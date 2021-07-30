@@ -1,9 +1,10 @@
 
 import logging
-import pandas as pd
 import asyncio as aio
 from enum import Enum
 from pathlib import Path
+
+import pandas as pd
 
 from ..core.benchmark import BenchmarkBase
 from ..elf import ELFInfo, SymResolver

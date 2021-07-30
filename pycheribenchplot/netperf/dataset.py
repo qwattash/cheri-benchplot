@@ -1,10 +1,13 @@
 
 import logging
-import numpy as np
-import pandas as pd
 from pathlib import Path
 
-from ..core.dataset import Field, DataField, IndexField, DataSetContainer, col2stat
+import numpy as np
+import pandas as pd
+
+from ..core.dataset import (Field, DataField, IndexField, DataSetContainer,
+                            col2stat)
+
 
 class NetperfData(DataSetContainer):
     fields = [

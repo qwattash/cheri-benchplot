@@ -1,10 +1,12 @@
 
 import logging
-import pandas as pd
 import re
 from pathlib import Path
 
+import pandas as pd
+
 from .core.dataset import DataSetContainer, IndexField, DataField
+
 
 class QEMUAddressRangeHistogram(DataSetContainer):
     fields = [

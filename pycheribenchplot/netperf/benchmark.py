@@ -1,10 +1,11 @@
 
 import logging
-import pandas as pd
 import asyncio as aio
 import shutil
 from enum import Enum
 from pathlib import Path
+
+import pandas as pd
 
 from ..core.benchmark import BenchmarkBase
 from ..core.instanced import InstancePlatform
@@ -13,6 +14,7 @@ from ..qemu_stats import QEMUAddressRangeHistogram
 from .config import NetperfBenchmarkRunConfig
 from .plot import *
 from .dataset import NetperfData
+
 
 class NetperfBenchmark(BenchmarkBase):
     def __init__(self, manager, config, instance_config):

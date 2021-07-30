@@ -1,9 +1,11 @@
 
-import pandas as pd
 from pathlib import Path
+
+import pandas as pd
 from sortedcontainers import SortedDict
 from elftools.elf.elffile import ELFFile
 from elftools.elf.enums import ENUM_ST_SHNDX
+
 
 class ELFInfo:
     def __init__(self, path: Path):

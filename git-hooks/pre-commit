@@ -1,0 +1,3 @@
+#!/bin/sh
+
+isort pycheribenchplot --virtual-env venv --py 39 -p pycheribenchplot --os

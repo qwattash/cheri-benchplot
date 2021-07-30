@@ -4,6 +4,7 @@ from enum import Enum
 
 from ..core.plot import StackedLinePlot, StackedBarPlot, make_colormap2
 
+
 class NetperfPlot(Enum):
     QEMU_PC_HIST = "qemu-pc-hist"
     ALL_BY_XFER_SIZE = "xfer-size"

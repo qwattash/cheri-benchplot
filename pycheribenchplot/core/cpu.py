@@ -1,6 +1,7 @@
 
 from enum import Enum
 
+
 class BenchmarkCPU(Enum):
     FLUTE = "flute"
     TOOOBA = "toooba"

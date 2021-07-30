@@ -3,6 +3,7 @@ from pathlib import Path
 
 from ..core.options import TemplateConfig
 
+
 @dataclass
 class NetperfBenchmarkRunConfig(TemplateConfig):
     netperf_path: Path = Path("opt/{cheri_target}/netperf/bin")

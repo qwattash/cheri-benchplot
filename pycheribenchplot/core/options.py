@@ -8,6 +8,7 @@ from pathlib import Path
 from dataclasses import dataclass, fields, is_dataclass, replace, Field
 from enum import Enum
 
+
 def _template_safe(temp: str, **kwargs):
     try:
         return temp.format(**kwargs)

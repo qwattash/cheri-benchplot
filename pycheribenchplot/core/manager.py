@@ -1,15 +1,17 @@
 import logging
 import uuid
 import asyncio as aio
-import asyncssh
 from pathlib import Path
 from dataclasses import dataclass, field
 from enum import Enum
+
+import asyncssh
 
 from .options import TemplateConfig, TemplateConfigContext
 from .benchmark import BenchmarkRunConfig, BenchmarkType
 from .instanced import InstanceClient, InstanceConfig
 from ..netperf.benchmark import NetperfBenchmark
+
 
 @dataclass
 class BenchmarkManagerConfig(TemplateConfig):

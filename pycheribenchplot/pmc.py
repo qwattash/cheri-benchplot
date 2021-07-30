@@ -1,10 +1,12 @@
 
 import logging
+
 import pandas as pd
 import numpy as np
 
 from .core.cpu import *
 from .core.dataset import *
+
 
 class PMCStatData:
     fields = [
