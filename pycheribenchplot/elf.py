@@ -1,4 +1,3 @@
-
 from pathlib import Path
 
 import pandas as pd
@@ -12,11 +11,11 @@ class ELFInfo:
         self.path = path
         self.ef = ELFFile(open(path, "rb"))
 
+
 class SymResolver:
     """
     Resolve symbols from a set of ELF files with optional mapping addresses
     """
-
     def __init__(self):
         self.files = {}
         self.symbols = SortedDict()
@@ -32,4 +31,3 @@ class SymResolver:
         if index < 0:
             return None
         return self.symbols.values()[index]
-

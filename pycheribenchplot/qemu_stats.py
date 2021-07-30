@@ -1,4 +1,3 @@
-
 import logging
 import re
 from pathlib import Path
@@ -9,11 +8,7 @@ from .core.dataset import DataSetContainer, IndexField, DataField
 
 
 class QEMUAddressRangeHistogram(DataSetContainer):
-    fields = [
-        DataField("start"),
-        DataField("end"),
-        DataField("count")
-    ]
+    fields = [DataField("start"), DataField("end"), DataField("count")]
 
     def raw_fields(self):
         return QEMUAddressRangeHistogram.fields
@@ -26,8 +21,8 @@ class QEMUAddressRangeHistogram(DataSetContainer):
     def load(self, path: Path):
         match = re.match(self.file_matcher, path.name)
         if not match:
-            logging.warning("Malformed qemu address range histogram file name %s:" +
-                            "expecting %sqemu-<UUID>.csv", path, self.file_prefix)
+            logging.warning("Malformed qemu address range histogram file name %s:" + "expecting %sqemu-<UUID>.csv",
+                            path, self.file_prefix)
             return
         dataset_id = match.group(1)
         csv_df = self._load_csv(path)

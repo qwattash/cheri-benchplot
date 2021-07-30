@@ -1,4 +1,3 @@
-
 import logging
 import time
 import uuid
@@ -33,11 +32,13 @@ def timing(name, logger=None):
         end = time.time()
         logger.info("%s in %.2fs", name, end - start)
 
+
 class BenchmarkType(Enum):
     NETPERF = "netperf"
 
     def __str__(self):
         return self.value
+
 
 @dataclass
 class BenchmarkDataSetConfig(TemplateConfig):
@@ -89,7 +90,6 @@ class BenchmarkBase(TemplateConfigContext):
     """
     Base class for all the benchmarks
     """
-
     def __init__(self, manager, config, instance_config):
         super().__init__()
         self.uuid = uuid.uuid4()
@@ -142,8 +142,7 @@ class BenchmarkBase(TemplateConfigContext):
                 except aio.CancelledError as ex:
                     raise ex
                 except Exception as ex:
-                    self.logger.error("Error while processing output for %s: %s",
-                                      proc_task.command, ex)
+                    self.logger.error("Error while processing output for %s: %s", proc_task.command, ex)
                 self.logger.debug(out)
         except aio.CancelledError as ex:
             proc_task.terminate()
@@ -151,11 +150,10 @@ class BenchmarkBase(TemplateConfigContext):
         finally:
             self.logger.debug("Background task %s done", proc_task.command)
 
-
     async def _run_bg_cmd(self, command: str, args: list, env={}, iocallback=None):
         """Run a background command without waiting for termination"""
         cmdline = f"{command} " + " ".join(args)
-        env_str = [f"{k}={v}" for k,v in env.items()]
+        env_str = [f"{k}={v}" for k, v in env.items()]
         self.logger.debug("exec background: %s env=%s", cmdline, env)
         proc_task = await self._conn.create_process(cmdline, env=env_str)
         self._command_tasks.append(aio.create_task(self._cmd_io(proc_task, iocallback)))
@@ -164,7 +162,7 @@ class BenchmarkBase(TemplateConfigContext):
     async def _run_cmd(self, command: str, args: list, env={}, outfile=PIPE):
         """Run a command and wait for the process to complete"""
         cmdline = f"{command} " + " ".join(args)
-        env_str = [f"{k}={v}" for k,v in env.items()]
+        env_str = [f"{k}={v}" for k, v in env.items()]
         self.logger.debug("exec: %s env=%s", cmdline, env)
         result = await self._conn.run(cmdline, env=env_str, stdout=outfile)
         if result.returncode != 0:
@@ -181,8 +179,11 @@ class BenchmarkBase(TemplateConfigContext):
         await asyncssh.scp(src, host_dst)
 
     async def _connect_instance(self, info: BenchmarkInfo):
-        conn = await asyncssh.connect(info.ssh_host, port=info.ssh_port, known_hosts=None,
-                                      client_keys=[self.manager_config.ssh_key], username="root",
+        conn = await asyncssh.connect(info.ssh_host,
+                                      port=info.ssh_port,
+                                      known_hosts=None,
+                                      client_keys=[self.manager_config.ssh_key],
+                                      username="root",
                                       passphrase="")
         self.logger.debug("Connected to instance")
         return conn
@@ -214,7 +215,6 @@ class BenchmarkBase(TemplateConfigContext):
 
 
 class _BenchmarkBase:
-
     def plot(self):
         # Common libpmc input
         self.pmc = PMCStatData.get_pmc_for_cpu(self.cpu, self.options, self)
@@ -227,8 +227,7 @@ class _BenchmarkBase:
         self._process_data_sources()
         self.merged_raw_data = self._merge_raw_data()
         self.merged_stats = self._merge_stats()
-        logging.info("Generate relative data for baseline %s",
-                     self.options.baseline)
+        logging.info("Generate relative data for baseline %s", self.options.baseline)
         self._compute_relative_stats()
         logging.info("Generate plots")
         self._draw()
@@ -258,4 +257,3 @@ class _BenchmarkBase:
         logging.info("Loading %s", filepath)
         if self._is_pmc_input(filepath):
             self._load_pmc(filepath)
-

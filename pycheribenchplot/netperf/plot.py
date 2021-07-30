@@ -1,4 +1,3 @@
-
 import logging
 from enum import Enum
 
@@ -12,6 +11,7 @@ class NetperfPlot(Enum):
     def __str__(self):
         return self.value
 
+
 class Plotter:
     def __init__(self, benchmark):
         self.benchmark = benchmark
@@ -24,8 +24,7 @@ class Plotter:
 
     def _get_outfile(self):
         runs = self._get_datasets()
-        outfile = "netperf-{}-{}".format(self.options.config.name,
-                                         "+".join(runs))
+        outfile = "netperf-{}-{}".format(self.options.config.name, "+".join(runs))
         return outfile
 
     def _get_colormap(self):
@@ -40,7 +39,6 @@ class NetperfQemuPCHist(Plotter):
     1. Absolute values from each dataset
     2. Relative diff between datasets and baseline
     """
-
     def __init__(self, benchmark):
         super().__init__(benchmark)
 
@@ -65,8 +63,7 @@ class NetperfQemuPCHist(Plotter):
         datasets = self._get_datasets()
         outfile = self._get_outfile()
         cmap = self._get_colormap()
-        logging.info("Generate plot data for %s runs:%s",
-                     self.options.config.name, list(datasets))
+        logging.info("Generate plot data for %s runs:%s", self.options.config.name, list(datasets))
         cols = self._get_subplot_columns()
         plot = StackedLinePlot(self.options, "Netperf", outfile, len(cols))
 
@@ -76,10 +73,8 @@ class NetperfQemuPCHist(Plotter):
         plot.plot_main_axis2(data, err_hi, err_lo, cols, "__dataset_id", cmap)
         # plot.plot_main_axis(data, err_hi, err_lo, cols, cmap)
 
-        logging.info("Plot %s -> %s", self.options.config.name,
-                     outfile)
+        logging.info("Plot %s -> %s", self.options.config.name, outfile)
         plot.draw(cmap)
-
 
 
 class NetperfTXSizeStackPlot:
@@ -102,14 +97,12 @@ class NetperfTXSizeStackPlot:
         try:
             self.x_index = self.x_mapping[self.options.config]
         except KeyError:
-            logging.error("%s does not support transaction_size plot",
-                          self.options.config.name)
+            logging.error("%s does not support transaction_size plot", self.options.config.name)
             exit(1)
 
     def _get_outfile(self):
         runs = self._get_datasets()
-        outfile = "netperf-{}-{}".format(self.options.config.name,
-                                         "+".join(runs))
+        outfile = "netperf-{}-{}".format(self.options.config.name, "+".join(runs))
         return outfile
 
     def _get_colormap(self):
@@ -142,8 +135,7 @@ class NetperfTXSizeStackPlot:
         datasets = self._get_datasets()
         outfile = self._get_outfile()
         cmap = self._get_colormap()
-        logging.info("Generate plot data for %s runs:%s",
-                     self.options.config.name, list(datasets))
+        logging.info("Generate plot data for %s runs:%s", self.options.config.name, list(datasets))
         cols = self._get_subplot_columns()
         plot = StackedLinePlot(self.options, "Netperf", outfile, len(cols))
 
@@ -153,6 +145,5 @@ class NetperfTXSizeStackPlot:
         plot.plot_main_axis2(data, err_hi, err_lo, cols, "__dataset_id", cmap)
         # plot.plot_main_axis(data, err_hi, err_lo, cols, cmap)
 
-        logging.info("Plot %s -> %s", self.options.config.name,
-                     outfile)
+        logging.info("Plot %s -> %s", self.options.config.name, outfile)
         plot.draw(cmap)

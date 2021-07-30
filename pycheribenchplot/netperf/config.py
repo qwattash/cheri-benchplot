@@ -11,4 +11,3 @@ class NetperfBenchmarkRunConfig(TemplateConfig):
     netperf_options: list[str] = field(default_factory=list)
     netserver_options: list[str] = field(default_factory=list)
     qemu_log_output: str = "netperf-qemu-{uuid}.csv"
-

@@ -20,6 +20,7 @@ from .options import OptionConfig, TemplateConfig
 
 ctx = zaio.Context()
 
+
 class InstanceDaemonError(Exception):
     pass
 
@@ -49,6 +50,7 @@ class InstanceKernelABI(Enum):
 
     def __str__(self):
         return self.value
+
 
 @dataclass
 class QemuInstanceConfig(TemplateConfig):
@@ -159,6 +161,7 @@ class BenchmarkInfo:
 class _Reply:
     benchmarks: list[BenchmarkInfo]
 
+
 @dataclass
 class _InstanceMessage:
     op: InstanceOp
@@ -170,7 +173,6 @@ class InstanceClient:
     """
     Client Interface to the zmq service.
     """
-
     def __init__(self):
         self.logger = logging.getLogger("cheri-instanced-client")
         self.socket = ctx.socket(zmq.REQ)
@@ -178,7 +180,7 @@ class InstanceClient:
         self.base_poll_time = 10.0
         self.timeout = 5.0
 
-    async def _msg(self, op: InstanceOp, owner: uuid.UUID, config: InstanceConfig=None, timeout=None) -> _Reply:
+    async def _msg(self, op: InstanceOp, owner: uuid.UUID, config: InstanceConfig = None, timeout=None) -> _Reply:
         if timeout is None:
             timeout = self.timeout
         req = _Message(op=op, owner=owner, config=config)
@@ -333,8 +335,11 @@ class Instance(ABC):
         retry = 3
         while True:
             try:
-                self._ssh_ctrl_conn = await asyncssh.connect("localhost", port=self.ssh_port, known_hosts=None,
-                                                             client_keys=[ssh_keyfile], username="root",
+                self._ssh_ctrl_conn = await asyncssh.connect("localhost",
+                                                             port=self.ssh_port,
+                                                             known_hosts=None,
+                                                             client_keys=[ssh_keyfile],
+                                                             username="root",
                                                              passphrase="")
                 break
             except Exception as ex:
@@ -457,10 +462,12 @@ class CheribuildInstance(Instance):
         run_cmd += [self._run_option("ephemeral")]
         run_cmd += [self._run_option("ssh-forwarding-port"), str(self.ssh_port)]
         # Let cheribuild know that it may look up all kernels
-        run_cmd += [self._cheribsd_option("build-alternate-abi-kernels"),
-                    self._cheribsd_option("build-fett-kernels"),
-                    self._cheribsd_option("build-bench-kernels"),
-                    self._cheribsd_option("build-fpga-kernels")]
+        run_cmd += [
+            self._cheribsd_option("build-alternate-abi-kernels"),
+            self._cheribsd_option("build-fett-kernels"),
+            self._cheribsd_option("build-bench-kernels"),
+            self._cheribsd_option("build-fpga-kernels")
+        ]
         # Extra qemu options and tracing tags?
         trace_sink = str(self._get_qemu_trace_sink())
         qemu_options = ["-D", trace_sink]
@@ -473,10 +480,13 @@ class CheribuildInstance(Instance):
         run_cmd += [self._run_option("extra-options"), " ".join(qemu_options)]
 
         self.logger.debug("%s %s", self._cheribuild, run_cmd)
-        self._cheribuild_task = await aio.create_subprocess_exec(
-            self._cheribuild, *run_cmd, stdin=aio.subprocess.PIPE,
-            stdout=aio.subprocess.PIPE, stderr=aio.subprocess.PIPE,
-            start_new_session=True, loop=self.event_loop)
+        self._cheribuild_task = await aio.create_subprocess_exec(self._cheribuild,
+                                                                 *run_cmd,
+                                                                 stdin=aio.subprocess.PIPE,
+                                                                 stdout=aio.subprocess.PIPE,
+                                                                 stderr=aio.subprocess.PIPE,
+                                                                 start_new_session=True,
+                                                                 loop=self.event_loop)
         self.logger.debug("Spawned cheribuild pid=%d pgid=%d", self._cheribuild_task.pid,
                           os.getpgid(self._cheribuild_task.pid))
         # Now wait for the boot to complete and start sshd
@@ -520,7 +530,6 @@ class CheribuildInstance(Instance):
 
 
 class InstanceDaemon:
-
     def __init__(self, config: InstanceDaemonConfig):
         self.config = config
         self.logger = logging.getLogger("cheri-instanced")
@@ -529,8 +538,7 @@ class InstanceDaemon:
             self.socket.bind("tcp://127.0.0.1:15555")
             self.db = dbm.open(".cheri-instance-cache", "c")
         except zmq.ZMQError as e:
-            self.logger.error("Can not start cheri-instanced: %s." +
-                              "Maybe the daemon is already running?", e)
+            self.logger.error("Can not start cheri-instanced: %s." + "Maybe the daemon is already running?", e)
             exit(1)
         self.loop = aio.get_event_loop()
         # Running instances
@@ -601,8 +609,7 @@ class InstanceDaemon:
         self.zmq_task.cancel()
         for i in self.active_instances.values():
             i.stop()
-        result = await aio.gather(*[i.task for i in self.active_instances.values()],
-                                  return_exceptions=True)
+        result = await aio.gather(*[i.task for i in self.active_instances.values()], return_exceptions=True)
         self.logger.debug("Instance tasks completed: errs=%s", result)
         for e in result:
             if isinstance(e, Exception):

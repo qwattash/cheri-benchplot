@@ -1,4 +1,3 @@
-
 import logging
 
 import pandas as pd
@@ -72,8 +71,7 @@ class PMCStatData:
         csv_df.set_index(self.index_columns(), inplace=True)
 
         csv_df = self._enforce_data_types(csv_df)
-        valid_columns = set(csv_df.columns).intersection(
-            set(self.all_columns()))
+        valid_columns = set(csv_df.columns).intersection(set(self.all_columns()))
         self.df = pd.concat([self.df, csv_df[valid_columns]])
 
 
@@ -85,70 +83,70 @@ class FluteStatcountersData(PMCStatData):
         DataField("cycles"),
         DataField("instructions"),
         DataField("time"),
-        DataField("redirect", "PC redirects"), # 0x01
-        DataField("branch"), # 0x03
-        DataField("jal"), # 0x04
-        DataField("jalr"), # 0x05
-        DataField("trap", "Stage 2 trap"), # 0x02
-        DataField("auipc"), # 0x06
-        DataField("load"), # 0x07
-        DataField("store"), # 0x08
-        DataField("LR"), # 0x09
-        DataField("SC"), # 0x0a
-        DataField("AMO"), # 0x0b
-        DataField("serial_shift"), # 0x0c
-        DataField("integer_muldiv", "Integer Mul/Div insn count"), # 0x0d
-        DataField("FP", "Floating point insn count"), # 0x0e
-        DataField("SC_success", "SC success"), # 0x0f
-        DataField("load_wait", "Stage 2 cycles waiting on load"), # 0x10
-        DataField("store_wait", "Stage 2 cycles waiting on store"), # 0x11
-        DataField("fence", "Fence insn count"), # 0x12
-        DataField("F_busy", "Cycles where stage F is busy"), # 0x13
-        DataField("D_busy", "Cycles where stage D is busy"), # 0x14
-        DataField("1_busy", "Cycles where stage 1 is busy"), # 0x15
-        DataField("2_busy", "Cycles where stage 2 is busy"), # 0x16
-        DataField("3_busy", "Cycles where stage 3 is busy"), # 0x17
-        DataField("imprecise_setbounds", "Count setbounds NOT resulting in the exact bounds requested"), # 0x18
-        DataField("cap_unrepresentable", "Count capability tag lost due to unrepresentable bounds"), # 0x19
-        DataField("cap_load", "Stage 2 capability-wide load"), # 0x1a
-        DataField("cap_store", "Stage 2 capability-wide store"), # 0x1b
-        DataField("cap_load_tag_set", "Stage 2 loads tagged capability"), # 0x1c
-        DataField("cap_store_tag_set", "Stage 2 stores tagged capability"), # 0x1d
-        DataField("icache_load", "iCache load count"), # 0x20
-        DataField("icache_load_miss", "iCache load missed"), # 0x21
-        DataField("icache_load_miss_wait", "iCache load miss latency (cycles)"), # 0x22
-        DataField("dcache_load", "dCache load count"), # 0x30
-        DataField("dcache_load_miss", "dCache load missed"), # 0x31
-        DataField("dcache_load_miss_wait", "dCache load miss latency (cycles)"), # 0x32
-        DataField("icache_store", "iCache store count"), # 0x23
+        DataField("redirect", "PC redirects"),  # 0x01
+        DataField("branch"),  # 0x03
+        DataField("jal"),  # 0x04
+        DataField("jalr"),  # 0x05
+        DataField("trap", "Stage 2 trap"),  # 0x02
+        DataField("auipc"),  # 0x06
+        DataField("load"),  # 0x07
+        DataField("store"),  # 0x08
+        DataField("LR"),  # 0x09
+        DataField("SC"),  # 0x0a
+        DataField("AMO"),  # 0x0b
+        DataField("serial_shift"),  # 0x0c
+        DataField("integer_muldiv", "Integer Mul/Div insn count"),  # 0x0d
+        DataField("FP", "Floating point insn count"),  # 0x0e
+        DataField("SC_success", "SC success"),  # 0x0f
+        DataField("load_wait", "Stage 2 cycles waiting on load"),  # 0x10
+        DataField("store_wait", "Stage 2 cycles waiting on store"),  # 0x11
+        DataField("fence", "Fence insn count"),  # 0x12
+        DataField("F_busy", "Cycles where stage F is busy"),  # 0x13
+        DataField("D_busy", "Cycles where stage D is busy"),  # 0x14
+        DataField("1_busy", "Cycles where stage 1 is busy"),  # 0x15
+        DataField("2_busy", "Cycles where stage 2 is busy"),  # 0x16
+        DataField("3_busy", "Cycles where stage 3 is busy"),  # 0x17
+        DataField("imprecise_setbounds", "Count setbounds NOT resulting in the exact bounds requested"),  # 0x18
+        DataField("cap_unrepresentable", "Count capability tag lost due to unrepresentable bounds"),  # 0x19
+        DataField("cap_load", "Stage 2 capability-wide load"),  # 0x1a
+        DataField("cap_store", "Stage 2 capability-wide store"),  # 0x1b
+        DataField("cap_load_tag_set", "Stage 2 loads tagged capability"),  # 0x1c
+        DataField("cap_store_tag_set", "Stage 2 stores tagged capability"),  # 0x1d
+        DataField("icache_load", "iCache load count"),  # 0x20
+        DataField("icache_load_miss", "iCache load missed"),  # 0x21
+        DataField("icache_load_miss_wait", "iCache load miss latency (cycles)"),  # 0x22
+        DataField("dcache_load", "dCache load count"),  # 0x30
+        DataField("dcache_load_miss", "dCache load missed"),  # 0x31
+        DataField("dcache_load_miss_wait", "dCache load miss latency (cycles)"),  # 0x32
+        DataField("icache_store", "iCache store count"),  # 0x23
         DataField("icache_store_miss", "iCache store missed -- UNIMPL"),
         DataField("icache_store_miss_wait", "iCache store miss latency (cycles) -- UNIMPL"),
-        DataField("dcache_store", "dCache store count"), # 0x33
+        DataField("dcache_store", "dCache store count"),  # 0x33
         DataField("dcache_store_miss", "dCache store missed -- UNIMPL"),
         DataField("dcache_store_miss_wait", "dCache store miss latency (cycles) -- UNIMPL"),
-        DataField("dcache_amo", "dCache atomic operation requested"), # 0x36
-        DataField("dcache_amo_miss", "dCache atomic operation missed"), # 0x37
-        DataField("dcache_amo_miss_wait", "dCache atomic operation miss latency (cycles)"), # 0x38
-        DataField("itlb_access", "iTLB access count"), # 0x29
-        DataField("itlb_miss", "iTLB miss count"), # 0x2a
-        DataField("itlb_miss_wait", "iTLB miss latency (cycles)"), # 0x2b
-        DataField("itlb_flush", "iTLB flush"), # 0x2c
+        DataField("dcache_amo", "dCache atomic operation requested"),  # 0x36
+        DataField("dcache_amo_miss", "dCache atomic operation missed"),  # 0x37
+        DataField("dcache_amo_miss_wait", "dCache atomic operation miss latency (cycles)"),  # 0x38
+        DataField("itlb_access", "iTLB access count"),  # 0x29
+        DataField("itlb_miss", "iTLB miss count"),  # 0x2a
+        DataField("itlb_miss_wait", "iTLB miss latency (cycles)"),  # 0x2b
+        DataField("itlb_flush", "iTLB flush"),  # 0x2c
         DataField("dtlb_access", "dTLB access count"),  # 0x39
-        DataField("dtlb_miss", "dTLB miss count"), # 0x3a
-        DataField("dtlb_miss_wait", "dTLB miss latency (cycles)"), # 0x3b
-        DataField("dtlb_flush", "iTLB flush"), # 0x3c
-        DataField("icache_evict", "iCache eviction count"), # 0x2d
-        DataField("dcache_evict", "dCache eviction count"), # 0x3d
-        DataField("llcache_load_miss", "last-level cache load missed"), # 0x61
-        DataField("llcache_load_miss_wait", "last-level cache load miss latency (cycles)"), # 0x62
-        DataField("llcache_evict", "last-level cache eviction count"), # 0x64
-        DataField("tagcache_store", "tag cache store count"), # 0x40
-        DataField("tagcache_store_miss", "tag cache store missed"), # 0x41
-        DataField("tagcache_load", "tag cache load count"), # 0x42
-        DataField("tagcache_load_miss", "tag cache load missed"), # 0x43
-        DataField("tagcache_evict", "tag cache eviction count"), # 0x44
-        DataField("tagcache_set_store", "tag cache set tag write"), # 0x45
-        DataField("tagcache_set_load", "tag cache set tag read"), # 0x46
+        DataField("dtlb_miss", "dTLB miss count"),  # 0x3a
+        DataField("dtlb_miss_wait", "dTLB miss latency (cycles)"),  # 0x3b
+        DataField("dtlb_flush", "iTLB flush"),  # 0x3c
+        DataField("icache_evict", "iCache eviction count"),  # 0x2d
+        DataField("dcache_evict", "dCache eviction count"),  # 0x3d
+        DataField("llcache_load_miss", "last-level cache load missed"),  # 0x61
+        DataField("llcache_load_miss_wait", "last-level cache load miss latency (cycles)"),  # 0x62
+        DataField("llcache_evict", "last-level cache eviction count"),  # 0x64
+        DataField("tagcache_store", "tag cache store count"),  # 0x40
+        DataField("tagcache_store_miss", "tag cache store missed"),  # 0x41
+        DataField("tagcache_load", "tag cache load count"),  # 0x42
+        DataField("tagcache_load_miss", "tag cache load missed"),  # 0x43
+        DataField("tagcache_evict", "tag cache eviction count"),  # 0x44
+        DataField("tagcache_set_store", "tag cache set tag write"),  # 0x45
+        DataField("tagcache_set_load", "tag cache set tag read"),  # 0x46
     ]
 
     def __init__(self, options, benchmark):
@@ -170,8 +168,7 @@ class FluteStatcountersData(PMCStatData):
         self._import_df(csv_df)
 
     def _enforce_data_types(self, df):
-        coltypes = {f.name: f.dtype for f in self.raw_fields()
-                    if f.name in df.columns}
+        coltypes = {f.name: f.dtype for f in self.raw_fields() if f.name in df.columns}
         return df.astype(coltypes, copy=True)
 
     def _gen_composite_metrics(self):
@@ -190,8 +187,7 @@ class FluteStatcountersData(PMCStatData):
                     hit_rate = hit / self.df[base_metric]
                 else:
                     if (self.df[base_metric] == 0).all():
-                        logging.warning("Invalid hit count for %s, maybe %s is unimplemented",
-                                        c, base_metric)
+                        logging.warning("Invalid hit count for %s, maybe %s is unimplemented", c, base_metric)
                         hit_rate = np.NaN
                     else:
                         logging.critical("Negative hit count %s".format(base_metric))
@@ -224,41 +220,80 @@ class BeriStatcountersData:
     """
 
     data_columns = [
-        "cycles", "instructions", "dcache_write", "dcache_read",
-        "l2cache_write", "l2cache_read", "tagcache_write", "tagcache_read"]
+        "cycles", "instructions", "dcache_write", "dcache_read", "l2cache_write", "l2cache_read", "tagcache_write",
+        "tagcache_read"
+    ]
     plot_columns = [
-        "cycles", "instructions", "cpi", "dtlb_miss", "itlb_miss",
+        "cycles",
+        "instructions",
+        "cpi",
+        "dtlb_miss",
+        "itlb_miss",
         "icache_fetch_icount",
-        "tagcache_w_miss_rate", "tagcache_r_miss_rate",
-        "dcache_w_miss_rate", "dcache_r_miss_rate",
+        "tagcache_w_miss_rate",
+        "tagcache_r_miss_rate",
+        "dcache_w_miss_rate",
+        "dcache_r_miss_rate",
         "icache_r_miss_rate",
-        "dcache_set_tag_write", "dcache_set_tag_read",
-        "l2cache_w_miss_rate", "l2cache_r_miss_rate",
-        "l2cache_set_tag_write", "l2cache_set_tag_read",
-        'mipsmem_byte_read', 'mipsmem_byte_write',
-        'mipsmem_hword_read', 'mipsmem_hword_write',
-        'mipsmem_word_read', 'mipsmem_word_write',
-        'mipsmem_dword_read', 'mipsmem_dword_write',
-        'mipsmem_cap_read', 'mipsmem_cap_write',
-        'mipsmem_cap_read_tag_set', 'mipsmem_cap_write_tag_set',
-        'total_mem_read', 'mem_r_op_per_byte',
-        'total_mem_write', 'mem_w_op_per_byte',
-#        'kern_unaligned_access', 'kern_unaligned_access_per_insn'
+        "dcache_set_tag_write",
+        "dcache_set_tag_read",
+        "l2cache_w_miss_rate",
+        "l2cache_r_miss_rate",
+        "l2cache_set_tag_write",
+        "l2cache_set_tag_read",
+        'mipsmem_byte_read',
+        'mipsmem_byte_write',
+        'mipsmem_hword_read',
+        'mipsmem_hword_write',
+        'mipsmem_word_read',
+        'mipsmem_word_write',
+        'mipsmem_dword_read',
+        'mipsmem_dword_write',
+        'mipsmem_cap_read',
+        'mipsmem_cap_write',
+        'mipsmem_cap_read_tag_set',
+        'mipsmem_cap_write_tag_set',
+        'total_mem_read',
+        'mem_r_op_per_byte',
+        'total_mem_write',
+        'mem_w_op_per_byte',
+        #        'kern_unaligned_access', 'kern_unaligned_access_per_insn'
     ]
     plot_descriptions = [
-        "cycles", "committed instructions", "cycles per instr", "dTLB miss", "iTLB miss",
+        "cycles",
+        "committed instructions",
+        "cycles per instr",
+        "dTLB miss",
+        "iTLB miss",
         "committed instructions / icache fetch",
-        "tagcache W miss rate", "tagcache R miss rate",
-        "dcache W miss rate", "dcache R miss rate",
+        "tagcache W miss rate",
+        "tagcache R miss rate",
+        "dcache W miss rate",
+        "dcache R miss rate",
         "icache R miss rate",
-        "dcache set tag W", "dcache set tag R", "l2cache W miss rate",
-        "l2cache R miss rate", "l2cache set tag W", "l2cache set tag R",
-        "uArch byte R", "uArch byte W", "uArch hword R", "uArch hword W",
-        "uArch word R", "uArch word W", "uArch dword R", "uArch dword W",
-        "uArch cap R", "uArch cap W", "uArch tagged cap R", "uArch tagged cap W",
-        "uArch total R", "uArch total R / total bytes R",
-        "uArch total W", "uArch total W / total bytes W",
-#        "Kern unaligned access", "Kern unaligned access per instr"
+        "dcache set tag W",
+        "dcache set tag R",
+        "l2cache W miss rate",
+        "l2cache R miss rate",
+        "l2cache set tag W",
+        "l2cache set tag R",
+        "uArch byte R",
+        "uArch byte W",
+        "uArch hword R",
+        "uArch hword W",
+        "uArch word R",
+        "uArch word W",
+        "uArch dword R",
+        "uArch dword W",
+        "uArch cap R",
+        "uArch cap W",
+        "uArch tagged cap R",
+        "uArch tagged cap W",
+        "uArch total R",
+        "uArch total R / total bytes R",
+        "uArch total W",
+        "uArch total W / total bytes W",
+        #        "Kern unaligned access", "Kern unaligned access per instr"
     ]
 
     def __init__(self, input_df, baseline_arch):
@@ -274,62 +309,47 @@ class BeriStatcountersData:
     def make_composite_metrics(self):
         assert "dcache_write" in BeriStatcountersData.data_columns
         assert "dcache_read" in BeriStatcountersData.data_columns
-        self.df = self.df.assign(
-            dcache_w_hit_rate = hit_rate(self.df, "dcache_write"),
-            dcache_r_hit_rate = hit_rate(self.df, "dcache_read"),
-            icache_w_hit_rate = hit_rate(self.df, "icache_write"),
-            icache_r_hit_rate = hit_rate(self.df, "icache_read"),
-            l2cache_w_hit_rate = hit_rate(self.df, "l2cache_write"),
-            l2cache_r_hit_rate = hit_rate(self.df, "l2cache_read"),
-            tagcache_w_hit_rate = hit_rate(self.df, "tagcache_write"),
-            tagcache_r_hit_rate = hit_rate(self.df, "tagcache_read"))
+        self.df = self.df.assign(dcache_w_hit_rate=hit_rate(self.df, "dcache_write"),
+                                 dcache_r_hit_rate=hit_rate(self.df, "dcache_read"),
+                                 icache_w_hit_rate=hit_rate(self.df, "icache_write"),
+                                 icache_r_hit_rate=hit_rate(self.df, "icache_read"),
+                                 l2cache_w_hit_rate=hit_rate(self.df, "l2cache_write"),
+                                 l2cache_r_hit_rate=hit_rate(self.df, "l2cache_read"),
+                                 tagcache_w_hit_rate=hit_rate(self.df, "tagcache_write"),
+                                 tagcache_r_hit_rate=hit_rate(self.df, "tagcache_read"))
         # account for never having a single hit/miss on the write side
         self.df["icache_w_hit_rate"].fillna(1, inplace=True)
 
-        self.df = self.df.assign(
-            dcache_w_miss_rate = 1 - self.df["dcache_w_hit_rate"],
-            dcache_r_miss_rate = 1 - self.df["dcache_r_hit_rate"],
-            icache_w_miss_rate = 1 - self.df["icache_w_hit_rate"],
-            icache_r_miss_rate = 1 - self.df["icache_r_hit_rate"],
-            l2cache_w_miss_rate = 1 - self.df["l2cache_w_hit_rate"],
-            l2cache_r_miss_rate = 1 - self.df["l2cache_r_hit_rate"],
-            tagcache_w_miss_rate = 1 - self.df["tagcache_w_hit_rate"],
-            tagcache_r_miss_rate = 1 - self.df["tagcache_r_hit_rate"])
+        self.df = self.df.assign(dcache_w_miss_rate=1 - self.df["dcache_w_hit_rate"],
+                                 dcache_r_miss_rate=1 - self.df["dcache_r_hit_rate"],
+                                 icache_w_miss_rate=1 - self.df["icache_w_hit_rate"],
+                                 icache_r_miss_rate=1 - self.df["icache_r_hit_rate"],
+                                 l2cache_w_miss_rate=1 - self.df["l2cache_w_hit_rate"],
+                                 l2cache_r_miss_rate=1 - self.df["l2cache_r_hit_rate"],
+                                 tagcache_w_miss_rate=1 - self.df["tagcache_w_hit_rate"],
+                                 tagcache_r_miss_rate=1 - self.df["tagcache_r_hit_rate"])
 
-        total_read_op = (self.df["mipsmem_byte_read"] +
-                         self.df["mipsmem_hword_read"] +
-                         self.df["mipsmem_word_read"] +
-                         self.df["mipsmem_dword_read"] +
-                         self.df["mipsmem_cap_read"])
-        total_bytes_read = (
-            self.df["mipsmem_byte_read"] +
-            self.df["mipsmem_hword_read"] * 2 +
-            self.df["mipsmem_word_read"] * 4 +
-            self.df["mipsmem_dword_read"] * 8 +
-            self.df["mipsmem_cap_read"] * 16)
-        total_write_op = (self.df["mipsmem_byte_write"] +
-                         self.df["mipsmem_hword_write"] +
-                         self.df["mipsmem_word_write"] +
-                         self.df["mipsmem_dword_write"] +
-                         self.df["mipsmem_cap_write"])
-        total_bytes_write = (
-            self.df["mipsmem_byte_write"] +
-            self.df["mipsmem_hword_write"] * 2 +
-            self.df["mipsmem_word_write"] * 4 +
-            self.df["mipsmem_dword_write"] * 8 +
-            self.df["mipsmem_cap_write"] * 16)
+        total_read_op = (self.df["mipsmem_byte_read"] + self.df["mipsmem_hword_read"] + self.df["mipsmem_word_read"] +
+                         self.df["mipsmem_dword_read"] + self.df["mipsmem_cap_read"])
+        total_bytes_read = (self.df["mipsmem_byte_read"] + self.df["mipsmem_hword_read"] * 2 +
+                            self.df["mipsmem_word_read"] * 4 + self.df["mipsmem_dword_read"] * 8 +
+                            self.df["mipsmem_cap_read"] * 16)
+        total_write_op = (self.df["mipsmem_byte_write"] + self.df["mipsmem_hword_write"] +
+                          self.df["mipsmem_word_write"] + self.df["mipsmem_dword_write"] + self.df["mipsmem_cap_write"])
+        total_bytes_write = (self.df["mipsmem_byte_write"] + self.df["mipsmem_hword_write"] * 2 +
+                             self.df["mipsmem_word_write"] * 4 + self.df["mipsmem_dword_write"] * 8 +
+                             self.df["mipsmem_cap_write"] * 16)
 
-        self.df = self.df.assign(
-            total_mem_read = total_read_op,
-            total_mem_write = total_write_op,
-            mem_r_op_per_byte = total_read_op / total_bytes_read,
-            mem_w_op_per_byte = total_write_op / total_bytes_write)
+        self.df = self.df.assign(total_mem_read=total_read_op,
+                                 total_mem_write=total_write_op,
+                                 mem_r_op_per_byte=total_read_op / total_bytes_read,
+                                 mem_w_op_per_byte=total_write_op / total_bytes_write)
 
         self.df = self.df.assign(
             # instruction cache fetches over instruction count
             # give a metric of the committed instructions ratio
-            icache_fetch_icount = self.df["instructions"] / (self.df["icache_read_hit"] + self.df["icache_read_miss"]),
-            cpi = self.df["cycles"] / self.df["instructions"])
+            icache_fetch_icount=self.df["instructions"] / (self.df["icache_read_hit"] + self.df["icache_read_miss"]),
+            cpi=self.df["cycles"] / self.df["instructions"])
 
         self.df.drop(["kern_unaligned_access"], axis=1)
         # self.df["kern_unaligned_access"].fillna(0, inplace=True)
@@ -364,35 +384,23 @@ class BeriStatcountersData:
         b_median = self.baseline_set(median)
         b_q25 = self.baseline_set(q25)
         b_q75 = self.baseline_set(q75)
-        abs_delta_median = median.groupby("archname").apply(
-            lambda grp: grp - b_median)
-        abs_delta_median_err_hi = q75.groupby("archname").apply(
-            lambda grp: grp - b_q25)
-        abs_delta_median_err_lo = q25.groupby("archname").apply(
-            lambda grp: grp - b_q75)
-        stats_df = self.add_statistic(
-            abs_delta_median, "delta_median", stats_df)
-        stats_df = self.add_statistic(
-            abs_delta_median_err_hi, "delta_median_err_hi", stats_df)
-        stats_df = self.add_statistic(
-            abs_delta_median_err_lo, "delta_median_err_lo", stats_df)
+        abs_delta_median = median.groupby("archname").apply(lambda grp: grp - b_median)
+        abs_delta_median_err_hi = q75.groupby("archname").apply(lambda grp: grp - b_q25)
+        abs_delta_median_err_lo = q25.groupby("archname").apply(lambda grp: grp - b_q75)
+        stats_df = self.add_statistic(abs_delta_median, "delta_median", stats_df)
+        stats_df = self.add_statistic(abs_delta_median_err_hi, "delta_median_err_hi", stats_df)
+        stats_df = self.add_statistic(abs_delta_median_err_lo, "delta_median_err_lo", stats_df)
         # normalized median and quartiles w.r.t. baseline arch
-        norm_delta_median = median.groupby("archname").apply(
-            lambda grp: 100 * (grp - b_median) / b_median)
-        norm_delta_median_err_hi = q75.groupby("archname").apply(
-            lambda grp: 100 * (grp - b_median) / b_median)
-        norm_delta_median_err_lo = q25.groupby("archname").apply(
-            lambda grp: 100 * (grp - b_median) / b_median)
+        norm_delta_median = median.groupby("archname").apply(lambda grp: 100 * (grp - b_median) / b_median)
+        norm_delta_median_err_hi = q75.groupby("archname").apply(lambda grp: 100 * (grp - b_median) / b_median)
+        norm_delta_median_err_lo = q25.groupby("archname").apply(lambda grp: 100 * (grp - b_median) / b_median)
         # account for never having a single hit/miss on the write side
         norm_delta_median["icache_w_miss_rate"].fillna(0, inplace=True)
         norm_delta_median_err_hi["icache_w_miss_rate"].fillna(0, inplace=True)
         norm_delta_median_err_lo["icache_w_miss_rate"].fillna(0, inplace=True)
-        stats_df = self.add_statistic(
-            norm_delta_median, "norm_delta_median", stats_df)
-        stats_df = self.add_statistic(
-            norm_delta_median_err_hi, "norm_delta_median_err_hi", stats_df)
-        stats_df = self.add_statistic(
-            norm_delta_median_err_lo, "norm_delta_median_err_lo", stats_df)
+        stats_df = self.add_statistic(norm_delta_median, "norm_delta_median", stats_df)
+        stats_df = self.add_statistic(norm_delta_median_err_hi, "norm_delta_median_err_hi", stats_df)
+        stats_df = self.add_statistic(norm_delta_median_err_lo, "norm_delta_median_err_lo", stats_df)
         # mean and std by progname and archname
         # self.add_statistic(grouped.mean(), "mean")
         # self.add_statistic(grouped.std(), "std")

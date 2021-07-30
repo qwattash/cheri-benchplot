@@ -1,4 +1,3 @@
-
 import logging
 import asyncio as aio
 from enum import Enum
@@ -35,19 +34,21 @@ class NetperfBenchmark(BenchmarkBase):
     @classmethod
     def setup_config_options(cls, parser, command, run, plot):
         super().setup_config_options(parser, command, run, plot)
-        run.add_argument("config", type=_validate_config, choices=netperf_configs,
+        run.add_argument("config",
+                         type=_validate_config,
+                         choices=netperf_configs,
                          help="Benchmark configuration to run, this is forwarded also to " +
-                             "the remote script that invokes netperf")
+                         "the remote script that invokes netperf")
 
-        plot.add_argument("config", type=_validate_config, choices=netperf_configs,
-                          help="The test configuration name that has been run " +
-                              " by run-benchmark.sh")
-        plot.add_argument("plot_type", type=NetperfPlot, choices=list(NetperfPlot),
-                          help="Plot to draw")
-        plot.add_argument("--qemu-pc-samples-prefix", type=str,
+        plot.add_argument("config",
+                          type=_validate_config,
+                          choices=netperf_configs,
+                          help="The test configuration name that has been run " + " by run-benchmark.sh")
+        plot.add_argument("plot_type", type=NetperfPlot, choices=list(NetperfPlot), help="Plot to draw")
+        plot.add_argument("--qemu-pc-samples-prefix",
+                          type=str,
                           default="netperf-qemu-",
                           help="Prefix to detect files with qemu PC samples")
-
 
     def __init__(self, options, parser):
         super().__init__(options, parser)
@@ -91,8 +92,7 @@ class NetperfBenchmark(BenchmarkBase):
 
     def plot(self):
         self.netperf = NetperfData(self.options)
-        self.qemu_pc_samples = QEMUAddressRangeHistogram(self.options,
-            prefix=self.options.qemu_pc_samples_prefix)
+        self.qemu_pc_samples = QEMUAddressRangeHistogram(self.options, prefix=self.options.qemu_pc_samples_prefix)
         super().plot()
 
     # async def run_on_instance(self, instance: BenchmarkInstance):

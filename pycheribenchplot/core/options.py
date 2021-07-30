@@ -1,4 +1,3 @@
-
 import argparse as ap
 import collections
 import itertools
@@ -14,6 +13,7 @@ def _template_safe(temp: str, **kwargs):
         return temp.format(**kwargs)
     except KeyError:
         return temp
+
 
 @dataclass
 class OptionConfig:
@@ -81,7 +81,6 @@ class TemplateConfigContext:
 
 @dataclass
 class TemplateConfig(OptionConfig):
-
     def _bind_one(self, context, dtype, value):
         params = context.conf_template_params()
         if dtype == str:

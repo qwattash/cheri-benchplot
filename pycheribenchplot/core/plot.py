@@ -31,13 +31,12 @@ def align_twin_axes(ax, ax_twin, min_twin, max_twin):
     # after the shift
     lim = ax.get_ylim()
     twin_lim = ax_twin.get_ylim()
-    margin = 0.1 # percentage
+    margin = 0.1  # percentage
     if min_twin < twin_lim[0]:
         # adjust min
         # get size of adjustment in figure space
         min_twin = min_twin - np.absolute(margin * min_twin)
-        _, dy = (ttwin.transform((0, 0)) -
-                 ttwin.transform((0, twin_lim[0] - min_twin)))
+        _, dy = (ttwin.transform((0, 0)) - ttwin.transform((0, twin_lim[0] - min_twin)))
         # convert figure-space shift to axis shift
         _, ax_shift = tx_inv.transform((0, 0)) - tx_inv.transform((0, dy))
         _, twin_shift = ttwin_inv.transform((0, 0)) - ttwin_inv.transform((0, dy))
@@ -53,6 +52,7 @@ def align_twin_axes(ax, ax_twin, min_twin, max_twin):
         _, twin_shift = ttwin_inv.transform((0, 0)) - ttwin_inv.transform((0, dy))
         ax.set_ylim(lim[0], lim[1] - ax_shift)
         ax_twin.set_ylim(twin_lim[0], twin_lim[1] - twin_shift)
+
 
 class ColorMap:
     def __init__(self, colors, labels):
@@ -70,7 +70,6 @@ def make_colormap2(keys):
 
 
 class PlotDataset:
-
     def __init__(self, col, index):
         self.x = None
         self.x_labels = None
@@ -84,7 +83,6 @@ class Plot:
     """
     Base class for drawing plots
     """
-
     def __init__(self, options, outfile):
         self.options = options
         self.outfile = outfile
@@ -111,7 +109,6 @@ class Plot:
 
 class MultiPlot(Plot):
     """Wrapper for multi row/column plots"""
-
     def __init__(self, options, outfile, rows, cols):
         self.rows = rows
         self.cols = cols
@@ -130,7 +127,6 @@ class MultiPlot(Plot):
 
 class MultiBarPlot(MultiPlot):
     """Wrapper for multi row/column bar plots"""
-
     def __init__(self, options, outfile, rows, cols):
         super().__init__(options, outfile, rows, cols)
         for ax in self.iteraxes():
@@ -141,8 +137,7 @@ class MultiBarPlot(MultiPlot):
     def set_title(self, title):
         self.fig.suptitle(title)
 
-    def plot_at(self, row, col, x, y, xlabels=None, ylabels=None,
-                xdesc=None, ydesc=None, **kwargs):
+    def plot_at(self, row, col, x, y, xlabels=None, ylabels=None, xdesc=None, ydesc=None, **kwargs):
         ax = self.get_axis(row, col)
         ax.set_xticks(x)
         if xlabels is not None:
@@ -153,7 +148,6 @@ class MultiBarPlot(MultiPlot):
 
 class StackedPlot:
     """Base class for stacked plots"""
-
     def __init__(self, options, title, benchmark, nmetrics, ncmp=2, ygrid="main", outfile=None):
         self.options = options
         # main parameters setup
@@ -162,8 +156,7 @@ class StackedPlot:
             outfile = "{}-combined-overhead.pdf".format(benchmark)
         self.outfile = outfile
         # main figure setup
-        self.fig, self.axes = plt.subplots(
-            nmetrics, 1, sharex=True, figsize=(10, 5 * nmetrics))
+        self.fig, self.axes = plt.subplots(nmetrics, 1, sharex=True, figsize=(10, 5 * nmetrics))
         try:
             self.axes[0]
         except:
@@ -181,7 +174,6 @@ class StackedPlot:
 
 class StackedBarPlot(StackedPlot):
     """Stacked bars for combined overhead plotting"""
-
     def __init__(self, options, title, benchmark, nmetrics, **kwargs):
         """
         options: command line options
@@ -195,8 +187,7 @@ class StackedBarPlot(StackedPlot):
         self.bar_width = 0.8
 
     def setup_xaxis(self, xlabels):
-        self.xticks = np.arange(1, len(xlabels)*self.xtick_group + 1,
-                                self.xtick_group)
+        self.xticks = np.arange(1, len(xlabels) * self.xtick_group + 1, self.xtick_group)
         self.axes[-1].set_xticks(self.xticks)
         self.axes[-1].set_xticklabels(xlabels, rotation=90)
         self.axes[0].tick_params(labelbottom=False, labeltop=True)
@@ -211,16 +202,18 @@ class StackedBarPlot(StackedPlot):
         check_nan(err_lo, "NaN in err_lo")
 
         for dcol, ehcol, elcol, ax, label in zip(data, err_hi, err_lo, self.axes, labels):
-            scale = calc_scale(np.min(data[dcol] - err_lo[elcol]),
-                               np.max(data[dcol] + err_hi[ehcol]))
+            scale = calc_scale(np.min(data[dcol] - err_lo[elcol]), np.max(data[dcol] + err_hi[ehcol]))
             assert len(data[dcol]) == len(err_lo[elcol])
             assert len(data[dcol]) == len(err_hi[ehcol])
             yerr = [err_lo[elcol] / 10**scale, err_hi[ehcol] / 10**scale]
             bar_unit = self.bar_width / self.xtick_group
             bar_offset = group_offset - int(self.xtick_group / 2)
             ax.bar(self.xticks + bar_offset * bar_unit,
-                   data[dcol] / 10**scale, yerr=yerr, width=bar_unit,
-                   color=color, capsize=2)
+                   data[dcol] / 10**scale,
+                   yerr=yerr,
+                   width=bar_unit,
+                   color=color,
+                   capsize=2)
             if scale:
                 ax.set_ylabel(r"$\Delta$ {} ($10^{}$)".format(label, scale))
             else:
@@ -242,9 +235,7 @@ class StackedBarPlot(StackedPlot):
             yerr = [err_lo[elcol], err_hi[ehcol]]
             bar_unit = self.bar_width / self.xtick_group
             bar_offset = group_offset - int(self.xtick_group / 2)
-            ax.bar(self.xticks + bar_offset * bar_unit,
-                   data[dcol], yerr=yerr, width=bar_unit,
-                   color=color, capsize=2)
+            ax.bar(self.xticks + bar_offset * bar_unit, data[dcol], yerr=yerr, width=bar_unit, color=color, capsize=2)
             ax.set_ylabel(r"% change in {}".format(label))
 
             if self.ygrid == "twin":
@@ -256,11 +247,12 @@ class StackedBarPlot(StackedPlot):
             align_twin_axes(ax, twin, tmin, tmax)
         legend_items = []
         for color, label in colormap:
-            legend_items.append(mpatches.Patch(
-                facecolor=color, edgecolor=color, label=label))
+            legend_items.append(mpatches.Patch(facecolor=color, edgecolor=color, label=label))
         self.axes[0].legend(handles=legend_items,
                             bbox_to_anchor=(0, 1.32, 1, 0.2),
-                            loc="lower left", mode="expand", ncol=2)
+                            loc="lower left",
+                            mode="expand",
+                            ncol=2)
         outpath = self.options.output / self.outfile
         plt.savefig(outpath)
         if not self.options.silent:
@@ -270,7 +262,6 @@ class StackedBarPlot(StackedPlot):
 
 class StackedLinePlot(StackedPlot):
     """Stacked line graphs for combined metrics plot over a parameter"""
-
     def __init__(self, options, title, benchmark, nmetrics, **kwargs):
         super().__init__(options, title, benchmark, nmetrics, **kwargs)
         self.axis_scale = []
@@ -330,8 +321,7 @@ class StackedLinePlot(StackedPlot):
 
     def compute_yaxis_scale(self, data, err_hi, err_lo):
         for col, errhi_col, errlo_col, ax_index in zip(data, err_hi, err_lo, range(len(self.axes))):
-            scale = calc_scale(np.min(data[col] - err_lo[errlo_col]),
-                               np.max(data[col] + err_hi[errhi_col]))
+            scale = calc_scale(np.min(data[col] - err_lo[errlo_col]), np.max(data[col] + err_hi[errhi_col]))
             self.axis_scale[ax_index] = max(self.axis_scale[ax_index], scale)
 
     def plot_main_axis_dataset(self, data, err_hi, err_lo, subplot_labels, color):
@@ -341,12 +331,11 @@ class StackedLinePlot(StackedPlot):
         check_nan(err_hi, "NaN in err_hi")
         check_nan(err_lo, "NaN in err_lo")
 
-        for col, errhi_col, errlo_col, ax, scale, label in zip(
-                data, err_hi, err_lo, self.axes, self.axis_scale, subplot_labels):
+        for col, errhi_col, errlo_col, ax, scale, label in zip(data, err_hi, err_lo, self.axes, self.axis_scale,
+                                                               subplot_labels):
             yerr = [err_lo[errlo_col] / 10**scale, err_hi[errhi_col] / 10**scale]
 
-            ax.errorbar(self.xticks, data[col] / 10**scale, yerr=yerr,
-                        color=color, capsize=3)
+            ax.errorbar(self.xticks, data[col] / 10**scale, yerr=yerr, color=color, capsize=3)
             ax.scatter(self.xticks, data[col] / 10**scale, color=color, s=2, marker='o')
             if scale:
                 ax.set_ylabel(r"{} ($10^{}$)".format(label, scale))
@@ -363,14 +352,12 @@ class StackedLinePlot(StackedPlot):
         check_nan(err_hi, "NaN in err_hi")
         check_nan(err_lo, "NaN in err_lo")
 
-        for dcol, ehcol, elcol, ax, scale, label in zip(
-                data, err_hi, err_lo, self.axes, self.axis_scale, labels):
+        for dcol, ehcol, elcol, ax, scale, label in zip(data, err_hi, err_lo, self.axes, self.axis_scale, labels):
             assert len(data[dcol]) == len(err_lo[elcol])
             assert len(data[dcol]) == len(err_hi[ehcol])
             yerr = [err_lo[elcol] / 10**scale, err_hi[ehcol] / 10**scale]
 
-            ax.errorbar(self.xticks, data[dcol] / 10**scale, yerr=yerr,
-                        color=color, capsize=2)
+            ax.errorbar(self.xticks, data[dcol] / 10**scale, yerr=yerr, color=color, capsize=2)
             if scale:
                 ax.set_ylabel(r"{} ($10^{}$)".format(label, scale))
             else:
@@ -394,8 +381,10 @@ class StackedLinePlot(StackedPlot):
 
         for dcol, ax, scale, lcol in zip(data, self.axes, self.axis_scale, labels):
             for value, x, label in zip(data[dcol], self.xticks, labels[lcol]):
-                ax.annotate("{:.1f}%".format(label), xy=(x, value / 10**scale),
-                            textcoords="offset points", xytext=(0, 10))
+                ax.annotate("{:.1f}%".format(label),
+                            xy=(x, value / 10**scale),
+                            textcoords="offset points",
+                            xytext=(0, 10))
 
     def draw(self, colormap):
         for ax, twin in zip(self.axes, self.twinax):
@@ -403,14 +392,15 @@ class StackedLinePlot(StackedPlot):
             align_twin_axes(ax, twin, tmin, tmax)
         legend_items = []
         for color, label in colormap:
-            legend_items.append(mpatches.Patch(
-                facecolor=color, edgecolor=color, label=label))
+            legend_items.append(mpatches.Patch(facecolor=color, edgecolor=color, label=label))
         if len(self.axes) == 1:
             self.axes[0].legend(handles=legend_items, ncol=2)
         else:
             self.axes[0].legend(handles=legend_items,
                                 bbox_to_anchor=(0, 1.32, 1, 0.2),
-                                loc="lower left", mode="expand", ncol=2)
+                                loc="lower left",
+                                mode="expand",
+                                ncol=2)
         # Adjust spacing between title and legend based on the legend rows
         self.fig.subplots_adjust(top=1 - 0.01 * len(legend_items) / 2, bottom=0)
         outpath = self.options.output / "{}-combined-lines.pdf".format(self.benchmark_name)

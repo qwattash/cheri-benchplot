@@ -1,12 +1,10 @@
-
 import logging
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from ..core.dataset import (Field, DataField, IndexField, DataSetContainer,
-                            col2stat)
+from ..core.dataset import (Field, DataField, IndexField, DataSetContainer, col2stat)
 
 
 class NetperfData(DataSetContainer):
@@ -153,7 +151,8 @@ class NetperfData(DataSetContainer):
         Field("Remote Socket TOS"),
         Field("Local Congestion Control Algorithm"),
         Field("Remote Congestion Control Algorithm"),
-        Field("Local Fill File"), Field("Remote Fill File"),
+        Field("Local Fill File"),
+        Field("Remote Fill File"),
         Field("Command Line"),
         Field("CHERI Netperf ABI"),
         Field("CHERI Kernel ABI")
@@ -165,8 +164,7 @@ class NetperfData(DataSetContainer):
     def load(self, filepath: Path):
         match = re.match("netperf-output-([a-zA-Z0-9-]+)\.csv", filepath.name)
         if not match:
-            logging.warning("Malformed netperf output file name %s, " +
-                            "requires netperf-output-<UUID>", path)
+            logging.warning("Malformed netperf output file name %s, " + "requires netperf-output-<UUID>", path)
             return
         dataset_id = match.group(1)
         csv_df = self._load_csv(path, skiprows=1)
@@ -174,7 +172,6 @@ class NetperfData(DataSetContainer):
         self._internalize_csv(csv_df)
 
     def process(self):
-        err_columns = (col2stat("errhi", self.data_columns()) +
-                       col2stat("errlo", self.data_columns()))
+        err_columns = (col2stat("errhi", self.data_columns()) + col2stat("errlo", self.data_columns()))
         err_df = pd.DataFrame(0, index=self.df.index, columns=err_columns)
         self.df = pd.concat([self.df, err_df], axis=1)

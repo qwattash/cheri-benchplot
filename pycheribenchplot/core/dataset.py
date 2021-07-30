@@ -62,7 +62,6 @@ class DataSetContainer:
     Each benchmark run is associated with an UUID which is used to cross-reference
     data from different files.
     """
-
     def __init__(self, options):
         self.options = options
         self.df = pd.DataFrame(columns=self.all_columns())
@@ -113,6 +112,7 @@ def get_numeric_columns(self, df):
         if np.issubdtype(self.stats.dtypes[i], np.number):
             columns.append(col)
     return columns
+
 
 def col2stat(prefix, colnames):
     """
