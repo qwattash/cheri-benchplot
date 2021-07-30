@@ -141,10 +141,17 @@ class _Message:
 
 @dataclass
 class BenchmarkInfo:
+    # Status of the benchmark
     status: BenchmarkStatus
+    # ID of the instance
     uuid: "typing.Optional[uuid.UUID]" = None
+    # SSH host to reach the instance
     ssh_host: typing.Optional[str] = None
+    # SSH port to reach the instance
     ssh_port: typing.Optional[int] = None
+    # If the instance has qemu trace output, it will be
+    # sent to this file
+    qemu_trace_file: typing.Optional[Path] = None
 
 
 @dataclass
@@ -269,7 +276,7 @@ class Instance(ABC):
 
     def get_client_info(self, benchmark_id: uuid.UUID):
         if self.status == InstanceStatus.DEAD:
-            bench_status = InstanceStatus.ERROR
+            bench_status = BenchmarkStatus.ERROR
         elif self.owner == benchmark_id:
             if self.status == InstanceStatus.RUNNING:
                 bench_status = BenchmarkStatus.READY
@@ -390,9 +397,10 @@ class Instance(ABC):
             self.logger.error("Fatal error: %s - shutdown instance", ex)
             await self._shutdown()
         finally:
-            # Release all waiters
             self.set_status(InstanceStatus.DEAD)
+            # Release all waiters on the instance
             self.benchmark_acquired.set()
+            self.status_change.set()
             self.logger.debug("Exiting benchmark instance main loop")
 
     def release(self):
@@ -434,11 +442,12 @@ class CheribuildInstance(Instance):
         return f"--{prefix}/{opt}"
 
     def _get_qemu_trace_sink(self):
-        return f"/tmp/trace-{self.uuid}.out"
+        return Path(f"/tmp/trace-{self.uuid}.out")
 
     def get_client_info(self, benchmark_id: uuid.UUID):
         info = super().get_client_info(benchmark_id)
         info.ssh_host = "localhost"
+        info.qemu_trace_file = self._get_qemu_trace_sink()
         return info
 
     async def _boot(self):
@@ -452,8 +461,14 @@ class CheribuildInstance(Instance):
                     self._cheribsd_option("build-bench-kernels"),
                     self._cheribsd_option("build-fpga-kernels")]
         # Extra qemu options and tracing tags?
-        trace_sink = self._get_qemu_trace_sink()
+        trace_sink = str(self._get_qemu_trace_sink())
         qemu_options = ["-D", trace_sink]
+        # Check for platform-specific options
+        if self.config.platform_options:
+            opts = self.config.platform_options
+            # We have QemuInstanceConfig options
+            if opts.qemu_trace_backend:
+                qemu_options += ["--cheri-trace-backend", opts.qemu_trace_backend]
         run_cmd += [self._run_option("extra-options"), " ".join(qemu_options)]
 
         self.logger.debug("%s %s", self._cheribuild, run_cmd)
@@ -483,6 +498,8 @@ class CheribuildInstance(Instance):
 
     async def _reset(self):
         """Can reuse the qemu instance directly"""
+        with open(self._get_qemu_trace_sink(), "w") as fd:
+            fd.truncate(0)
         return
 
     async def _shutdown(self):
@@ -492,15 +509,13 @@ class CheribuildInstance(Instance):
         """
         if self._ssh_ctrl_conn:
             await self._run_cmd("poweroff")
-            await self._ssh_ctrl_conn.close()
+            self._ssh_ctrl_conn.close()
             # Add timeout and force kill?
-            self.logger.error("XXX Shutdown wait for cheribuild to stop")
             await self._cheribuild_task.wait()
         elif self._cheribuild_task and self._cheribuild_task.returncode is None:
             # Kill with SIGINT so that cheribuild will cleanly kill childrens
             self.logger.debug("Sending SIGINT to cheribuild")
             os.killpg(os.getpgid(self._cheribuild_task.pid), signal.SIGINT)
-        self.logger.error("XXX Shutdown routine end")
 
 
 class InstanceDaemon:
@@ -559,8 +574,7 @@ class InstanceDaemon:
             self._shutdown()
         except Exception as ex:
             self.logger.error("Fatal error: %s - killing daemon", ex)
-            import traceback
-            traceback.print_tb(ex.__traceback__)
+            self._shutdown()
         finally:
             self.loop.run_until_complete(self.loop.shutdown_asyncgens())
             self.loop.close()
@@ -589,6 +603,10 @@ class InstanceDaemon:
         result = await aio.gather(*[i.task for i in self.active_instances.values()],
                                   return_exceptions=True)
         self.logger.debug("Instance tasks completed: errs=%s", result)
+        for e in result:
+            if isinstance(e, Exception):
+                import traceback
+                traceback.print_tb(e.__traceback__)
         self.logger.info("Shutdown done.")
 
     async def _daemon_main(self):

@@ -2,10 +2,12 @@
 import logging
 import pandas as pd
 import asyncio as aio
+import shutil
 from enum import Enum
 from pathlib import Path
 
 from ..core.benchmark import BenchmarkBase
+from ..core.instanced import InstancePlatform
 from ..elf import ELFInfo, SymResolver
 from ..qemu_stats import QEMUAddressRangeHistogram
 from .config import NetperfBenchmarkRunConfig
@@ -13,8 +15,8 @@ from .plot import *
 from .dataset import NetperfData
 
 class NetperfBenchmark(BenchmarkBase):
-    def __init__(self, manager_config, config, instance_config, instance_daemon):
-        super().__init__(manager_config, config, instance_config, instance_daemon)
+    def __init__(self, manager, config, instance_config):
+        super().__init__(manager, config, instance_config)
         self.netperf_config = self.config.benchmark_options
 
         self.logger.debug("Looking for netperf binaries in %s", self.netperf_config.netperf_path)
@@ -28,24 +30,30 @@ class NetperfBenchmark(BenchmarkBase):
             "STATCOUNTERS_NO_AUTOSAMPLE": "1"
         }
 
-    def conf_template_params(self):
-        params = super().conf_template_params()
+    def _bind_configs(self):
         qemu_outfile = "netperf-qemu-{uuid}.csv".format(uuid=self.uuid)
         pmc_outfile = "netperf-pmc-{uuid}.csv".format(uuid=self.uuid)
-        params.update(netperf_pmc_outfile=pmc_outfile,
-                      netperf_qemu_outfile=qemu_outfile)
-        return params
+        self.register_template_subst(netperf_pmc_outfile=pmc_outfile,
+                                     netperf_qemu_outfile=qemu_outfile)
+        super()._bind_configs()
 
     async def _run_benchmark(self):
         await super()._run_benchmark()
         await self._run_bg_cmd(self.netserver_bin, self.netperf_config.netserver_options,
                                env=self.env)
+        self.logger.info("Prime benchmark")
         await self._run_cmd(self.netperf_bin, self.netperf_config.netperf_prime_options,
                             env=self.env)
+        self.logger.info("Run benchmark iterations")
         await self._run_cmd(self.netperf_bin, self.netperf_config.netperf_options,
                             outfile=self.result_path / self.config.output_file, env=self.env)
+        self.logger.info("Gather results")
         for out in self.config.extra_files:
             await self._extract_file(out, self.result_path / out)
+        if self.instance_config.platform == InstancePlatform.QEMU:
+            # Grab the qemu log
+            shutil.copy(self._reserved_instance.qemu_trace_file,
+                        self.result_path / f"netperf-qemu-{self.uuid}.csv")
 
 
 class _NetperfBenchmark(BenchmarkBase):

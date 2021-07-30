@@ -1,7 +1,20 @@
 import pandas as pd
 import numpy as np
-
+from enum import Enum
 from pathlib import Path
+
+class DataSetParser(Enum):
+    """
+    Parser names to resolve a dataset configuration to the
+    correct factory for the parser.
+    """
+    PMC = "pmc"
+    NETPERF_DATA = "netperf-data"
+    QEMU_STATS = "qemu-stats"
+
+    def __str__(self):
+        return self.value
+
 
 class Field:
     """

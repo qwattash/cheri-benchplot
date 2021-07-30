@@ -1,19 +1,49 @@
 import logging
+import uuid
 import asyncio as aio
+import asyncssh
+from pathlib import Path
+from dataclasses import dataclass, field
 from enum import Enum
 
-from ..netperf.benchmark import NetperfBenchmark
-from .benchmark import BenchmarkManagerConfig, BenchmarkRunConfig, BenchmarkType
+from .options import TemplateConfig, TemplateConfigContext
+from .benchmark import BenchmarkRunConfig, BenchmarkType
 from .instanced import InstanceClient, InstanceConfig
+from ..netperf.benchmark import NetperfBenchmark
+
+@dataclass
+class BenchmarkManagerConfig(TemplateConfig):
+    """
+    Describe a set of benchmarks to run on each instance.
+    This is the top-level configuration object loaded from the json config.
+    """
+    verbose: bool = False
+    ssh_key: Path = Path("~/.ssh/id_rsa")
+    output_path: Path = field(default_factory=Path.cwd)
+    sdk_path: Path = Path("~/cheri/cherisdk")
+    instances: list[InstanceConfig] = field(default_factory=list)
+    benchmarks: list[BenchmarkRunConfig] = field(default_factory=list)
 
 
-class BenchmarkManager:
+class BenchmarkManager(TemplateConfigContext):
     def __init__(self, config: BenchmarkManagerConfig):
-        self.config = config
+        super().__init__()
+        # The ID for this benchplot session
+        self.session = uuid.uuid4()
         self.logger = logging.getLogger("benchplot")
         self.instance_manager = InstanceClient()
         self.loop = aio.get_event_loop()
         self.benchmark_instances = {}
+
+        # Note: this will only bind the manager-specific options, the rest of the template arguments
+        # will remain as they will need to be bound to specific benchmark instances.
+        self.register_template_subst(session=self.session)
+        self.config = config.bind(self)
+        self.logger.info("Start benchplot session %s", self.session)
+        # Adjust libraries log level
+        if not self.config.verbose:
+            ssh_logger = logging.getLogger("asyncssh")
+            ssh_logger.setLevel(logging.WARNING)
 
     def create_benchmark(self, bench_config: BenchmarkRunConfig, instance: InstanceConfig):
         """Create a benchmark run on an instance"""
@@ -21,7 +51,7 @@ class BenchmarkManager:
             bench_class = NetperfBenchmark
         else:
             self.logger.error("Invalid benchmark type %s", bench_config.type)
-        bench = bench_class(self.config, bench_config, instance, self.instance_manager)
+        bench = bench_class(self, bench_config, instance)
         bench.task = self.loop.create_task(bench.run())
         self.benchmark_instances[bench.uuid] = bench
         self.logger.debug("Created benchmark run %s on %s id=%s", bench_config.name, instance.name, bench.uuid)
@@ -46,33 +76,5 @@ class BenchmarkManager:
             self.loop.close()
             self.logger.info("All tasks finished")
 
-
-
     def plot(self):
         pass
-
-    # def initialize_cli(self, parser: ap.ArgumentParser):
-    #     parser.add_argument("-s", "--stats", type=Path, nargs='+', required=True,
-    #                         help="Path to benchmark stats results")
-    #     parser.add_argument("-r", "--rootfs", type=Path, required=True,
-    #                         help="Path to the CheriBSD rootfs to find related binaries")
-    #     parser.add_argument("--cpu", type=BenchmarkCPU, choices=list(BenchmarkCPU),
-    #                         required=True, default=BenchmarkCPU.FLUTE,
-    #                         help="CPU on which the benchmark has run")
-    #     parser.add_argument("-q", "--quiet", action="store_true")
-    #     # XXX generate benchmark bundle directory if none is given
-    #     parser.add_argument("-o", "--output", type=Path, help="Path to output directory",
-    #                         default=Path.cwd())
-    #     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
-
-    #     bench = parser.add_subparsers(
-    #         dest="benchmark", metavar="benchmark",
-    #         help="Benchmark-specific options available by invoking it with -h",
-    #         required=True)
-    #     for driver in benchmark_manager.get_drivers():
-    #         driver_parser = bench.add_parser(driver.benchmark_name)
-    #         driver_commands = driver_parser.add_subparsers(dest="command", required=True)
-    #         run = driver_commands.add_parser("run", description="Run {} benchmark".format(driver.benchmark_name))
-    #         plot = driver_commands.add_parser("plot", description="Plot {} results".format(driver.benchmark_name))
-    #         driver_parser.set_defaults(driver_class=driver)
-    #         driver.setup_config_options(driver_parser, driver_commands, run, plot)

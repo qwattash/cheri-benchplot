@@ -5,8 +5,7 @@ import argparse as ap
 
 from pathlib import Path
 
-from pycheribenchplot.core.manager import BenchmarkManager
-from pycheribenchplot.core.benchmark import BenchmarkManagerConfig
+from pycheribenchplot.core.manager import BenchmarkManager, BenchmarkManagerConfig
 
 def main():
     root_logger = logging.getLogger(None)
