@@ -1,0 +1,33 @@
+{
+    "output_path": "tests/demo",
+    "sdk_path": "~/git/cheri/cherisdk",
+    "ssh_key": "~/git/cheri/cheri-benchplot/tests/freebsd_id_rsa",
+    "instances": [
+        {
+            "kernel": "CHERI-QEMU-NODEBUG",
+            "platform": "qemu",
+            "cheri_target": "riscv64-purecap",
+            "kernelabi": "hybrid",
+            "platform_options": {
+                "qemu_trace_backend": "stats"
+            }
+        }
+    ],
+    "benchmarks": [
+        {
+            "name": "udp_rr_5k_1b",
+            "desc": "UDP RR 5K transactions 1-byte",
+            "type": "netperf",
+            "output_file": "netperf-output-{uuid}.csv",
+            "extra_files": ["{netperf_pmc_outfile}"],
+            "benchmark_options": {
+                "qemu_log_output": "netperf-qemu-{uuid}.csv",
+                "netperf_options": ["-P", "0", "-i", "10", "-g", "all", "-G", "{netperf_pmc_outfile}",
+                                    "-l", "-5000", "-t", "UDP_RR", "--", "-o", "all",
+                                    "-r", "1,1", "-u", "{uuid}"],
+                "netserver_options": ["-D"]
+            },
+            "plots": []
+        }
+    ]
+}
