@@ -4,17 +4,17 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from ..core.dataset import (Field, DataField, IndexField, DataSetContainer, col2stat)
+from ..core.dataset import (Field, DataField, StrField, IndexField, DataSetContainer, col2stat)
 
 
 class NetperfData(DataSetContainer):
     fields = [
-        Field("Socket Type"),
-        Field("Protocol"),
-        Field("Direction"),
+        StrField("Socket Type"),
+        StrField("Protocol"),
+        StrField("Direction"),
         DataField("Elapsed Time (sec)"),
         DataField("Throughput"),
-        Field("Throughput Units"),
+        StrField("Throughput Units"),
         Field("Local Send Socket Size Requested"),
         Field("Local Send Socket Size Initial"),
         Field("Local Send Socket Size Final"),
@@ -39,7 +39,7 @@ class NetperfData(DataSetContainer):
         Field("Local CPU I/O %"),
         Field("Local CPU IRQ %"),
         Field("Local CPU swintr %"),
-        Field("Local CPU Util Method"),
+        StrField("Local CPU Util Method"),
         Field("Local Service Demand"),
         Field("Remote CPU Util %"),
         Field("Remote CPU User %"),
@@ -47,9 +47,9 @@ class NetperfData(DataSetContainer):
         Field("Remote CPU I/O %"),
         Field("Remote CPU IRQ %"),
         Field("Remote CPU swintr %"),
-        Field("Remote CPU Util Method"),
+        StrField("Remote CPU Util Method"),
         Field("Remote Service Demand"),
-        Field("Service Demand Units"),
+        StrField("Service Demand Units"),
         Field("Confidence Level Percent"),
         Field("Confidence Width Target"),
         Field("Confidence Iterations Run"),
@@ -77,10 +77,10 @@ class NetperfData(DataSetContainer):
         Field("Remote Peak Per CPU ID"),
         Field("Remote CPU Frequency MHz"),
         Field("Source Port"),
-        Field("Source Address"),
+        StrField("Source Address"),
         Field("Source Family"),
         Field("Destination Port"),
-        Field("Destination Address"),
+        StrField("Destination Address"),
         Field("Destination Family"),
         Field("Local Send Calls"),
         Field("Local Recv Calls"),
@@ -118,26 +118,22 @@ class NetperfData(DataSetContainer):
         Field("Remote Recv Clean Count"),
         Field("Remote NODELAY"),
         Field("Remote Cork"),
-        Field("Local Interface Vendor"),
-        Field("Local Interface Device"),
-        Field("Local Interface Subvendor"),
-        Field("Local Interface Subdevice"),
-        Field("Local Interface Slot"),
-        Field("Remote Interface Vendor"),
-        Field("Remote Interface Device"),
-        Field("Remote Interface Subvendor"),
-        Field("Remote Interface Subdevice"),
-        Field("Remote Interface Slot"),
+        StrField("Local Interface Vendor"),
+        StrField("Local Interface Device"),
+        StrField("Local Interface Subvendor"),
+        StrField("Local Interface Subdevice"),
+        StrField("Remote Interface Vendor"),
+        StrField("Remote Interface Device"),
+        StrField("Remote Interface Subvendor"),
+        StrField("Remote Interface Subdevice"),
         Field("Local Interval Usecs"),
         Field("Local Interval Burst"),
         Field("Remote Interval Usecs"),
         Field("Remote Interval Burst"),
         Field("Local OS Security Type ID"),
         Field("Local OS Security Enabled Num"),
-        Field("Remote OS Security Type"),
-        Field("Remote OS Security Enabled"),
         Field("Result Tag"),
-        Field("Test UUID"),
+        StrField("Test UUID"),
         Field("Minimum Latency Microseconds"),
         Field("Maximum Latency Microseconds"),
         Field("50th Percentile Latency Microseconds"),
@@ -147,29 +143,23 @@ class NetperfData(DataSetContainer):
         Field("Stddev Latency Microseconds"),
         Field("Local Socket Priority"),
         Field("Remote Socket Priority"),
-        Field("Local Socket TOS"),
-        Field("Remote Socket TOS"),
+        StrField("Local Socket TOS"),
+        StrField("Remote Socket TOS"),
         Field("Local Congestion Control Algorithm"),
         Field("Remote Congestion Control Algorithm"),
         Field("Local Fill File"),
         Field("Remote Fill File"),
-        Field("Command Line"),
-        Field("CHERI Netperf ABI"),
-        Field("CHERI Kernel ABI")
+        StrField("Command Line"),
+        StrField("CHERI Netperf ABI"),
+        StrField("CHERI Kernel ABI")
     ]
 
     def raw_fields(self):
         return NetperfData.fields
 
-    def load(self, filepath: Path):
-        match = re.match("netperf-output-([a-zA-Z0-9-]+)\.csv", filepath.name)
-        if not match:
-            logging.warning("Malformed netperf output file name %s, " + "requires netperf-output-<UUID>", path)
-            return
-        dataset_id = match.group(1)
-        csv_df = self._load_csv(path, skiprows=1)
-        csv_df["__dataset_id"] = dataset_id
-        self._internalize_csv(csv_df)
+    def _load_csv(self, path: Path, **kwargs):
+        kwargs["skiprows"] = 1
+        return super()._load_csv(path, **kwargs)
 
     def process(self):
         err_columns = (col2stat("errhi", self.data_columns()) + col2stat("errlo", self.data_columns()))

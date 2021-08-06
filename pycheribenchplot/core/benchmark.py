@@ -1,4 +1,6 @@
 import logging
+import io
+import re
 import time
 import uuid
 import typing
@@ -12,13 +14,14 @@ from subprocess import PIPE
 import pandas as pd
 import asyncssh
 
+from .procstat import ProcstatDataset
 from .instanced import InstanceConfig, BenchmarkInfo
-from .options import TemplateConfig, TemplateConfigContext
+from .config import TemplateConfig, TemplateConfigContext
 from .dataset import DataSetParser
+from .elf import SymResolver
 from ..netperf.config import NetperfBenchmarkRunConfig
-from .cpu import BenchmarkCPU
 from ..pmc import PMCStatData
-from ..elf import ELFInfo, SymResolver
+from ..qemu_stats import QEMUAddressRangeHistogram
 
 
 @contextmanager
@@ -73,7 +76,6 @@ class BenchmarkRunConfig(TemplateConfig):
     env: extra environment variables to set
     extra_files: extra files that the benchmark generates and need to be extracted from the
       guest
-    plots: the plots to generate for the benchmark
     """
     name: str
     type: BenchmarkType
@@ -82,17 +84,31 @@ class BenchmarkRunConfig(TemplateConfig):
     datasets: dict[str, BenchmarkDataSetConfig]
     desc: str = ""
     env: dict = field(default_factory=dict)
-    plots: list[str] = field(default_factory=list)
     extra_files: list[str] = field(default_factory=list)
+
+
+@dataclass
+class BenchmarkRunRecord:
+    """
+    Record the execution of a benchmark for post-processing. This archives the instance and
+    benchmark configurations bound to a specific run of the benchmark, with template parameters
+    fully resolved.
+    """
+    uuid: uuid.UUID
+    instance: InstanceConfig
+    run: BenchmarkRunConfig
 
 
 class BenchmarkBase(TemplateConfigContext):
     """
     Base class for all the benchmarks
     """
-    def __init__(self, manager, config, instance_config):
+    def __init__(self, manager, config, instance_config, run_id=None):
         super().__init__()
-        self.uuid = uuid.uuid4()
+        if run_id:
+            self.uuid = run_id
+        else:
+            self.uuid = uuid.uuid4()
         self.manager = manager
         self.daemon = manager.instance_manager
         self.manager_config = manager.config
@@ -107,12 +123,19 @@ class BenchmarkBase(TemplateConfigContext):
         self.rootfs = rootfs_path
 
         self.result_path = self.manager_config.output_path / str(self.uuid)
-        self.result_path.mkdir(parents=True)
+        self.result_path.mkdir(parents=True, exist_ok=True)
 
         self.logger = logging.getLogger(f"{config.name}:{instance_config.name}:{self.uuid}")
         self._reserved_instance = None  # BenchmarkInfo of the instance the daemon has reserved us
         self._conn = None  # Connection to the CheriBSD instance
         self._command_tasks = []  # Commands being run on the instance
+        # Datasets loaded for the benchmark
+        self.datasets = {}
+        # Plots to show for this benchmark. Note: this is only relevant for baseline instances
+        self.plots = []
+        self.sym_resolver = SymResolver(self)
+        # There is an extra implicit dataset to extract procstat -v mappings
+        self.procstat_output = self.result_path / f"procstat-{self.uuid}.csv"
 
     def _bind_configs(self):
         """
@@ -132,6 +155,13 @@ class BenchmarkBase(TemplateConfigContext):
         self.instance_config = instance_config.bind(self)
         self.config = config.bind(self)
 
+    def _record_benchmark_run(self):
+        record = BenchmarkRunRecord(uuid=self.uuid, instance=self.instance_config, run=self.config)
+        self.manager.record_benchmark(record)
+
+    def register_plot(self, plotter):
+        self.plots.append(plotter)
+
     async def _cmd_io(self, proc_task, callback):
         try:
             while proc_task.returncode is None:
@@ -150,6 +180,17 @@ class BenchmarkBase(TemplateConfigContext):
         finally:
             self.logger.debug("Background task %s done", proc_task.command)
 
+    async def _find_remote_pid(self, cmd_match: str):
+        pid = None
+        result = await self._run_cmd("ps", ["-x", "-o", "pid,command"])
+        for line in io.StringIO(result.stdout):
+            fields = line.strip().split(" ")
+            cmd = " ".join(fields[1:])
+            if re.match(str(cmd_match), cmd):
+                pid = int(fields[0])
+                break
+        return pid
+
     async def _run_bg_cmd(self, command: str, args: list, env={}, iocallback=None):
         """Run a background command without waiting for termination"""
         cmdline = f"{command} " + " ".join(args)
@@ -159,6 +200,18 @@ class BenchmarkBase(TemplateConfigContext):
         self._command_tasks.append(aio.create_task(self._cmd_io(proc_task, iocallback)))
         return proc_task
 
+    async def _stop_bg_cmd(self, task):
+        """
+        Work around the unreliability of asyncssh/openssh signal delivery
+        """
+        cmd = task.command.split(" ")[0]
+        pid = await self._find_remote_pid(cmd)
+        if pid is None:
+            self.logger.error("Can not stop %s, missing pid", task.command)
+        else:
+            await self._run_cmd("kill", ["-TERM", str(pid)])
+            await task.wait()
+
     async def _run_cmd(self, command: str, args: list, env={}, outfile=PIPE):
         """Run a command and wait for the process to complete"""
         cmdline = f"{command} " + " ".join(args)
@@ -166,12 +219,10 @@ class BenchmarkBase(TemplateConfigContext):
         self.logger.debug("exec: %s env=%s", cmdline, env)
         result = await self._conn.run(cmdline, env=env_str, stdout=outfile)
         if result.returncode != 0:
-            if outfile:
-                cmdline += f" >> {outfile}"
             self.logger.error("Failed to run %s: %s", command, result.stderr)
         else:
             self.logger.debug("%s done: %s", command, result.stdout)
-        return result.returncode
+        return result
 
     async def _extract_file(self, guest_src: Path, host_dst: Path):
         """Extract file from instance"""
@@ -189,7 +240,16 @@ class BenchmarkBase(TemplateConfigContext):
         return conn
 
     async def _run_benchmark(self):
+        """
+        Run the actual benchmark sequence.
+        """
         self.logger.info("Running benchmark")
+
+    async def _run_procstat(self):
+        """
+        Try to get virtual memory map for the benchmark
+        """
+        self.logger.info("Collect procstat info")
 
     async def run(self):
         self.logger.info("Waiting for instance")
@@ -199,19 +259,97 @@ class BenchmarkBase(TemplateConfigContext):
             return
         try:
             self._conn = await self._connect_instance(self._reserved_instance)
+            await self._run_procstat()
             with timing("Benchmark completed", self.logger):
                 await self._run_benchmark()
+                self._record_benchmark_run()
             # Stop all pending background processes
             for t in self._command_tasks:
                 t.cancel()
             await aio.gather(*self._command_tasks, return_exceptions=True)
         except Exception as ex:
+            import traceback
             self.logger.error("Benchmark run failed: %s", ex)
+            traceback.print_tb(ex.__traceback__)
         finally:
             await self.daemon.release_instance(self.uuid, self._reserved_instance)
 
+    def _get_dataset_parser(self, dset_key: str, dset: BenchmarkDataSetConfig):
+        """Resolve the parser for the given dataset"""
+        if dset.parser == DataSetParser.PMC:
+            parser = PMCStatData.get_parser(self, dset_key)
+        elif dset.parser == DataSetParser.QEMU_STATS:
+            parser = QEMUAddressRangeHistogram.get_parser(self, dset_key)
+        else:
+            self.logger.error("No parser for dataset %s", dset.name)
+            raise Exception("No parser")
+        return parser
+
+    def _load_dataset(self, dset_key: str, dset: BenchmarkDataSetConfig):
+        """Resolve the parser for the given dataset and import the target file"""
+        parser = self._get_dataset_parser(dset_key, dset)
+        parser.load(self.result_path / dset.name)
+        return parser
+
+    def _load_extra_data(self):
+        kernel = self.rootfs / "boot" / f"kernel.{self.instance_config.kernel}" / "kernel.full"
+        if not kernel.exists():
+            self.logger.warning("Kernel name not found in kernel.<CONF> directories, using the default kernel")
+            kernel = self.rootfs / "kernel" / "kernel.full"
+        self.sym_resolver.import_symbols(kernel, 0)
+        if self.procstat_output.exists():
+            # If we have procstat output, import all the symbols
+            self.logger.debug("Load implicit procstat dataset")
+            pstat = ProcstatDataset(self, "procstat")
+            pstat.load(self.procstat_output)
+            self.datasets["procstat"] = pstat
+            for base, guest_path in pstat.mapped_binaries(self.uuid):
+                local_path = self.rootfs / guest_path.relative_to("/")
+                self.sym_resolver.import_symbols(local_path, base)
+
+    def load(self):
+        """
+        Setup benchmark metadata and load results into datasets from the currently assigned run configuration.
+        """
+        self._load_extra_data()
+        for name, dset in self.config.datasets.items():
+            self.logger.info("Loading %s from %s", name, dset.name)
+            self.datasets[name] = self._load_dataset(name, dset)
+        for dset in self.datasets.values():
+            dset.pre_merge()
+
+    def merge(self, others: list["BenchmarkBase"]):
+        """
+        Merge datasets from compatible runs into a single dataset.
+        Note that this is called only on the baseline benchmark instance
+        """
+        self.logger.debug("Merge datasets %s", self.config.name)
+        for dset in self.datasets.values():
+            dset.init_merge()
+        for bench in others:
+            for name, dset in bench.datasets.items():
+                self.datasets[name].merge(dset)
+            for name, dset in bench.datasets.items():
+                self.datasets[name].post_merge()
+
+    def aggregate(self):
+        """
+        Generate dataset aggregates (e.g. mean and quartiles)
+        Note that this is called only on the baseline benchmark instance
+        """
+        self.logger.debug("Aggregate datasets %s", self.config.name)
+        for dset in self.datasets.values():
+            dset.aggregate()
+            dset.post_aggregate()
+
     def plot(self):
-        pass
+        """
+        Plot the data from the generated datasets
+        Note that this is called only on the baseline benchmark instance
+        """
+        self.logger.debug("Plot datasets")
+        for plot in self.plots:
+            plot.draw()
 
 
 class _BenchmarkBase:

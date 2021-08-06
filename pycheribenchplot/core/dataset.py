@@ -1,3 +1,4 @@
+import logging
 from enum import Enum
 from pathlib import Path
 
@@ -34,6 +35,7 @@ class Field:
 class StrField(Field):
     def __init__(self, name, desc=None, **kwargs):
         kwargs["dtype"] = str
+        kwargs.setdefault("importfn", str)
         super().__init__(name, desc=None, **kwargs)
 
 
@@ -42,9 +44,9 @@ class DataField(Field):
     A field representing benchmark measurement data instead of
     benchmark information.
     """
-    def __init__(self, name, desc=None, **kwargs):
+    def __init__(self, name, desc=None, dtype=float, **kwargs):
         kwargs["isdata"] = True
-        super().__init__(name, desc=None, **kwargs)
+        super().__init__(name, desc=None, dtype=dtype, **kwargs)
 
 
 class IndexField(Field):
@@ -62,10 +64,27 @@ class DataSetContainer:
     Each benchmark run is associated with an UUID which is used to cross-reference
     data from different files.
     """
-    def __init__(self, options):
-        self.options = options
+    @classmethod
+    def get_parser(cls, benchmark: "BenchmarkBase", dset_key: str):
+        return cls(benchmark, dset_key)
+
+    def __init__(self, benchmark: "Benchmarkbase", dset_key: str):
+        """
+        Arguments:
+        benchmark: the benchmark instance this dataset belongs to
+        dset_key: the key this dataset is associated to in the BenchmarkRunConfig
+        """
+        self.name = dset_key
+        self.benchmark = benchmark
+        self.config = benchmark.config
+        self.logger = logging.getLogger(f"{self.config.name}:{dset_key}")
         self.df = pd.DataFrame(columns=self.all_columns())
+        self.df = self.df.astype(self._get_column_dtypes(include_converted=True))
         self.df.set_index(self.index_columns(), inplace=True)
+        self.merged_df = None
+        self.agg_df = None
+        if self.benchmark.instance_config.baseline:
+            self._register_plots(benchmark)
 
     def raw_fields(self) -> "typing.Sequence[Field]":
         """All fields that MAY be present in the input files"""
@@ -79,6 +98,9 @@ class DataSetContainer:
         """All column names that are to be used as dataset index in the container dataframe"""
         return ["__dataset_id"] + [f.name for f in self.raw_fields() if f.isindex]
 
+    def all_columns_noindex(self) -> "typing.Sequence[str]":
+        return set(self.all_columns()) - set(self.index_columns())
+
     def data_columns(self):
         """
         All data column names in the container dataframe.
@@ -86,13 +108,21 @@ class DataSetContainer:
         """
         return [f.name for f in self.raw_fields() if f.isdata]
 
+    def _get_column_dtypes(self, include_converted=False) -> dict[str, type]:
+        return {f.name: f.dtype for f in self.raw_fields() if include_converted or f.importfn is None}
+
+    def _get_column_conv(self) -> dict:
+        return {f.name: f.importfn for f in self.raw_fields() if f.importfn is not None}
+
     def _load_csv(self, path: Path, **kwargs) -> pd.DataFrame:
         """
         Load a raw CSV file into a dataframe compatible with the columns given in all_columns.
         """
-        dtype_map = {}
-        converter_map = {}
+        kwargs.setdefault("dtype", self._get_column_dtypes())
+        kwargs.setdefault("converters", self._get_column_conv())
         csv_df = pd.read_csv(path, **kwargs)
+        csv_df["__dataset_id"] = self.benchmark.uuid
+        return csv_df
 
     def _internalize_csv(self, csv_df: pd.DataFrame):
         """
@@ -102,8 +132,60 @@ class DataSetContainer:
         - The columns must be a subset of all_columns().
         """
         csv_df.set_index(self.index_columns(), inplace=True)
-        column_subset = set(csv_df.columns).intersection(set(self.data_columns()))
+        column_subset = set(csv_df.columns).intersection(set(self.all_columns_noindex()))
         self.df = pd.concat([self.df, csv_df[column_subset]])
+
+    def _register_plots(self, benchmark: "BenchmarkBase"):
+        pass
+
+    def load(self, path: Path):
+        csv_df = self._load_csv(path)
+        self._internalize_csv(csv_df)
+
+    def pre_merge(self):
+        """
+        Pre-process a dataset from a single benchmark run.
+        This can be used as a hook to generate composite metrics before merging the datasets.
+        """
+        self.logger.debug("Pre-process %s", self.config.name)
+
+    def init_merge(self):
+        """
+        Initialize merge state on the baseline instance we are merging into.
+        """
+        if self.merged_df is None:
+            self.merged_df = self.df
+
+    def merge(self, other: "DataSetContainer"):
+        """
+        Merge datasets from all the runs that we need to compare
+        Note that the merged dataset will be associated with the baseline run, so the
+        benchmark.uuid on the merge and post-merge operations will refer to the baseline implicitly.
+        """
+        self.logger.debug("Merge %s", self.config.name)
+        if self.merged_df is None:
+            src = self.df
+        else:
+            src = self.merged_df
+        self.merged_df = pd.concat([src, other.df])
+
+    def post_merge(self):
+        """
+        After merging, this is used to generate composite or relative metrics on the merged dataset.
+        """
+        self.logger.debug("Post-merge %s", self.config.name)
+
+    def aggregate(self):
+        """
+        Aggregate the metrics in the merged runs.
+        """
+        self.logger.debug("Aggregate %s", self.config.name)
+
+    def post_aggregate(self):
+        """
+        Generate composite metrics or relative metrics after aggregation.
+        """
+        self.logger.debug("Post-aggregate %s", self.config.name)
 
 
 def get_numeric_columns(self, df):
@@ -120,3 +202,27 @@ def col2stat(prefix, colnames):
     the given prefix
     """
     return list(map(lambda c: "{}_{}".format(prefix, c), colnames))
+
+
+def align_multi_index_levels(df: pd.DataFrame, align_levels: list[str], fill_value=None):
+    """
+    Align a subset of the levels of a multi-index.
+    This will generate the union of the sets of values in the align_levels parameter.
+    The union set is then repeated for each other dataframe index level, so that every
+    combination of the other levels, have the same set of aligned level combinations.
+    """
+    # Get an union of the sets of levels to align as the index of the grouped dataframe
+    align_sets = df.groupby(align_levels).count()
+    # Values of the non-aggregated levels of the dataframe
+    other_levels = [lvl for lvl in df.index.names if lvl not in align_levels]
+    # Now get the unique combinations of other_levels
+    other_sets = df.groupby(other_levels).count()
+    # For each one of the other_sets levels, we need to repeat the aligned index union set, so we
+    # create repetitions to make room for all the combinations
+    align_cols = align_sets.index.to_frame().reset_index(drop=True)
+    other_cols = other_sets.index.to_frame().reset_index(drop=True)
+    align_cols_rep = align_cols.iloc[align_cols.index.repeat(len(other_sets))].reset_index(drop=True)
+    other_cols_rep = other_cols.iloc[np.tile(other_cols.index, len(align_sets))].reset_index(drop=True)
+    new_index = pd.concat([other_cols_rep, align_cols_rep], axis=1)
+    new_index = pd.MultiIndex.from_frame(new_index)
+    return df.reindex(new_index, fill_value=fill_value).sort_index()

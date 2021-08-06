@@ -1,3 +1,9 @@
+import logging
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+
+import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import matplotlib.lines as mlines
@@ -5,6 +11,124 @@ import matplotlib.patches as mpatches
 import matplotlib.colors as mcolors
 
 from .dataset import *
+
+
+class PlotError(Exception):
+    pass
+
+
+@dataclass
+class DataView:
+    df: pd.DataFrame
+    method: str  # 'scatter', 'line', 'bar'
+    options: dict[str, any]
+
+
+@dataclass
+class CellData:
+    views: list[DataView] = field(default_factory=list)
+
+
+class Surface(ABC):
+    """
+    The surface abstraction on which to plot.
+    We model a grid layout and we associate dataframes to plot to each grid cell.
+    Each dataframe must have a specific layout informing what to plot.
+    Each view for the cell can hava a different plot type associated, so we can combine
+    scatter and line plots (for example).
+    """
+    def __init__(self):
+        # The layout is encoded as a matrix indexed by row,column of the figure subplots
+        # each cell in the plot is associated with cell data
+        self._layout = np.full([1, 1], CellData())
+        self.logger = logging.getLogger(self.__class__.__name__)
+
+    @property
+    def layout(self):
+        return self._layout.shape
+
+    def _supported_methods(self):
+        return ["scatter", "line", "bar"]
+
+    def _find_empty_cell(self):
+        """
+        Find an emtpy cell in the layout, if none is found we return None, otherwise
+        return the cell coordinates
+        """
+        for i, row in enumerate(self._layout):
+            for j, cell in enumerate(row):
+                if len(cell.views) == 0:
+                    return (i, j)
+        return None
+
+    def set_layout(self, nrows, ncols):
+        """
+        Create a drawing surface with given number of rows and columns of plots.
+        Note that this will reset any views that have been added to the current layout.
+        """
+        self._layout = np.full([nrows, ncols], CellData())
+
+    def add_view(self, plot: str, df: pd.DataFrame, cell=None):
+        """
+        The view we are adding for display must have the following structure:
+        index: ["__dataset_id", "x"]
+        columns: ["y_left", "y_right"] where one of the columns may be omitted
+        """
+        if plot not in self._supported_methods():
+            raise PlotError(f"Unsupported method {plot} by surface {self.__class__.__name__}")
+        if cell is None:
+            cell = self._find_empty_cell()
+        view = DataView(df=df, method=plot, options={})
+        self._layout[cell].views.append(view)
+
+    @abstractmethod
+    def draw(self):
+        """Draw all the registered views into the surface."""
+        ...
+
+
+class MatplotlibSurface(Surface):
+    def draw(self):
+        self.logger.debug("Drawing")
+
+
+class Plot(ABC):
+    """Base class for drawing plots."""
+    def __init__(self, benchmark: "BenchmarkBase", dataset: "DataSetContainer", surface: Surface):
+        self.benchmark = benchmark
+        self.logger = self.benchmark.logger
+        self.dataset = dataset
+        self.surface = surface
+
+    @abstractmethod
+    def _get_plot_title(self):
+        """Return a human-readable name for the plot"""
+        ...
+
+    @abstractmethod
+    def _get_plot_file(self):
+        """Return the output path of the plot"""
+        ...
+
+    def draw(self):
+        """Actually draw the plot."""
+        self.logger.debug("Drawing dataset %s", self.dataset.name)
+        self.surface.draw()
+
+
+class TablePlot(Plot):
+    pass
+
+
+class StackedPlot(Plot):
+    """
+    Handle a plot that generates a stacked set of axes from the dataset provided.
+    This base class contains helpers to handle the surface.
+    """
+    pass
+
+
+#### Old stuff
 
 
 def align_twin_axes(ax, ax_twin, min_twin, max_twin):
@@ -146,7 +270,7 @@ class MultiBarPlot(MultiPlot):
         ax.bar(x, y, **kwargs)
 
 
-class StackedPlot:
+class _StackedPlot:
     """Base class for stacked plots"""
     def __init__(self, options, title, benchmark, nmetrics, ncmp=2, ygrid="main", outfile=None):
         self.options = options
@@ -172,7 +296,7 @@ class StackedPlot:
         self.fig.suptitle(title, x=0.5, y=0.998)
 
 
-class StackedBarPlot(StackedPlot):
+class StackedBarPlot(_StackedPlot):
     """Stacked bars for combined overhead plotting"""
     def __init__(self, options, title, benchmark, nmetrics, **kwargs):
         """
@@ -260,7 +384,7 @@ class StackedBarPlot(StackedPlot):
         plt.close(self.fig)
 
 
-class StackedLinePlot(StackedPlot):
+class StackedLinePlot(_StackedPlot):
     """Stacked line graphs for combined metrics plot over a parameter"""
     def __init__(self, options, title, benchmark, nmetrics, **kwargs):
         super().__init__(options, title, benchmark, nmetrics, **kwargs)

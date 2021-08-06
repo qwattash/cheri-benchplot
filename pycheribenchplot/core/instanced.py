@@ -16,7 +16,7 @@ import asyncssh
 import zmq
 import zmq.asyncio as zaio
 
-from .options import OptionConfig, TemplateConfig
+from .config import Config, TemplateConfig, path_field
 
 ctx = zaio.Context()
 
@@ -27,6 +27,9 @@ class InstanceDaemonError(Exception):
 
 class InstancePlatform(Enum):
     QEMU = "qemu"
+    FLUTE = "flute"
+    TOOOBA = "toooba"
+    MORELLO_FPGA = "morello"
     FPGA = "fpga"
 
     def __str__(self):
@@ -38,6 +41,12 @@ class InstanceCheriBSD(Enum):
     RISCV64_HYBRID = "riscv64-hybrid"
     MORELLO_PURECAP = "morello-purecap"
     MORELLO_HYBRID = "morello-hybrid"
+
+    def is_riscv(self):
+        return (self == InstanceCheriBSD.RISCV64_PURECAP or self == InstanceCheriBSD.RISCV64_HYBRID)
+
+    def is_morello(self):
+        return (self == InstanceCheriBSD.MORELLO_PURECAP or self == InstanceCheriBSD.MORELLO_HYBRID)
 
     def __str__(self):
         return self.value
@@ -65,6 +74,7 @@ class InstanceConfig(TemplateConfig):
     XXX-AM May need a custom __eq__() if iterable members are added
     """
     kernel: str
+    baseline: bool = False
     name: typing.Optional[str] = None
     platform: InstancePlatform = InstancePlatform.QEMU
     cheri_target: InstanceCheriBSD = InstanceCheriBSD.RISCV64_PURECAP
@@ -78,13 +88,13 @@ class InstanceConfig(TemplateConfig):
 
 
 @dataclass
-class InstanceDaemonConfig(OptionConfig):
+class InstanceDaemonConfig(Config):
     concurrent_instances: int = 4
     verbose: bool = False
-    ssh_key: Path = Path("~/.ssh/id_rsa")
+    ssh_key: Path = path_field("~/.ssh/id_rsa")
     terminate_on_exit: bool = True
-    sdk_path: Path = Path("~/cheri/cherisdk")
-    cheribuild_path: Path = Path("~/cheri/cheribuild/cheribuild.py")
+    sdk_path: Path = path_field("~/cheri/cherisdk")
+    cheribuild_path: Path = path_field("~/cheri/cheribuild/cheribuild.py")
     instances: list[InstanceConfig] = field(default_factory=list)
 
 
@@ -179,6 +189,7 @@ class InstanceClient:
         self.socket.connect("tcp://127.0.0.1:15555")
         self.base_poll_time = 10.0
         self.timeout = 5.0
+        self.tmp_lock = aio.Lock()
 
     async def _msg(self, op: InstanceOp, owner: uuid.UUID, config: InstanceConfig = None, timeout=None) -> _Reply:
         if timeout is None:
@@ -208,6 +219,7 @@ class InstanceClient:
         return reply.benchmarks[0]
 
     async def request_instance(self, owner: uuid.UUID, config: InstanceConfig) -> BenchmarkInfo:
+        await self.tmp_lock.acquire()
         try:
             # Check that the daemon is up
             await self._summary_msg()
@@ -227,14 +239,17 @@ class InstanceClient:
             return None
         except aio.TimeoutError:
             self.logger.error("Instance request timed out, is the daemon running?")
-        return None
+        finally:
+            self.tmp_lock.release()
 
     async def release_instance(self, owner: uuid.UUID, inst: BenchmarkInfo):
+        await self.tmp_lock.acquire()
         try:
             reply = await self._release_msg(owner)
         except aio.TimeoutError:
             self.logger.error("Instance request timed out, is the daemon running?")
         finally:
+            self.tmp_lock.release()
             self.logger.debug("Released instance: %s (%s:%d)", inst.uuid, inst.ssh_host, inst.ssh_port)
 
 
@@ -572,6 +587,7 @@ class InstanceDaemon:
             raise InstanceDaemonError(f"Invalid instance platform {config.platform}")
         self.active_instances[instance.uuid] = instance
         instance.task = self.loop.create_task(instance.main_loop())
+        instance.task.add_done_callback(lambda: self._recycle_instance(instance))
         self.logger.debug("Created instance %s", instance.uuid)
         return instance
 
@@ -596,6 +612,14 @@ class InstanceDaemon:
         except Exception as ex:
             self.logger.error("Fatal error during shutdown %s", ex)
             self._kill()
+
+    def _recycle_instance(self, instance):
+        """
+        Called whenever an instance shuts down completely.
+        Remove it form the instances for now instead of potentially rebooting.
+        """
+        self.logger.debug("Cleanup dead instance %s", instance.uuid)
+        self.active_instances.pop(instance.uuid, None)
 
     async def _daemon_shutdown(self):
         """
@@ -641,7 +665,7 @@ class InstanceDaemon:
         inst = None
         for running_inst in self.active_instances.values():
             # Note: this compares all fields
-            if config == running_inst.config:
+            if config == running_inst.config and running_inst.status != InstanceStatus.DEAD:
                 inst = running_inst
                 break
         if inst is None:

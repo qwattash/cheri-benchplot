@@ -4,8 +4,10 @@ import itertools
 import typing
 import json
 from pathlib import Path
-from dataclasses import dataclass, fields, is_dataclass, replace, Field
+from dataclasses import dataclass, fields, is_dataclass, replace, Field, field
 from enum import Enum
+
+from dataclasses_json import DataClassJsonMixin, config
 
 
 def _template_safe(temp: str, **kwargs):
@@ -15,13 +17,18 @@ def _template_safe(temp: str, **kwargs):
         return temp
 
 
+def path_field(default=None):
+    return field(default=Path(default), metadata=config(encoder=str, decoder=Path))
+
+
 @dataclass
-class OptionConfig:
+class Config(DataClassJsonMixin):
     @classmethod
-    def from_json(cls, jsonpath):
-        jsonfile = open(jsonpath, "r")
-        confdata = json.load(jsonfile)
-        return cls(**confdata)
+    def load_json(cls, jsonpath):
+        with open(jsonpath, "r") as jsonfile:
+            return super().from_json(jsonfile.read())
+        # confdata = json.load(jsonfile)
+        # return cls(**confdata)
 
     def _normalize_sequence(self, f, sequence):
         type_args = typing.get_args(f.type)
@@ -61,7 +68,9 @@ class OptionConfig:
                 else:
                     setattr(self, f.name, origin(value))
             elif type(origin) != typing._SpecialForm:
-                setattr(self, f.name, f.type(getattr(self, f.name)))
+                # Not a typing class (e.g. Union)
+                if issubclass(f.type, Path):
+                    setattr(self, f.name, Path(getattr(self, f.name)))
 
 
 class TemplateConfigContext:
@@ -80,7 +89,7 @@ class TemplateConfigContext:
 
 
 @dataclass
-class TemplateConfig(OptionConfig):
+class TemplateConfig(Config):
     def _bind_one(self, context, dtype, value):
         params = context.conf_template_params()
         if dtype == str:
@@ -92,19 +101,19 @@ class TemplateConfig(OptionConfig):
             return Path(str_path)
         return value
 
-    def bind_field(self, context, field: Field, value):
-        origin = typing.get_origin(field.type)
-        if is_dataclass(field.type):
-            return self._bind_one(context, field.type, value)
+    def bind_field(self, context, f: Field, value):
+        origin = typing.get_origin(f.type)
+        if is_dataclass(f.type):
+            return self._bind_one(context, f.type, value)
         elif type(origin) == type:
             if issubclass(origin, collections.abc.Sequence):
-                arg_type = typing.get_args(field.type)[0]
+                arg_type = typing.get_args(f.type)[0]
                 return [self._bind_one(context, arg_type, v) for v in value]
             if issubclass(origin, collections.abc.Mapping):
-                arg_type = typing.get_args(field.type)[1]
+                arg_type = typing.get_args(f.type)[1]
                 return {key: self._bind_one(context, arg_type, v) for key, v in value.items()}
         else:
-            return self._bind_one(context, field.type, value)
+            return self._bind_one(context, f.type, value)
 
     def bind(self, context):
         changes = {}

@@ -1,36 +1,38 @@
 import logging
+from pathlib import Path
 
 import pandas as pd
 import numpy as np
 
 from .core.cpu import *
-from .core.dataset import *
+from .core.dataset import DataSetContainer, StrField, DataField
+from .core.instanced import InstanceCheriBSD, InstancePlatform
 
 
-class PMCStatData:
+class PMCStatData(DataSetContainer):
     fields = [
         StrField("progname"),
         StrField("archname"),
     ]
 
     @classmethod
-    def get_pmc_for_cpu(cls, cpu, options, benchmark):
-        if cpu == BenchmarkCPU.FLUTE or cpu == BenchmarkCPU.QEMU_RISCV:
-            return FluteStatcountersData(options, benchmark)
-        elif cpu == BenchmarkCPU.TOOOBA:
-            fatal("TODO")
-        elif cpu == BenchmarkCPU.MORELLO:
-            fatal("TODO")
-        elif cpu == BenchmarkCPU.BERI:
-            return BeriStatcountersData(options, benchmark)
-        assert False, "Not Reached"
+    def get_parser(cls, benchmark: "BenchmarkBase", dset_key: str):
+        target = benchmark.instance_config.cheri_target
+        platform = benchmark.instance_config.platform
+        if target.is_riscv():
+            if platform == InstancePlatform.QEMU:
+                return FluteStatcountersData(benchmark, dset_key)
+        self.logger.error("XXX Unimplemented")
+        return None
 
-    def __init__(self, options, benchmark):
-        self.options = options
+    def __init__(self, benchmark, dset_key):
+        self._extra_index = []
+        self._gen_extra_index = lambda df: []
+        super().__init__(benchmark, dset_key)
         self.stats_df = None
-        self._gen_extra_index = lambda df: benchmark.pmc_map_index(df)
-        extra = self._gen_extra_index(pd.DataFrame(columns=["progname", "archname"]))
-        self._extra_index = list(extra.columns)
+        # self._gen_extra_index = lambda df: self.benchmark.pmc_map_index(df)
+        # extra = self._gen_extra_index(pd.DataFrame(columns=["progname", "archname"]))
+        # self._extra_index = list(extra.columns)
 
     def raw_fields(self):
         return PMCStatData.fields
@@ -58,7 +60,8 @@ class PMCStatData:
         else:
             self.stats_df = pd.concat([self.stats_df, new_df], axis=1)
 
-    def _import_df(self, csv_df):
+    def _load_csv(self, path: Path, **kwargs):
+        csv_df = super()._load_csv(path, **kwargs)
         # Add sample indexes (could reuse the current index)
         csv_df["sample_index"] = np.arange(len(csv_df))
 
@@ -68,11 +71,13 @@ class PMCStatData:
         if len(self._extra_index):
             csv_df[self._extra_index] = idx_df
         # Properly set the dataset index
-        csv_df.set_index(self.index_columns(), inplace=True)
+        return csv_df
+        # csv_df.set_index(self.index_columns(), inplace=True)
 
-        csv_df = self._enforce_data_types(csv_df)
-        valid_columns = set(csv_df.columns).intersection(set(self.all_columns()))
-        self.df = pd.concat([self.df, csv_df[valid_columns]])
+        # csv_df = self._enforce_data_types(csv_df)
+        # valid_columns = set(csv_df.columns).intersection(set(self.all_columns()))
+        # return csv_df[valid_columns]
+        # self.df = pd.concat([self.df, csv_df[valid_columns]])
 
 
 class FluteStatcountersData(PMCStatData):
@@ -149,8 +154,8 @@ class FluteStatcountersData(PMCStatData):
         DataField("tagcache_set_load", "tag cache set tag read"),  # 0x46
     ]
 
-    def __init__(self, options, benchmark):
-        super().__init__(options, benchmark)
+    def __init__(self, benchmark, dset_key):
+        super().__init__(benchmark, dset_key)
         self.df = pd.DataFrame(columns=self.all_columns())
         self.df.set_index(self.index_columns(), inplace=True)
         self.df = self._enforce_data_types(self.df)
@@ -161,11 +166,6 @@ class FluteStatcountersData(PMCStatData):
     def valid_data_columns(self):
         tmp = self.df[self.data_columns()].dropna(axis=1, how="all")
         return list(tmp.columns)
-
-    def load(self, dataset_id, filepath):
-        csv_df = pd.read_csv(filepath)
-        csv_df["__dataset_id"] = dataset_id
-        self._import_df(csv_df)
 
     def _enforce_data_types(self, df):
         coltypes = {f.name: f.dtype for f in self.raw_fields() if f.name in df.columns}

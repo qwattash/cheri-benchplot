@@ -19,7 +19,7 @@ def main():
     if args.v:
         root_logger.setLevel(logging.DEBUG)
     logging.debug("Loading config %s", args.json_config)
-    config = InstanceDaemonConfig.from_json(args.json_config)
+    config = InstanceDaemonConfig.load_json(args.json_config)
     if args.v:
         # Override from command line
         config.verbose = True

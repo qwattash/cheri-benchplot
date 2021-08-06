@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pandas as pd
 
-from ..core.benchmark import BenchmarkBase
+from ..core.benchmark import BenchmarkBase, BenchmarkDataSetConfig
 from ..core.instanced import InstancePlatform
-from ..elf import ELFInfo, SymResolver
+from ..core.dataset import DataSetParser
 from ..qemu_stats import QEMUAddressRangeHistogram
 from .config import NetperfBenchmarkRunConfig
 from .plot import *
@@ -16,8 +16,8 @@ from .dataset import NetperfData
 
 
 class NetperfBenchmark(BenchmarkBase):
-    def __init__(self, manager, config, instance_config):
-        super().__init__(manager, config, instance_config)
+    def __init__(self, manager, config, instance_config, run_id=None):
+        super().__init__(manager, config, instance_config, run_id=run_id)
         self.netperf_config = self.config.benchmark_options
 
         self.logger.debug("Looking for netperf binaries in %s", self.netperf_config.netperf_path)
@@ -29,28 +29,45 @@ class NetperfBenchmark(BenchmarkBase):
         self.logger.debug("Using %s %s", self.netperf_bin, self.netserver_bin)
         self.env = {"STATCOUNTERS_NO_AUTOSAMPLE": "1"}
 
-    def _bind_configs(self):
-        qemu_outfile = "netperf-qemu-{uuid}.csv".format(uuid=self.uuid)
-        pmc_outfile = "netperf-pmc-{uuid}.csv".format(uuid=self.uuid)
-        self.register_template_subst(netperf_pmc_outfile=pmc_outfile, netperf_qemu_outfile=qemu_outfile)
-        super()._bind_configs()
+    async def _run_procstat(self):
+        await super()._run_procstat()
+        # Grab the memory mapping for the process
+        netperf_stopped = await self._run_bg_cmd(self.netperf_bin, ["-z"], env=self.env)
+        await aio.sleep(1)
+        try:
+            pid = await self._find_remote_pid(self.netperf_bin)
+            if pid is None:
+                self.logger.error("netperf -z not running?")
+                raise Exception("Process died unexpectedly")
+            await self._run_cmd("procstat", ["-v", str(pid)], env=self.env, outfile=self.procstat_output)
+            self.logger.debug("Collected procstat info")
+        finally:
+            await self._stop_bg_cmd(netperf_stopped)
 
     async def _run_benchmark(self):
         await super()._run_benchmark()
-        await self._run_bg_cmd(self.netserver_bin, self.netperf_config.netserver_options, env=self.env)
-        self.logger.info("Prime benchmark")
-        await self._run_cmd(self.netperf_bin, self.netperf_config.netperf_prime_options, env=self.env)
-        self.logger.info("Run benchmark iterations")
-        await self._run_cmd(self.netperf_bin,
-                            self.netperf_config.netperf_options,
-                            outfile=self.result_path / self.config.output_file,
-                            env=self.env)
+        netserver = await self._run_bg_cmd(self.netserver_bin, self.netperf_config.netserver_options, env=self.env)
+        try:
+            self.logger.info("Prime benchmark")
+            await self._run_cmd(self.netperf_bin, self.netperf_config.netperf_prime_options, env=self.env)
+            self.logger.info("Run benchmark iterations")
+            await self._run_cmd(self.netperf_bin,
+                                self.netperf_config.netperf_options,
+                                outfile=self.result_path / self.config.output_file,
+                                env=self.env)
+        finally:
+            await self._stop_bg_cmd(netserver)
         self.logger.info("Gather results")
         for out in self.config.extra_files:
             await self._extract_file(out, self.result_path / out)
         if self.instance_config.platform == InstancePlatform.QEMU:
             # Grab the qemu log
-            shutil.copy(self._reserved_instance.qemu_trace_file, self.result_path / f"netperf-qemu-{self.uuid}.csv")
+            shutil.copy(self._reserved_instance.qemu_trace_file, self.result_path / self.netperf_config.qemu_log_output)
+
+    def _get_dataset_parser(self, dset_key: str, dset: BenchmarkDataSetConfig):
+        if dset.parser == DataSetParser.NETPERF_DATA:
+            return NetperfData.get_parser(self, dset_key)
+        return super()._get_dataset_parser(dset_key, dset)
 
 
 class _NetperfBenchmark(BenchmarkBase):
