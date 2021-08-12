@@ -131,6 +131,9 @@ class BenchmarkBase(TemplateConfigContext):
         self._command_tasks = []  # Commands being run on the instance
         # Datasets loaded for the benchmark
         self.datasets = {}
+        # Map uuids to benchmarks that have been merged into the current instance (which is the baseline)
+        # so that we can look them up if necessary
+        self.merged_benchmarks = {}
         # Plots to show for this benchmark. Note: this is only relevant for baseline instances
         self.plots = []
         self.sym_resolver = SymResolver(self)
@@ -323,10 +326,11 @@ class BenchmarkBase(TemplateConfigContext):
         Merge datasets from compatible runs into a single dataset.
         Note that this is called only on the baseline benchmark instance
         """
-        self.logger.debug("Merge datasets %s", self.config.name)
+        self.logger.debug("Merge datasets %s onto baseline %s", [str(b) for b in others], self.uuid)
         for dset in self.datasets.values():
             dset.init_merge()
         for bench in others:
+            self.merged_benchmarks[bench.uuid] = bench
             for name, dset in bench.datasets.items():
                 self.datasets[name].merge(dset)
             for name, dset in bench.datasets.items():
@@ -349,7 +353,11 @@ class BenchmarkBase(TemplateConfigContext):
         """
         self.logger.debug("Plot datasets")
         for plot in self.plots:
+            plot.prepare()
             plot.draw()
+
+    def __str__(self):
+        return f"{self.config.name}:{self.uuid}"
 
 
 class _BenchmarkBase:

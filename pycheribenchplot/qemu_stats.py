@@ -6,14 +6,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .core.dataset import (DataSetContainer, IndexField, DataField, Field, align_multi_index_levels)
-from .core.plot import TablePlot, MatplotlibSurface, StackedPlot
+from .core.dataset import (DataSetContainer, IndexField, DataField, Field, align_multi_index_levels, rotate_multi_index_level, subset_xs, check_multi_index_aligned, DatasetProcessingException)
+from .core.plot import Plot, MatplotlibSurface, CellData, DataView
+from .core.html import HTMLSurface
 
 
-class QEMUAddrRangeHistTable(StackedPlot):
-    """
-    Note: this only supports the HTML surface
-    """
+class QEMUAddrRangeHistBars(Plot):
     def __init__(self, benchmark, dataset):
         super().__init__(benchmark, dataset, MatplotlibSurface())
 
@@ -21,33 +19,105 @@ class QEMUAddrRangeHistTable(StackedPlot):
         return "QEMU PC hit count"
 
     def _get_plot_file(self):
+        return self.benchmark.manager_config.output_path / "qemu-pc-hist-bars.pdf"
+
+    def prepare(self):
+        """
+        For each non-baseline dataset_id in the aggregate frame, we extract the
+        file/function pair on the X axis and the count on the y axis.
+        We plot the absolute count (normalized) and the diff count on two separate cells
+        of the same surface.
+        """
+        super().prepare()
+        baseline = self.benchmark.uuid
+        df = self.dataset.agg_df.sort_values(by="diff", key=abs, ascending=False)
+        self.surface.set_layout(3, 1)
+        not_baseline = df.index.get_level_values("__dataset_id") != baseline
+        df = df[not_baseline]
+        df = df.reset_index(["file", "symbol"])
+        df["file_sym"] = df["file"] + ":" + df["symbol"]
+        df = df.set_index("file_sym", append=True)
+        # Put everything into dataframes formatted for Surface.add_view
+        abs_diff_df = df.rename(columns={"diff": "y_left"}).rename(index={"file_sym": "x"})
+        self.surface.add_view("bar-group", abs_diff_df)
+        # view_df = df.rename(columns={"norm_diff": "y_left"}).rename(index={"file_sym": "x"})
+
+
+class QEMUAddrRangeHistTable(Plot):
+    """
+    Note: this only supports the HTML surface
+    """
+    def __init__(self, benchmark, dataset):
+        super().__init__(benchmark, dataset, HTMLSurface())
+
+    def _get_plot_title(self):
+        return "QEMU PC hit count"
+
+    def _get_plot_file(self):
         return self.benchmark.manager_config.output_path / "qemu-pc-hist-table.html"
 
+    def _get_legend_map(self):
+        legend = {uuid: str(bench.instance_config.kernelabi) for uuid,bench in self.benchmark.merged_benchmarks.items()}
+        legend[self.benchmark.uuid] = f"{self.benchmark.instance_config.kernelabi}(baseline)"
+        return legend
 
-# class QEMUAddrRangeHistPlot(StackedBarPlot):
-#     pass
+    def prepare(self):
+        """
+        For each dataset (including the baseline) we show the dataframes as tables in
+        an HTML page.
+        """
+        legend_map = self._get_legend_map()
+        baseline = self.benchmark.uuid
+        df = self.dataset.agg_df
+        if not check_multi_index_aligned(df, "__dataset_id"):
+            self.logger.error("Unaligned index, skipping plot")
+            return
+
+        df["norm_diff"] = df["norm_diff"] * 100  # make the ratio a percentage
+        self.surface.set_layout(2, 1)
+        # Table for common functions
+        nonzero = df["count"].groupby(["file", "symbol"]).min() != 0
+        common_syms = nonzero & (nonzero != np.nan)
+        common_df = subset_xs(df, common_syms)
+        view_df, colmap = rotate_multi_index_level(common_df, "__dataset_id", legend_map)
+        show_cols = np.append(colmap.loc[:, ["count", "call_count"]].to_numpy().transpose().ravel(),
+                              colmap.loc[colmap.index != baseline, ["diff", "norm_diff"]].to_numpy().transpose().ravel())
+        sort_cols = colmap.loc[colmap.index != baseline, "norm_diff"].to_numpy().ravel()
+        view_df2 = view_df[show_cols].sort_values(list(sort_cols), ascending=False, key=abs)
+        cell = self.surface.make_cell(title="Common functions BB hit count")
+        view = self.surface.make_view("table", df=view_df2)
+        cell.add_view(view)
+        self.surface.set_cell(0, 0, cell)
+
+        # Table for functions that are only in one of the runs
+        extra_df = subset_xs(df, ~common_syms)
+        view_df, colmap = rotate_multi_index_level(extra_df, "__dataset_id", legend_map)
+        view_df = view_df[show_cols].sort_values(list(sort_cols), ascending=False, key=abs)
+        cell = self.surface.make_cell(title="Extra functions")
+        view = self.surface.make_view("table", df=view_df)
+        cell.add_view(view)
+        self.surface.set_cell(1, 0, cell)
 
 
 class QEMUAddressRangeHistogram(DataSetContainer):
     fields = [
         Field("CPU", dtype=int),
-        Field("start", dtype=int, importfn=lambda x: int(x, 16)),
-        Field("end", dtype=int, importfn=lambda x: int(x, 16)),
+        Field("start", dtype=np.uint, importfn=lambda x: np.uint(int(x, 16))),
+        Field("end", dtype=np.uint, importfn=lambda x: np.uint(int(x, 16))),
         DataField("count", dtype=int)
     ]
 
     def raw_fields(self):
         return QEMUAddressRangeHistogram.fields
 
-    def _load_csv(self, path, **kwargs):
-        kwargs["sep"] = ",\s*"
-        kwargs["engine"] = "python"
-        return super()._load_csv(path, **kwargs)
+    def _internalize_csv(self, csv_df: pd.DataFrame):
+        super()._internalize_csv(csv_df)
+        self._post_intern = pd.DataFrame(self.df)
 
     def _register_plots(self, benchmark):
         super()._register_plots(benchmark)
         benchmark.register_plot(QEMUAddrRangeHistTable(benchmark, self))
-        # benchmark.register_plot(QEMUAddrRangeHistPlot(benchmark, self))
+        # benchmark.register_plot(QEMUAddrRangeHistBars(benchmark, self))
 
     def pre_merge(self):
         """
@@ -56,6 +126,7 @@ class QEMUAddressRangeHistogram(DataSetContainer):
         """
         super().pre_merge()
         resolver = self.benchmark.sym_resolver
+        print({k: f"{v:x}" for k,v in resolver.mapping.items()})
         mapped = self.df["start"].map(lambda addr: resolver.lookup(addr))
         self.df["symbol"] = mapped.map(lambda syminfo: syminfo.name)
         # Note: For the file name, we omit the directory part as otherwise the same executable
@@ -63,12 +134,22 @@ class QEMUAddressRangeHistogram(DataSetContainer):
         # not useful when comparing different compilations that have different paths e.g. the kernel
         # We also have to handle rtld manually to map its name.
         self.df["file"] = mapped.map(lambda syminfo: syminfo.filepath.name)
+        # Generate now a new column only for entries that EXACTLY match symbols, meaning that
+        # this is the first basic-block of the function and is considered as an individual call
+        # to that function
+        is_call = self.df["start"].map(lambda addr: resolver.lookup_exact(addr) is not None)
+        self.df["call_count"] = self.df["count"].mask(~is_call, 0).astype(np.uint)
 
     def aggregate(self):
         super().aggregate()
         tmp = self.merged_df.set_index(["file", "symbol"], append=True)
         grouped = tmp.groupby(["__dataset_id", "file", "symbol"])
-        self.agg_df = grouped.agg({"count": "sum", "start": "min", "end": "max"})
+        self.agg_df = grouped.agg({"count": "sum", "call_count": "sum", "start": "min", "end": "max"})
+        # Check that the data is sensible
+        not_sensible = self.agg_df["count"] < self.agg_df["call_count"].fillna(0)
+        if not_sensible.any():
+            self.logger.debug("Offending rows:\n%s", self.agg_df.loc[not_sensible])
+            raise DatasetProcessingException("Call count must always be less than the total PC hit count")
 
     def post_aggregate(self):
         super().post_aggregate()
@@ -76,15 +157,22 @@ class QEMUAddressRangeHistogram(DataSetContainer):
         # the symbols set for each file, repeated for each dataset_id.
         new_df = align_multi_index_levels(self.agg_df, ["file", "symbol"], fill_value=0)
         # Now we can safely assign as there are no missing values.
-        # Compute difference in calls for each function w.r.t. the baseline
+        # 1) Compute difference in calls for each function w.r.t. the baseline.
+        # 2) Now build the normalized absolute count, note that this will generate infinities where
+        #   the baseline benchmark count is 0 (e.g. extra functions called only in other samples)
         baseline = new_df.xs(self.benchmark.uuid, level="__dataset_id")
         datasets = new_df.index.get_level_values("__dataset_id").unique()
-        new_df["diff"] = 0
+        new_df[["diff", "norm_diff", "call_diff", "norm_call_diff"]] = 0
+        new_df["norm_diff"] = 0
+        # XXX could avoid this loop by repeating N times the baseline values and vectorize the division?
         for ds_id in datasets:
             other = new_df.xs(ds_id, level="__dataset_id")
             diff = other.subtract(baseline)
+            norm_diff = diff["count"].divide(baseline["count"])
+            norm_call_diff = diff["call_count"].subtract(baseline["call_count"])
             new_df.loc[ds_id, "diff"] = diff["count"].values
+            new_df.loc[ds_id, "call_diff"] = diff["call_count"].values
+            new_df.loc[ds_id, "norm_diff"] = norm_diff.values
+            new_df.loc[ds_id, "norm_call_diff"] = norm_call_diff.values
+
         self.agg_df = new_df
-        # This is more for the plotting driver
-        self.agg_df = new_df.sort_values(by="diff", key=abs, ascending=False)
-        self.logger.info(self.agg_df.loc[[d for d in datasets if d != self.benchmark.uuid]])

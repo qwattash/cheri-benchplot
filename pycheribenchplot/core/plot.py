@@ -1,4 +1,5 @@
 import logging
+import typing
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
@@ -9,6 +10,7 @@ import matplotlib.ticker as ticker
 import matplotlib.lines as mlines
 import matplotlib.patches as mpatches
 import matplotlib.colors as mcolors
+from jinja2 import Environment, PackageLoader, select_autoescape
 
 from .dataset import *
 
@@ -17,16 +19,53 @@ class PlotError(Exception):
     pass
 
 
-@dataclass
-class DataView:
-    df: pd.DataFrame
-    method: str  # 'scatter', 'line', 'bar'
-    options: dict[str, any]
+class DataView(ABC):
+    """
+    Base class for single plot types that are drawn onto a cell.
+    A data view encodes the rendering logic for a specific type of plot (e.g. a line plot) from a generic
+    dataframe using the given columns as axes (if relevant).
+    Individual plots can override concrete DataViews to customize the plot appearence.
+    """
+
+    def __init__(self, df: pd.DataFrame, options: dict = {}, x: str = "x", yleft: str = None, yright: str = None):
+        self.df = df
+        self.options = options
+        self.x = x # name of the x axis index level
+        self.yleft = yleft # name of the left Y data column
+        self.yright = yright # name of the right Y data column
+
+    @abstractmethod
+    def render(self, cell: "CellData", surface: "Surface"):
+        """
+        Render this data view. This function allows customization over specific plot methods.
+        The main surface used for rendering is given, but the implementation is specific to the
+        surface type.
+        """
+        ...
 
 
-@dataclass
 class CellData:
-    views: list[DataView] = field(default_factory=list)
+    """
+    Base class to represent a cell on the surface of the plot (e.g. a matplotlib subplot axes).
+    This is used to bundle multiple views onto the cell and render them according to the surface type.
+    """
+
+    def __init__(self, title = "", yleft_text = "", yright_text = "", x_text = "",
+                 legend_map = {}, legend_col = "__dataset_id"):
+        self.title = title # Title for the cell of the plot
+        self.yleft_text = yleft_text # Annotation on the left Y axis
+        self.yright_text = yright_text # Annotation on the right Y axis
+        self.x_text = x_text  # Annotation on the X axis
+        self.legend_map = legend_map # map index label values to human-readable names
+        self.legend_col = legend_col # Index label for the legend key of each set of data
+        self.views = []
+        self.surface = None
+
+    def set_surface(self, surface):
+        self.surface = surface
+
+    def add_view(self, view: DataView):
+        self.views.append(view)
 
 
 class Surface(ABC):
@@ -47,10 +86,7 @@ class Surface(ABC):
     def layout(self):
         return self._layout.shape
 
-    def _supported_methods(self):
-        return ["scatter", "line", "bar"]
-
-    def _find_empty_cell(self):
+    def find_empty_cell(self):
         """
         Find an emtpy cell in the layout, if none is found we return None, otherwise
         return the cell coordinates
@@ -66,35 +102,74 @@ class Surface(ABC):
         Create a drawing surface with given number of rows and columns of plots.
         Note that this will reset any views that have been added to the current layout.
         """
-        self._layout = np.full([nrows, ncols], CellData())
+        self._layout = np.full([nrows, ncols], self.make_cell())
 
-    def add_view(self, plot: str, df: pd.DataFrame, cell=None):
+    def set_cell(self, row: int, col:int, cell: CellData):
         """
-        The view we are adding for display must have the following structure:
-        index: ["__dataset_id", "x"]
-        columns: ["y_left", "y_right"] where one of the columns may be omitted
+        Set the given data to plot on a cell
         """
-        if plot not in self._supported_methods():
-            raise PlotError(f"Unsupported method {plot} by surface {self.__class__.__name__}")
-        if cell is None:
-            cell = self._find_empty_cell()
-        view = DataView(df=df, method=plot, options={})
-        self._layout[cell].views.append(view)
+        cell.set_surface(self)
+        self._layout[(row, col)] = cell
 
     @abstractmethod
-    def draw(self):
+    def make_cell(self, **kwargs) -> CellData:
+        """Cell factory function"""
+        ...
+
+    @abstractmethod
+    def make_view(self, plot_type: str, **kwargs) -> DataView:
+        """
+        Factory for data views for a given plot type.
+        I the plot type is not supported, we may throw and exception
+        """
+        ...
+
+    @abstractmethod
+    def draw(self, title: str, dest: Path):
         """Draw all the registered views into the surface."""
         ...
 
 
 class MatplotlibSurface(Surface):
-    def draw(self):
-        self.logger.debug("Drawing")
+
+    def _supported_methods(self):
+        return ["scatter", "line", "bar-group"]
+
+    def _make_figure(self):
+        rows, cols = self.layout
+        self.fig, self.axes = plt.subplots(rows, cols, sharex=True, figsize=(10 * cols, 5 * rows),
+                                           squeeze=False)
+
+    def _plot_view(self, ax: "plt.Axes", cell: CellData, view: DataView):
+        self.logger.error("Unsupported plot method %s, skip data view", view.method)
+
+    def _plot_bar_group(self, ax: "plt.Axes", cell: CellData, view: DataView):
+        """
+        For each value in the view, plot a set of bars corresponding each to a dataset_id we are
+        comparing. The height of the bars is taken from the y_left column of the view.
+        """
+        pass
+
+    def _plot_at(self, index, cell):
+        ax = self.axes[index]
+        for view in cell.views:
+            self._plot_view(ax, cell, view)
+
+    def draw(self, title, dest):
+        self.logger.debug("Drawing...")
+        self._make_figure()
+        for index, cell in np.ndenumerate(self._layout):
+            self._plot_at(index, cell)
+        self.fig.savefig(dest)
 
 
 class Plot(ABC):
     """Base class for drawing plots."""
     def __init__(self, benchmark: "BenchmarkBase", dataset: "DataSetContainer", surface: Surface):
+        """
+        Note: the benchmark instance passed here is the baseline instance on which we performed the
+        dataset aggregation.
+        """
         self.benchmark = benchmark
         self.logger = self.benchmark.logger
         self.dataset = dataset
@@ -110,22 +185,15 @@ class Plot(ABC):
         """Return the output path of the plot"""
         ...
 
+    def prepare(self):
+        """Prepare the elements of the plot to draw"""
+        self.logger.debug("Setup plot %s", self._get_plot_title())
+
     def draw(self):
         """Actually draw the plot."""
         self.logger.debug("Drawing dataset %s", self.dataset.name)
-        self.surface.draw()
+        self.surface.draw(self._get_plot_title(), self._get_plot_file())
 
-
-class TablePlot(Plot):
-    pass
-
-
-class StackedPlot(Plot):
-    """
-    Handle a plot that generates a stacked set of axes from the dataset provided.
-    This base class contains helpers to handle the surface.
-    """
-    pass
 
 
 #### Old stuff
@@ -133,7 +201,7 @@ class StackedPlot(Plot):
 
 def align_twin_axes(ax, ax_twin, min_twin, max_twin):
     """
-    Align 0 point on twin Y axes
+    Alipgn 0 point on twin Y axes
     We first shift the twin axis to align the zero point in figure
     coordinates, then we correct limits on both axes to make sure we
     are fitting the shifted parts of the plot.
@@ -203,7 +271,7 @@ class PlotDataset:
         self.scale_fn = None
 
 
-class Plot:
+class _Plot:
     """
     Base class for drawing plots
     """
@@ -231,7 +299,7 @@ class Plot:
         plt.close(self.fig)
 
 
-class MultiPlot(Plot):
+class MultiPlot(_Plot):
     """Wrapper for multi row/column plots"""
     def __init__(self, options, outfile, rows, cols):
         self.rows = rows

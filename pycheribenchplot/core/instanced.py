@@ -92,7 +92,6 @@ class InstanceDaemonConfig(Config):
     concurrent_instances: int = 4
     verbose: bool = False
     ssh_key: Path = path_field("~/.ssh/id_rsa")
-    terminate_on_exit: bool = True
     sdk_path: Path = path_field("~/cheri/cherisdk")
     cheribuild_path: Path = path_field("~/cheri/cheribuild/cheribuild.py")
     instances: list[InstanceConfig] = field(default_factory=list)
@@ -256,12 +255,17 @@ class InstanceClient:
 class Instance(ABC):
     last_ssh_port = 12000
 
-    def __init__(self, event_loop, daemon_config, config):
+    def __init__(self, event_loop: aio.AbstractEventLoop, daemon_config: InstanceDaemonConfig, config: InstanceConfig):
+        # Main daemon event loop
         self.event_loop = event_loop
+        # Daemon configuration
         self.daemon_config = daemon_config
+        # Instance configuration
         self.config = config
+        # Unique ID of the instance
         self.uuid = uuid.uuid4()
         self.logger = logging.getLogger(f"{self.uuid}")
+        # SSH port allocated for the benchmarks to connect to the instance
         self.ssh_port = self._get_ssh_port()
         # The task associated to this instance main loop
         self.task = None
@@ -651,7 +655,8 @@ class InstanceDaemon:
             self.logger.info("ZMQ loop exited")
 
     async def _resurrect(self):
-        """Check cached instances to see if they are still alive"""
+        """Check cached dead instances to see if we can restart them"""
+        # XXX TODO
         return
 
     async def _preload_from_config(self):

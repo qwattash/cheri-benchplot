@@ -56,6 +56,8 @@ class BenchmarkManager(TemplateConfigContext):
         if not self.config.verbose:
             ssh_logger = logging.getLogger("asyncssh")
             ssh_logger.setLevel(logging.WARNING)
+        matplotlib_logger = logging.getLogger("matplotlib")
+        matplotlib_logger.setLevel(logging.WARNING)
         self.benchmark_records = BenchmarkManagerRecord(session=self.session)
         self.benchmark_records_path = self.config.output_path / "benchplot-run.json"
 
@@ -114,6 +116,8 @@ class BenchmarkManager(TemplateConfigContext):
         if len(aggregate_baseline) != len(self.config.benchmarks):
             self.logger.error("Number of benchmark variants does not match " + "number of runs marked as baseline")
             raise Exception("Missing baseline")
+        self.logger.debug("Benchmark aggregation groups: %s", aggregate_groups)
+        self.logger.debug("Benchmark aggregation baselines: %s", aggregate_baseline)
         # Merge compatible benchmark datasets into the baseline instance
         for name, baseline_bench in aggregate_baseline.items():
             baseline_bench.merge(aggregate_groups[name])

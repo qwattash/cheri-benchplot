@@ -1,4 +1,4 @@
-import subprocess as subp
+import typing
 from pathlib import Path
 from dataclasses import dataclass
 
@@ -47,17 +47,26 @@ class SymResolver:
                 continue
             self.symbols[sym["st_value"] + mapbase] = SymInfo(name=sym.name, filepath=path)
 
-    def lookup(self, addr: int):
+    def get_sym_addr(self, sym_name: str):
+        for addr, sym in self.symbols.items():
+            if sym.name == sym_name:
+                base = self.mapping[sym.filepath]
+                return base + addr
+        return None
+
+    def lookup(self, addr: int) -> SymInfo:
+        """
+        Find the symbol preceding the given address
+        """
         index = self.symbols.bisect(addr) - 1
         if index < 0:
             return None
         info = self.symbols.values()[index]
-        # Sanity check:
-        if self.bench.manager_config.verbose:
-            return info
-            addr2line = self.bench.manager_config.sdk_path.expanduser() / "sdk" / "bin" / "addr2line"
-            base = self.mapping[info.filepath]
-            print(base, addr, addr - base)
-            result = subp.run([addr2line, "--obj", info.filepath, f"0x{int(addr - base):x}"], capture_output=True)
-            print(result, "=?=", info.name)
         return info
+
+    def lookup_exact(self, addr: int) -> typing.Optional[SymInfo]:
+        """
+        Find the symbol matching exactly the given address.
+        If none is found, return None.
+        """
+        return self.symbols.get(addr, None)

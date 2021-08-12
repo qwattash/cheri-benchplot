@@ -1,0 +1,36 @@
+<html>
+    <head>
+        <title>{{ title }}</title>
+        <script src="https://d3js.org/d3.v7.min.js"></script>
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.0/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-KyZXEAg3QhqLMpG8r+8fhAXLRk2vvoC2f3B09zVXn8CA5QIVfZOJ3BCsw2P0p/We" crossorigin="anonymous">
+        <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.0/dist/js/bootstrap.bundle.min.js" integrity="sha384-U1DAWAznBHeqEIlVSCgzq+c9gqGAJn5c/t99JyeKa9xxaYpSvHU5awsuZVVFIhvj" crossorigin="anonymous"></script>
+
+        <style>
+         .plot-cell {
+         }
+        </style>
+    </head>
+    <body>
+        <section class="container-fluid my-3">
+            {% for row in cell_layout %}
+            {% set i = loop.index %}
+            <div class="row justify-content-center">
+                {% for cell in row %}
+                {% set j = loop.index %}
+                <div class="col overflow-auto">
+                    <div class="bg-light my-3 mx-2">
+                        <a class="text-center text-reset p-2" role="button" data-bs-toggle="collapse" href="#collapse-{{i}}-{{j}}">
+                            <h2>{{cell.title}}</h2>
+                        </a>
+                        <div class="collapse overflow-auto" id="collapse-{{i}}-{{j}}">
+                            {{ cell.to_html() | safe }}
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% endfor %}
+            </section>
+    </body>
+</html>
+

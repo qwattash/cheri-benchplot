@@ -70,7 +70,7 @@ class Config(DataClassJsonMixin):
             elif type(origin) != typing._SpecialForm:
                 # Not a typing class (e.g. Union)
                 if issubclass(f.type, Path):
-                    setattr(self, f.name, Path(getattr(self, f.name)))
+                    setattr(self, f.name, Path(getattr(self, f.name)).expanduser())
 
 
 class TemplateConfigContext:

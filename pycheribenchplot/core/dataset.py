@@ -1,10 +1,14 @@
 import logging
+import typing
 from enum import Enum
 from pathlib import Path
+from contextlib import contextmanager
 
 import pandas as pd
 import numpy as np
 
+class DatasetProcessingException(Exception):
+    pass
 
 class DataSetParser(Enum):
     """
@@ -134,6 +138,14 @@ class DataSetContainer:
         csv_df.set_index(self.index_columns(), inplace=True)
         column_subset = set(csv_df.columns).intersection(set(self.all_columns_noindex()))
         self.df = pd.concat([self.df, csv_df[column_subset]])
+        # Check that we did not accidentally change dtype, this may cause weirdness due to conversions
+        dtype_check = self.df.dtypes[column_subset] == csv_df.dtypes[column_subset]
+        if not dtype_check.all():
+            changed = dtype_check.index[~dtype_check]
+            for col in changed:
+                self.logger.error("Unexpected dtype change in %s: %s -> %s", col, csv_df.dtypes[col], self.df.dtypes[col])
+            raise DatasetProcessingException("Unexpected dtype change")
+
 
     def _register_plots(self, benchmark: "BenchmarkBase"):
         pass
@@ -188,6 +200,12 @@ class DataSetContainer:
         self.logger.debug("Post-aggregate %s", self.config.name)
 
 
+@contextmanager
+def dataframe_debug():
+    """Helper context manager to print whole dataframes"""
+    with pd.option_context('display.max_rows', None, 'display.max_columns', None):
+        yield
+
 def get_numeric_columns(self, df):
     columns = []
     for idx, col in enumerate(self.stats.columns):
@@ -203,6 +221,13 @@ def col2stat(prefix, colnames):
     """
     return list(map(lambda c: "{}_{}".format(prefix, c), colnames))
 
+def check_multi_index_aligned(df: pd.DataFrame, level: str):
+    """
+    Check that the given index level(s) are aligned.
+    """
+    group_size = df.groupby(level).count().iloc[:, 0]
+    aligned = (group_size == group_size.iloc[0]).all()
+    return aligned
 
 def align_multi_index_levels(df: pd.DataFrame, align_levels: list[str], fill_value=None):
     """
@@ -226,3 +251,61 @@ def align_multi_index_levels(df: pd.DataFrame, align_levels: list[str], fill_val
     new_index = pd.concat([other_cols_rep, align_cols_rep], axis=1)
     new_index = pd.MultiIndex.from_frame(new_index)
     return df.reindex(new_index, fill_value=fill_value).sort_index()
+
+def rotate_multi_index_level(df: pd.DataFrame, level: str, suffixes: dict[str, str]=None, fill_value=None) -> tuple[pd.DataFrame]:
+    """
+    Given a dataframe with multiple datasets indexed by one level of the multi-index, rotate datasets into
+    columns so that the index level is removed and the column values related to each dataset are concatenated
+    and renamed with the given suffix map.
+    We also emit a dataframe for the level/column mappings as follows.
+
+    Example:
+    ID  name  |  value
+    A   foo   |    0
+    A   bar   |    1
+    B   foo   |    2
+    B   bar   |    3
+
+    is rotated into
+
+    name  |  value_A value_B
+    foo   |    0       2
+    bar   |    1       3
+
+    with the following column mapping
+    ID  |  value
+    A   |  value_A
+    B   |  value_B
+    """
+    rotate_groups = df.groupby(level)
+    if suffixes is None:
+        suffixes = rotate_groups.groups.keys()
+    colmap = pd.DataFrame(columns=df.columns, index=df.index.get_level_values(level).unique())
+    groups = []
+    for key, group in rotate_groups.groups.items():
+        suffix = suffixes[key]
+        colmap.loc[key, :] = colmap.columns.map(lambda c: f"{c}_{suffix}")
+        rotated = df.loc[group].reset_index(level, drop=True).add_suffix(f"_{suffix}")
+        groups.append(rotated)
+    new_df = pd.concat(groups, axis=1)
+    return new_df, colmap
+
+
+def subset_xs(df: pd.DataFrame, selector: typing.Sequence[bool]):
+    """
+    Extract a cross section of the given levels of the dataframe, regarless of frame index ordering,
+    where the values match the given set of values.
+    """
+    # XXX align the dataframe?
+    levels = selector.index.names
+    # First, make our levels the last ones
+    swapped_levels = [n for n in df.index.names if n not in levels]
+    swapped_levels.extend(levels)
+    swapped = df.reorder_levels(swapped_levels)
+    # Now we tile the selector
+    ntiles = len(swapped) / len(selector)
+    assert ntiles == int(ntiles)
+    tiled = selector.loc[np.tile(selector.index, int(ntiles))]
+    # Now we can cross-section with the boolean selection
+    values = swapped.loc[tiled.values]
+    return values.reorder_levels(df.index.names)
