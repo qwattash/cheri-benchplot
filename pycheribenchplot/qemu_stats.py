@@ -74,7 +74,7 @@ class QEMUAddrRangeHistTable(Plot):
             return
 
         df["norm_diff"] = df["norm_diff"] * 100  # make the ratio a percentage
-        self.surface.set_layout(2, 1)
+        self.surface.set_layout(1, 1, expand=True, how="row")
         # Table for common functions
         nonzero = df["count"].groupby(["file", "symbol"]).min() != 0
         common_syms = nonzero & (nonzero != np.nan)
@@ -87,7 +87,7 @@ class QEMUAddrRangeHistTable(Plot):
         cell = self.surface.make_cell(title="Common functions BB hit count")
         view = self.surface.make_view("table", df=view_df2)
         cell.add_view(view)
-        self.surface.set_cell(0, 0, cell)
+        self.surface.next_cell(cell)
 
         # Table for functions that are only in one of the runs
         extra_df = subset_xs(df, ~common_syms)
@@ -96,7 +96,7 @@ class QEMUAddrRangeHistTable(Plot):
         cell = self.surface.make_cell(title="Extra functions")
         view = self.surface.make_view("table", df=view_df)
         cell.add_view(view)
-        self.surface.set_cell(1, 0, cell)
+        self.surface.next_cell(cell)
 
 
 class QEMUAddressRangeHistogram(DataSetContainer):

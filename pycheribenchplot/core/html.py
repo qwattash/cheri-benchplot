@@ -23,7 +23,7 @@ class HTMLSurface(Surface):
 
     def draw(self, title, dest):
         self.logger.debug("Drawing...")
-        rows, cols = self.layout
+        rows, cols = self.layout_shape
         html = self.template.render(nrows=rows, ncols=cols, title=title, cell_layout=self._layout)
         with open(dest, "w+") as dest_file:
             dest_file.write(html)

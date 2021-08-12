@@ -80,10 +80,12 @@ class Surface(ABC):
         # The layout is encoded as a matrix indexed by row,column of the figure subplots
         # each cell in the plot is associated with cell data
         self._layout = np.full([1, 1], CellData())
+        self._expand_layout = False
+        self._expand_direction = "row"
         self.logger = logging.getLogger(self.__class__.__name__)
 
     @property
-    def layout(self):
+    def layout_shape(self):
         return self._layout.shape
 
     def find_empty_cell(self):
@@ -91,18 +93,56 @@ class Surface(ABC):
         Find an emtpy cell in the layout, if none is found we return None, otherwise
         return the cell coordinates
         """
-        for i, row in enumerate(self._layout):
-            for j, cell in enumerate(row):
+        if self._expand_direction == "row":
+            axis = 0
+        else:
+            axis = 1
+        layout = np.rollaxis(self._layout, axis)
+
+        for i, stride in enumerate(layout):
+            for j, cell in enumerate(stride):
                 if len(cell.views) == 0:
-                    return (i, j)
+                    return np.roll(np.array([i, j]), shift=axis)
         return None
 
-    def set_layout(self, nrows, ncols):
+    def set_layout(self, nrows: int, ncols: int, expand: bool=False, how: str="row"):
         """
         Create a drawing surface with given number of rows and columns of plots.
         Note that this will reset any views that have been added to the current layout.
+
+        Arguments:
+        nrows: the number of rows to allocate
+        ncols: the number of columns to allocate
+        [expand]: automatically expand the layout
+        [how]: direction in which to expand the layout with next_cell(). If how="row",
+        fill rows until we reach ncols, then create another row. If how="col",
+        fill columns until we reach nrows, then create another column.
         """
+        self._expand_layout = expand
+        self._expand_direction = how
         self._layout = np.full([nrows, ncols], self.make_cell())
+
+    def next_cell(self, cell: CellData):
+        """
+        Add the given cell to the next position available in the layout.
+        """
+        index = self.find_empty_cell()
+        if index is not None:
+            i, j = index
+            self.set_cell(i, j, cell)
+        elif self._expand_layout:
+            stride_shape = list(self._layout.shape)
+            if self._expand_direction == "row":
+                axis = 0
+            else:
+                axis = 1
+            stride_shape[(axis + 1) % 2] = 1
+            new_stride = np.full(stride_shape, self.make_cell())
+            new_stride[0, 0] = cell
+            self._layout = np.concatenate((self._layout, new_stride), axis=axis)
+        else:
+            raise IndexError("No empty cell found")
+        assert len(self._layout.shape) == 2
 
     def set_cell(self, row: int, col:int, cell: CellData):
         """
@@ -136,7 +176,7 @@ class MatplotlibSurface(Surface):
         return ["scatter", "line", "bar-group"]
 
     def _make_figure(self):
-        rows, cols = self.layout
+        rows, cols = self.layout_shape
         self.fig, self.axes = plt.subplots(rows, cols, sharex=True, figsize=(10 * cols, 5 * rows),
                                            squeeze=False)
 
