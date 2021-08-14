@@ -310,6 +310,9 @@ class BenchmarkBase(TemplateConfigContext):
                 local_path = self.rootfs / guest_path.relative_to("/")
                 self.sym_resolver.import_symbols(local_path, base)
 
+    def get_dataset(self, parser_id: DataSetParser):
+        return self.datasets.get(parser_id, None)
+
     def load(self):
         """
         Setup benchmark metadata and load results into datasets from the currently assigned run configuration.
@@ -317,7 +320,7 @@ class BenchmarkBase(TemplateConfigContext):
         self._load_extra_data()
         for name, dset in self.config.datasets.items():
             self.logger.info("Loading %s from %s", name, dset.name)
-            self.datasets[name] = self._load_dataset(name, dset)
+            self.datasets[dset.parser] = self._load_dataset(name, dset)
         for dset in self.datasets.values():
             dset.pre_merge()
 
@@ -331,10 +334,10 @@ class BenchmarkBase(TemplateConfigContext):
             dset.init_merge()
         for bench in others:
             self.merged_benchmarks[bench.uuid] = bench
-            for name, dset in bench.datasets.items():
-                self.datasets[name].merge(dset)
-            for name, dset in bench.datasets.items():
-                self.datasets[name].post_merge()
+            for parser_id, dset in bench.datasets.items():
+                self.datasets[parser_id].merge(dset)
+            for parser_id, dset in bench.datasets.items():
+                self.datasets[parser_id].post_merge()
 
     def aggregate(self):
         """
@@ -345,6 +348,12 @@ class BenchmarkBase(TemplateConfigContext):
         for dset in self.datasets.values():
             dset.aggregate()
             dset.post_aggregate()
+
+    def verify(self):
+        """
+        Verify the integrity of the aggregate / post-processed data
+        """
+        self.logger.debug("Verify dataset integrity for %s", self.config.name)
 
     def plot(self):
         """

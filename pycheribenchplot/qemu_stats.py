@@ -48,7 +48,8 @@ class QEMUAddrRangeHistTable(Plot):
     Note: this only supports the HTML surface
     """
     def __init__(self, benchmark, dataset):
-        super().__init__(benchmark, dataset, HTMLSurface())
+        super().__init__(benchmark, HTMLSurface())
+        self.dataset = dataset
 
     def _get_plot_title(self):
         return "QEMU PC hit count"
@@ -126,7 +127,6 @@ class QEMUAddressRangeHistogram(DataSetContainer):
         """
         super().pre_merge()
         resolver = self.benchmark.sym_resolver
-        print({k: f"{v:x}" for k,v in resolver.mapping.items()})
         mapped = self.df["start"].map(lambda addr: resolver.lookup(addr))
         self.df["symbol"] = mapped.map(lambda syminfo: syminfo.name)
         # Note: For the file name, we omit the directory part as otherwise the same executable
@@ -134,17 +134,26 @@ class QEMUAddressRangeHistogram(DataSetContainer):
         # not useful when comparing different compilations that have different paths e.g. the kernel
         # We also have to handle rtld manually to map its name.
         self.df["file"] = mapped.map(lambda syminfo: syminfo.filepath.name)
+
         # Generate now a new column only for entries that EXACTLY match symbols, meaning that
         # this is the first basic-block of the function and is considered as an individual call
         # to that function
         is_call = self.df["start"].map(lambda addr: resolver.lookup_exact(addr) is not None)
         self.df["call_count"] = self.df["count"].mask(~is_call, 0).astype(np.uint)
 
+        # Generate instruction count for each range of start/end addresses
+        self.df["bcount"] = (self.df["end"] - self.df["start"]) / 4 * self.df["count"]
+
     def aggregate(self):
         super().aggregate()
         tmp = self.merged_df.set_index(["file", "symbol"], append=True)
         grouped = tmp.groupby(["__dataset_id", "file", "symbol"])
-        self.agg_df = grouped.agg({"count": "sum", "call_count": "sum", "start": "min", "end": "max"})
+        self.agg_df = grouped.agg({
+            "count": "sum",
+            "call_count": "sum",
+            "start": "min",
+            "end": "max",
+            "bcount": "sum"})
         # Check that the data is sensible
         not_sensible = self.agg_df["count"] < self.agg_df["call_count"].fillna(0)
         if not_sensible.any():
@@ -162,7 +171,7 @@ class QEMUAddressRangeHistogram(DataSetContainer):
         #   the baseline benchmark count is 0 (e.g. extra functions called only in other samples)
         baseline = new_df.xs(self.benchmark.uuid, level="__dataset_id")
         datasets = new_df.index.get_level_values("__dataset_id").unique()
-        new_df[["diff", "norm_diff", "call_diff", "norm_call_diff"]] = 0
+        new_df[["diff", "diff_bcount", "norm_diff", "call_diff", "norm_call_diff"]] = 0
         new_df["norm_diff"] = 0
         # XXX could avoid this loop by repeating N times the baseline values and vectorize the division?
         for ds_id in datasets:
@@ -171,8 +180,8 @@ class QEMUAddressRangeHistogram(DataSetContainer):
             norm_diff = diff["count"].divide(baseline["count"])
             norm_call_diff = diff["call_count"].subtract(baseline["call_count"])
             new_df.loc[ds_id, "diff"] = diff["count"].values
+            new_df.loc[ds_id, "diff_bcount"] = diff["bcount"].values
             new_df.loc[ds_id, "call_diff"] = diff["call_count"].values
             new_df.loc[ds_id, "norm_diff"] = norm_diff.values
             new_df.loc[ds_id, "norm_call_diff"] = norm_call_diff.values
-
         self.agg_df = new_df

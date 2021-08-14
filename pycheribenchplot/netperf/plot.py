@@ -1,7 +1,74 @@
 import logging
 from enum import Enum
 
-from ..core.plot import StackedLinePlot, StackedBarPlot, make_colormap2
+import pandas as pd
+import numpy as np
+
+from ..core.plot import Plot, check_multi_index_aligned, subset_xs, rotate_multi_index_level, StackedLinePlot, StackedBarPlot, make_colormap2
+from ..core.html import HTMLSurface
+
+class NetperfPCExplorationTable(Plot):
+    """
+    Note: this only supports the HTML surface
+    """
+    def __init__(self, benchmark, pmc_dset, qemu_dset):
+        super().__init__(benchmark, HTMLSurface())
+        self.pmc_dset = pmc_dset
+        self.qemu_dset = qemu_dset
+
+    def _get_plot_title(self):
+        return "Netperf PC hit count exploration"
+
+    def _get_plot_file(self):
+        return self.benchmark.manager_config.output_path / "netperf-pc-table.html"
+
+    def _get_legend_map(self):
+        legend = {uuid: str(bench.instance_config.kernelabi) for uuid,bench in self.benchmark.merged_benchmarks.items()}
+        legend[self.benchmark.uuid] = f"{self.benchmark.instance_config.kernelabi}(baseline)"
+        return legend
+
+    def prepare(self):
+        """
+        For each dataset (including the baseline) we show the dataframes as tables in
+        an HTML page.
+        """
+        legend_map = self._get_legend_map()
+        baseline = self.benchmark.uuid
+        df = self.qemu_dset.agg_df
+        df["norm_diff"] = df["norm_diff"] * 100  # make the ratio a percentage
+        pmc = self.pmc_dset.agg_df
+        if not check_multi_index_aligned(df, "__dataset_id"):
+            self.logger.error("Unaligned index, skipping plot")
+            return
+
+        icount_diff = pmc.loc[:, "diff_median_instructions"]
+
+        self.surface.set_layout(1, 1, expand=True, how="row")
+        # Table for common functions
+        nonzero = df["count"].groupby(["file", "symbol"]).min() != 0
+        common_syms = nonzero & (nonzero != np.nan)
+        common_df = subset_xs(df, common_syms)
+        view_df, colmap = rotate_multi_index_level(common_df, "__dataset_id", legend_map)
+        show_cols = np.append(colmap.loc[:, ["count", "call_count"]].to_numpy().transpose().ravel(),
+                              colmap.loc[colmap.index != baseline, ["diff", "norm_diff"]].to_numpy().transpose().ravel())
+        sort_cols = colmap.loc[colmap.index != baseline, "norm_diff"].to_numpy().ravel()
+        view_df2 = view_df[show_cols].sort_values(list(sort_cols), ascending=False, key=abs)
+        cell = self.surface.make_cell(title="Common functions BB hit count")
+        view = self.surface.make_view("table", df=view_df2)
+        cell.add_view(view)
+        self.surface.next_cell(cell)
+
+        # Table for functions that are only in one of the runs
+        extra_df = subset_xs(df, ~common_syms)
+        view_df, colmap = rotate_multi_index_level(extra_df, "__dataset_id", legend_map)
+        view_df = view_df[show_cols].sort_values(list(sort_cols), ascending=False, key=abs)
+        cell = self.surface.make_cell(title="Extra functions")
+        view = self.surface.make_view("table", df=view_df)
+        cell.add_view(view)
+        self.surface.next_cell(cell)
+
+
+###################### Old stuff
 
 
 class NetperfPlot(Enum):

@@ -124,6 +124,7 @@ class BenchmarkManager(TemplateConfigContext):
         # From now on we ony operate on the merged data
         for bench in aggregate_baseline.values():
             bench.aggregate()
+            bench.verify()
         # Now we have processed all the input data, do the plotting
         for bench in aggregate_baseline.values():
             bench.plot()

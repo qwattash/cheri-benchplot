@@ -19,7 +19,10 @@ class HTMLSurface(Surface):
         super().__init__()
         if template is None:
             template = self.default_template
-        self.template = self.env.get_template(template)
+        self.template = self.get_template(template)
+
+    def get_template(self, name: str):
+        return self.env.get_template(name)
 
     def draw(self, title, dest):
         self.logger.debug("Drawing...")
@@ -59,6 +62,8 @@ class HTMLTable(HTMLDataView):
         """
         Render the dataframe as an HTML table.
         """
-        styler = self.df.style
-        styler.set_table_attributes('class="table table-responsive"')
-        return styler.render()
+        table_template = surface.get_template("table.html")
+        styler = self.df.reset_index().style
+        styler.set_table_attributes('class="table table-striped table-responsive"')
+        table_html = styler.hide_index().render()
+        return table_template.render(cell_num=cell.cell_id, table=table_html)

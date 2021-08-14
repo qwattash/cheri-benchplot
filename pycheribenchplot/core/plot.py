@@ -1,5 +1,6 @@
 import logging
 import typing
+import itertools as it
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
@@ -10,10 +11,8 @@ import matplotlib.ticker as ticker
 import matplotlib.lines as mlines
 import matplotlib.patches as mpatches
 import matplotlib.colors as mcolors
-from jinja2 import Environment, PackageLoader, select_autoescape
 
 from .dataset import *
-
 
 class PlotError(Exception):
     pass
@@ -49,6 +48,7 @@ class CellData:
     Base class to represent a cell on the surface of the plot (e.g. a matplotlib subplot axes).
     This is used to bundle multiple views onto the cell and render them according to the surface type.
     """
+    cell_id_gen = it.count()
 
     def __init__(self, title = "", yleft_text = "", yright_text = "", x_text = "",
                  legend_map = {}, legend_col = "__dataset_id"):
@@ -60,6 +60,7 @@ class CellData:
         self.legend_col = legend_col # Index label for the legend key of each set of data
         self.views = []
         self.surface = None
+        self.cell_id = next(CellData.cell_id_gen)
 
     def set_surface(self, surface):
         self.surface = surface
@@ -140,6 +141,7 @@ class Surface(ABC):
             new_stride = np.full(stride_shape, self.make_cell())
             new_stride[0, 0] = cell
             self._layout = np.concatenate((self._layout, new_stride), axis=axis)
+            cell.set_surface(self)
         else:
             raise IndexError("No empty cell found")
         assert len(self._layout.shape) == 2
@@ -205,14 +207,13 @@ class MatplotlibSurface(Surface):
 
 class Plot(ABC):
     """Base class for drawing plots."""
-    def __init__(self, benchmark: "BenchmarkBase", dataset: "DataSetContainer", surface: Surface):
+    def __init__(self, benchmark: "BenchmarkBase", surface: Surface):
         """
         Note: the benchmark instance passed here is the baseline instance on which we performed the
         dataset aggregation.
         """
         self.benchmark = benchmark
         self.logger = self.benchmark.logger
-        self.dataset = dataset
         self.surface = surface
 
     @abstractmethod
@@ -231,7 +232,7 @@ class Plot(ABC):
 
     def draw(self):
         """Actually draw the plot."""
-        self.logger.debug("Drawing dataset %s", self.dataset.name)
+        self.logger.debug("Drawing plot %s", self._get_plot_title())
         self.surface.draw(self._get_plot_title(), self._get_plot_file())
 
 

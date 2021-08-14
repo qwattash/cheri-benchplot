@@ -5,14 +5,14 @@ import pandas as pd
 import numpy as np
 
 from .core.cpu import *
-from .core.dataset import DataSetContainer, StrField, DataField
+from .core.dataset import DataSetContainer, StrField, DataField, IndexField
 from .core.instanced import InstanceCheriBSD, InstancePlatform
 
 
 class PMCStatData(DataSetContainer):
     fields = [
-        StrField("progname"),
-        StrField("archname"),
+        IndexField("progname", dtype=str),
+        IndexField("archname", dtype=str),
     ]
 
     @classmethod
@@ -25,9 +25,8 @@ class PMCStatData(DataSetContainer):
         self.logger.error("XXX Unimplemented")
         return None
 
-    def __init__(self, benchmark, dset_key):
-        self._extra_index = []
-        self._gen_extra_index = lambda df: []
+    def __init__(self, benchmark: "BenchmarkBase", dset_key: str):
+        self._index_transform = lambda df: []
         super().__init__(benchmark, dset_key)
         self.stats_df = None
         # self._gen_extra_index = lambda df: self.benchmark.pmc_map_index(df)
@@ -37,47 +36,27 @@ class PMCStatData(DataSetContainer):
     def raw_fields(self):
         return PMCStatData.fields
 
-    def all_columns(self):
-        return set(self.index_columns() + [f.name for f in self.raw_fields()])
-
-    def index_columns(self):
-        return ["__dataset_id"] + self._extra_index + ["sample_index"]
-
-    def data_columns(self):
-        return [f.name for f in self.raw_fields() if f.isdata]
-
-    def valid_data_columns(self):
-        return self.data_columns()
-
     def process(self):
         self._gen_composite_metrics()
         self._gen_stats()
 
-    def add_statistic(self, new_df, prefix):
+    def add_aggregate_col(self, new_df: pd.DataFrame, prefix: str):
         new_df = new_df.add_prefix(prefix + "_")
-        if self.stats_df is None:
-            self.stats_df = new_df
+        if self.agg_df is None:
+            self.agg_df = new_df
         else:
-            self.stats_df = pd.concat([self.stats_df, new_df], axis=1)
+            self.agg_df = pd.concat([self.agg_df, new_df], axis=1)
 
     def _load_csv(self, path: Path, **kwargs):
         csv_df = super()._load_csv(path, **kwargs)
-        # Add sample indexes (could reuse the current index)
-        csv_df["sample_index"] = np.arange(len(csv_df))
 
         # Generate extra index columns if any
-        prog_and_arch = csv_df[["progname", "archname"]].copy()
-        idx_df = self._gen_extra_index(prog_and_arch)
-        if len(self._extra_index):
-            csv_df[self._extra_index] = idx_df
-        # Properly set the dataset index
+        prog_and_arch = csv_df[["progname", "archname"]]
+        idx_df = self._index_transform(prog_and_arch)
+        if len(idx_df):
+            csv_df = pd.concat((csv_df, idx_df), axis=1)
+            # Properly set the dataset index
         return csv_df
-        # csv_df.set_index(self.index_columns(), inplace=True)
-
-        # csv_df = self._enforce_data_types(csv_df)
-        # valid_columns = set(csv_df.columns).intersection(set(self.all_columns()))
-        # return csv_df[valid_columns]
-        # self.df = pd.concat([self.df, csv_df[valid_columns]])
 
 
 class FluteStatcountersData(PMCStatData):
@@ -154,12 +133,6 @@ class FluteStatcountersData(PMCStatData):
         DataField("tagcache_set_load", "tag cache set tag read"),  # 0x46
     ]
 
-    def __init__(self, benchmark, dset_key):
-        super().__init__(benchmark, dset_key)
-        self.df = pd.DataFrame(columns=self.all_columns())
-        self.df.set_index(self.index_columns(), inplace=True)
-        self.df = self._enforce_data_types(self.df)
-
     def raw_fields(self):
         return super().raw_fields() + FluteStatcountersData.fields
 
@@ -167,11 +140,7 @@ class FluteStatcountersData(PMCStatData):
         tmp = self.df[self.data_columns()].dropna(axis=1, how="all")
         return list(tmp.columns)
 
-    def _enforce_data_types(self, df):
-        coltypes = {f.name: f.dtype for f in self.raw_fields() if f.name in df.columns}
-        return df.astype(coltypes, copy=True)
-
-    def _gen_composite_metrics(self):
+    def pre_merge(self):
         new_columns = {}
         for c in self.valid_data_columns():
             if c.endswith("_miss"):
@@ -195,23 +164,37 @@ class FluteStatcountersData(PMCStatData):
                 new_columns["{}_hit_rate".format(base_metric)] = hit_rate
         self.df = self.df.assign(**new_columns)
 
-    def _gen_stats(self):
+    def aggregate(self):
         # Median and quartiles by index (except sample_index)
         group_index = self.index_columns()
-        group_index.remove("sample_index")
-        grouped = self.df[self.valid_data_columns()].groupby(level=group_index)
-        self.add_statistic(grouped.median(), "median")
-        self.add_statistic(grouped.quantile(q=0.25), "q25")
-        self.add_statistic(grouped.quantile(q=0.75), "q75")
+        grouped = self.merged_df[self.valid_data_columns()].groupby(level=group_index)
+        self.add_aggregate_col(grouped.median(), "median")
+        self.add_aggregate_col(grouped.quantile(q=0.25), "q25")
+        self.add_aggregate_col(grouped.quantile(q=0.75), "q75")
+        self.add_aggregate_col(grouped.sum(), "total")
         # Compute error columns from median and quartiles
         for col in self.valid_data_columns():
-            data_col = "median_{}".format(col)
-            q75_col = "q75_{}".format(col)
-            q25_col = "q25_{}".format(col)
-            err_hi = self.stats_df[q75_col] - self.stats_df[data_col]
-            err_lo = self.stats_df[data_col] - self.stats_df[q25_col]
-            self.stats_df["errhi_{}".format(col)] = err_hi
-            self.stats_df["errlo_{}".format(col)] = err_lo
+            data_col = f"median_{col}"
+            q75_col = f"q75_{col}"
+            q25_col = f"q25_{col}"
+            err_hi = self.agg_df[q75_col] - self.agg_df[data_col]
+            err_lo = self.agg_df[data_col] - self.agg_df[q25_col]
+            self.agg_df["errhi_{}".format(col)] = err_hi
+            self.agg_df["errlo_{}".format(col)] = err_lo
+
+    def post_aggregate(self):
+        super().post_aggregate()
+        # Compute relative metrics with respect to baseline
+        datasets = self.agg_df.index.get_level_values("__dataset_id").unique()
+        data_cols = list(self.agg_df.columns)
+        diff_cols = self.agg_df.columns.map(lambda c: f"diff_{c}")
+        baseline = self.agg_df.xs(self.benchmark.uuid, level="__dataset_id")[data_cols]
+        self.agg_df[diff_cols] = 0
+        for ds_id in datasets:
+            other = self.agg_df.xs(ds_id, level="__dataset_id")[data_cols]
+            diff = other.subtract(baseline)
+            self.agg_df.loc[ds_id, diff_cols] = diff.values
+
 
 
 class BeriStatcountersData:

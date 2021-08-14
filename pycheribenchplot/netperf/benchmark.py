@@ -14,7 +14,6 @@ from .config import NetperfBenchmarkRunConfig
 from .plot import *
 from .dataset import NetperfData
 
-
 class NetperfBenchmark(BenchmarkBase):
     def __init__(self, manager, config, instance_config, run_id=None):
         super().__init__(manager, config, instance_config, run_id=run_id)
@@ -68,6 +67,13 @@ class NetperfBenchmark(BenchmarkBase):
         if dset.parser == DataSetParser.NETPERF_DATA:
             return NetperfData.get_parser(self, dset_key)
         return super()._get_dataset_parser(dset_key, dset)
+
+    def plot(self):
+        pmc_dset = self.get_dataset(DataSetParser.PMC)
+        qemu_dset = self.get_dataset(DataSetParser.QEMU_STATS)
+        if pmc_dset and qemu_dset:
+            self.register_plot(NetperfPCExplorationTable(self, pmc_dset, qemu_dset))
+        super().plot()
 
 
 class _NetperfBenchmark(BenchmarkBase):
