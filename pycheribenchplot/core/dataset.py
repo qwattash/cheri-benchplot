@@ -7,8 +7,10 @@ from contextlib import contextmanager
 import pandas as pd
 import numpy as np
 
+
 class DatasetProcessingException(Exception):
     pass
+
 
 class DataSetParser(Enum):
     """
@@ -143,9 +145,9 @@ class DataSetContainer:
         if not dtype_check.all():
             changed = dtype_check.index[~dtype_check]
             for col in changed:
-                self.logger.error("Unexpected dtype change in %s: %s -> %s", col, csv_df.dtypes[col], self.df.dtypes[col])
+                self.logger.error("Unexpected dtype change in %s: %s -> %s", col, csv_df.dtypes[col],
+                                  self.df.dtypes[col])
             raise DatasetProcessingException("Unexpected dtype change")
-
 
     def _register_plots(self, benchmark: "BenchmarkBase"):
         pass
@@ -206,6 +208,7 @@ def dataframe_debug():
     with pd.option_context('display.max_rows', None, 'display.max_columns', None):
         yield
 
+
 def get_numeric_columns(self, df):
     columns = []
     for idx, col in enumerate(self.stats.columns):
@@ -221,6 +224,7 @@ def col2stat(prefix, colnames):
     """
     return list(map(lambda c: "{}_{}".format(prefix, c), colnames))
 
+
 def check_multi_index_aligned(df: pd.DataFrame, level: str):
     """
     Check that the given index level(s) are aligned.
@@ -228,6 +232,7 @@ def check_multi_index_aligned(df: pd.DataFrame, level: str):
     group_size = df.groupby(level).count().iloc[:, 0]
     aligned = (group_size == group_size.iloc[0]).all()
     return aligned
+
 
 def align_multi_index_levels(df: pd.DataFrame, align_levels: list[str], fill_value=None):
     """
@@ -252,7 +257,11 @@ def align_multi_index_levels(df: pd.DataFrame, align_levels: list[str], fill_val
     new_index = pd.MultiIndex.from_frame(new_index)
     return df.reindex(new_index, fill_value=fill_value).sort_index()
 
-def rotate_multi_index_level(df: pd.DataFrame, level: str, suffixes: dict[str, str]=None, fill_value=None) -> tuple[pd.DataFrame]:
+
+def rotate_multi_index_level(df: pd.DataFrame,
+                             level: str,
+                             suffixes: dict[str, str] = None,
+                             fill_value=None) -> tuple[pd.DataFrame]:
     """
     Given a dataframe with multiple datasets indexed by one level of the multi-index, rotate datasets into
     columns so that the index level is removed and the column values related to each dataset are concatenated

@@ -6,14 +6,14 @@ from jinja2 import Environment, PackageLoader, select_autoescape
 
 from .plot import DataView, CellData, Surface, PlotError
 
+
 class HTMLSurface(Surface):
     """
     Draw plots to static HTML files.
     """
 
-    env = Environment(loader=PackageLoader("pycheribenchplot"),
-                      autoescape=select_autoescape())
-    default_template="base_layout.html"
+    env = Environment(loader=PackageLoader("pycheribenchplot"), autoescape=select_autoescape())
+    default_template = "base_layout.html"
 
     def __init__(self, template=None):
         super().__init__()
@@ -45,7 +45,6 @@ class HTMLPlotCell(CellData):
     step within the jinja templates, so that we can access cell and view properties within the
     template if needed.
     """
-
     def to_html(self):
         html = []
         for view in self.views:

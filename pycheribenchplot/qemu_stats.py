@@ -6,7 +6,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .core.dataset import (DataSetContainer, IndexField, DataField, Field, align_multi_index_levels, rotate_multi_index_level, subset_xs, check_multi_index_aligned, DatasetProcessingException)
+from .core.dataset import (DataSetContainer, IndexField, DataField, Field, align_multi_index_levels,
+                           rotate_multi_index_level, subset_xs, check_multi_index_aligned, DatasetProcessingException)
 from .core.plot import Plot, MatplotlibSurface, CellData, DataView
 from .core.html import HTMLSurface
 
@@ -58,7 +59,10 @@ class QEMUAddrRangeHistTable(Plot):
         return self.benchmark.manager_config.output_path / "qemu-pc-hist-table.html"
 
     def _get_legend_map(self):
-        legend = {uuid: str(bench.instance_config.kernelabi) for uuid,bench in self.benchmark.merged_benchmarks.items()}
+        legend = {
+            uuid: str(bench.instance_config.kernelabi)
+            for uuid, bench in self.benchmark.merged_benchmarks.items()
+        }
         legend[self.benchmark.uuid] = f"{self.benchmark.instance_config.kernelabi}(baseline)"
         return legend
 
@@ -81,8 +85,9 @@ class QEMUAddrRangeHistTable(Plot):
         common_syms = nonzero & (nonzero != np.nan)
         common_df = subset_xs(df, common_syms)
         view_df, colmap = rotate_multi_index_level(common_df, "__dataset_id", legend_map)
-        show_cols = np.append(colmap.loc[:, ["count", "call_count"]].to_numpy().transpose().ravel(),
-                              colmap.loc[colmap.index != baseline, ["diff", "norm_diff"]].to_numpy().transpose().ravel())
+        show_cols = np.append(
+            colmap.loc[:, ["count", "call_count"]].to_numpy().transpose().ravel(),
+            colmap.loc[colmap.index != baseline, ["diff", "norm_diff"]].to_numpy().transpose().ravel())
         sort_cols = colmap.loc[colmap.index != baseline, "norm_diff"].to_numpy().ravel()
         view_df2 = view_df[show_cols].sort_values(list(sort_cols), ascending=False, key=abs)
         cell = self.surface.make_cell(title="Common functions BB hit count")
@@ -141,19 +146,16 @@ class QEMUAddressRangeHistogram(DataSetContainer):
         is_call = self.df["start"].map(lambda addr: resolver.lookup_exact(addr) is not None)
         self.df["call_count"] = self.df["count"].mask(~is_call, 0).astype(np.uint)
 
-        # Generate instruction count for each range of start/end addresses
-        self.df["bcount"] = (self.df["end"] - self.df["start"]) / 4 * self.df["count"]
+        # Generate number of bytes hit for each range of start/end addresses as a proxy for
+        # real instruction count. The real number will be some fraction of this number, depending
+        # on instruction size.
+        self.df["bcount"] = (self.df["end"] - self.df["start"]) * self.df["count"]
 
     def aggregate(self):
         super().aggregate()
         tmp = self.merged_df.set_index(["file", "symbol"], append=True)
         grouped = tmp.groupby(["__dataset_id", "file", "symbol"])
-        self.agg_df = grouped.agg({
-            "count": "sum",
-            "call_count": "sum",
-            "start": "min",
-            "end": "max",
-            "bcount": "sum"})
+        self.agg_df = grouped.agg({"count": "sum", "call_count": "sum", "start": "min", "end": "max", "bcount": "sum"})
         # Check that the data is sensible
         not_sensible = self.agg_df["count"] < self.agg_df["call_count"].fillna(0)
         if not_sensible.any():

@@ -196,7 +196,6 @@ class FluteStatcountersData(PMCStatData):
             self.agg_df.loc[ds_id, diff_cols] = diff.values
 
 
-
 class BeriStatcountersData:
     """
     Statcounters description and processing for CHERI-BERI

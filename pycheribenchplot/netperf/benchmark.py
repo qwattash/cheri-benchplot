@@ -14,6 +14,7 @@ from .config import NetperfBenchmarkRunConfig
 from .plot import *
 from .dataset import NetperfData
 
+
 class NetperfBenchmark(BenchmarkBase):
     def __init__(self, manager, config, instance_config, run_id=None):
         super().__init__(manager, config, instance_config, run_id=run_id)

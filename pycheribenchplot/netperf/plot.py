@@ -4,8 +4,10 @@ from enum import Enum
 import pandas as pd
 import numpy as np
 
-from ..core.plot import Plot, check_multi_index_aligned, subset_xs, rotate_multi_index_level, StackedLinePlot, StackedBarPlot, make_colormap2
+from ..core.plot import (Plot, check_multi_index_aligned, subset_xs, rotate_multi_index_level, StackedLinePlot,
+                         StackedBarPlot, make_colormap2)
 from ..core.html import HTMLSurface
+
 
 class NetperfPCExplorationTable(Plot):
     """
@@ -23,7 +25,10 @@ class NetperfPCExplorationTable(Plot):
         return self.benchmark.manager_config.output_path / "netperf-pc-table.html"
 
     def _get_legend_map(self):
-        legend = {uuid: str(bench.instance_config.kernelabi) for uuid,bench in self.benchmark.merged_benchmarks.items()}
+        legend = {
+            uuid: str(bench.instance_config.kernelabi)
+            for uuid, bench in self.benchmark.merged_benchmarks.items()
+        }
         legend[self.benchmark.uuid] = f"{self.benchmark.instance_config.kernelabi}(baseline)"
         return legend
 
@@ -49,8 +54,9 @@ class NetperfPCExplorationTable(Plot):
         common_syms = nonzero & (nonzero != np.nan)
         common_df = subset_xs(df, common_syms)
         view_df, colmap = rotate_multi_index_level(common_df, "__dataset_id", legend_map)
-        show_cols = np.append(colmap.loc[:, ["count", "call_count"]].to_numpy().transpose().ravel(),
-                              colmap.loc[colmap.index != baseline, ["diff", "norm_diff"]].to_numpy().transpose().ravel())
+        show_cols = np.append(
+            colmap.loc[:, ["count", "call_count"]].to_numpy().transpose().ravel(),
+            colmap.loc[colmap.index != baseline, ["diff", "norm_diff"]].to_numpy().transpose().ravel())
         sort_cols = colmap.loc[colmap.index != baseline, "norm_diff"].to_numpy().ravel()
         view_df2 = view_df[show_cols].sort_values(list(sort_cols), ascending=False, key=abs)
         cell = self.surface.make_cell(title="Common functions BB hit count")

@@ -14,6 +14,7 @@ import matplotlib.colors as mcolors
 
 from .dataset import *
 
+
 class PlotError(Exception):
     pass
 
@@ -25,13 +26,12 @@ class DataView(ABC):
     dataframe using the given columns as axes (if relevant).
     Individual plots can override concrete DataViews to customize the plot appearence.
     """
-
     def __init__(self, df: pd.DataFrame, options: dict = {}, x: str = "x", yleft: str = None, yright: str = None):
         self.df = df
         self.options = options
-        self.x = x # name of the x axis index level
-        self.yleft = yleft # name of the left Y data column
-        self.yright = yright # name of the right Y data column
+        self.x = x  # name of the x axis index level
+        self.yleft = yleft  # name of the left Y data column
+        self.yright = yright  # name of the right Y data column
 
     @abstractmethod
     def render(self, cell: "CellData", surface: "Surface"):
@@ -50,14 +50,13 @@ class CellData:
     """
     cell_id_gen = it.count()
 
-    def __init__(self, title = "", yleft_text = "", yright_text = "", x_text = "",
-                 legend_map = {}, legend_col = "__dataset_id"):
-        self.title = title # Title for the cell of the plot
-        self.yleft_text = yleft_text # Annotation on the left Y axis
-        self.yright_text = yright_text # Annotation on the right Y axis
+    def __init__(self, title="", yleft_text="", yright_text="", x_text="", legend_map={}, legend_col="__dataset_id"):
+        self.title = title  # Title for the cell of the plot
+        self.yleft_text = yleft_text  # Annotation on the left Y axis
+        self.yright_text = yright_text  # Annotation on the right Y axis
         self.x_text = x_text  # Annotation on the X axis
-        self.legend_map = legend_map # map index label values to human-readable names
-        self.legend_col = legend_col # Index label for the legend key of each set of data
+        self.legend_map = legend_map  # map index label values to human-readable names
+        self.legend_col = legend_col  # Index label for the legend key of each set of data
         self.views = []
         self.surface = None
         self.cell_id = next(CellData.cell_id_gen)
@@ -106,7 +105,7 @@ class Surface(ABC):
                     return np.roll(np.array([i, j]), shift=axis)
         return None
 
-    def set_layout(self, nrows: int, ncols: int, expand: bool=False, how: str="row"):
+    def set_layout(self, nrows: int, ncols: int, expand: bool = False, how: str = "row"):
         """
         Create a drawing surface with given number of rows and columns of plots.
         Note that this will reset any views that have been added to the current layout.
@@ -146,7 +145,7 @@ class Surface(ABC):
             raise IndexError("No empty cell found")
         assert len(self._layout.shape) == 2
 
-    def set_cell(self, row: int, col:int, cell: CellData):
+    def set_cell(self, row: int, col: int, cell: CellData):
         """
         Set the given data to plot on a cell
         """
@@ -173,14 +172,12 @@ class Surface(ABC):
 
 
 class MatplotlibSurface(Surface):
-
     def _supported_methods(self):
         return ["scatter", "line", "bar-group"]
 
     def _make_figure(self):
         rows, cols = self.layout_shape
-        self.fig, self.axes = plt.subplots(rows, cols, sharex=True, figsize=(10 * cols, 5 * rows),
-                                           squeeze=False)
+        self.fig, self.axes = plt.subplots(rows, cols, sharex=True, figsize=(10 * cols, 5 * rows), squeeze=False)
 
     def _plot_view(self, ax: "plt.Axes", cell: CellData, view: DataView):
         self.logger.error("Unsupported plot method %s, skip data view", view.method)
@@ -234,7 +231,6 @@ class Plot(ABC):
         """Actually draw the plot."""
         self.logger.debug("Drawing plot %s", self._get_plot_title())
         self.surface.draw(self._get_plot_title(), self._get_plot_file())
-
 
 
 #### Old stuff
