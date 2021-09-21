@@ -135,12 +135,10 @@ class InstanceOp(Enum):
     Operations that can be requested to the instance daemon
     SUMMARY: return summary of tasks on the daemon
     REQUEST: schedule a benchmark to run on an instance
-    POLL: check status of a benchmark
     RELEASE: release instance after a benchmark is done with it
     """
     SUMMARY = "summary"
     REQUEST = "request"
-    POLL = "poll"
     RELEASE = "release"
 
 
@@ -164,11 +162,20 @@ class BenchmarkInfo:
     # If the instance has qemu trace output, it will be
     # sent to this file
     qemu_trace_file: typing.Optional[Path] = None
+    # If the instance has qemu-perfetto trace output, it will
+    # be sent to this file
+    qemu_pftrace_file: typing.Optional[Path] = None
 
 
 @dataclass
 class _Reply:
     benchmarks: list[BenchmarkInfo]
+
+
+@dataclass
+class _Notification:
+    owner: uuid.UUID
+    benchmark: BenchmarkInfo
 
 
 @dataclass
@@ -182,84 +189,129 @@ class InstanceClient:
     """
     Client Interface to the zmq service.
     """
-    def __init__(self):
-        self.logger = logging.getLogger("cheri-instanced-client")
-        self.socket = ctx.socket(zmq.REQ)
-        self.socket.connect("tcp://127.0.0.1:15555")
-        self.base_poll_time = 10.0
-        self.timeout = 5.0
-        self.tmp_lock = aio.Lock()
+    class PendingBenchmark:
+        def __init__(self):
+            self.event = aio.Event()
+            self.benchmark_info = None
 
-    async def _msg(self, op: InstanceOp, owner: uuid.UUID, config: InstanceConfig = None, timeout=None) -> _Reply:
+        def dispatch(self, info: BenchmarkInfo):
+            if self.benchmark_info is not None:
+                raise InstanceDaemonError("Duplicate notification for pending benchmark")
+            self.benchmark_info = info
+            self.event.set()
+
+        async def wait(self):
+            await self.event.wait()
+
+    def __init__(self, loop: aio.AbstractEventLoop):
+        self.logger = logging.getLogger("cheri-instanced-client")
+        self.loop = loop
+        self.cmd_socket = ctx.socket(zmq.REQ)
+        self.cmd_socket.connect("tcp://127.0.0.1:15555")
+        self.cmd_socket_mutex = aio.Lock()
+        self.notify_socket = ctx.socket(zmq.SUB)
+        self.notify_socket.connect("tcp://127.0.0.1:15556")
+        self.timeout = 5.0
+        # Pending uuids -> received benchmark info
+        self._pending_events = {}
+        self._notifier_task = None
+
+    def start(self):
+        self._notifier_task = self.loop.create_task(self._notifier_loop())
+
+    async def stop(self):
+        if self._notifier_task:
+            self._notifier_task.cancel()
+            await aio.gather(self._notifier_task, return_exceptions=True)
+        self.notify_socket.close()
+
+    async def _notifier_loop(self):
+        self.logger.debug("Start client notification listener")
+        self.notify_socket.subscribe("")
+        while True:
+            msg = await self.notify_socket.recv_pyobj()
+            if msg.owner not in self._pending_events:
+                continue
+            if (msg.benchmark.status == BenchmarkStatus.READY or msg.benchmark.status == BenchmarkStatus.ERROR):
+                self._pending_events[msg.owner].dispatch(msg.benchmark)
+
+    async def _cmd_msg(self, op: InstanceOp, owner: uuid.UUID, config: InstanceConfig = None, timeout=None) -> _Reply:
         if timeout is None:
             timeout = self.timeout
         req = _Message(op=op, owner=owner, config=config)
-        await self.socket.send_pyobj(req)
-        if timeout > 0:
-            reply = await aio.wait_for(self.socket.recv_pyobj(), timeout=timeout)
-        else:
-            reply = await self.socket.recv_pyobj()
+        async with self.cmd_socket_mutex:
+            # We need to serialize command request-reply pairs as zmq REQ/REP sockets do
+            # not like multiple in-flight messages
+            await self.cmd_socket.send_pyobj(req)
+            if timeout > 0:
+                reply = await aio.wait_for(self.cmd_socket.recv_pyobj(), timeout=timeout)
+            else:
+                reply = await self.cmd_socket.recv_pyobj()
         return reply
 
     async def _summary_msg(self) -> list[BenchmarkInfo]:
-        reply = await self._msg(InstanceOp.SUMMARY, None)
+        reply = await self._cmd_msg(InstanceOp.SUMMARY, None)
         return reply.benchmarks
 
     async def _request_msg(self, owner, config, timeout=0) -> BenchmarkInfo:
-        reply = await self._msg(InstanceOp.REQUEST, owner, config, timeout)
-        return reply.benchmarks[0]
-
-    async def _poll_msg(self, owner, timeout=None) -> BenchmarkInfo:
-        reply = await self._msg(InstanceOp.POLL, owner, timeout=timeout)
+        reply = await self._cmd_msg(InstanceOp.REQUEST, owner, config, timeout)
         return reply.benchmarks[0]
 
     async def _release_msg(self, owner, timeout=None) -> BenchmarkInfo:
-        reply = await self._msg(InstanceOp.RELEASE, owner, None, timeout=timeout)
+        reply = await self._cmd_msg(InstanceOp.RELEASE, owner, None, timeout=timeout)
         return reply.benchmarks[0]
 
+    async def _wait_for_instance(self, owner: uuid.UUID):
+        pending = InstanceClient.PendingBenchmark()
+        self._pending_events[owner] = pending
+        await pending.wait()
+        self.logger.debug("Got pending instance %s status for %s", pending.benchmark_info.uuid, owner)
+        del self._pending_events[owner]
+        return pending.benchmark_info
+
     async def request_instance(self, owner: uuid.UUID, config: InstanceConfig) -> BenchmarkInfo:
-        await self.tmp_lock.acquire()
         try:
             # Check that the daemon is up
             await self._summary_msg()
             # Request and instance, the reply will arrive after the instance is ready for us
-            self.logger.debug("Request instance")
+            self.logger.debug("Request instance for %s", owner)
             info = await self._request_msg(owner, config)
             if info.status == BenchmarkStatus.READY:
                 return info
             elif info.status == BenchmarkStatus.ERROR:
-                self.logger.error("Failed to request instance")
+                self.logger.error("Failed to request instance for %s", owner)
             elif info.status == BenchmarkStatus.QUEUED or info.status == BenchmarkStatus.PENDING:
-                self.logger.error("Allocated instance is not ready")
-                await self._release_msg(owner)
+                self.logger.debug("Waiting for instance allocation")
+                info = await self._wait_for_instance(owner)
+                if info.status != BenchmarkStatus.READY:
+                    self.logger.error("Failed to request instance for %s", owner)
+                    return None
+                return info
             else:
                 self.logger.error("Invalid requested instance state")
                 await self._release_msg(owner)
             return None
         except aio.TimeoutError:
             self.logger.error("Instance request timed out, is the daemon running?")
-        finally:
-            self.tmp_lock.release()
 
     async def release_instance(self, owner: uuid.UUID, inst: BenchmarkInfo):
-        await self.tmp_lock.acquire()
         try:
             reply = await self._release_msg(owner)
         except aio.TimeoutError:
             self.logger.error("Instance request timed out, is the daemon running?")
         finally:
-            self.tmp_lock.release()
             self.logger.debug("Released instance: %s (%s:%d)", inst.uuid, inst.ssh_host, inst.ssh_port)
 
 
 class Instance(ABC):
     last_ssh_port = 12000
 
-    def __init__(self, event_loop: aio.AbstractEventLoop, daemon_config: InstanceDaemonConfig, config: InstanceConfig):
+    def __init__(self, daemon: "InstanceDaemon", config: InstanceConfig):
+        self.daemon = daemon
         # Main daemon event loop
-        self.event_loop = event_loop
+        self.event_loop = daemon.loop
         # Daemon configuration
-        self.daemon_config = daemon_config
+        self.daemon_config: InstanceDaemonConfig = daemon.config
         # Instance configuration
         self.config = config
         # Unique ID of the instance
@@ -275,13 +327,13 @@ class Instance(ABC):
         # in the owner field
         self.owner = None
         # Queue of benchmark_id waiting to run on the instance
-        self.run_queue = aio.Queue()
+        self.run_queue = []
+        # Event signaling the presence of items in the run_queue
+        self.run_queue_avail = aio.Event()
         # Signal when the instance is released by the benchmark currently owning it
         self.release_event = aio.Event()
         # Signal when a new benchmark exits the queue and acquires the instance
         self.benchmark_acquired = aio.Event()
-        # Signal status change of the instance
-        self.status_change = aio.Event()
         # Status of the instance, should be updated via set_status()
         self.status = InstanceStatus.INIT
 
@@ -289,12 +341,6 @@ class Instance(ABC):
         port = Instance.last_ssh_port
         Instance.last_ssh_port += 1
         return port
-
-    def set_status(self, next_status):
-        self.logger.debug("STATUS %s -> %s", self.status, next_status)
-        self.status = next_status
-        self.status_change.set()
-        self.status_change.clear()
 
     def get_client_info(self, benchmark_id: uuid.UUID):
         if self.status == InstanceStatus.DEAD:
@@ -310,26 +356,38 @@ class Instance(ABC):
         info = BenchmarkInfo(status=bench_status, uuid=self.uuid, ssh_port=self.ssh_port)
         return info
 
-    def schedule(self, benchmark_id):
+    def schedule(self, benchmark_id: uuid.UUID):
         if self.status == InstanceStatus.INIT or self.status == InstanceStatus.IDLE:
             # We can fast-path and avoid passing via the queue
             pass
-        self.run_queue.put_nowait(benchmark_id)
+        self._run_queue_put(benchmark_id)
 
-    async def wait_for(self, benchmark_id: uuid.UUID):
-        """
-        Wait until the given benchmark_id acquires the instance
-        """
-        while self.owner != benchmark_id:
-            await self.benchmark_acquired.wait()
-        while self.status != InstanceStatus.RUNNING:
-            if self.status == InstanceStatus.DEAD:
-                return
-            await self.status_change.wait()
+    def retire(self, benchmark_id: uuid.UUID):
+        try:
+            self.run_queue.remove(benchmark_id)
+        except ValueError:
+            self.logger.warning("Attempt to retire unscheduled benchmark %s on %s", benchmark_id, self.uuid)
+
+    def set_status(self, next_status):
+        self.logger.debug("STATUS %s -> %s", self.status, next_status)
+        self.status = next_status
+        self.daemon.notify_instance_update(self)
+
+    async def _run_queue_get(self) -> uuid.UUID:
+        await self.run_queue_avail.wait()
+        benchmark_id = self.run_queue.pop(0)
+        if len(self.run_queue) == 0:
+            self.run_queue_avail.clear()
+        return benchmark_id
+
+    def _run_queue_put(self, benchmark_id: uuid.UUID):
+        self.run_queue.append(benchmark_id)
+        if not self.run_queue_avail.is_set():
+            self.run_queue_avail.set()
 
     async def _next_scheduled_benchmark(self):
         assert self.owner is None, "Owner was not reset"
-        next_benchmark = await self.run_queue.get()
+        next_benchmark = await self._run_queue_get()
         self.benchmark_acquired.set()
         self.owner = next_benchmark
         self.logger.info("Running benchmark %s on instance %s", next_benchmark, self.uuid)
@@ -420,12 +478,13 @@ class Instance(ABC):
             raise ex
         except Exception as ex:
             self.logger.error("Fatal error: %s - shutdown instance", ex)
+            import traceback
+            traceback.print_tb(ex.__traceback__)
             await self._shutdown()
         finally:
             self.set_status(InstanceStatus.DEAD)
             # Release all waiters on the instance
             self.benchmark_acquired.set()
-            self.status_change.set()
             self.logger.debug("Exiting benchmark instance main loop")
 
     def release(self):
@@ -449,8 +508,8 @@ class Instance(ABC):
 
 
 class CheribuildInstance(Instance):
-    def __init__(self, event_loop, daemon_config, config):
-        super().__init__(event_loop, daemon_config, config)
+    def __init__(self, daemon, config):
+        super().__init__(daemon, config)
         self._cheribuild = self.daemon_config.cheribuild_path.expanduser()
         # The cheribuild process task
         self._cheribuild_task = None
@@ -469,10 +528,15 @@ class CheribuildInstance(Instance):
     def _get_qemu_trace_sink(self):
         return Path(f"/tmp/trace-{self.uuid}.out")
 
+    def _get_qemu_perfetto_sink(self):
+        # This will be a binary file containing serialized perfetto protobufs.
+        return Path(f"/tmp/pftrace-{self.uuid}.pb")
+
     def get_client_info(self, benchmark_id: uuid.UUID):
         info = super().get_client_info(benchmark_id)
         info.ssh_host = "localhost"
         info.qemu_trace_file = self._get_qemu_trace_sink()
+        info.qemu_pftrace_file = self._get_qemu_perfetto_sink()
         return info
 
     async def _boot(self):
@@ -488,15 +552,17 @@ class CheribuildInstance(Instance):
             self._cheribsd_option("build-fpga-kernels")
         ]
         # Extra qemu options and tracing tags?
-        trace_sink = str(self._get_qemu_trace_sink())
-        qemu_options = ["-D", trace_sink]
-        # Check for platform-specific options
-        if self.config.platform_options:
-            opts = self.config.platform_options
-            # We have QemuInstanceConfig options
-            if opts.qemu_trace_backend:
-                qemu_options += ["--cheri-trace-backend", opts.qemu_trace_backend]
-        run_cmd += [self._run_option("extra-options"), " ".join(qemu_options)]
+        plat_opts = self.config.platform_options
+        if (plat_opts and isinstance(plat_opts, QemuInstanceConfig) and plat_opts.qemu_trace):
+            common_trace_sink = str(self._get_qemu_trace_sink())
+            qemu_options = ["-D", common_trace_sink]
+            # Other backends are not as powerful, so focus on this one
+            qemu_options += [
+                "--cheri-trace-backend", "perfetto", "--cheri-trace-perfetto-logfile",
+                str(self._get_qemu_perfetto_sink()), "--cheri-trace-perfetto-categories",
+                ",".join(plat_opts.qemu_trace_categories)
+            ]
+            run_cmd += [self._run_option("extra-options"), " ".join(qemu_options)]
 
         self.logger.debug("%s %s", self._cheribuild, run_cmd)
         self._cheribuild_task = await aio.create_subprocess_exec(self._cheribuild,
@@ -549,12 +615,19 @@ class CheribuildInstance(Instance):
 
 
 class InstanceDaemon:
+    """
+    The service managing instances for the benchmarks to run on
+    """
     def __init__(self, config: InstanceDaemonConfig):
         self.config = config
         self.logger = logging.getLogger("cheri-instanced")
-        self.socket = ctx.socket(zmq.REP)
+        # Socket used by clients to request things
+        self.cmd_socket = ctx.socket(zmq.REP)
+        # # Socket used by the daemon to push status updates to clients
+        self.notify_socket = ctx.socket(zmq.PUB)
         try:
-            self.socket.bind("tcp://127.0.0.1:15555")
+            self.cmd_socket.bind("tcp://127.0.0.1:15555")
+            self.notify_socket.bind("tcp://127.0.0.1:15556")
             self.db = dbm.open(".cheri-instance-cache", "c")
         except zmq.ZMQError as e:
             self.logger.error("Can not start cheri-instanced: %s." + "Maybe the daemon is already running?", e)
@@ -562,12 +635,15 @@ class InstanceDaemon:
         self.loop = aio.get_event_loop()
         # Running instances
         self.active_instances = {}
+        # Instances with status updates
+        self.instance_update_queue = aio.Queue()
         # Benchmark ID mapped to the owned instance
         self.owners = {}
         # Protect owners registry against concurrent requests
         self.owners_mtx = aio.Lock()
         # I/O task for zmq socket
         self.zmq_task = None
+        self.notifier_task = None
 
     def _create_fpga_instance(self, config: InstanceConfig):
         self.logger.warning("Running on fpga not yet supported")
@@ -577,7 +653,7 @@ class InstanceDaemon:
         instance = None
         try:
             if config.platform == InstancePlatform.QEMU:
-                instance = CheribuildInstance(self.loop, self.config, config)
+                instance = CheribuildInstance(self, config)
             elif config.platform == InstancePlatform.FPGA:
                 instance = self._create_fpga_instance(config)
         except aio.CancelledError as ex:
@@ -591,7 +667,7 @@ class InstanceDaemon:
             raise InstanceDaemonError(f"Invalid instance platform {config.platform}")
         self.active_instances[instance.uuid] = instance
         instance.task = self.loop.create_task(instance.main_loop())
-        instance.task.add_done_callback(lambda: self._recycle_instance(instance))
+        instance.task.add_done_callback(lambda future: self._recycle_instance(instance))
         self.logger.debug("Created instance %s", instance.uuid)
         return instance
 
@@ -643,14 +719,18 @@ class InstanceDaemon:
             if isinstance(e, Exception):
                 import traceback
                 traceback.print_tb(e.__traceback__)
-        self.logger.info("Shutdown done.")
+        # Garbage-collect all other service tasks
+        self.notifier_task.cancel()
+        await aio.gather(self.notifier_task, return_exceptions=True)
+        self.logger.info("Global shutdown done")
 
     async def _daemon_main(self):
         try:
             self.zmq_task = self.loop.create_task(self._zmq_loop())
+            self.notifier_task = self.loop.create_task(self._zmq_notifier_loop())
             # preload_task = self.loop.create_task(self._preload_from_config())
             # await preload_task
-            await self.zmq_task
+            await aio.gather(self.zmq_task, self.notifier_task)
         except aio.CancelledError:
             self.logger.info("ZMQ loop exited")
 
@@ -678,9 +758,28 @@ class InstanceDaemon:
         inst.schedule(owner)
         return inst
 
+    def _find_instance_for(self, bench_id: uuid.UUID) -> typing.Optional[Instance]:
+        """
+        Find the instance we allocated the given benchmark
+        """
+        for instance in self.active_instances.values():
+            if instance.owner == bench_id:
+                return instance
+            # Check the instance run queue
+        return None
+
     def _error_reply(self):
         reply = _Reply(benchmarks=[BenchmarkInfo(status=BenchmarkStatus.ERROR)])
         return reply
+
+    def notify_instance_update(self, instance: Instance):
+        """
+        Notify a change in an instance state to the subscribers. This is used
+        to push the notification when a benchmark owns an instance to run on.
+        This is done by pushing the instance to a queue that is drained by the
+        notifier loop.
+        """
+        self.instance_update_queue.put_nowait(instance)
 
     async def _summary(self, msg):
         return _Reply(benchmarks=[])
@@ -694,26 +793,20 @@ class InstanceDaemon:
             return self._error_reply()
         self.logger.info("Requested instance for benchmark %s", msg.owner)
         instance = self._schedule_instance(msg.owner, msg.config)
-        self.owners[msg.owner] = instance
-        self.logger.info("Benchmark %s allocated to instance %s", msg.owner, instance.uuid)
-        await instance.wait_for(msg.owner)
-        info = instance.get_client_info(msg.owner)
-        return _Reply(benchmarks=[info])
-
-    async def _poll(self, msg):
-        if msg.owner not in self.owners:
-            self.logger.warning("Polling for unscheduled benchmark %s", msg.owner)
-            return self._error_reply()
-        instance = self.owners[msg.owner]
         info = instance.get_client_info(msg.owner)
         return _Reply(benchmarks=[info])
 
     async def _release(self, msg):
-        if msg.owner not in self.owners:
-            self.logger.warning("No instance to release for %s", msg.owner)
-            return self._error_reply()
-        instance = self.owners.pop(msg.owner)
-        instance.release()
+        instance = self._find_instance_for(msg.owner)
+        if instance is None:
+            self.logger.warning(f"No scheduled instance for %s, can not release", msg.owner)
+        else:
+            if instance.owner == msg.owner:
+                self.logger.debug("Release locked instance for %s", msg.owner)
+                instance.release()
+            else:
+                self.logger.debug("Release queued instance for %s", msg.owner)
+                instance.retire(msg.owner)
         info = instance.get_client_info(msg.owner)
         return _Reply(benchmarks=[info])
 
@@ -724,15 +817,20 @@ class InstanceDaemon:
             reply = await self._summary(msg)
         elif msg.op == InstanceOp.RELEASE:
             reply = await self._release(msg)
-        elif msg.op == InstanceOp.POLL:
-            reply = await self._poll(msg)
         else:
             reply = self._error_reply()
         return reply
 
+    async def _zmq_notifier_loop(self):
+        self.logger.info("Started cheri-instanced notifier zmq at localhost:15556")
+        while True:
+            instance = await self.instance_update_queue.get()
+            n = _Notification(instance.owner, instance.get_client_info(instance.owner))
+            await self.notify_socket.send_pyobj(n)
+
     async def _zmq_loop(self):
         self.logger.info("Started cheri-instanced zmq at localhost:15555")
         while True:
-            msg = await self.socket.recv_pyobj()
+            msg = await self.cmd_socket.recv_pyobj()
             reply = await self._process_message(msg)
-            await self.socket.send_pyobj(reply)
+            await self.cmd_socket.send_pyobj(reply)

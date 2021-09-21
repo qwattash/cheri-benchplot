@@ -42,8 +42,8 @@ class BenchmarkManager(TemplateConfigContext):
         # The ID for this benchplot session
         self.session = uuid.uuid4()
         self.logger = logging.getLogger("benchplot")
-        self.instance_manager = InstanceClient()
         self.loop = aio.get_event_loop()
+        self.instance_manager = InstanceClient(self.loop)
         self.benchmark_instances = {}
         self.queued_tasks = []
 
@@ -82,8 +82,10 @@ class BenchmarkManager(TemplateConfigContext):
 
     async def _run_tasks(self):
         await aio.gather(*self.queued_tasks)
+        await self.instance_manager.stop()
 
     def _handle_run_command(self):
+        self.instance_manager.start()
         for conf in self.config.benchmarks:
             self.logger.debug("Found benchmark %s", conf.name)
             for inst_conf in self.config.instances:
@@ -116,8 +118,10 @@ class BenchmarkManager(TemplateConfigContext):
         if len(aggregate_baseline) != len(self.config.benchmarks):
             self.logger.error("Number of benchmark variants does not match " + "number of runs marked as baseline")
             raise Exception("Missing baseline")
-        self.logger.debug("Benchmark aggregation groups: %s", aggregate_groups)
-        self.logger.debug("Benchmark aggregation baselines: %s", aggregate_baseline)
+        self.logger.debug("Benchmark aggregation groups: %s",
+                          {k: map(lambda b: b.uuid, v)
+                           for k, v in aggregate_groups.items()})
+        self.logger.debug("Benchmark aggregation baselines: %s", {k: b.uuid for k, b in aggregate_baseline.items()})
         # Merge compatible benchmark datasets into the baseline instance
         for name, baseline_bench in aggregate_baseline.items():
             baseline_bench.merge(aggregate_groups[name])
@@ -140,6 +144,7 @@ class BenchmarkManager(TemplateConfigContext):
         for t in self.queued_tasks:
             t.cancel()
         await aio.gather(*self.queued_tasks, return_exceptions=True)
+        await self.instance_manager.stop()
 
     def run(self, command):
         if command == "run":
