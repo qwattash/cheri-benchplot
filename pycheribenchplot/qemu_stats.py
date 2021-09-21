@@ -6,8 +6,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .core.dataset import (DataSetContainer, IndexField, DataField, Field, align_multi_index_levels,
-                           rotate_multi_index_level, subset_xs, check_multi_index_aligned, DatasetProcessingException)
+from .core.dataset import (IndexField, DataField, Field, align_multi_index_levels, rotate_multi_index_level, subset_xs,
+                           check_multi_index_aligned, DatasetProcessingException)
+from .core.perfetto import PerfettoDataSetContainer
 from .core.plot import Plot, MatplotlibSurface, CellData, DataView
 from .core.html import HTMLSurface
 
@@ -105,20 +106,66 @@ class QEMUAddrRangeHistTable(Plot):
         self.surface.next_cell(cell)
 
 
-class QEMUAddressRangeHistogram(DataSetContainer):
+class QEMUStatsBBHistogramDataset(PerfettoDataSetContainer):
     fields = [
-        Field("CPU", dtype=int),
-        Field("start", dtype=np.uint, importfn=lambda x: np.uint(int(x, 16))),
-        Field("end", dtype=np.uint, importfn=lambda x: np.uint(int(x, 16))),
+        IndexField("arg_set_id", dtype=int),
+        IndexField("bucket", dtype=int),
+        #Field("CPU", dtype=int),
+        Field("start", dtype=np.uint),
+        Field("end", dtype=np.uint),
         DataField("count", dtype=int)
     ]
 
-    def raw_fields(self):
-        return QEMUAddressRangeHistogram.fields
+    field_names_map = {
+        "qemu.histogram.bucket.start": "start",
+        "qemu.histogram.bucket.end": "end",
+        "qemu.histogram.bucket.value": "count"
+    }
 
-    def _internalize_csv(self, csv_df: pd.DataFrame):
-        super()._internalize_csv(csv_df)
-        self._post_intern = pd.DataFrame(self.df)
+    def raw_fields(self):
+        return QEMUStatsBBHistogramDataset.fields
+
+    def _get_sql_expr(self):
+        query = ("SELECT * FROM slice INNER JOIN args ON " + "slice.arg_set_id = args.arg_set_id WHERE " +
+                 "slice.category = 'stats' AND slice.name = 'bb_hist' AND " + "args.flat_key LIKE 'qemu%'")
+        return query
+
+    def _build_df(self, input_df: pd.DataFrame):
+        """
+        Convert the input dataframe into the dataset dataframe
+        This involves mappint the values of the key column into columns
+        qemu.histogram.bucket[n].start -> start
+        qemu.histogram.bucket[n].end -> end
+        qemu.histogram.bucket[n].value -> count
+        """
+        # Check that the dataframe matches the expected format
+        assert input_df["key"].apply(lambda k: k.startswith("qemu.histogram.bucket[")).all(
+        ), "Malformed input perfetto dataframe: expected all argument keys as qemu.histogram.bucket[n].<field>"
+        # First assign the bucket index as a column
+        extractor = re.compile("\[([0-9]+)\]")
+        input_df["bucket"] = input_df["key"].apply(lambda k: int(extractor.search(k).group(1)))
+        # Make sure the index is now aligned for all bucket field groups
+        input_df.set_index(["arg_set_id", "bucket"], inplace=True)
+        # Rotate the keys into columns using the bucket index as row index
+        tmp_df = pd.DataFrame(columns=input_df["flat_key"].unique())
+        for c in tmp_df.columns:
+            self.logger.debug(f"column {c} loop assign")
+            # Assume all bucket fields are int_values (int or uint)
+            tmp_df[c] = input_df[input_df["flat_key"] == c]["int_value"]
+
+        # XXX-AM: this is somewhat common to all perfetto dataset processing
+        # Fixup column names
+        tmp_df = tmp_df.rename(columns=self.field_names_map)
+        # Add dataset ID
+        tmp_df["__dataset_id"] = self.benchmark.uuid
+        # Normalize fields
+        tmp_df = tmp_df.reset_index(drop=False).astype(self._get_column_dtypes(include_converted=True))
+        tmp_df.set_index(self.index_columns(), inplace=True)
+        return tmp_df
+
+    # def _internalize_csv(self, csv_df: pd.DataFrame):
+    #     super()._internalize_csv(csv_df)
+    #     self._post_intern = pd.DataFrame(self.df)
 
     def _register_plots(self, benchmark):
         super()._register_plots(benchmark)

@@ -10,7 +10,7 @@ from enum import Enum
 
 import asyncssh
 
-from .config import Config, TemplateConfig, TemplateConfigContext
+from .config import Config, TemplateConfig, TemplateConfigContext, path_field
 from .benchmark import BenchmarkRunConfig, BenchmarkRunRecord, BenchmarkType
 from .instanced import InstanceClient, InstanceConfig
 from ..netperf.benchmark import NetperfBenchmark
@@ -26,6 +26,7 @@ class BenchmarkManagerConfig(TemplateConfig):
     ssh_key: Path = Path("~/.ssh/id_rsa")
     output_path: Path = field(default_factory=Path.cwd)
     sdk_path: Path = Path("~/cheri/cherisdk")
+    perfetto_path: Path = path_field("~/cheri/cheri-perfetto/build")
     instances: list[InstanceConfig] = field(default_factory=list)
     benchmarks: list[BenchmarkRunConfig] = field(default_factory=list)
 

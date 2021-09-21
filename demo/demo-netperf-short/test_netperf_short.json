@@ -1,32 +1,35 @@
-/*
- * Valid template parameters:
- * session: the session ID of the benchplot run, this is the same for all benchmarks
- *   run within a single invocation of cheri-benchplot.
- * uuid: The ID of the benchmark instnace
- * cheri_target: The cheri target of the instance running (e.g. riscv64-hybrid)
- *
- * netperf-speficif parameters:
- * netperf_pmc_outfile: the generated filename for the netperf output
- * netperf_qemu_outfile: the generated filename for the qemu trace output
- */
 {
-    "output_path": "tests/demo-{session}",
+    "output_path": "tests/demo-netperf-short",
+    "cheribuild_path": "~/git/cheri/cheribuild/cheribuild.py",
     "sdk_path": "~/git/cheri/cherisdk",
     "ssh_key": "~/git/cheri/cheri-benchplot/tests/freebsd_id_rsa",
     "instances": [
         {
+            "baseline": true,
             "kernel": "CHERI-QEMU-NODEBUG",
             "platform": "qemu",
             "cheri_target": "riscv64-purecap",
             "kernelabi": "hybrid",
             "platform_options": {
-                "qemu_trace_backend": "stats"
+                "qemu_trace": true,
+                "qemu_trace_categories": ["stats"]
+            }
+        },
+        {
+            "baseline": false,
+            "kernel": "CHERI-PURECAP-QEMU-NODEBUG",
+            "platform": "qemu",
+            "cheri_target": "riscv64-purecap",
+            "kernelabi": "purecap",
+            "platform_options": {
+                "qemu_trace": true,
+                "qemu_trace_categories": ["stats"]
             }
         }
     ],
     "benchmarks": [
         {
-            "name": "udp_rr_5k_1b",
+            "name": "udp_rr_50_1b",
             "desc": "UDP RR 5K transactions 1-byte",
             "type": "netperf",
             "output_file": "{netperf_output}",
@@ -34,11 +37,10 @@
             "benchmark_options": {
                 "qemu_log_output": "{netperf_qemu_stats}",
                 "netperf_options": ["-P", "1", "-i", "10", "-g", "qemu", "-G", "{netperf_pmc}",
-                                    "-l", "-5000", "-t", "UDP_RR", "--", "-o", "all",
+                                    "-l", "-50", "-t", "UDP_RR", "--", "-o", "all",
                                     "-r", "1,1", "-u", "{uuid}"],
                 "netserver_options": ["-D"]
             },
-            // Describe replacement names for datasets and file names
             "datasets": {
                 "netperf-output": {
                     "name": "netperf-output-{uuid}.csv",
@@ -51,9 +53,8 @@
                 "netperf-qemu-stats": {
                     "name": "netperf-qemu-stats-{uuid}.csv",
                     "parser": "qemu-stats"
-                },
-            },
-            "plots": []
+                }
+            }
         }
     ]
 }

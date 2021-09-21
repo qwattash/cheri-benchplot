@@ -4,11 +4,11 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 
-from .dataset import DataSetContainer, DataField, StrField, Field
+from .dataset import CSVDataSetContainer, DataField, StrField, Field
 from .instanced import InstanceCheriBSD, InstancePlatform
 
 
-class ProcstatDataset(DataSetContainer):
+class ProcstatDataset(CSVDataSetContainer):
     fields = [
         Field("PID", dtype=int),
         DataField("START", dtype=int, importfn=lambda x: int(x, 16)),

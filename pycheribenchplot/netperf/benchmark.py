@@ -9,7 +9,7 @@ import pandas as pd
 from ..core.benchmark import BenchmarkBase, BenchmarkDataSetConfig
 from ..core.instanced import InstancePlatform
 from ..core.dataset import DataSetParser
-from ..qemu_stats import QEMUAddressRangeHistogram
+from ..qemu_stats import QEMUStatsBBHistogramDataset
 from .config import NetperfBenchmarkRunConfig
 from .plot import *
 from .dataset import NetperfData
@@ -61,8 +61,9 @@ class NetperfBenchmark(BenchmarkBase):
         for out in self.config.extra_files:
             await self._extract_file(out, self.result_path / out)
         if self.instance_config.platform == InstancePlatform.QEMU:
-            # Grab the qemu log
-            shutil.copy(self._reserved_instance.qemu_trace_file, self.result_path / self.netperf_config.qemu_log_output)
+            # Grab the qemu perfetto log
+            shutil.copy(self._reserved_instance.qemu_pftrace_file,
+                        self.result_path / self.netperf_config.qemu_log_output)
 
     def _get_dataset_parser(self, dset_key: str, dset: BenchmarkDataSetConfig):
         if dset.parser == DataSetParser.NETPERF_DATA:
@@ -120,7 +121,7 @@ class _NetperfBenchmark(BenchmarkBase):
 
     def plot(self):
         self.netperf = NetperfData(self.options)
-        self.qemu_pc_samples = QEMUAddressRangeHistogram(self.options, prefix=self.options.qemu_pc_samples_prefix)
+        self.qemu_pc_samples = QEMUStatsBBHistogramDataset(self.options, prefix=self.options.qemu_pc_samples_prefix)
         super().plot()
 
     # async def run_on_instance(self, instance: BenchmarkInstance):

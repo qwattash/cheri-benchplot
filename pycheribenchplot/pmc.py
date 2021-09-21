@@ -5,11 +5,11 @@ import pandas as pd
 import numpy as np
 
 from .core.cpu import *
-from .core.dataset import DataSetContainer, StrField, DataField, IndexField
+from .core.dataset import CSVDataSetContainer, StrField, DataField, IndexField
 from .core.instanced import InstanceCheriBSD, InstancePlatform
 
 
-class PMCStatData(DataSetContainer):
+class PMCStatData(CSVDataSetContainer):
     fields = [
         IndexField("progname", dtype=str),
         IndexField("archname", dtype=str),

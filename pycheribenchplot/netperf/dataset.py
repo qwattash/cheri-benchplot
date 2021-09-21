@@ -4,10 +4,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from ..core.dataset import (Field, DataField, StrField, IndexField, DataSetContainer, col2stat)
+from ..core.dataset import (Field, DataField, StrField, IndexField, CSVDataSetContainer, col2stat)
 
 
-class NetperfData(DataSetContainer):
+class NetperfData(CSVDataSetContainer):
     fields = [
         StrField("Socket Type"),
         StrField("Protocol"),

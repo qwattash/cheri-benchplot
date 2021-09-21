@@ -64,7 +64,8 @@ class InstanceKernelABI(Enum):
 @dataclass
 class QemuInstanceConfig(TemplateConfig):
     """QEMU-specific instance configuration"""
-    qemu_trace_backend: str = None
+    qemu_trace: bool = False
+    qemu_trace_categories: list[str] = field(default_factory=list)
 
 
 @dataclass
