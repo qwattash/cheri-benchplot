@@ -20,7 +20,8 @@ class DataSetParser(Enum):
     """
     PMC = "pmc"
     NETPERF_DATA = "netperf-data"
-    QEMU_STATS = "qemu-stats"
+    QEMU_STATS_BB_HIST = "qemu-stats-bb"
+    QEMU_STATS_CALL_HIST = "qemu-stats-call"
 
     def __str__(self):
         return self.value
@@ -30,12 +31,13 @@ class Field:
     """
     Helper class to describe a data column from a CSV or other file
     """
-    def __init__(self, name, desc=None, dtype=float, isdata=False, isindex=False, importfn=None):
+    def __init__(self, name, desc=None, dtype=float, isdata=False, isindex=False, isderived=False, importfn=None):
         self.name = name
         self.dtype = dtype
         self.desc = desc if desc is not None else name
         self.isdata = isdata
         self.isindex = isindex
+        self.isderived = isderived
         self.importfn = importfn
 
 
@@ -63,6 +65,17 @@ class IndexField(Field):
     def __init__(self, name, desc=None, **kwargs):
         kwargs["isindex"] = True
         super().__init__(name, desc=None, **kwargs)
+
+
+class DerivedField(Field):
+    """
+    Indicates a field that is generated during processing and will be guaranteed to
+    appear only in the final aggregate dataframe for the dataset.
+    """
+    def __init__(self, name, desc=None, **kwargs):
+        kwargs["isderived"] = True
+        kwargs.setdefault("isdata", True)
+        super().__init__(name, desc, **kwargs)
 
 
 class DataSetContainer(ABC):
@@ -93,13 +106,18 @@ class DataSetContainer(ABC):
         if self.benchmark.instance_config.baseline:
             self._register_plots(benchmark)
 
-    def raw_fields(self) -> "typing.Sequence[Field]":
-        """All fields that MAY be present in the input files"""
+    def raw_fields(self, include_derived=False) -> "typing.Sequence[Field]":
+        """
+        All fields that MAY be present in the input files.
+        This is the set of fields that we expect to build the input dataframe (self.df).
+        Other processing steps during pre-merge, and post-merge may add derived fields and
+        index levels as necessary.
+        """
         return []
 
-    def all_columns(self) -> "typing.Sequence[str]":
+    def all_columns(self, include_derived=False) -> "typing.Sequence[str]":
         """All column names in the container dataframe, including the index names"""
-        return set(self.index_columns() + [f.name for f in self.raw_fields()])
+        return set(self.index_columns() + [f.name for f in self.raw_fields(include_derived)])
 
     def index_columns(self):
         """All column names that are to be used as dataset index in the container dataframe"""
@@ -108,12 +126,12 @@ class DataSetContainer(ABC):
     def all_columns_noindex(self) -> "typing.Sequence[str]":
         return set(self.all_columns()) - set(self.index_columns())
 
-    def data_columns(self):
+    def data_columns(self, include_derived=False):
         """
         All data column names in the container dataframe.
         This MUST NOT include synthetic data columns that are generated after importing the dataframe.
         """
-        return [f.name for f in self.raw_fields() if f.isdata]
+        return [f.name for f in self.raw_fields(include_derived) if f.isdata]
 
     def _get_column_dtypes(self, include_converted=False) -> dict[str, type]:
         return {f.name: f.dtype for f in self.raw_fields() if include_converted or f.importfn is None}

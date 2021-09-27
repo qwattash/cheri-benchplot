@@ -1,5 +1,5 @@
 {
-    "output_path": "~/git/cheri/cheri-benchplot/tests/demo-netperf-multi-instance",
+    "output_path": "~/git/cheri/cheri-benchplot/demo/demo-netperf-multi-instance",
     "sdk_path": "~/git/cheri/cherisdk",
     "ssh_key": "~/git/cheri/cheri-benchplot/tests/freebsd_id_rsa",
     "cheribuild_path": "~/git/cheri/cheribuild/cheribuild.py",
@@ -53,7 +53,11 @@
                 },
                 "netperf-qemu-stats": {
                     "name": "netperf-qemu-stats-{uuid}.pb",
-                    "parser": "qemu-stats"
+                    "parser": "qemu-stats-bb"
+                },
+                "netperf-qemu-stats-call": {
+                    "name": "netperf-qemu-stats-{uuid}.pb",
+                    "parser": "qemu-stats-call"
                 }
             }
         }

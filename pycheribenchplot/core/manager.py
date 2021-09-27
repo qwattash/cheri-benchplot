@@ -137,7 +137,7 @@ class BenchmarkManager(TemplateConfigContext):
     def _handle_plot_command(self):
         self.logger.debug("Import records from %s", self.benchmark_records_path)
         if not self.benchmark_records_path.exists() or self.benchmark_records_path.is_dir():
-            self.logger.error("Fatal: Invalid benchmark records file")
+            self.logger.error("Fatal: Invalid benchmark records file %s", self.benchmark_records_path)
             exit(1)
         self.queued_tasks.append(self.loop.create_task(self._plot_task()))
 

@@ -72,9 +72,11 @@ class NetperfBenchmark(BenchmarkBase):
 
     def plot(self):
         pmc_dset = self.get_dataset(DataSetParser.PMC)
-        qemu_dset = self.get_dataset(DataSetParser.QEMU_STATS)
-        if pmc_dset and qemu_dset:
-            self.register_plot(NetperfPCExplorationTable(self, pmc_dset, qemu_dset))
+        qemu_bb_dset = self.get_dataset(DataSetParser.QEMU_STATS_BB_HIST)
+        qemu_call_dset = self.get_dataset(DataSetParser.QEMU_STATS_CALL_HIST)
+        self.register_plot(NetperfQEMUStatsExplorationTable(self, pmc_dset, qemu_bb_dset, qemu_call_dset))
+        # if pmc_dset and qemu_dset:
+        #     self.register_plot(NetperfPCExplorationTable(self, pmc_dset, qemu_bb_dset))
         super().plot()
 
 

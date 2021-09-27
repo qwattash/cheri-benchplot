@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .core.dataset import (IndexField, DataField, Field, align_multi_index_levels, rotate_multi_index_level, subset_xs,
+from .core.dataset import (IndexField, DataField, DerivedField, Field, align_multi_index_levels, rotate_multi_index_level, subset_xs,
                            check_multi_index_aligned, DatasetProcessingException)
 from .core.perfetto import PerfettoDataSetContainer
 from .core.plot import Plot, MatplotlibSurface, CellData, DataView
@@ -54,7 +54,7 @@ class QEMUAddrRangeHistTable(Plot):
         self.dataset = dataset
 
     def _get_plot_title(self):
-        return "QEMU PC hit count"
+        return "QEMU Stats"
 
     def _get_plot_file(self):
         return self.benchmark.manager_config.output_path / "qemu-pc-hist-table.html"
@@ -74,24 +74,35 @@ class QEMUAddrRangeHistTable(Plot):
         """
         legend_map = self._get_legend_map()
         baseline = self.benchmark.uuid
-        df = self.dataset.agg_df
+        # Stacked plots on a single column
+        self.surface.set_layout(1, 1, expand=True, how="row")
+        # Make sure we copy it and do not mess with the original
+        df = self.dataset.agg_df.copy()
         if not check_multi_index_aligned(df, "__dataset_id"):
             self.logger.error("Unaligned index, skipping plot")
             return
 
-        df["norm_diff"] = df["norm_diff"] * 100  # make the ratio a percentage
-        self.surface.set_layout(1, 1, expand=True, how="row")
+        data_cols = self.dataset.data_columns(include_derived=True)
+        # Make normalized fields a percentage
+        norm_cols = [col for col in data_cols if col.startswith("norm_")]
+        df[norm_cols] = df[norm_cols] * 100
+        # base data columns, displayed for both baseline and measure runs
+        common_cols = self.dataset.data_columns()
+        # derived data columns, displayed only for measure runs as they are comparative results
+        measure_cols = list(set(data_cols) - set(common_cols))
+
         # Table for common functions
         nonzero = df["count"].groupby(["file", "symbol"]).min() != 0
         common_syms = nonzero & (nonzero != np.nan)
         common_df = subset_xs(df, common_syms)
         view_df, colmap = rotate_multi_index_level(common_df, "__dataset_id", legend_map)
         show_cols = np.append(
-            colmap.loc[:, ["count", "call_count"]].to_numpy().transpose().ravel(),
-            colmap.loc[colmap.index != baseline, ["diff", "norm_diff"]].to_numpy().transpose().ravel())
-        sort_cols = colmap.loc[colmap.index != baseline, "norm_diff"].to_numpy().ravel()
+            colmap.loc[:, common_cols].to_numpy().transpose().ravel(),
+            colmap.loc[colmap.index != baseline, measure_cols].to_numpy().transpose().ravel())
+        # Sorting
+        sort_cols = colmap.loc[colmap.index != baseline, "count"].to_numpy().ravel()
         view_df2 = view_df[show_cols].sort_values(list(sort_cols), ascending=False, key=abs)
-        cell = self.surface.make_cell(title="Common functions BB hit count")
+        cell = self.surface.make_cell(title="QEMU stats for common functions")
         view = self.surface.make_view("table", df=view_df2)
         cell.add_view(view)
         self.surface.next_cell(cell)
@@ -106,29 +117,7 @@ class QEMUAddrRangeHistTable(Plot):
         self.surface.next_cell(cell)
 
 
-class QEMUStatsBBHistogramDataset(PerfettoDataSetContainer):
-    fields = [
-        IndexField("arg_set_id", dtype=int),
-        IndexField("bucket", dtype=int),
-        #Field("CPU", dtype=int),
-        Field("start", dtype=np.uint),
-        Field("end", dtype=np.uint),
-        DataField("count", dtype=int)
-    ]
-
-    field_names_map = {
-        "qemu.histogram.bucket.start": "start",
-        "qemu.histogram.bucket.end": "end",
-        "qemu.histogram.bucket.value": "count"
-    }
-
-    def raw_fields(self):
-        return QEMUStatsBBHistogramDataset.fields
-
-    def _get_sql_expr(self):
-        query = ("SELECT * FROM slice INNER JOIN args ON " + "slice.arg_set_id = args.arg_set_id WHERE " +
-                 "slice.category = 'stats' AND slice.name = 'bb_hist' AND " + "args.flat_key LIKE 'qemu%'")
-        return query
+class QEMUStatsHistogramDataset(PerfettoDataSetContainer):
 
     def _build_df(self, input_df: pd.DataFrame):
         """
@@ -149,13 +138,12 @@ class QEMUStatsBBHistogramDataset(PerfettoDataSetContainer):
         # Rotate the keys into columns using the bucket index as row index
         tmp_df = pd.DataFrame(columns=input_df["flat_key"].unique())
         for c in tmp_df.columns:
-            self.logger.debug(f"column {c} loop assign")
             # Assume all bucket fields are int_values (int or uint)
             tmp_df[c] = input_df[input_df["flat_key"] == c]["int_value"]
 
         # XXX-AM: this is somewhat common to all perfetto dataset processing
         # Fixup column names
-        tmp_df = tmp_df.rename(columns=self.field_names_map)
+        tmp_df = tmp_df.rename(columns=self.field_names_map())
         # Add dataset ID
         tmp_df["__dataset_id"] = self.benchmark.uuid
         # Normalize fields
@@ -163,9 +151,149 @@ class QEMUStatsBBHistogramDataset(PerfettoDataSetContainer):
         tmp_df.set_index(self.index_columns(), inplace=True)
         return tmp_df
 
-    # def _internalize_csv(self, csv_df: pd.DataFrame):
-    #     super()._internalize_csv(csv_df)
-    #     self._post_intern = pd.DataFrame(self.df)
+    def pre_merge(self):
+        """
+        Resolve symbols to mach each entry to the function containing it.
+        We update the raw-data dataframe with a new column accordingly.
+        """
+        super().pre_merge()
+        resolver = self.benchmark.sym_resolver
+        # If there is no 'end' columns size will be a zero vector
+        size = self.df.get("end", self.df["start"]) - self.df["start"]
+        mapped = self.df["start"].map(lambda addr: resolver.lookup_bounded(addr))
+        sym_size = mapped.map(lambda syminfo: syminfo.size if syminfo else np.nan)
+        # Add metadata colum not note whether we found a symbol for the entry or not
+        valid_syms = (~sym_size.isna()) | (sym_size >= size)
+        self.df["symbol"] = mapped.map(lambda syminfo: syminfo.name if syminfo else "<unknown>")
+        self.df.loc[~valid_syms, "symbol"] = self.df.loc[~valid_syms, "start"].transform(lambda addr: f"0x{addr:x}")
+        # Note: For the file name, we omit the directory part as otherwise the same executable
+        # in different directories will be picked up as a completely different file. This is
+        # not useful when comparing different compilations that have different paths e.g. the kernel
+        # We also have to handle rtld manually to map its name.
+        self.df["file"] = mapped.map(lambda syminfo: syminfo.filepath.name if syminfo else "<unknown>")
+        self.df.loc[~valid_syms, "file"] = "<unknown>"
+
+    def aggregate(self):
+        super().aggregate()
+        tmp = self.merged_df.set_index(["file", "symbol"], append=True)
+        grouped = tmp.groupby(["__dataset_id", "file", "symbol"])
+        self.agg_df = grouped.agg({"count": "sum", "start": "min"})
+
+    def _diff_columns(self):
+        return ["count"]
+
+    def post_aggregate(self):
+        super().post_aggregate()
+        # Align dataframe on the (file, symbol) pairs where we want to get an union of
+        # the symbols set for each file, repeated for each dataset_id.
+        new_df = align_multi_index_levels(self.agg_df, ["file", "symbol"], fill_value=0)
+        # Now we can safely assign as there are no missing values.
+        # 1) Compute delta for each metric for each function w.r.t. the baseline.
+        # 2) Build the normalized delta for each metric, note that this will generate infinities where
+        #   the baseline benchmark count is 0 (e.g. extra functions called only in other samples)
+        baseline = new_df.xs(self.benchmark.uuid, level="__dataset_id")
+        datasets = new_df.index.get_level_values("__dataset_id").unique()
+        base_cols = self._diff_columns()
+        diff_cols = [f"diff_{col}" for col in base_cols]
+        norm_cols = [f"norm_{col}" for col in diff_cols]
+        new_df[diff_cols] = 0
+        new_df[norm_cols] = 0
+        # XXX could avoid this loop by repeating N times the baseline values and vectorize the division?
+        for ds_id in datasets:
+            other = new_df.xs(ds_id, level="__dataset_id")
+            diff = other[base_cols].subtract(baseline[base_cols])
+            norm_diff = diff[base_cols].divide(baseline[base_cols])
+            new_df.loc[ds_id, diff_cols] = diff[base_cols].values
+            new_df.loc[ds_id, norm_cols] = norm_diff[base_cols].values
+        self.agg_df = new_df
+
+
+class QEMUStatsBBHistogramDataset(QEMUStatsHistogramDataset):
+    """Basic-block hit count histogram"""
+
+    fields = [
+        IndexField("arg_set_id", dtype=int),
+        IndexField("bucket", dtype=int),
+        #Field("CPU", dtype=int),
+        Field("start", dtype=np.uint),
+        Field("end", dtype=np.uint),
+        DataField("count", dtype=int),
+        DerivedField("diff_count", dtype=int),
+        DerivedField("norm_diff_count", dtype=float)
+    ]
+
+    def raw_fields(self, include_derived=False):
+        fields = super().raw_fields(include_derived)
+        fields += [f for f in QEMUStatsBBHistogramDataset.fields
+                   if include_derived or not f.isderived]
+        return fields;
+
+    def field_names_map(self):
+        return {
+            "qemu.histogram.bucket.start": "start",
+            "qemu.histogram.bucket.end": "end",
+            "qemu.histogram.bucket.value": "count"
+        }
+
+    def _get_sql_expr(self):
+        query = ("SELECT * FROM slice INNER JOIN args ON " + "slice.arg_set_id = args.arg_set_id WHERE " +
+                 "slice.category = 'stats' AND slice.name = 'bb_hist' AND " + "args.flat_key LIKE 'qemu%'")
+        return query
+
+    def _register_plots(self, benchmark):
+        super()._register_plots(benchmark)
+        benchmark.register_plot(QEMUAddrRangeHistTable(benchmark, self))
+        # benchmark.register_plot(QEMUAddrRangeHistBars(benchmark, self))
+
+    def pre_merge(self):
+        super().pre_merge()
+        # Generate number of bytes hit for each range of start/end addresses as a proxy for
+        # real instruction count. The real number will be some fraction of this number, depending
+        # on instruction size.
+        self.df["bcount"] = (self.df["end"] - self.df["start"]) * self.df["count"]
+
+    def aggregate(self):
+        super().aggregate()
+        tmp = self.merged_df.set_index(["file", "symbol"], append=True)
+        grouped = tmp.groupby(["__dataset_id", "file", "symbol"])
+        self.agg_df["end"] = grouped["end"].max()
+        self.agg_df["bcount"] = grouped["bcount"].sum()
+
+    def _diff_columns(self):
+        cols = super()._diff_columns()
+        return cols + ["bcount"]
+
+
+class QEMUStatsBranchHistogramDataset(QEMUStatsHistogramDataset):
+    """Branch instruction target hit count histogram"""
+
+    fields = [
+        IndexField("arg_set_id", dtype=int),
+        IndexField("bucket", dtype=int),
+        #Field("CPU", dtype=int),
+        Field("start", dtype=np.uint),
+        DataField("count", dtype=int),
+        DerivedField("call_count", dtype=int),
+        DerivedField("diff_call_count", dtype=int),
+        DerivedField("norm_diff_call_count", dtype=float)
+    ]
+
+    def _get_sql_expr(self):
+        query = ("SELECT * FROM slice INNER JOIN args ON " + "slice.arg_set_id = args.arg_set_id WHERE " +
+                 "slice.category = 'stats' AND slice.name = 'branch_hist' AND " + "args.flat_key LIKE 'qemu%'")
+        return query
+
+    def raw_fields(self, include_derived=False):
+        fields = super().raw_fields(include_derived)
+        fields += [f for f in QEMUStatsBranchHistogramDataset.fields
+                   if include_derived or not f.isderived]
+        return fields;
+
+    def field_names_map(self):
+        return {
+            "qemu.histogram.bucket.start": "start",
+            "qemu.histogram.bucket.value": "count"
+        }
 
     def _register_plots(self, benchmark):
         super()._register_plots(benchmark)
@@ -179,58 +307,19 @@ class QEMUStatsBBHistogramDataset(PerfettoDataSetContainer):
         """
         super().pre_merge()
         resolver = self.benchmark.sym_resolver
-        mapped = self.df["start"].map(lambda addr: resolver.lookup(addr))
-        self.df["symbol"] = mapped.map(lambda syminfo: syminfo.name)
-        # Note: For the file name, we omit the directory part as otherwise the same executable
-        # in different directories will be picked up as a completely different file. This is
-        # not useful when comparing different compilations that have different paths e.g. the kernel
-        # We also have to handle rtld manually to map its name.
-        self.df["file"] = mapped.map(lambda syminfo: syminfo.filepath.name)
-
-        # Generate now a new column only for entries that EXACTLY match symbols, meaning that
-        # this is the first basic-block of the function and is considered as an individual call
+        # Generate now a new column only for entries that exactly match symbols, meaning that
+        # these are function calls is the first basic-block of the function and is considered as an individual call
         # to that function
         is_call = self.df["start"].map(lambda addr: resolver.lookup_exact(addr) is not None)
-        self.df["call_count"] = self.df["count"].mask(~is_call, 0).astype(np.uint)
-
-        # Generate number of bytes hit for each range of start/end addresses as a proxy for
-        # real instruction count. The real number will be some fraction of this number, depending
-        # on instruction size.
-        self.df["bcount"] = (self.df["end"] - self.df["start"]) * self.df["count"]
+        self.df["call_count"] = self.df["count"].mask(~is_call, 0).astype(int)
 
     def aggregate(self):
         super().aggregate()
         tmp = self.merged_df.set_index(["file", "symbol"], append=True)
         grouped = tmp.groupby(["__dataset_id", "file", "symbol"])
-        self.agg_df = grouped.agg({"count": "sum", "call_count": "sum", "start": "min", "end": "max", "bcount": "sum"})
-        # Check that the data is sensible
-        not_sensible = self.agg_df["count"] < self.agg_df["call_count"].fillna(0)
-        if not_sensible.any():
-            self.logger.debug("Offending rows:\n%s", self.agg_df.loc[not_sensible])
-            raise DatasetProcessingException("Call count must always be less than the total PC hit count")
+        self.agg_df["call_count"] = grouped["call_count"].sum()
+        # Drop anything that is not a function call?
 
-    def post_aggregate(self):
-        super().post_aggregate()
-        # Align dataframe on the (file, symbol) pairs where we want to get an union of
-        # the symbols set for each file, repeated for each dataset_id.
-        new_df = align_multi_index_levels(self.agg_df, ["file", "symbol"], fill_value=0)
-        # Now we can safely assign as there are no missing values.
-        # 1) Compute difference in calls for each function w.r.t. the baseline.
-        # 2) Now build the normalized absolute count, note that this will generate infinities where
-        #   the baseline benchmark count is 0 (e.g. extra functions called only in other samples)
-        baseline = new_df.xs(self.benchmark.uuid, level="__dataset_id")
-        datasets = new_df.index.get_level_values("__dataset_id").unique()
-        new_df[["diff", "diff_bcount", "norm_diff", "call_diff", "norm_call_diff"]] = 0
-        new_df["norm_diff"] = 0
-        # XXX could avoid this loop by repeating N times the baseline values and vectorize the division?
-        for ds_id in datasets:
-            other = new_df.xs(ds_id, level="__dataset_id")
-            diff = other.subtract(baseline)
-            norm_diff = diff["count"].divide(baseline["count"])
-            norm_call_diff = diff["call_count"].subtract(baseline["call_count"])
-            new_df.loc[ds_id, "diff"] = diff["count"].values
-            new_df.loc[ds_id, "diff_bcount"] = diff["bcount"].values
-            new_df.loc[ds_id, "call_diff"] = diff["call_count"].values
-            new_df.loc[ds_id, "norm_diff"] = norm_diff.values
-            new_df.loc[ds_id, "norm_call_diff"] = norm_call_diff.values
-        self.agg_df = new_df
+    def _diff_columns(self):
+        cols = super()._diff_columns()
+        return cols + ["call_count"]

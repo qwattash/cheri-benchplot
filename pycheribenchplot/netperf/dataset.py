@@ -154,7 +154,7 @@ class NetperfData(CSVDataSetContainer):
         StrField("CHERI Kernel ABI")
     ]
 
-    def raw_fields(self):
+    def raw_fields(self, include_derived=False):
         return NetperfData.fields
 
     def _load_csv(self, path: Path, **kwargs):

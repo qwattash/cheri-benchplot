@@ -23,7 +23,7 @@ class ProcstatDataset(CSVDataSetContainer):
         StrField("PATH")
     ]
 
-    def raw_fields(self):
+    def raw_fields(self, include_derived=False):
         return ProcstatDataset.fields
 
     def _load_csv(self, path: Path, **kwargs):

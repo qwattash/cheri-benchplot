@@ -62,7 +62,11 @@
                     },
                     "netperf-qemu-stats": {
                         "name": "netperf-qemu-stats-08e9f7fd-581e-4c5b-8e1c-eb202714d71f.pb",
-                        "parser": "qemu-stats"
+                        "parser": "qemu-stats-bb"
+                    },
+                    "netperf-qemu-stats-call": {
+                        "name": "netperf-qemu-stats-08e9f7fd-581e-4c5b-8e1c-eb202714d71f.pb",
+                        "parser": "qemu-stats-call"
                     }
                 },
                 "desc": "UDP RR 5K transactions 1-byte",
@@ -133,7 +137,11 @@
                     },
                     "netperf-qemu-stats": {
                         "name": "netperf-qemu-stats-b152dc4a-31ed-4c15-8bde-df96b66b1a57.pb",
-                        "parser": "qemu-stats"
+                        "parser": "qemu-stats-bb"
+                    },
+                    "netperf-qemu-stats-call": {
+                        "name": "netperf-qemu-stats-b152dc4a-31ed-4c15-8bde-df96b66b1a57.pb",
+                        "parser": "qemu-stats-call"
                     }
                 },
                 "desc": "UDP RR 5K transactions 1-byte",

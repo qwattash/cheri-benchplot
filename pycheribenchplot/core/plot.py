@@ -3,6 +3,7 @@ import typing
 import itertools as it
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from collections import OrderedDict
 
 import numpy as np
 import pandas as pd
@@ -19,19 +20,122 @@ class PlotError(Exception):
     pass
 
 
+class ColorMap:
+
+    @classmethod
+    def from_keys(cls, keys: list, mapname: str = "Pastel1"):
+        nkeys = len(keys)
+        cmap = plt.get_cmap(mapname)
+        return ColorMap(keys, cmap(range(nkeys)), keys)
+
+    @classmethod
+    def from_index(cls, df: pd.DataFrame, mapname: str = "Pastel1"):
+        values = df.index.unique()
+        nvalues = len(values)
+        cmap = plt.get_cmap(mapname)
+        return ColorMap(values, cmap(range(nvalues)), map(lambda val: str(val), values))
+
+    @classmethod
+    def from_column(cls, col: pd.Series, mapname: str = "Pastel1"):
+        values = col.unique()
+        nvalues = len(values)
+        cmap = plt.get_cmap(mapname)
+        return ColorMap(values, cmap(range(nvalues)), values)
+
+    @classmethod
+    def base8(cls):
+        """Hardcoded 8-color map with color names as keys (solarized-light theme)"""
+        colors = {
+            "black": "#002b36",
+            "red": "#dc322f",
+            "green": "#859900",
+            "orange": "#cb4b16",
+            "yellow": "#b58900",
+            "blue": "#268bd2",
+            "magenta": "#d33682",
+            "violet": "#6c71c4",
+            "cyan": "#2aa198",
+            "white": "#839496"
+        }
+        return ColorMap(colors.keys(), colors.values(), colors.keys())
+
+    def __init__(self, keys: typing.Iterable[typing.Hashable],
+                 colors, labels: typing.Iterable[str]):
+        self.cmap = OrderedDict()
+        for k,c,l in zip(keys, colors, labels):
+            self.cmap[k] = (c, l)
+
+    @property
+    def colors(self):
+        return map(lambda pair: pair[0], self.cmap.values())
+
+    @property
+    def labels(self):
+        return map(lambda pair: pair[1], self.cmap.values())
+
+    def get_color(self, key: typing.Hashable):
+        if key is None:
+            return None
+        return self.cmap[key][0]
+
+    def get_label(self, key: typing.Hashable):
+        if key is None:
+            return None
+        return self.cmap[key][1]
+
+    def color_items(self):
+        return {k: pair[0] for k,pair in self.cmap.items()}
+
+    def __iter__(self):
+        return zip(self.colors, self.labels)
+
+
 class DataView(ABC):
     """
     Base class for single plot types that are drawn onto a cell.
     A data view encodes the rendering logic for a specific type of plot (e.g. a line plot) from a generic
     dataframe using the given columns as axes (if relevant).
     Individual plots can override concrete DataViews to customize the plot appearence.
+    Arguments:
+    df: View dataframe
+    options: Extra options to pass to the surface
+    x: name of the column to pull X-axis values from (default 'x')
+    yleft: name of the column(s) to pull left Y-axis values from, if any
+    yright: name of the column(s) to pull right Y-axis values from, if any
+    colormap: colormap to use for individual samples in the dataset. This can be used to map different samples
+    to different colors. If none is given, no coloring will be performed
+    color_col: column to use as key for the color in the colormap. If a colormap is given but no color column, the
+    index will be used.
     """
-    def __init__(self, df: pd.DataFrame, options: dict = {}, x: str = "x", yleft: str = None, yright: str = None):
+    def __init__(self, df: pd.DataFrame, options: dict = {}, x: str = "x",
+                 yleft: typing.Union[str,list[str]] = [],
+                 yright: typing.Union[str,list[str]] = [],
+                 colormap: ColorMap = None, color_col: str = None):
         self.df = df
         self.options = options
-        self.x = x  # name of the x axis index level
-        self.yleft = yleft  # name of the left Y data column
-        self.yright = yright  # name of the right Y data column
+        self.x = x
+        self._yleft = yleft
+        self._yright = yright
+        self.colormap = colormap
+        self.color_col = color_col
+
+    @property
+    def yleft(self) -> list[str]:
+        """Return a normalized list of yleft column names"""
+        if isinstance(self._yleft, str):
+            return [self._yleft]
+        else:
+            # Any other iterable is fine
+            return self._yleft
+
+    @property
+    def yright(self) -> list[str]:
+        """Return a normalized list of yrigth column names"""
+        if isinstance(self._yright, str):
+            return [self._yright]
+        else:
+            # Any other iterable is fine
+            return self._yright
 
     @abstractmethod
     def render(self, cell: "CellData", surface: "Surface"):
@@ -87,6 +191,10 @@ class Surface(ABC):
     @property
     def layout_shape(self):
         return self._layout.shape
+
+    def output_file_ext(self):
+        """Extension for the output file"""
+        return ""
 
     def find_empty_cell(self):
         """
@@ -283,7 +391,7 @@ def align_twin_axes(ax, ax_twin, min_twin, max_twin):
         ax_twin.set_ylim(twin_lim[0], twin_lim[1] - twin_shift)
 
 
-class ColorMap:
+class _ColorMap:
     def __init__(self, colors, labels):
         self.colors = colors
         self.label = labels
@@ -295,7 +403,7 @@ class ColorMap:
 def make_colormap2(keys):
     nkeys = len(keys)
     cmap = plt.get_cmap("Pastel1")
-    return ColorMap(cmap(range(nkeys)), keys)
+    return _ColorMap(cmap(range(nkeys)), keys)
 
 
 class PlotDataset:

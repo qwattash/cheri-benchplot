@@ -23,6 +23,7 @@ class ELFInfo:
 class SymInfo:
     name: str
     filepath: Path
+    size: int
 
 
 class SymResolver:
@@ -45,7 +46,7 @@ class SymResolver:
         for sym in symtab.iter_symbols():
             if not include_local and sym.name.startswith(".LBB"):
                 continue
-            self.symbols[sym["st_value"] + mapbase] = SymInfo(name=sym.name, filepath=path)
+            self.symbols[sym["st_value"] + mapbase] = SymInfo(name=sym.name, filepath=path, size=sym["st_size"])
 
     def get_sym_addr(self, sym_name: str):
         for addr, sym in self.symbols.items():
@@ -54,7 +55,7 @@ class SymResolver:
                 return base + addr
         return None
 
-    def lookup(self, addr: int) -> SymInfo:
+    def _lookup(self, addr: int) -> typing.Optional[tuple[int, SymInfo]]:
         """
         Find the symbol preceding the given address
         """
@@ -62,7 +63,24 @@ class SymResolver:
         if index < 0:
             return None
         info = self.symbols.values()[index]
-        return info
+        return (index, info)
+
+    def lookup(self, addr: int) -> SymInfo:
+        result = self._lookup(addr)
+        if result is None:
+            return None
+        _, syminfo = result
+        return syminfo
+
+    def lookup_bounded(self, addr: int) -> typing.Optional[SymInfo]:
+        result = self._lookup(addr)
+        if result is None:
+            return None
+        index, syminfo = result
+        base_addr = self.symbols.keys()[index]
+        if addr > base_addr + syminfo.size:
+            return None
+        return syminfo
 
     def lookup_exact(self, addr: int) -> typing.Optional[SymInfo]:
         """

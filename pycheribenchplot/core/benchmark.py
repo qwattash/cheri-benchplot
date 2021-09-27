@@ -21,7 +21,7 @@ from .dataset import DataSetParser
 from .elf import SymResolver
 from ..netperf.config import NetperfBenchmarkRunConfig
 from ..pmc import PMCStatData
-from ..qemu_stats import QEMUStatsBBHistogramDataset
+from ..qemu_stats import QEMUStatsBBHistogramDataset, QEMUStatsBranchHistogramDataset
 
 
 @contextmanager
@@ -281,8 +281,10 @@ class BenchmarkBase(TemplateConfigContext):
         """Resolve the parser for the given dataset"""
         if dset.parser == DataSetParser.PMC:
             parser = PMCStatData.get_parser(self, dset_key)
-        elif dset.parser == DataSetParser.QEMU_STATS:
+        elif dset.parser == DataSetParser.QEMU_STATS_BB_HIST:
             parser = QEMUStatsBBHistogramDataset.get_parser(self, dset_key)
+        elif dset.parser == DataSetParser.QEMU_STATS_CALL_HIST:
+            parser = QEMUStatsBranchHistogramDataset.get_parser(self, dset_key)
         else:
             self.logger.error("No parser for dataset %s", dset.name)
             raise Exception("No parser")

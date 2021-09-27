@@ -33,7 +33,7 @@ class PMCStatData(CSVDataSetContainer):
         # extra = self._gen_extra_index(pd.DataFrame(columns=["progname", "archname"]))
         # self._extra_index = list(extra.columns)
 
-    def raw_fields(self):
+    def raw_fields(self, include_derived=False):
         return PMCStatData.fields
 
     def process(self):
@@ -133,7 +133,7 @@ class FluteStatcountersData(PMCStatData):
         DataField("tagcache_set_load", "tag cache set tag read"),  # 0x46
     ]
 
-    def raw_fields(self):
+    def raw_fields(self, include_derived=False):
         return super().raw_fields() + FluteStatcountersData.fields
 
     def valid_data_columns(self):

@@ -21,6 +21,9 @@ class HTMLSurface(Surface):
             template = self.default_template
         self.template = self.get_template(template)
 
+    def output_file_ext(self):
+        return "html"
+
     def get_template(self, name: str):
         return self.env.get_template(name)
 
@@ -52,17 +55,30 @@ class HTMLPlotCell(CellData):
         return "".join(html)
 
 
-class HTMLDataView(DataView):
-    pass
+class HTMLTable(DataView):
 
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        if self.colormap and self.color_col is None:
+            self.color_col = self.df.index.names
 
-class HTMLTable(HTMLDataView):
+    def _apply_colormap(self, view_df):
+        color = view_df[self.color_col].map(lambda color_key: self.colormap.get_color(color_key)).map(lambda color: f"background-color: {color};" if color else "")
+        cp = view_df.copy()
+        cp.loc[:,:] = np.tile(color.to_numpy(), (len(view_df.columns), 1)).transpose()
+        return cp
+
     def render(self, cell, surface):
         """
         Render the dataframe as an HTML table.
         """
+        hide_cols = set(self.df.columns) - set(self.yleft)
         table_template = surface.get_template("table.html")
         styler = self.df.reset_index().style
+        if self.colormap is not None:
+            styler.apply(lambda df: self._apply_colormap(df), axis=None)
+            # styler.apply(lambda col: col.map(lambda x: f"color: 'red';"))
+        styler.format(precision=3)
         styler.set_table_attributes('class="table table-striped table-responsive"')
-        table_html = styler.hide_index().render()
+        table_html = styler.hide_index().hide_columns(hide_cols).render()
         return table_template.render(cell_num=cell.cell_id, table=table_html)
