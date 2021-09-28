@@ -6,8 +6,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .core.dataset import (IndexField, DataField, DerivedField, Field, align_multi_index_levels, rotate_multi_index_level, subset_xs,
-                           check_multi_index_aligned, DatasetProcessingException)
+from .core.dataset import (IndexField, DataField, DerivedField, Field, align_multi_index_levels,
+                           rotate_multi_index_level, subset_xs, check_multi_index_aligned, DatasetProcessingException)
 from .core.perfetto import PerfettoDataSetContainer
 from .core.plot import Plot, MatplotlibSurface, CellData, DataView
 from .core.html import HTMLSurface
@@ -96,9 +96,8 @@ class QEMUAddrRangeHistTable(Plot):
         common_syms = nonzero & (nonzero != np.nan)
         common_df = subset_xs(df, common_syms)
         view_df, colmap = rotate_multi_index_level(common_df, "__dataset_id", legend_map)
-        show_cols = np.append(
-            colmap.loc[:, common_cols].to_numpy().transpose().ravel(),
-            colmap.loc[colmap.index != baseline, measure_cols].to_numpy().transpose().ravel())
+        show_cols = np.append(colmap.loc[:, common_cols].to_numpy().transpose().ravel(),
+                              colmap.loc[colmap.index != baseline, measure_cols].to_numpy().transpose().ravel())
         # Sorting
         sort_cols = colmap.loc[colmap.index != baseline, "count"].to_numpy().ravel()
         view_df2 = view_df[show_cols].sort_values(list(sort_cols), ascending=False, key=abs)
@@ -118,7 +117,6 @@ class QEMUAddrRangeHistTable(Plot):
 
 
 class QEMUStatsHistogramDataset(PerfettoDataSetContainer):
-
     def _build_df(self, input_df: pd.DataFrame):
         """
         Convert the input dataframe into the dataset dataframe
@@ -164,14 +162,14 @@ class QEMUStatsHistogramDataset(PerfettoDataSetContainer):
         sym_size = mapped.map(lambda syminfo: syminfo.size if syminfo else np.nan)
         # Add metadata colum not note whether we found a symbol for the entry or not
         valid_syms = (~sym_size.isna()) | (sym_size >= size)
-        self.df["symbol"] = mapped.map(lambda syminfo: syminfo.name if syminfo else "<unknown>")
+        self.df["symbol"] = mapped.map(lambda syminfo: syminfo.name if syminfo else "[unknown]")
         self.df.loc[~valid_syms, "symbol"] = self.df.loc[~valid_syms, "start"].transform(lambda addr: f"0x{addr:x}")
         # Note: For the file name, we omit the directory part as otherwise the same executable
         # in different directories will be picked up as a completely different file. This is
         # not useful when comparing different compilations that have different paths e.g. the kernel
         # We also have to handle rtld manually to map its name.
-        self.df["file"] = mapped.map(lambda syminfo: syminfo.filepath.name if syminfo else "<unknown>")
-        self.df.loc[~valid_syms, "file"] = "<unknown>"
+        self.df["file"] = mapped.map(lambda syminfo: syminfo.filepath.name if syminfo else "[unknown]")
+        self.df.loc[~valid_syms, "file"] = "[unknown]"
 
     def aggregate(self):
         super().aggregate()
@@ -224,9 +222,8 @@ class QEMUStatsBBHistogramDataset(QEMUStatsHistogramDataset):
 
     def raw_fields(self, include_derived=False):
         fields = super().raw_fields(include_derived)
-        fields += [f for f in QEMUStatsBBHistogramDataset.fields
-                   if include_derived or not f.isderived]
-        return fields;
+        fields += [f for f in QEMUStatsBBHistogramDataset.fields if include_derived or not f.isderived]
+        return fields
 
     def field_names_map(self):
         return {
@@ -285,15 +282,11 @@ class QEMUStatsBranchHistogramDataset(QEMUStatsHistogramDataset):
 
     def raw_fields(self, include_derived=False):
         fields = super().raw_fields(include_derived)
-        fields += [f for f in QEMUStatsBranchHistogramDataset.fields
-                   if include_derived or not f.isderived]
-        return fields;
+        fields += [f for f in QEMUStatsBranchHistogramDataset.fields if include_derived or not f.isderived]
+        return fields
 
     def field_names_map(self):
-        return {
-            "qemu.histogram.bucket.start": "start",
-            "qemu.histogram.bucket.value": "count"
-        }
+        return {"qemu.histogram.bucket.start": "start", "qemu.histogram.bucket.value": "count"}
 
     def _register_plots(self, benchmark):
         super()._register_plots(benchmark)

@@ -21,7 +21,7 @@ from .dataset import DataSetParser
 from .elf import SymResolver
 from ..netperf.config import NetperfBenchmarkRunConfig
 from ..pmc import PMCStatData
-from ..qemu_stats import QEMUStatsBBHistogramDataset, QEMUStatsBranchHistogramDataset
+from ..qemu_stats import (QEMUStatsBBHistogramDataset, QEMUStatsBranchHistogramDataset)
 
 
 @contextmanager

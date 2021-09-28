@@ -21,7 +21,6 @@ class PlotError(Exception):
 
 
 class ColorMap:
-
     @classmethod
     def from_keys(cls, keys: list, mapname: str = "Pastel1"):
         nkeys = len(keys)
@@ -59,10 +58,9 @@ class ColorMap:
         }
         return ColorMap(colors.keys(), colors.values(), colors.keys())
 
-    def __init__(self, keys: typing.Iterable[typing.Hashable],
-                 colors, labels: typing.Iterable[str]):
+    def __init__(self, keys: typing.Iterable[typing.Hashable], colors, labels: typing.Iterable[str]):
         self.cmap = OrderedDict()
-        for k,c,l in zip(keys, colors, labels):
+        for k, c, l in zip(keys, colors, labels):
             self.cmap[k] = (c, l)
 
     @property
@@ -84,7 +82,7 @@ class ColorMap:
         return self.cmap[key][1]
 
     def color_items(self):
-        return {k: pair[0] for k,pair in self.cmap.items()}
+        return {k: pair[0] for k, pair in self.cmap.items()}
 
     def __iter__(self):
         return zip(self.colors, self.labels)
@@ -107,10 +105,14 @@ class DataView(ABC):
     color_col: column to use as key for the color in the colormap. If a colormap is given but no color column, the
     index will be used.
     """
-    def __init__(self, df: pd.DataFrame, options: dict = {}, x: str = "x",
-                 yleft: typing.Union[str,list[str]] = [],
-                 yright: typing.Union[str,list[str]] = [],
-                 colormap: ColorMap = None, color_col: str = None):
+    def __init__(self,
+                 df: pd.DataFrame,
+                 options: dict = {},
+                 x: str = "x",
+                 yleft: typing.Union[str, list[str]] = [],
+                 yright: typing.Union[str, list[str]] = [],
+                 colormap: ColorMap = None,
+                 color_col: str = None):
         self.df = df
         self.options = options
         self.x = x

@@ -8,6 +8,7 @@ from ..core.plot import (Plot, check_multi_index_aligned, subset_xs, rotate_mult
                          StackedBarPlot, make_colormap2, ColorMap)
 from ..core.html import HTMLSurface
 
+
 class NetperfQEMUStatsExplorationTable(Plot):
     """
     Note: this does not support the matplotlib surface
@@ -37,13 +38,81 @@ class NetperfQEMUStatsExplorationTable(Plot):
         """Preparation step for a table in a cell for the given cross-section of the main dataframe"""
         pass
 
+    def _prepare_xs(self, df_xs, cell_title):
+        """
+        Prepare the given cross-section of the dataframe as a table in a cell of the plot.
+        """
+        legend_map = self._get_legend_map()
+        baseline = self.benchmark.uuid
+        view_df, colmap = rotate_multi_index_level(df_xs, "__dataset_id", legend_map)
+        # Decide which columns to show:
+        # Showed for both the baseline and measure runs
+        common_cols = ["count", "call_count"]
+        # Showed only for measure runs
+        measure_cols = ["diff_count", "norm_diff_count", "diff_call_count", "norm_diff_call_count"]
+        show_cols = np.append(colmap.loc[:, common_cols].to_numpy().transpose().ravel(),
+                              colmap.loc[colmap.index != baseline, measure_cols].to_numpy().transpose().ravel())
+        # Decide how to sort
+        sort_cols = colmap.loc[colmap.index != baseline, "norm_diff_call_count"].to_numpy().ravel()
+
+        # build the final view df
+        view_df2 = view_df.sort_values(list(sort_cols), ascending=False, key=abs)
+        cell = self.surface.make_cell(title=cell_title)
+        view = self.surface.make_view("table", df=view_df2, yleft=show_cols)
+        cell.add_view(view)
+        self.surface.next_cell(cell)
+
+    def _get_common_symbols_xs(self, df):
+        """
+        Return a dataframe containing the cross section of the (joined) qemu stats dataframe
+        containing the symbols that are common to all runs (i.e. across all __dataset_id values).
+        We consider valid common symbols those for which we were able to resolve the (file, sym_name)
+        pair and have sensible BB count and call_count values.
+        """
+        nonzero = df[["count", "call_count"]].groupby(["file", "symbol"]).min().fillna(0) != 0
+        common_syms = nonzero.any(axis=1)
+        common_df = subset_xs(df, common_syms)
+        # Filter remaining symbols for validity
+        valid_syms = common_df.index.get_level_values("file") != "[unknown]"
+        valid_call = (common_df["count"] != 0) & (common_df["call_count"] != 0)
+        valid_df = common_df[valid_syms & valid_call]
+        return valid_df
+
+    def _get_unique_symbols_xs(self, df):
+        """
+        This is complementary to _get_common_symbols_xs().
+        """
+        anyzero = df[["count", "call_count"]].groupby(["file", "symbol"]).min().fillna(0) == 0
+        unique_syms = anyzero.any(axis=1)
+        unique_df = subset_xs(df, unique_syms)
+        # Filter remaining symbols for validity
+        valid_syms = unique_df.index.get_level_values("file") != "[unknown]"
+        valid_call = (unique_df["count"] != 0) & (unique_df["call_count"] != 0)
+        valid_df = unique_df[valid_syms & valid_call]
+        return valid_df
+
+    def _get_missing_symbols_xs(self, df):
+        """
+        Return a cross-section of the (joined) qemu stats dataframe containing the symbols
+        that could not be resolved for some of the datasets.
+        """
+        invalid_syms = df.index.get_level_values("file") == "[unknown]"
+        valid_call = (df["count"] != 0) & (df["call_count"] != 0)
+        return df[invalid_syms & valid_call]
+
+    def _get_inconsistent_symbols_xs(self, df):
+        """
+        Return a cross-section of the (joined) qemu stats dataframe containing inconsistent
+        records, for which we have BB hits but no calls or calls without any BB hit.
+        """
+        invalid_call = (df["count"] == 0) | (df["call_count"] == 0)
+        return df[invalid_call]
+
     def prepare(self):
         """
         For each dataset (including the baseline) we show the dataframes as tables.
         Combine the qemu stats datasets into a single table for ease of inspection
         """
-        legend_map = self._get_legend_map()
-        baseline = self.benchmark.uuid
         bb_df = self.qemu_bb_dset.agg_df
         call_df = self.qemu_call_dset.agg_df
         # Note: the df here is implicitly a copy and following operations will not modify it
@@ -58,51 +127,16 @@ class NetperfQEMUStatsExplorationTable(Plot):
         # PMC data XXX-AM unused for now
         icount_diff = pmc.loc[:, "diff_median_instructions"]
 
+        # Now plot each table
         self.surface.set_layout(1, 1, expand=True, how="row")
-        # Table for common functions
-        nonzero = df["count"].groupby(["file", "symbol"]).min() != 0
-        common_syms = nonzero & (nonzero != np.nan)
-        common_df = subset_xs(df, common_syms)
-        view_df, colmap = rotate_multi_index_level(common_df, "__dataset_id", legend_map)
-        # Decide which columns to show:
-        # Showed for both the baseline and measure runs
-        common_cols = ["count", "call_count"]
-        # Showed only for measure runs
-        measure_cols = ["diff_count", "norm_diff_count", "diff_call_count", "norm_diff_call_count"]
-        show_cols = np.append(
-            colmap.loc[:, common_cols].to_numpy().transpose().ravel(),
-            colmap.loc[colmap.index != baseline, measure_cols].to_numpy().transpose().ravel())
-        # Decide how to sort
-        sort_cols = colmap.loc[colmap.index != baseline, "norm_diff_call_count"].to_numpy().ravel()
-
-        # Build the color index column and the color map.
-        # We paint red all rows with invalid symbols
-        # We paint orange all rows where the call number is 0 but we appear to hit basic blocks
-        valid_syms_cmap = ColorMap.base8()
-        unknown_syms = view_df.index.get_level_values("file").map(lambda name: "red" if name == "<unknown>" else None)
-        # check which call count numbers make sense at all and map it back to the view_dataframe index
-        sensible_call_count = (common_df["count"] != 0) & (common_df["call_count"] != 0)  # Both bb_count and call_count are nonzero
-        weird_syms = sensible_call_count.groupby(["file", "symbol"]).all().map(lambda v: None if v else "cyan")
-        # Double check we did not mess up and misaligned the indexes
-        assert (weird_syms.index.values == view_df.index.values).all()
-        view_df["_color"] = weird_syms.where(~weird_syms.isna(), unknown_syms)
-
-        # build the final view df
-        view_df2 = view_df.sort_values(list(sort_cols), ascending=False, key=abs)
-        cell = self.surface.make_cell(title="QEMU stats for common functions")
-        view = self.surface.make_view("table", df=view_df2, yleft=show_cols,
-                                      colormap=valid_syms_cmap, color_col="_color")
-        cell.add_view(view)
-        self.surface.next_cell(cell)
-
-        # Table for functions that are only in one of the runs
-        extra_df = subset_xs(df, ~common_syms)
-        view_df, colmap = rotate_multi_index_level(extra_df, "__dataset_id", legend_map)
-        view_df = view_df[show_cols].sort_values(list(sort_cols), ascending=False, key=abs)
-        cell = self.surface.make_cell(title="QEMU stats for extra functions")
-        view = self.surface.make_view("table", df=view_df, yleft=show_cols)
-        cell.add_view(view)
-        self.surface.next_cell(cell)
+        common_df = self._get_common_symbols_xs(df)
+        self._prepare_xs(common_df, "QEMU stats for common functions")
+        unique_df = self._get_unique_symbols_xs(df)
+        self._prepare_xs(unique_df, "QEMU stats for unique functions")
+        missing_syms_df = self._get_missing_symbols_xs(df)
+        self._prepare_xs(missing_syms_df, "QEMU stats for unresolved functions")
+        inconsistent_df = self._get_inconsistent_symbols_xs(df)
+        self._prepare_xs(inconsistent_df, "Inconsistent QEMU stats records")
 
 
 ###################### Old stuff

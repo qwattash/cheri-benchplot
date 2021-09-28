@@ -56,16 +56,16 @@ class HTMLPlotCell(CellData):
 
 
 class HTMLTable(DataView):
-
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         if self.colormap and self.color_col is None:
             self.color_col = self.df.index.names
 
     def _apply_colormap(self, view_df):
-        color = view_df[self.color_col].map(lambda color_key: self.colormap.get_color(color_key)).map(lambda color: f"background-color: {color};" if color else "")
+        color = view_df[self.color_col].map(lambda color_key: self.colormap.get_color(color_key)).map(
+            lambda color: f"background-color: {color};" if color else "")
         cp = view_df.copy()
-        cp.loc[:,:] = np.tile(color.to_numpy(), (len(view_df.columns), 1)).transpose()
+        cp.loc[:, :] = np.tile(color.to_numpy(), (len(view_df.columns), 1)).transpose()
         return cp
 
     def render(self, cell, surface):
@@ -77,7 +77,6 @@ class HTMLTable(DataView):
         styler = self.df.reset_index().style
         if self.colormap is not None:
             styler.apply(lambda df: self._apply_colormap(df), axis=None)
-            # styler.apply(lambda col: col.map(lambda x: f"color: 'red';"))
         styler.format(precision=3)
         styler.set_table_attributes('class="table table-striped table-responsive"')
         table_html = styler.hide_index().hide_columns(hide_cols).render()
