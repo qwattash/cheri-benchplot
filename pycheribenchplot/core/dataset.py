@@ -352,3 +352,13 @@ def subset_xs(df: pd.DataFrame, selector: typing.Sequence[bool]):
     # Now we can cross-section with the boolean selection
     values = swapped.loc[tiled.values]
     return values.reorder_levels(df.index.names)
+
+
+def reorder_columns(df: pd.DataFrame, ordered_cols: typing.Sequence[str]):
+    """
+    Reorder columns as the given column name list. Any remaining column is
+    appended at the end.
+    """
+    extra_cols = list(set(df.columns) - set(ordered_cols))
+    result_df = df.reindex(columns=np.append(ordered_cols, extra_cols))
+    return result_df

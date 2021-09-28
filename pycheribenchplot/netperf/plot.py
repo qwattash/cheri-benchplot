@@ -4,8 +4,8 @@ from enum import Enum
 import pandas as pd
 import numpy as np
 
-from ..core.plot import (Plot, check_multi_index_aligned, subset_xs, rotate_multi_index_level, StackedLinePlot,
-                         StackedBarPlot, make_colormap2, ColorMap)
+from ..core.dataset import subset_xs, rotate_multi_index_level, reorder_columns
+from ..core.plot import (Plot, check_multi_index_aligned, StackedLinePlot, StackedBarPlot, make_colormap2, ColorMap)
 from ..core.html import HTMLSurface
 
 
@@ -45,16 +45,16 @@ class NetperfQEMUStatsExplorationTable(Plot):
         # Showed for both the baseline and measure runs
         common_cols = ["bb_count", "call_count", "start", "start_call"]  ## XXX-AM find a way to format columns
         # Showed only for measure runs
-        measure_cols = ["delta_bb_count", "norm_delta_bb_count", "delta_call_count", "norm_delta_call_count"]
+        relative_cols = ["delta_bb_count", "norm_delta_bb_count", "delta_call_count", "norm_delta_call_count"]
         show_cols = np.append(colmap.loc[:, common_cols].to_numpy().transpose().ravel(),
-                              colmap.loc[colmap.index != baseline, measure_cols].to_numpy().transpose().ravel())
-        # Decide how to sort
+                              colmap.loc[colmap.index != baseline, relative_cols].to_numpy().transpose().ravel())
+        # Decide how to sort and order columns
         sort_cols = colmap.loc[colmap.index != baseline, "norm_delta_call_count"].to_numpy().ravel()
-
-        # build the final view df
-        view_df2 = view_df.sort_values(list(sort_cols), ascending=False, key=abs)
+        view_df = view_df.sort_values(list(sort_cols), ascending=False, key=abs)
+        view_df = reorder_columns(view_df, show_cols)
+        # Add the view for drawing
         cell = self.surface.make_cell(title=cell_title)
-        view = self.surface.make_view("table", df=view_df2, yleft=show_cols)
+        view = self.surface.make_view("table", df=view_df, yleft=show_cols)
         cell.add_view(view)
         self.surface.next_cell(cell)
 
