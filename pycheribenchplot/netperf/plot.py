@@ -34,10 +34,6 @@ class NetperfQEMUStatsExplorationTable(Plot):
         legend[self.benchmark.uuid] = f"{self.benchmark.instance_config.kernelabi}(baseline)"
         return legend
 
-    def prepare_xs(self):
-        """Preparation step for a table in a cell for the given cross-section of the main dataframe"""
-        pass
-
     def _prepare_xs(self, df_xs, cell_title):
         """
         Prepare the given cross-section of the dataframe as a table in a cell of the plot.
@@ -47,13 +43,13 @@ class NetperfQEMUStatsExplorationTable(Plot):
         view_df, colmap = rotate_multi_index_level(df_xs, "__dataset_id", legend_map)
         # Decide which columns to show:
         # Showed for both the baseline and measure runs
-        common_cols = ["count", "call_count"]
+        common_cols = ["bb_count", "call_count", "start", "start_call"]  ## XXX-AM find a way to format columns
         # Showed only for measure runs
-        measure_cols = ["diff_count", "norm_diff_count", "diff_call_count", "norm_diff_call_count"]
+        measure_cols = ["delta_bb_count", "norm_delta_bb_count", "delta_call_count", "norm_delta_call_count"]
         show_cols = np.append(colmap.loc[:, common_cols].to_numpy().transpose().ravel(),
                               colmap.loc[colmap.index != baseline, measure_cols].to_numpy().transpose().ravel())
         # Decide how to sort
-        sort_cols = colmap.loc[colmap.index != baseline, "norm_diff_call_count"].to_numpy().ravel()
+        sort_cols = colmap.loc[colmap.index != baseline, "norm_delta_call_count"].to_numpy().ravel()
 
         # build the final view df
         view_df2 = view_df.sort_values(list(sort_cols), ascending=False, key=abs)
@@ -69,12 +65,12 @@ class NetperfQEMUStatsExplorationTable(Plot):
         We consider valid common symbols those for which we were able to resolve the (file, sym_name)
         pair and have sensible BB count and call_count values.
         """
-        nonzero = df[["count", "call_count"]].groupby(["file", "symbol"]).min().fillna(0) != 0
+        nonzero = df[["bb_count", "call_count"]].groupby(["file", "symbol"]).min().fillna(0) != 0
         common_syms = nonzero.any(axis=1)
         common_df = subset_xs(df, common_syms)
         # Filter remaining symbols for validity
         valid_syms = common_df.index.get_level_values("file") != "[unknown]"
-        valid_call = (common_df["count"] != 0) & (common_df["call_count"] != 0)
+        valid_call = (common_df["bb_count"] != 0) & (common_df["call_count"] != 0)
         valid_df = common_df[valid_syms & valid_call]
         return valid_df
 
@@ -82,12 +78,12 @@ class NetperfQEMUStatsExplorationTable(Plot):
         """
         This is complementary to _get_common_symbols_xs().
         """
-        anyzero = df[["count", "call_count"]].groupby(["file", "symbol"]).min().fillna(0) == 0
+        anyzero = df[["bb_count", "call_count"]].groupby(["file", "symbol"]).min().fillna(0) == 0
         unique_syms = anyzero.any(axis=1)
         unique_df = subset_xs(df, unique_syms)
         # Filter remaining symbols for validity
         valid_syms = unique_df.index.get_level_values("file") != "[unknown]"
-        valid_call = (unique_df["count"] != 0) & (unique_df["call_count"] != 0)
+        valid_call = (unique_df["bb_count"] != 0) & (unique_df["call_count"] != 0)
         valid_df = unique_df[valid_syms & valid_call]
         return valid_df
 
@@ -97,7 +93,7 @@ class NetperfQEMUStatsExplorationTable(Plot):
         that could not be resolved for some of the datasets.
         """
         invalid_syms = df.index.get_level_values("file") == "[unknown]"
-        valid_call = (df["count"] != 0) & (df["call_count"] != 0)
+        valid_call = (df["bb_count"] != 0) & (df["call_count"] != 0)
         return df[invalid_syms & valid_call]
 
     def _get_inconsistent_symbols_xs(self, df):
@@ -105,7 +101,7 @@ class NetperfQEMUStatsExplorationTable(Plot):
         Return a cross-section of the (joined) qemu stats dataframe containing inconsistent
         records, for which we have BB hits but no calls or calls without any BB hit.
         """
-        invalid_call = (df["count"] == 0) | (df["call_count"] == 0)
+        invalid_call = (df["bb_count"] == 0) | (df["call_count"] == 0)
         return df[invalid_call]
 
     def prepare(self):
@@ -117,17 +113,15 @@ class NetperfQEMUStatsExplorationTable(Plot):
         call_df = self.qemu_call_dset.agg_df
         # Note: the df here is implicitly a copy and following operations will not modify it
         df = bb_df.join(call_df, how="outer", rsuffix="_call")
-        pmc = self.pmc_dset.agg_df
-        # make the ratios a percentage
-        df["norm_diff_count"] = df["norm_diff_count"] * 100
-        df["norm_diff_call_count"] = df["norm_diff_call_count"] * 100
+        # pmc = self.pmc_dset.agg_df
+
+        # Make the ratios a percentage
+        df["norm_delta_bb_count"] = df["norm_delta_bb_count"] * 100
+        df["norm_delta_call_count"] = df["norm_delta_call_count"] * 100
+        # Now plot each table
         if not check_multi_index_aligned(df, "__dataset_id"):
             self.logger.error("Unaligned index, skipping plot")
             return
-        # PMC data XXX-AM unused for now
-        icount_diff = pmc.loc[:, "diff_median_instructions"]
-
-        # Now plot each table
         self.surface.set_layout(1, 1, expand=True, how="row")
         common_df = self._get_common_symbols_xs(df)
         self._prepare_xs(common_df, "QEMU stats for common functions")
@@ -175,7 +169,7 @@ class NetperfQemuPCHist(Plotter):
     """
     Plot qemu PC histograms. We output N + 1 histograms:
     1. Absolute values from each dataset
-    2. Relative diff between datasets and baseline
+    2. Relative delta between datasets and baseline
     """
     def __init__(self, benchmark):
         super().__init__(benchmark)

@@ -92,26 +92,11 @@ class QEMUAddrRangeHistTable(Plot):
         measure_cols = list(set(data_cols) - set(common_cols))
 
         # Table for common functions
-        nonzero = df["count"].groupby(["file", "symbol"]).min() != 0
-        common_syms = nonzero & (nonzero != np.nan)
-        common_df = subset_xs(df, common_syms)
-        view_df, colmap = rotate_multi_index_level(common_df, "__dataset_id", legend_map)
+        view_df, colmap = rotate_multi_index_level(df, "__dataset_id", legend_map)
         show_cols = np.append(colmap.loc[:, common_cols].to_numpy().transpose().ravel(),
                               colmap.loc[colmap.index != baseline, measure_cols].to_numpy().transpose().ravel())
-        # Sorting
-        sort_cols = colmap.loc[colmap.index != baseline, "count"].to_numpy().ravel()
-        view_df2 = view_df[show_cols].sort_values(list(sort_cols), ascending=False, key=abs)
         cell = self.surface.make_cell(title="QEMU stats for common functions")
-        view = self.surface.make_view("table", df=view_df2)
-        cell.add_view(view)
-        self.surface.next_cell(cell)
-
-        # Table for functions that are only in one of the runs
-        extra_df = subset_xs(df, ~common_syms)
-        view_df, colmap = rotate_multi_index_level(extra_df, "__dataset_id", legend_map)
-        view_df = view_df[show_cols].sort_values(list(sort_cols), ascending=False, key=abs)
-        cell = self.surface.make_cell(title="Extra functions")
-        view = self.surface.make_view("table", df=view_df)
+        view = self.surface.make_view("table", df=view_df, yleft=show_cols)
         cell.add_view(view)
         self.surface.next_cell(cell)
 
@@ -171,14 +156,20 @@ class QEMUStatsHistogramDataset(PerfettoDataSetContainer):
         self.df["file"] = mapped.map(lambda syminfo: syminfo.filepath.name if syminfo else "[unknown]")
         self.df.loc[~valid_syms, "file"] = "[unknown]"
 
+    def _get_agg_strategy(self):
+        """Return mapping of column-name => aggregation function for the columns we need to aggregate"""
+        agg = {"start": "min"}
+        agg.update({col: "sum" for col in self.delta_columns()})
+        return agg
+
     def aggregate(self):
         super().aggregate()
         tmp = self.merged_df.set_index(["file", "symbol"], append=True)
         grouped = tmp.groupby(["__dataset_id", "file", "symbol"])
-        self.agg_df = grouped.agg({"count": "sum", "start": "min"})
+        self.agg_df = grouped.agg(self._get_agg_strategy())
 
-    def _diff_columns(self):
-        return ["count"]
+    def delta_columns(self):
+        return self.data_columns()
 
     def post_aggregate(self):
         super().post_aggregate()
@@ -191,18 +182,18 @@ class QEMUStatsHistogramDataset(PerfettoDataSetContainer):
         #   the baseline benchmark count is 0 (e.g. extra functions called only in other samples)
         baseline = new_df.xs(self.benchmark.uuid, level="__dataset_id")
         datasets = new_df.index.get_level_values("__dataset_id").unique()
-        base_cols = self._diff_columns()
-        diff_cols = [f"diff_{col}" for col in base_cols]
-        norm_cols = [f"norm_{col}" for col in diff_cols]
-        new_df[diff_cols] = 0
+        base_cols = self.delta_columns()
+        delta_cols = [f"delta_{col}" for col in base_cols]
+        norm_cols = [f"norm_{col}" for col in delta_cols]
+        new_df[delta_cols] = 0
         new_df[norm_cols] = 0
         # XXX could avoid this loop by repeating N times the baseline values and vectorize the division?
         for ds_id in datasets:
             other = new_df.xs(ds_id, level="__dataset_id")
-            diff = other[base_cols].subtract(baseline[base_cols])
-            norm_diff = diff[base_cols].divide(baseline[base_cols])
-            new_df.loc[ds_id, diff_cols] = diff[base_cols].values
-            new_df.loc[ds_id, norm_cols] = norm_diff[base_cols].values
+            delta = other[base_cols].subtract(baseline[base_cols])
+            norm_delta = delta[base_cols].divide(baseline[base_cols])
+            new_df.loc[ds_id, delta_cols] = delta[base_cols].values
+            new_df.loc[ds_id, norm_cols] = norm_delta[base_cols].values
         self.agg_df = new_df
 
 
@@ -215,9 +206,10 @@ class QEMUStatsBBHistogramDataset(QEMUStatsHistogramDataset):
         #Field("CPU", dtype=int),
         Field("start", dtype=np.uint),
         Field("end", dtype=np.uint),
-        DataField("count", dtype=int),
-        DerivedField("diff_count", dtype=int),
-        DerivedField("norm_diff_count", dtype=float)
+        DataField("bb_count", dtype=int),
+        DerivedField("bb_bytes", dtype=int),
+        DerivedField("delta_bb_count", dtype=int),
+        DerivedField("norm_delta_bb_count", dtype=float)
     ]
 
     def raw_fields(self, include_derived=False):
@@ -229,7 +221,7 @@ class QEMUStatsBBHistogramDataset(QEMUStatsHistogramDataset):
         return {
             "qemu.histogram.bucket.start": "start",
             "qemu.histogram.bucket.end": "end",
-            "qemu.histogram.bucket.value": "count"
+            "qemu.histogram.bucket.value": "bb_count"
         }
 
     def _get_sql_expr(self):
@@ -240,25 +232,19 @@ class QEMUStatsBBHistogramDataset(QEMUStatsHistogramDataset):
     def _register_plots(self, benchmark):
         super()._register_plots(benchmark)
         benchmark.register_plot(QEMUAddrRangeHistTable(benchmark, self))
-        # benchmark.register_plot(QEMUAddrRangeHistBars(benchmark, self))
 
     def pre_merge(self):
         super().pre_merge()
         # Generate number of bytes hit for each range of start/end addresses as a proxy for
         # real instruction count. The real number will be some fraction of this number, depending
         # on instruction size.
-        self.df["bcount"] = (self.df["end"] - self.df["start"]) * self.df["count"]
+        self.df["bb_bytes"] = (self.df["end"] - self.df["start"]) * self.df["bb_count"]
 
-    def aggregate(self):
-        super().aggregate()
-        tmp = self.merged_df.set_index(["file", "symbol"], append=True)
-        grouped = tmp.groupby(["__dataset_id", "file", "symbol"])
-        self.agg_df["end"] = grouped["end"].max()
-        self.agg_df["bcount"] = grouped["bcount"].sum()
-
-    def _diff_columns(self):
-        cols = super()._diff_columns()
-        return cols + ["bcount"]
+    def _get_agg_strategy(self):
+        agg = super()._get_agg_strategy()
+        agg["end"] = "max"
+        agg["bb_bytes"] = "sum"
+        return agg
 
 
 class QEMUStatsBranchHistogramDataset(QEMUStatsHistogramDataset):
@@ -269,10 +255,10 @@ class QEMUStatsBranchHistogramDataset(QEMUStatsHistogramDataset):
         IndexField("bucket", dtype=int),
         #Field("CPU", dtype=int),
         Field("start", dtype=np.uint),
-        DataField("count", dtype=int),
+        DataField("branch_count", dtype=int),
         DerivedField("call_count", dtype=int),
-        DerivedField("diff_call_count", dtype=int),
-        DerivedField("norm_diff_call_count", dtype=float)
+        DerivedField("delta_call_count", dtype=int),
+        DerivedField("norm_delta_call_count", dtype=float)
     ]
 
     def _get_sql_expr(self):
@@ -286,7 +272,7 @@ class QEMUStatsBranchHistogramDataset(QEMUStatsHistogramDataset):
         return fields
 
     def field_names_map(self):
-        return {"qemu.histogram.bucket.start": "start", "qemu.histogram.bucket.value": "count"}
+        return {"qemu.histogram.bucket.start": "start", "qemu.histogram.bucket.value": "branch_count"}
 
     def _register_plots(self, benchmark):
         super()._register_plots(benchmark)
@@ -304,15 +290,8 @@ class QEMUStatsBranchHistogramDataset(QEMUStatsHistogramDataset):
         # these are function calls is the first basic-block of the function and is considered as an individual call
         # to that function
         is_call = self.df["start"].map(lambda addr: resolver.lookup_exact(addr) is not None)
-        self.df["call_count"] = self.df["count"].mask(~is_call, 0).astype(int)
+        self.df["call_count"] = self.df["branch_count"].mask(~is_call, 0).astype(int)
 
-    def aggregate(self):
-        super().aggregate()
-        tmp = self.merged_df.set_index(["file", "symbol"], append=True)
-        grouped = tmp.groupby(["__dataset_id", "file", "symbol"])
-        self.agg_df["call_count"] = grouped["call_count"].sum()
-        # Drop anything that is not a function call?
-
-    def _diff_columns(self):
-        cols = super()._diff_columns()
+    def delta_columns(self):
+        cols = super().delta_columns()
         return cols + ["call_count"]

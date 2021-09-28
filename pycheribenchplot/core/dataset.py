@@ -29,7 +29,12 @@ class DataSetParser(Enum):
 
 class Field:
     """
-    Helper class to describe a data column from a CSV or other file
+    Helper class to describe column and associated metadata to aid processing
+    XXX-AM: Consider adding some sort of tags to the fields so that we can avoid hardcoding the
+    names for some processing steps (e.g. normalized fields that should be shown as percentage,
+    or address fields for hex visualization).
+    May also help to split derived fields by the stage in which they are created
+    (e.g. pre-merge, post-merge, post-agg). This should move the burden of declaring which fields to process.
     """
     def __init__(self, name, desc=None, dtype=float, isdata=False, isindex=False, isderived=False, importfn=None):
         self.name = name
@@ -129,7 +134,7 @@ class DataSetContainer(ABC):
     def data_columns(self, include_derived=False):
         """
         All data column names in the container dataframe.
-        This MUST NOT include synthetic data columns that are generated after importing the dataframe.
+        This, by default, does not include synthetic data columns that are generated after importing the dataframe.
         """
         return [f.name for f in self.raw_fields(include_derived) if f.isdata]
 
