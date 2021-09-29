@@ -77,7 +77,7 @@ class HTMLTable(DataView):
         styler = self.df.reset_index().style
         if self.colormap is not None:
             styler.apply(lambda df: self._apply_colormap(df), axis=None)
-        styler.format(precision=3)
+        styler.format(self.fmt, precision=3)
         styler.set_table_attributes('class="table table-striped table-responsive"')
         table_html = styler.hide_index().hide_columns(hide_cols).render()
         return table_template.render(cell_num=cell.cell_id, table=table_html)

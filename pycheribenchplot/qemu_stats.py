@@ -102,6 +102,18 @@ class QEMUAddrRangeHistTable(Plot):
 
 
 class QEMUStatsHistogramDataset(PerfettoDataSetContainer):
+    fields = [
+        IndexField("arg_set_id", dtype=int),
+        IndexField("bucket", dtype=int),
+        Field("start", dtype=np.uint),
+        DerivedField("valid_symbol", dtype=object, isdata=False)
+    ]
+
+    def raw_fields(self, include_derived=False):
+        fields = super().raw_fields(include_derived)
+        fields += [f for f in QEMUStatsHistogramDataset.fields if include_derived or not f.isderived]
+        return fields
+
     def _build_df(self, input_df: pd.DataFrame):
         """
         Convert the input dataframe into the dataset dataframe
@@ -141,24 +153,29 @@ class QEMUStatsHistogramDataset(PerfettoDataSetContainer):
         """
         super().pre_merge()
         resolver = self.benchmark.sym_resolver
+        self.df["valid_symbol"] = "ok"
         # If there is no 'end' columns size will be a zero vector
         size = self.df.get("end", self.df["start"]) - self.df["start"]
-        mapped = self.df["start"].map(lambda addr: resolver.lookup_bounded(addr))
-        sym_size = mapped.map(lambda syminfo: syminfo.size if syminfo else np.nan)
-        # Add metadata colum not note whether we found a symbol for the entry or not
-        valid_syms = (~sym_size.isna()) | (sym_size >= size)
-        self.df["symbol"] = mapped.map(lambda syminfo: syminfo.name if syminfo else "[unknown]")
-        self.df.loc[~valid_syms, "symbol"] = self.df.loc[~valid_syms, "start"].transform(lambda addr: f"0x{addr:x}")
+        resolved = self.df["start"].map(lambda addr: resolver.lookup_bounded(addr))
+        self.df.loc[resolved.isna(), "valid_symbol"] = "no-match"
+
+        sym_size = resolved.map(lambda syminfo: syminfo.size if syminfo else np.nan)
+        size_mismatch = (sym_size.isna()) | (sym_size < size)
+        self.df.loc[size_mismatch, "valid_symbol"] = "size-mismatch"
+        invalid_syms = self.df["valid_symbol"] != "ok"
+
+        self.df["symbol"] = resolved.map(lambda syminfo: syminfo.name if syminfo else None)
+        self.df.loc[invalid_syms, "symbol"] = self.df.loc[invalid_syms, "start"].transform(lambda addr: f"0x{addr:x}")
         # Note: For the file name, we omit the directory part as otherwise the same executable
         # in different directories will be picked up as a completely different file. This is
         # not useful when comparing different compilations that have different paths e.g. the kernel
         # We also have to handle rtld manually to map its name.
-        self.df["file"] = mapped.map(lambda syminfo: syminfo.filepath.name if syminfo else "[unknown]")
-        self.df.loc[~valid_syms, "file"] = "[unknown]"
+        self.df["file"] = resolved.map(lambda syminfo: syminfo.filepath.name if syminfo else None)
+        self.df.loc[invalid_syms, "file"] = "unknown"
 
     def _get_agg_strategy(self):
         """Return mapping of column-name => aggregation function for the columns we need to aggregate"""
-        agg = {"start": "min"}
+        agg = {"start": "min", "valid_symbol": lambda vec: ",".join(vec.unique())}
         agg.update({col: "sum" for col in self.delta_columns()})
         return agg
 
@@ -176,6 +193,9 @@ class QEMUStatsHistogramDataset(PerfettoDataSetContainer):
         # Align dataframe on the (file, symbol) pairs where we want to get an union of
         # the symbols set for each file, repeated for each dataset_id.
         new_df = align_multi_index_levels(self.agg_df, ["file", "symbol"], fill_value=0)
+        # Backfill after alignment
+        new_df.loc[new_df["valid_symbol"] == 0, "valid_symbol"] = "missing"
+
         # Now we can safely assign as there are no missing values.
         # 1) Compute delta for each metric for each function w.r.t. the baseline.
         # 2) Build the normalized delta for each metric, note that this will generate infinities where
@@ -194,6 +214,7 @@ class QEMUStatsHistogramDataset(PerfettoDataSetContainer):
             norm_delta = delta[base_cols].divide(baseline[base_cols])
             new_df.loc[ds_id, delta_cols] = delta[base_cols].values
             new_df.loc[ds_id, norm_cols] = norm_delta[base_cols].values
+        assert not new_df["valid_symbol"].isna().any()
         self.agg_df = new_df
 
 
@@ -201,10 +222,6 @@ class QEMUStatsBBHistogramDataset(QEMUStatsHistogramDataset):
     """Basic-block hit count histogram"""
 
     fields = [
-        IndexField("arg_set_id", dtype=int),
-        IndexField("bucket", dtype=int),
-        #Field("CPU", dtype=int),
-        Field("start", dtype=np.uint),
         Field("end", dtype=np.uint),
         DataField("bb_count", dtype=int),
         DerivedField("bb_bytes", dtype=int),
@@ -251,10 +268,6 @@ class QEMUStatsBranchHistogramDataset(QEMUStatsHistogramDataset):
     """Branch instruction target hit count histogram"""
 
     fields = [
-        IndexField("arg_set_id", dtype=int),
-        IndexField("bucket", dtype=int),
-        #Field("CPU", dtype=int),
-        Field("start", dtype=np.uint),
         DataField("branch_count", dtype=int),
         DerivedField("call_count", dtype=int),
         DerivedField("delta_call_count", dtype=int),

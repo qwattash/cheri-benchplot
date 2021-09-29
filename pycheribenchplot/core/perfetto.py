@@ -56,4 +56,7 @@ class PerfettoDataSetContainer(DataSetContainer):
 
     def load(self, path: Path):
         processor = TraceProcessor(bin_path=self._trace_processor_path(), file_path=path)
-        self._extract_events(processor)
+        try:
+            self._extract_events(processor)
+        finally:
+            processor.close()

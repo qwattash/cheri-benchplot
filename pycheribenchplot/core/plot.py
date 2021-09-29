@@ -96,7 +96,7 @@ class DataView(ABC):
     Individual plots can override concrete DataViews to customize the plot appearence.
     Arguments:
     df: View dataframe
-    options: Extra options to pass to the surface
+    fmt: Column data formatters map. Accept a dict of column-name => formatter.
     x: name of the column to pull X-axis values from (default 'x')
     yleft: name of the column(s) to pull left Y-axis values from, if any
     yright: name of the column(s) to pull right Y-axis values from, if any
@@ -107,14 +107,14 @@ class DataView(ABC):
     """
     def __init__(self,
                  df: pd.DataFrame,
-                 options: dict = {},
+                 fmt: dict = {},
                  x: str = "x",
                  yleft: typing.Union[str, list[str]] = [],
                  yright: typing.Union[str, list[str]] = [],
                  colormap: ColorMap = None,
                  color_col: str = None):
         self.df = df
-        self.options = options
+        self.fmt = fmt
         self.x = x
         self._yleft = yleft
         self._yright = yright

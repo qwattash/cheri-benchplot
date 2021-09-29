@@ -104,7 +104,7 @@ class DataSetContainer(ABC):
         self.config = benchmark.config
         self.logger = logging.getLogger(f"{self.config.name}:{dset_key}")
         self.df = pd.DataFrame(columns=self.all_columns())
-        self.df = self.df.astype(self._get_column_dtypes(include_converted=True))
+        self.df = self.df.astype(self._get_column_dtypes())
         self.df.set_index(self.index_columns(), inplace=True)
         self.merged_df = None
         self.agg_df = None
@@ -138,8 +138,16 @@ class DataSetContainer(ABC):
         """
         return [f.name for f in self.raw_fields(include_derived) if f.isdata]
 
-    def _get_column_dtypes(self, include_converted=False) -> dict[str, type]:
-        return {f.name: f.dtype for f in self.raw_fields() if include_converted or f.importfn is None}
+    def _get_column_dtypes(self, include_converted=True, include_index=True, include_derived=False) -> dict[str, type]:
+        fields = self.raw_fields(include_derived)
+        idx = self.index_columns()
+        dtypes = {}
+        for f in fields:
+            if not include_index and f.name in idx:
+                continue
+            if include_converted or f.importfn is None:
+                dtypes[f.name] = f.dtype
+        return dtypes
 
     def _get_column_conv(self) -> dict:
         return {f.name: f.importfn for f in self.raw_fields() if f.importfn is not None}
@@ -206,7 +214,7 @@ class CSVDataSetContainer(DataSetContainer):
         """
         Load a raw CSV file into a dataframe compatible with the columns given in all_columns.
         """
-        kwargs.setdefault("dtype", self._get_column_dtypes())
+        kwargs.setdefault("dtype", self._get_column_dtypes(include_converted=False))
         kwargs.setdefault("converters", self._get_column_conv())
         csv_df = pd.read_csv(path, **kwargs)
         csv_df["__dataset_id"] = self.benchmark.uuid
@@ -263,12 +271,14 @@ def check_multi_index_aligned(df: pd.DataFrame, level: str):
     """
     Check that the given index level(s) are aligned.
     """
-    group_size = df.groupby(level).count().iloc[:, 0]
+    if len(df) == 0:
+        return True
+    group_size = df.groupby(level).size()
     aligned = (group_size == group_size.iloc[0]).all()
     return aligned
 
 
-def align_multi_index_levels(df: pd.DataFrame, align_levels: list[str], fill_value=None):
+def align_multi_index_levels(df: pd.DataFrame, align_levels: list[str], fill_value=np.nan):
     """
     Align a subset of the levels of a multi-index.
     This will generate the union of the sets of values in the align_levels parameter.
@@ -320,6 +330,9 @@ def rotate_multi_index_level(df: pd.DataFrame,
     A   |  value_A
     B   |  value_B
     """
+
+    # XXX-AM: Check that the levels are aligned, otherwise we may get unexpected results due to NaN popping out
+
     rotate_groups = df.groupby(level)
     if suffixes is None:
         suffixes = rotate_groups.groups.keys()
@@ -330,8 +343,13 @@ def rotate_multi_index_level(df: pd.DataFrame,
         colmap.loc[key, :] = colmap.columns.map(lambda c: f"{c}_{suffix}")
         rotated = df.loc[group].reset_index(level, drop=True).add_suffix(f"_{suffix}")
         groups.append(rotated)
-    new_df = pd.concat(groups, axis=1)
-    return new_df, colmap
+    if len(groups):
+        new_df = pd.concat(groups, axis=1)
+        return new_df, colmap
+    else:
+        # Return the input dataframe without the index level, but no extra columns as there are
+        # no index values to rotate
+        return df.reset_index(level=level, drop=True), colmap
 
 
 def subset_xs(df: pd.DataFrame, selector: typing.Sequence[bool]):
