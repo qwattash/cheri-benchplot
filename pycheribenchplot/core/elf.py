@@ -24,6 +24,7 @@ class SymInfo:
     name: str
     filepath: Path
     size: int
+    addr: int
 
 
 class SymResolver:
@@ -35,8 +36,9 @@ class SymResolver:
         self.files = {}
         self.mapping = {}
         self.symbols = SortedDict()
+        self.functions = SortedDict()
 
-    def import_symbols(self, path: Path, mapbase: int, include_local=False):
+    def import_symbols(self, path: Path, mapbase: int):
         info = ELFInfo(path)
         if info.is_dynamic():
             mapbase = 0
@@ -44,9 +46,12 @@ class SymResolver:
         self.mapping[path] = mapbase
         symtab = info.ef.get_section_by_name(".symtab")
         for sym in symtab.iter_symbols():
-            if not include_local and sym.name.startswith(".LBB"):
-                continue
-            self.symbols[sym["st_value"] + mapbase] = SymInfo(name=sym.name, filepath=path, size=sym["st_size"])
+            addr = sym["st_value"] + mapbase
+            syminfo = SymInfo(name=sym.name, filepath=path, addr=addr, size=sym["st_size"])
+            st_info = sym["st_info"]
+            self.symbols[addr] = syminfo
+            if st_info.type == "STT_FUNC":
+                self.functions[addr] = syminfo
 
     def get_sym_addr(self, sym_name: str):
         for addr, sym in self.symbols.items():
@@ -55,36 +60,35 @@ class SymResolver:
                 return base + addr
         return None
 
-    def _lookup(self, addr: int) -> typing.Optional[tuple[int, SymInfo]]:
+    def _lookup(self, sym_map: SortedDict[int, SymInfo], addr: int) -> typing.Optional[tuple[int, SymInfo]]:
         """
         Find the symbol preceding the given address
         """
-        index = self.symbols.bisect(addr) - 1
+        index = sym_map.bisect(addr) - 1
         if index < 0:
             return None
-        info = self.symbols.values()[index]
+        info = sym_map.values()[index]
         return (index, info)
 
-    def lookup(self, addr: int) -> SymInfo:
-        result = self._lookup(addr)
+    def lookup_fn(self, addr: int) -> SymInfo:
+        result = self._lookup(self.functions, addr)
         if result is None:
             return None
         _, syminfo = result
         return syminfo
 
-    def lookup_bounded(self, addr: int) -> typing.Optional[SymInfo]:
-        result = self._lookup(addr)
+    def lookup_fn_bounded(self, addr: int) -> typing.Optional[SymInfo]:
+        result = self._lookup(self.functions, addr)
         if result is None:
             return None
         index, syminfo = result
-        base_addr = self.symbols.keys()[index]
-        if addr > base_addr + syminfo.size:
+        if addr > syminfo.addr + syminfo.size:
             return None
         return syminfo
 
-    def lookup_exact(self, addr: int) -> typing.Optional[SymInfo]:
+    def lookup_fn_exact(self, addr: int) -> typing.Optional[SymInfo]:
         """
         Find the symbol matching exactly the given address.
         If none is found, return None.
         """
-        return self.symbols.get(addr, None)
+        return self.functions.get(addr, None)

@@ -154,16 +154,14 @@ class QEMUStatsHistogramDataset(PerfettoDataSetContainer):
         super().pre_merge()
         resolver = self.benchmark.sym_resolver
         self.df["valid_symbol"] = "ok"
-        # If there is no 'end' columns size will be a zero vector
-        size = self.df.get("end", self.df["start"]) - self.df["start"]
-        resolved = self.df["start"].map(lambda addr: resolver.lookup_bounded(addr))
+        resolved = self.df["start"].map(lambda addr: resolver.lookup_fn(addr))
         self.df.loc[resolved.isna(), "valid_symbol"] = "no-match"
+        # XXX-AM: the symbol size does not appear to be reliable?
+        # sym_end = resolved.map(lambda syminfo: syminfo.addr + syminfo.size if syminfo else np.nan)
+        # size_mismatch = (~sym_end.isna()) & (self.df["start"] > sym_end)
+        # self.df.loc[size_mismatch, "valid_symbol"] = "size-mismatch"
 
-        sym_size = resolved.map(lambda syminfo: syminfo.size if syminfo else np.nan)
-        size_mismatch = (sym_size.isna()) | (sym_size < size)
-        self.df.loc[size_mismatch, "valid_symbol"] = "size-mismatch"
         invalid_syms = self.df["valid_symbol"] != "ok"
-
         self.df["symbol"] = resolved.map(lambda syminfo: syminfo.name if syminfo else None)
         self.df.loc[invalid_syms, "symbol"] = self.df.loc[invalid_syms, "start"].transform(lambda addr: f"0x{addr:x}")
         # Note: For the file name, we omit the directory part as otherwise the same executable
@@ -302,7 +300,7 @@ class QEMUStatsBranchHistogramDataset(QEMUStatsHistogramDataset):
         # Generate now a new column only for entries that exactly match symbols, meaning that
         # these are function calls is the first basic-block of the function and is considered as an individual call
         # to that function
-        is_call = self.df["start"].map(lambda addr: resolver.lookup_exact(addr) is not None)
+        is_call = self.df["start"].map(lambda addr: resolver.lookup_fn_exact(addr) is not None)
         self.df["call_count"] = self.df["branch_count"].mask(~is_call, 0).astype(int)
 
     def delta_columns(self):
