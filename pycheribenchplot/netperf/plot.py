@@ -48,7 +48,7 @@ class NetperfQEMUStatsExplorationTable(Plot):
         # Decide which columns to show:
         # Showed for both the baseline and measure runs
         common_cols = ["bb_count", "call_count", "start", "start_call",
-                       "valid_symbol"]  ## XXX-AM find a way to format columns
+                       "valid_symbol"]
         # Showed only for measure runs
         relative_cols = ["delta_bb_count", "norm_delta_bb_count", "delta_call_count", "norm_delta_call_count"]
         show_cols = np.append(colmap.loc[:, common_cols].to_numpy().transpose().ravel(),
@@ -104,9 +104,9 @@ class NetperfQEMUStatsExplorationTable(Plot):
         Return a cross-section of the (joined) qemu stats dataframe containing the symbols
         that could not be resolved for some of the datasets.
         """
-        invalid_syms = df["valid_symbol"] == "no-match"
-        valid_record = df["bb_count"] != 0
-        return df[invalid_syms & valid_record]
+        invalid = (df["valid_symbol"] == "no-match") & (df["bb_count"] != 0)
+        invalid_syms = invalid.groupby(["file", "symbol"]).all()
+        return subset_xs(df, invalid_syms)
 
     def _get_inconsistent_symbols_xs(self, df):
         """
@@ -144,6 +144,7 @@ class NetperfQEMUStatsExplorationTable(Plot):
         self._prepare_xs(missing_syms_df, "QEMU stats for unresolved functions", df)
         inconsistent_df = self._get_inconsistent_symbols_xs(df)
         self._prepare_xs(inconsistent_df, "Inconsistent QEMU stats records", df)
+        self._prepare_xs(df, "All samples", df)
 
 
 ###################### Old stuff
