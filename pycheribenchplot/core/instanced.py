@@ -64,6 +64,7 @@ class InstanceKernelABI(Enum):
 @dataclass
 class QemuInstanceConfig(TemplateConfig):
     """QEMU-specific instance configuration"""
+    qemu_tmp_dir: Path = path_field("/tmp")
     qemu_trace: bool = False
     qemu_trace_categories: list[str] = field(default_factory=list)
 
@@ -471,7 +472,6 @@ class Instance(ABC):
                 self.release_event.clear()
                 self.set_status(InstanceStatus.RESET)
                 await self._reset()
-                self.run_queue.task_done()
                 self.set_status(InstanceStatus.IDLE)
         except aio.CancelledError as ex:
             self.logger.debug("Instance loop cancelled")
@@ -527,11 +527,13 @@ class CheribuildInstance(Instance):
         return f"--{prefix}/{opt}"
 
     def _get_qemu_trace_sink(self):
-        return Path(f"/tmp/trace-{self.uuid}.out")
+        qemu_tmp_dir = self.config.platform_options.qemu_tmp_dir.expanduser()
+        return qemu_tmp_dir / f"trace-{self.uuid}.out"
 
     def _get_qemu_perfetto_sink(self):
         # This will be a binary file containing serialized perfetto protobufs.
-        return Path(f"/tmp/pftrace-{self.uuid}.pb")
+        qemu_tmp_dir = self.config.platform_options.qemu_tmp_dir.expanduser()
+        return qemu_tmp_dir / f"pftrace-{self.uuid}.pb"
 
     def get_client_info(self, benchmark_id: uuid.UUID):
         info = super().get_client_info(benchmark_id)
@@ -596,6 +598,8 @@ class CheribuildInstance(Instance):
     async def _reset(self):
         """Can reuse the qemu instance directly"""
         with open(self._get_qemu_trace_sink(), "w") as fd:
+            fd.truncate(0)
+        with open(self._get_qemu_perfetto_sink(), "w") as fd:
             fd.truncate(0)
         return
 
