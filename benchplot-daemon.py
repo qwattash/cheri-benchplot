@@ -7,17 +7,17 @@ from pathlib import Path
 from pycheribenchplot.core.instanced import InstanceDaemon, InstanceDaemonConfig
 
 def main():
-    root_logger = logging.getLogger(None)
-    root_logger.setLevel(logging.INFO)
-
     parser = ap.ArgumentParser(description="Benchmark runner instance daemon")
     parser.add_argument("json_config", type=Path, help="Configuration file")
     parser.add_argument("-v", action="store_true", help="Verbose output")
+    parser.add_argument("-l", type=Path, help="Log file", default=None)
 
     args = parser.parse_args()
 
+    level = logging.INFO
     if args.v:
-        root_logger.setLevel(logging.DEBUG)
+        level = logging.DEBUG
+    logging.basicConfig(filename=args.l, level=level, filemode="w")
     logging.debug("Loading config %s", args.json_config)
     config = InstanceDaemonConfig.load_json(args.json_config)
     if args.v:
