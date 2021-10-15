@@ -23,7 +23,8 @@ class NetperfQEMUStatsExplorationTable(Plot):
         return "Netperf PC hit count exploration"
 
     def _get_plot_file(self):
-        path = self.benchmark.manager_config.output_path / "netperf-pc-table.{}".format(self.surface.output_file_ext())
+        ext = self.surface.output_file_ext()
+        path = self.benchmark.manager.session_output_path / f"netperf-pc-table.{ext}"
         return path
 
     def _get_legend_map(self):

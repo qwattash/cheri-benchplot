@@ -21,7 +21,7 @@ class QEMUAddrRangeHistBars(Plot):
         return "QEMU PC hit count"
 
     def _get_plot_file(self):
-        return self.benchmark.manager_config.output_path / "qemu-pc-hist-bars.pdf"
+        return self.benchmark.manager.session_output_path / "qemu-pc-hist-bars.pdf"
 
     def prepare(self):
         """
@@ -57,7 +57,7 @@ class QEMUAddrRangeHistTable(Plot):
         return "QEMU Stats"
 
     def _get_plot_file(self):
-        return self.benchmark.manager_config.output_path / "qemu-pc-hist-table.html"
+        return self.benchmark.manager.session_output_path / "qemu-pc-hist-table.html"
 
     def _get_legend_map(self):
         legend = {
