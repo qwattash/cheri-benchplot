@@ -27,8 +27,6 @@ class Config(DataClassJsonMixin):
     def load_json(cls, jsonpath):
         with open(jsonpath, "r") as jsonfile:
             return super().from_json(jsonfile.read())
-        # confdata = json.load(jsonfile)
-        # return cls(**confdata)
 
     def _normalize_sequence(self, f, sequence):
         type_args = typing.get_args(f.type)
@@ -102,10 +100,27 @@ class TemplateConfig(Config):
         return value
 
     def bind_field(self, context, f: Field, value):
+        """
+        Run the template substitution on a config field.
+        If the field is a collection or a nested TemplateConfig, we recursively bind
+        each value.
+        """
         origin = typing.get_origin(f.type)
         if is_dataclass(f.type):
+            # Forward the nested bind if the dataclass is a TemplateConfig
             return self._bind_one(context, f.type, value)
+        elif origin is typing.Union:
+            args = typing.get_args(f.type)
+            if len(args) == 2 and args[1] == None:
+                # If we have an optional field, bind with the type argument instead
+                return self._bind_one(context, args[0], value)
+            else:
+                # Common union field, use whatever type we have as the argument as we do not
+                # know how to parse it
+                return self._bind_one(context, type(value), value)
         elif type(origin) == type:
+            # Generic type argument is a subclass of the type metaclass so it is safe
+            # to check with issubclass()
             if issubclass(origin, collections.abc.Sequence):
                 arg_type = typing.get_args(f.type)[0]
                 return [self._bind_one(context, arg_type, v) for v in value]
@@ -116,6 +131,13 @@ class TemplateConfig(Config):
             return self._bind_one(context, f.type, value)
 
     def bind(self, context):
+        """
+        Run a template substitution pass with the given substitution context.
+        This will resolve template strings as "{foo}" for template key/value
+        substitutions that have been registerd in the contexv via
+        TemplateConfigContext.register_template_subst() and leave the missing
+        template parameters unchanged for later passes.
+        """
         changes = {}
         for f in fields(self):
             replaced = self.bind_field(context, f, getattr(self, f.name))

@@ -94,7 +94,7 @@ class BenchmarkRunConfig(TemplateConfig):
     type: BenchmarkType
     benchmark_options: dict[str, any]
     datasets: dict[str, BenchmarkDataSetConfig]
-    output_file: typing.Optional[str] = None
+    output_file: typing.Optional[Path] = None
     desc: str = ""
     env: dict = field(default_factory=dict)
     extra_files: list[str] = field(default_factory=list)
