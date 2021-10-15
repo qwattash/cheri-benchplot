@@ -1,6 +1,5 @@
 import logging
 import asyncio as aio
-import dbm
 import os
 import re
 import signal
@@ -82,6 +81,7 @@ class InstanceConfig(TemplateConfig):
     cheri_target: InstanceCheriBSD = InstanceCheriBSD.RISCV64_PURECAP
     kernelabi: InstanceKernelABI = InstanceKernelABI.HYBRID
     platform_options: typing.Union[QemuInstanceConfig] = None
+    terminate_on_reset: bool = False
 
     def __post_init__(self):
         super().__post_init__()
@@ -91,7 +91,8 @@ class InstanceConfig(TemplateConfig):
 
 @dataclass
 class InstanceDaemonConfig(Config):
-    concurrent_instances: int = 4
+    cmd_addr: str = "tcp://127.0.0.1:15555"
+    notify_addr: str = "tcp://127.0.0.1:15556"
     verbose: bool = False
     ssh_key: Path = path_field("~/.ssh/id_rsa")
     sdk_path: Path = path_field("~/cheri/cherisdk")
@@ -318,7 +319,7 @@ class Instance(ABC):
         self.config = config
         # Unique ID of the instance
         self.uuid = uuid.uuid4()
-        self.logger = logging.getLogger(f"{self.uuid}")
+        self.logger = logging.getLogger(f"{self.uuid}({self.config.name})")
         # SSH port allocated for the benchmarks to connect to the instance
         self.ssh_port = self._get_ssh_port()
         # The task associated to this instance main loop
@@ -472,7 +473,11 @@ class Instance(ABC):
                 self.release_event.clear()
                 self.set_status(InstanceStatus.RESET)
                 await self._reset()
-                self.set_status(InstanceStatus.IDLE)
+                if self.config.terminate_on_reset:
+                    await self._shutdown()
+                    self.set_status(InstanceStatus.INIT)
+                else:
+                    self.set_status(InstanceStatus.IDLE)
         except aio.CancelledError as ex:
             self.logger.debug("Instance loop cancelled")
             await self._shutdown()
@@ -514,6 +519,10 @@ class CheribuildInstance(Instance):
         self._cheribuild = self.daemon_config.cheribuild_path.expanduser()
         # The cheribuild process task
         self._cheribuild_task = None
+        # cheribuild output reader tasks
+        self._io_tasks = []
+        # Events used to wait on cheribuild output
+        self._io_loop_observers = []
 
     def _cheribuild_target(self, prefix):
         return f"{prefix}-{self.config.cheri_target}"
@@ -541,6 +550,39 @@ class CheribuildInstance(Instance):
         info.qemu_trace_file = self._get_qemu_trace_sink()
         info.qemu_pftrace_file = self._get_qemu_perfetto_sink()
         return info
+
+    async def _stdout_loop(self):
+        while not self._cheribuild_task.stdout.at_eof():
+            raw_out = await self._cheribuild_task.stdout.readline()
+            if not raw_out:
+                continue
+            out = raw_out.decode("ascii")
+            if self.daemon_config.verbose:
+                self.logger.debug(out.rstrip())
+            for evt, matcher in self._io_loop_observers:
+                if matcher(out, False):
+                    evt.set()
+        raise InstanceDaemonError("Cheribuild died")
+
+    async def _stderr_loop(self):
+        while not self._cheribuild_task.stderr.at_eof():
+            raw_out = await self._cheribuild_task.stderr.readline()
+            if not raw_out:
+                continue
+            out = raw_out.decode("ascii")
+            if self.daemon_config.verbose:
+                self.logger.warning(out.rstrip())
+            for evt, matcher in self._io_loop_observers:
+                if matcher(out, True):
+                    evt.set()
+        raise InstanceDaemonError("Cheribuild died")
+
+    async def _wait_io(self, matcher: typing.Callable[[str, bool], bool]):
+        """Wait for matching I/O from cheribuild on stdout or stderr"""
+        event = aio.Event()
+        self._io_loop_observers.append((event, matcher))
+        await event.wait()
+        self._io_loop_observers.remove((event, matcher))
 
     async def _boot(self):
         run_cmd = [self._cheribuild_target("run"), "--skip-update"]
@@ -577,31 +619,19 @@ class CheribuildInstance(Instance):
                                                                  loop=self.event_loop)
         self.logger.debug("Spawned cheribuild pid=%d pgid=%d", self._cheribuild_task.pid,
                           os.getpgid(self._cheribuild_task.pid))
+        self._io_tasks.append(self.event_loop.create_task(self._stdout_loop()))
+        self._io_tasks.append(self.event_loop.create_task(self._stderr_loop()))
         # Now wait for the boot to complete and start sshd
-        sshd_pattern = re.compile("Starting sshd\.")
+        sshd_pattern = re.compile(r"Starting sshd\.")
         ssh_keyfile = self.daemon_config.ssh_key.expanduser()
-        while self._cheribuild_task.returncode is None:
-            raw_out = await self._cheribuild_task.stdout.readline()
-            if raw_out:
-                out = raw_out.decode("ascii")
-                if self.daemon_config.verbose:
-                    self.logger.debug(out.rstrip())
-                if sshd_pattern.match(out):
-                    break
-        if self._cheribuild_task.returncode is not None:
-            self.logger.error("Unexpected shutdown")
-            out, err = await self._cheribuild_task.communicate()
-            raise InstanceDaemonError(f"Instance died before sshd could startup: {err}")
+        await self._wait_io(lambda out, is_stderr: sshd_pattern.match(out) if not is_stderr else False)
         # give qemu some time
         await aio.sleep(5)
 
     async def _reset(self):
-        """Can reuse the qemu instance directly"""
+        """Reset the instance for the next benchmark"""
         with open(self._get_qemu_trace_sink(), "w") as fd:
             fd.truncate(0)
-        with open(self._get_qemu_perfetto_sink(), "w") as fd:
-            fd.truncate(0)
-        return
 
     async def _shutdown(self):
         """
@@ -617,6 +647,10 @@ class CheribuildInstance(Instance):
             # Kill with SIGINT so that cheribuild will cleanly kill childrens
             self.logger.debug("Sending SIGINT to cheribuild")
             os.killpg(os.getpgid(self._cheribuild_task.pid), signal.SIGINT)
+        if len(self._io_tasks):
+            await aio.gather(*self._io_tasks, return_exceptions=True)
+        self._cheribuild_task = None
+        self._ssh_ctrl_conn = None
 
 
 class InstanceDaemon:
@@ -626,18 +660,18 @@ class InstanceDaemon:
     def __init__(self, config: InstanceDaemonConfig):
         self.config = config
         self.logger = logging.getLogger("cheri-instanced")
+        # Daemon event loop
+        self.loop = aio.get_event_loop()
         # Socket used by clients to request things
         self.cmd_socket = ctx.socket(zmq.REP)
         # # Socket used by the daemon to push status updates to clients
         self.notify_socket = ctx.socket(zmq.PUB)
         try:
-            self.cmd_socket.bind("tcp://127.0.0.1:15555")
-            self.notify_socket.bind("tcp://127.0.0.1:15556")
-            self.db = dbm.open(".cheri-instance-cache", "c")
+            self.cmd_socket.bind(self.config.cmd_addr)
+            self.notify_socket.bind(self.config.notify_addr)
         except zmq.ZMQError as e:
             self.logger.error("Can not start cheri-instanced: %s." + "Maybe the daemon is already running?", e)
             exit(1)
-        self.loop = aio.get_event_loop()
         # Running instances
         self.active_instances = {}
         # Instances with status updates
@@ -677,26 +711,27 @@ class InstanceDaemon:
         return instance
 
     def start(self):
+        # This is the new default event loop for this thread
         try:
             self.loop.run_until_complete(self._daemon_main())
         except KeyboardInterrupt:
             self.logger.info("User requested shutdown, cleanup")
-            self._shutdown()
+            self.shutdown()
         except Exception as ex:
             self.logger.error("Fatal error: %s - killing daemon", ex)
-            self._shutdown()
+            self.shutdown()
         finally:
             self.loop.run_until_complete(self.loop.shutdown_asyncgens())
             self.loop.close()
             self.logger.info("Shutdown completed")
 
-    def _shutdown(self):
+    def shutdown(self):
         """Helper to run the _daemon_shutdown task"""
         try:
             self.loop.run_until_complete(self._daemon_shutdown())
         except Exception as ex:
             self.logger.error("Fatal error during shutdown %s", ex)
-            self._kill()
+            exit(1)
 
     def _recycle_instance(self, instance):
         """
@@ -715,7 +750,8 @@ class InstanceDaemon:
         3. wait for all instance tasks to complete
         """
         self.logger.debug("Global shutdown")
-        self.zmq_task.cancel()
+        if self.zmq_task:
+            self.zmq_task.cancel()
         for i in self.active_instances.values():
             i.stop()
         result = await aio.gather(*[i.task for i in self.active_instances.values()], return_exceptions=True)
@@ -725,8 +761,9 @@ class InstanceDaemon:
                 import traceback
                 traceback.print_tb(e.__traceback__)
         # Garbage-collect all other service tasks
-        self.notifier_task.cancel()
-        await aio.gather(self.notifier_task, return_exceptions=True)
+        if self.notifier_task:
+            self.notifier_task.cancel()
+            await aio.gather(self.notifier_task, return_exceptions=True)
         self.logger.info("Global shutdown done")
 
     async def _daemon_main(self):
