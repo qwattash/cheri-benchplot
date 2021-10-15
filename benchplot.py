@@ -2,6 +2,7 @@
 
 import logging
 import argparse as ap
+import uuid
 
 from pathlib import Path
 
@@ -15,6 +16,11 @@ def main():
     sub = parser.add_subparsers(help="command", dest="command")
     sub_run = sub.add_parser("run", help="run benchmarks in configuration")
     sub_plot = sub.add_parser("plot", help="process benchmarks and generate plots")
+    sub_plot.add_argument("session", type=uuid.UUID,
+                          help="session ID to plot for, defaults to the latest session recorded",
+                          nargs="?", default=None)
+    sub_clean = sub.add_parser("clean", help="clean output directory")
+    sub_list = sub.add_parser("list", help="list sessions in the output directory")
 
     args = parser.parse_args()
 
@@ -28,7 +34,7 @@ def main():
         # Override from command line
         config.verbose = True
     benchmark_manager = BenchmarkManager(config)
-    benchmark_manager.run(args.command)
+    benchmark_manager.run(args)
 
 if __name__ == "__main__":
     main()

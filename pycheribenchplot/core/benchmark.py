@@ -135,7 +135,7 @@ class BenchmarkBase(TemplateConfigContext):
             raise Exception(f"Invalid rootfs path {rootfs_path} for benchmark instance")
         self.rootfs = rootfs_path
 
-        self.result_path = self.manager_config.output_path / str(self.uuid)
+        self.result_path = self.manager.session_output_path / str(self.uuid)
         self.result_path.mkdir(parents=True, exist_ok=True)
 
         self.logger = logging.getLogger(f"{config.name}:{instance_config.name}:{self.uuid}")
@@ -277,6 +277,11 @@ class BenchmarkBase(TemplateConfigContext):
         """Extract file from instance"""
         src = (self._conn, guest_src)
         await asyncssh.scp(src, host_dst)
+
+    async def _import_file(self, host_src: Path, guest_dst: Path):
+        """Import file into instance"""
+        dst = (self._conn, guest_dst)
+        await asyncssh.scp(host_src, dst)
 
     async def _connect_instance(self, info: BenchmarkInfo):
         conn = await asyncssh.connect(info.ssh_host,

@@ -3,6 +3,9 @@ import uuid
 import json
 import asyncio as aio
 import traceback
+import typing
+import argparse as ap
+from datetime import datetime, timezone
 from pathlib import Path
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -38,6 +41,7 @@ class BenchmarkManagerRecord(Config):
 
 class BenchmarkManager(TemplateConfigContext):
     benchmark_runner_map = {}
+    records_filename = "benchplot-run.json"
 
     @classmethod
     def register_benchmark(cls, type_: BenchmarkType, bench_class):
@@ -45,6 +49,8 @@ class BenchmarkManager(TemplateConfigContext):
 
     def __init__(self, config: BenchmarkManagerConfig):
         super().__init__()
+        # Cached copy of the configuration template
+        self._config_template = config
         # The ID for this benchplot session
         self.session = uuid.uuid4()
         self.logger = logging.getLogger("benchplot")
@@ -54,10 +60,7 @@ class BenchmarkManager(TemplateConfigContext):
         self.failed_benchmarks = []
         self.queued_tasks = []
 
-        # Note: this will only bind the manager-specific options, the rest of the template arguments
-        # will remain as they will need to be bound to specific benchmark instances.
-        self.register_template_subst(session=self.session)
-        self.config = config.bind(self)
+        self._init_session()
         self.logger.info("Start benchplot session %s", self.session)
         # Adjust libraries log level
         if not self.config.verbose:
@@ -65,11 +68,61 @@ class BenchmarkManager(TemplateConfigContext):
             ssh_logger.setLevel(logging.WARNING)
         matplotlib_logger = logging.getLogger("matplotlib")
         matplotlib_logger.setLevel(logging.WARNING)
-        self.benchmark_records = BenchmarkManagerRecord(session=self.session)
-        self.benchmark_records_path = self.config.output_path / "benchplot-run.json"
 
     def record_benchmark(self, record: BenchmarkRunRecord):
         self.benchmark_records.records.append(record)
+
+    def _init_session(self):
+        """Session-ID dependant initialization"""
+        # Note: this will only bind the manager-specific options, the rest of the template arguments
+        # will remain as they will need to be bound to specific benchmark instances.
+        self.register_template_subst(session=self.session)
+        self.config = self._config_template.bind(self)
+        self.session_output_path = self.config.output_path / f"benchplot-session-{str(self.session)}"
+        self.benchmark_records = BenchmarkManagerRecord(session=self.session)
+        self.benchmark_records_path = self.session_output_path / self.records_filename
+
+    def _resolve_recorded_session(self, session: typing.Optional[uuid.UUID]):
+        """
+        Find recorded session to use for benchmark analysis.
+        If a session ID is given, we try to locate the benchmark records for that session.
+        If no session is given, default to the most recent session
+        (by last-modified time of the record file).
+        The resolved session is set as the current session ID and any dependent session state is
+        re-initialized.
+        If a session can not be resolved, raise an exception
+        """
+        self.logger.debug("Lookup session records in %s", self.config.output_path)
+        resolved = None
+        resolved_mtime = 0
+        for next_dir in self._iter_output_session_dirs():
+            record_file = next_dir / self.records_filename
+            record = BenchmarkManagerRecord.load_json(record_file)
+            if session is None:
+                fstat = record_file.stat()
+                if fstat.st_mtime > resolved_mtime:
+                    resolved = record
+            elif session == record.session:
+                resolved = record
+                break
+        if resolved is None:
+            self.logger.error("Can not resolve benchmark session %s in %s",
+                              session if session is not None else "DEFAULT",
+                              self.config.output_path)
+            raise Exception("Benchmark session not found")
+        self.session = resolved.session
+        self._init_session()
+        # Overwrite benchmark records with the resolved data
+        self.benchmark_records = resolved
+
+    def _iter_output_session_dirs(self):
+        if not self.config.output_path.is_dir():
+            self.logger.error("Output directory %s does not exist", self.config.output_path)
+            raise OSError("Output directory not found")
+        for next_dir in self.config.output_path.iterdir():
+            if not next_dir.is_dir() or not (next_dir / self.records_filename).exists():
+                continue
+            yield next_dir
 
     def _emit_records(self):
         self.logger.debug("Emit benchmark records")
@@ -87,22 +140,28 @@ class BenchmarkManager(TemplateConfigContext):
         self.logger.debug("Created benchmark run %s on %s id=%s", bench_config.name, instance.name, bench.uuid)
         return bench
 
+    async def _list_task(self):
+        self.logger.debug("List recorded sessions at %s", self.config.output_path)
+        for next_dir in self._iter_output_session_dirs():
+            record_file = next_dir / self.records_filename
+            records = BenchmarkManagerRecord.load_json(record_file)
+            fstat = record_file.stat()
+            mtime = datetime.fromtimestamp(fstat.st_mtime, tz=timezone.utc)
+            print(f"SESSION {records.session} [{mtime}]")
+            for bench_record in records.records:
+                print(f"\t{bench_record.run.type}:{bench_record.run.name} on instance " +
+                      f"{bench_record.instance.name} ({bench_record.uuid})")
+
+    async def _clean_task(self):
+        self.logger.debug("Clean all sessions from the output directory")
+        for next_dir in self._iter_output_session_dirs():
+            next_dir.rmdir()
+
     async def _run_tasks(self):
         await aio.gather(*self.queued_tasks)
         await self.instance_manager.stop()
 
-    def _handle_run_command(self):
-        self.instance_manager.start()
-        for conf in self.config.benchmarks:
-            self.logger.debug("Found benchmark %s", conf.name)
-            for inst_conf in self.config.instances:
-                bench = self.create_benchmark(conf, inst_conf)
-                bench.task = self.loop.create_task(bench.run())
-                self.queued_tasks.append(bench.task)
-
     async def _plot_task(self):
-        self.benchmark_records = BenchmarkManagerRecord.load_json(self.benchmark_records_path)
-        self.session = self.benchmark_records.session
         # Find all benchmark variants we were supposed to run
         # Note: this assumes that we aggregate to compare the same benchmark across OS configs,
         # it can be easily changed to also support comparison of different benchmark runs on
@@ -140,12 +199,25 @@ class BenchmarkManager(TemplateConfigContext):
         for bench in aggregate_baseline.values():
             bench.plot()
 
-    def _handle_plot_command(self):
-        self.logger.debug("Import records from %s", self.benchmark_records_path)
-        if not self.benchmark_records_path.exists() or self.benchmark_records_path.is_dir():
-            self.logger.error("Fatal: Invalid benchmark records file %s", self.benchmark_records_path)
-            exit(1)
+    def _handle_run_command(self, args: ap.Namespace):
+        self.instance_manager.start()
+        self.session_output_path.mkdir(parents=True)
+        for conf in self.config.benchmarks:
+            self.logger.debug("Found benchmark %s", conf.name)
+            for inst_conf in self.config.instances:
+                bench = self.create_benchmark(conf, inst_conf)
+                bench.task = self.loop.create_task(bench.run())
+                self.queued_tasks.append(bench.task)
+
+    def _handle_plot_command(self, args: ap.Namespace):
+        self._resolve_recorded_session(args.session)
         self.queued_tasks.append(self.loop.create_task(self._plot_task()))
+
+    def _handle_list_command(self, args: ap.Namespace):
+        self.queued_tasks.append(self.loop.create_task(self._list_task()))
+
+    def _handle_clean_command(self, args: ap.Namespace):
+        self.queued_tasks.append(self.loop.create_task(self._clean_task()))
 
     async def _shutdown_tasks(self):
         for t in self.queued_tasks:
@@ -153,11 +225,17 @@ class BenchmarkManager(TemplateConfigContext):
         await aio.gather(*self.queued_tasks, return_exceptions=True)
         await self.instance_manager.stop()
 
-    def run(self, command):
+    def run(self, args: ap.Namespace):
+        """Main entry point to execute benchmark tasks."""
+        command = args.command
         if command == "run":
-            self._handle_run_command()
+            self._handle_run_command(args)
         elif command == "plot":
-            self._handle_plot_command()
+            self._handle_plot_command(args)
+        elif command == "list":
+            self._handle_list_command(args)
+        elif command == "clean":
+            self._handle_clean_command(args)
         else:
             self.logger.error("Fatal: invalid command")
             exit(1)
