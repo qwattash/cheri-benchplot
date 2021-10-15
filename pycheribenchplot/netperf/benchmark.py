@@ -9,6 +9,8 @@ import pandas as pd
 from ..core.benchmark import BenchmarkBase, BenchmarkDataSetConfig
 from ..core.instanced import InstancePlatform
 from ..core.dataset import DataSetParser
+from ..core.excel import SpreadsheetSurface
+from ..core.html import HTMLSurface
 from ..qemu_stats import QEMUStatsBBHistogramDataset
 from .config import NetperfBenchmarkRunConfig
 from .plot import *
@@ -70,9 +72,11 @@ class NetperfBenchmark(BenchmarkBase):
         pmc_dset = self.get_dataset(DataSetParser.PMC)
         qemu_bb_dset = self.get_dataset(DataSetParser.QEMU_STATS_BB_HIST)
         qemu_call_dset = self.get_dataset(DataSetParser.QEMU_STATS_CALL_HIST)
-        self.register_plot(NetperfQEMUStatsExplorationTable(self, pmc_dset, qemu_bb_dset, qemu_call_dset))
-        # if pmc_dset and qemu_dset:
-        #     self.register_plot(NetperfPCExplorationTable(self, pmc_dset, qemu_bb_dset))
+        self.register_plot(
+            NetperfQEMUStatsExplorationTable(self, pmc_dset, qemu_bb_dset, qemu_call_dset, surface=HTMLSurface()))
+        self.register_plot(
+            NetperfQEMUStatsExplorationTable(self, pmc_dset, qemu_bb_dset, qemu_call_dset,
+                                             surface=SpreadsheetSurface()))
         super().plot()
 
 
