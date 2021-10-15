@@ -4,7 +4,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from ..core.dataset import (Field, DataField, StrField, IndexField, CSVDataSetContainer, col2stat)
+from ..core.dataset import Field, DataField, StrField, IndexField, col2stat
+from ..core.csv import CSVDataSetContainer
 
 
 class NetperfData(CSVDataSetContainer):

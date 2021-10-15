@@ -4,7 +4,8 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 
-from .dataset import CSVDataSetContainer, DataField, StrField, Field
+from .dataset import DataField, StrField, Field
+from .csv import CSVDataSetContainer
 from .instanced import InstanceCheriBSD, InstancePlatform
 
 

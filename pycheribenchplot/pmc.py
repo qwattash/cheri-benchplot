@@ -5,7 +5,8 @@ import pandas as pd
 import numpy as np
 
 from .core.cpu import *
-from .core.dataset import CSVDataSetContainer, StrField, DataField, IndexField
+from .core.dataset import StrField, DataField, IndexField
+from .core.csv import CSVDataSetContainer
 from .core.instanced import InstanceCheriBSD, InstancePlatform
 
 
