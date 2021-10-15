@@ -18,7 +18,7 @@ def _template_safe(temp: str, **kwargs):
 
 
 def path_field(default=None):
-    return field(default=Path(default), metadata=config(encoder=str, decoder=Path))
+    return field(default=Path(default) if default else None, metadata=config(encoder=str, decoder=Path))
 
 
 @dataclass

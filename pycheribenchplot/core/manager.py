@@ -13,7 +13,6 @@ import asyncssh
 from .config import Config, TemplateConfig, TemplateConfigContext, path_field
 from .benchmark import BenchmarkRunConfig, BenchmarkRunRecord, BenchmarkType
 from .instanced import InstanceClient, InstanceConfig
-from ..netperf.benchmark import NetperfBenchmark
 
 
 @dataclass
@@ -38,6 +37,12 @@ class BenchmarkManagerRecord(Config):
 
 
 class BenchmarkManager(TemplateConfigContext):
+    benchmark_runner_map = {}
+
+    @classmethod
+    def register_benchmark(cls, type_: BenchmarkType, bench_class):
+        cls.benchmark_runner_map[type_] = bench_class
+
     def __init__(self, config: BenchmarkManagerConfig):
         super().__init__()
         # The ID for this benchplot session
@@ -46,6 +51,7 @@ class BenchmarkManager(TemplateConfigContext):
         self.loop = aio.get_event_loop()
         self.instance_manager = InstanceClient(self.loop)
         self.benchmark_instances = {}
+        self.failed_benchmarks = []
         self.queued_tasks = []
 
         # Note: this will only bind the manager-specific options, the rest of the template arguments
@@ -72,9 +78,9 @@ class BenchmarkManager(TemplateConfigContext):
 
     def create_benchmark(self, bench_config: BenchmarkRunConfig, instance: InstanceConfig, uid: uuid.UUID = None):
         """Create a benchmark run on an instance"""
-        if bench_config.type == BenchmarkType.NETPERF:
-            bench_class = NetperfBenchmark
-        else:
+        try:
+            bench_class = self.benchmark_runner_map[bench_config.type]
+        except KeyError:
             self.logger.error("Invalid benchmark type %s", bench_config.type)
         bench = bench_class(self, bench_config, instance, run_id=uid)
         self.benchmark_instances[bench.uuid] = bench

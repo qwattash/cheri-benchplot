@@ -6,6 +6,7 @@ import uuid
 import typing
 import json
 import asyncio as aio
+import traceback
 from contextlib import contextmanager
 from pathlib import Path
 from enum import Enum
@@ -20,7 +21,6 @@ from .instanced import InstanceConfig, BenchmarkInfo
 from .config import TemplateConfig, TemplateConfigContext
 from .dataset import DataSetParser
 from .elf import SymResolver
-from ..netperf.config import NetperfBenchmarkRunConfig
 from ..pmc import PMCStatData
 from ..qemu_stats import (QEMUStatsBBHistogramDataset, QEMUStatsBranchHistogramDataset)
 
@@ -92,9 +92,9 @@ class BenchmarkRunConfig(TemplateConfig):
     """
     name: str
     type: BenchmarkType
-    output_file: str
-    benchmark_options: typing.Union[NetperfBenchmarkRunConfig]
+    benchmark_options: dict[str, any]
     datasets: dict[str, BenchmarkDataSetConfig]
+    output_file: typing.Optional[str] = None
     desc: str = ""
     env: dict = field(default_factory=dict)
     extra_files: list[str] = field(default_factory=list)
@@ -333,9 +333,9 @@ class BenchmarkBase(TemplateConfigContext):
                 t.cancel()
             await aio.gather(*self._command_tasks, return_exceptions=True)
         except Exception as ex:
-            import traceback
             self.logger.error("Benchmark run failed: %s", ex)
             traceback.print_tb(ex.__traceback__)
+            self.manager.failed_benchmarks.append(self)
         finally:
             await self.daemon.release_instance(self.uuid, self._reserved_instance)
 

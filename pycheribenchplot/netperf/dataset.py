@@ -166,3 +166,7 @@ class NetperfData(CSVDataSetContainer):
         err_columns = (col2stat("errhi", self.data_columns()) + col2stat("errlo", self.data_columns()))
         err_df = pd.DataFrame(0, index=self.df.index, columns=err_columns)
         self.df = pd.concat([self.df, err_df], axis=1)
+
+    def aggregate(self):
+        super().aggregate()
+        self.agg_df = self.merged_df.copy()
