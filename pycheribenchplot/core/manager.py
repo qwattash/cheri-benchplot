@@ -5,6 +5,7 @@ import asyncio as aio
 import traceback
 import typing
 import argparse as ap
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from collections import defaultdict
@@ -155,7 +156,7 @@ class BenchmarkManager(TemplateConfigContext):
     async def _clean_task(self):
         self.logger.debug("Clean all sessions from the output directory")
         for next_dir in self._iter_output_session_dirs():
-            next_dir.rmdir()
+            shutil.rmtree(next_dir)
 
     async def _run_tasks(self):
         await aio.gather(*self.queued_tasks)
