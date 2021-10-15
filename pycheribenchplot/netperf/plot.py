@@ -47,8 +47,7 @@ class NetperfQEMUStatsExplorationTable(Plot):
         assert not view_df[colmap.loc[:, "valid_symbol"]].isna().any().any()
         # Decide which columns to show:
         # Showed for both the baseline and measure runs
-        common_cols = ["bb_count", "call_count", "start", "start_call",
-                       "valid_symbol"]
+        common_cols = ["bb_count", "call_count", "start", "start_call", "valid_symbol"]
         # Showed only for measure runs
         relative_cols = ["delta_bb_count", "norm_delta_bb_count", "delta_call_count", "norm_delta_call_count"]
         show_cols = np.append(colmap.loc[:, common_cols].to_numpy().transpose().ravel(),
