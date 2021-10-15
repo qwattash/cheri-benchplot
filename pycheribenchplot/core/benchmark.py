@@ -4,17 +4,18 @@ import re
 import time
 import uuid
 import typing
+import json
 import asyncio as aio
 from contextlib import contextmanager
 from pathlib import Path
 from enum import Enum
 from dataclasses import dataclass, field
-from subprocess import PIPE
 
 import pandas as pd
 import asyncssh
 
 from .procstat import ProcstatDataset
+from .pidmap import PidMapDataset
 from .instanced import InstanceConfig, BenchmarkInfo
 from .config import TemplateConfig, TemplateConfigContext
 from .dataset import DataSetParser
@@ -36,8 +37,20 @@ def timing(name, logger=None):
         logger.info("%s in %.2fs", name, end - start)
 
 
+class BenchmarkError(Exception):
+    def __init__(self, benchmark, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.benchmark = benchmark
+        self.benchmark.logger.error(str(self))
+
+    def __str__(self):
+        msg = super().__str__()
+        return f"BenchmarkError: {msg} on benchmark instance {self.benchmark.uuid}"
+
+
 class BenchmarkType(Enum):
     NETPERF = "netperf"
+    TEST = "TEST"  # Reserved for tests
 
     def __str__(self):
         return self.value
@@ -137,8 +150,10 @@ class BenchmarkBase(TemplateConfigContext):
         # Plots to show for this benchmark. Note: this is only relevant for baseline instances
         self.plots = []
         self.sym_resolver = SymResolver(self)
-        # There is an extra implicit dataset to extract procstat -v mappings
+        # Extra implicit dataset to extract procstat -v mappings
         self.procstat_output = self.result_path / f"procstat-{self.uuid}.csv"
+        # Extra implicit dataset to extract PID to command mapping
+        self.pid_map_output = self.result_path / f"pid-map-{self.uuid}.json"
 
     def _bind_configs(self):
         """
@@ -157,6 +172,7 @@ class BenchmarkBase(TemplateConfigContext):
         # Second pass
         self.instance_config = instance_config.bind(self)
         self.config = config.bind(self)
+        self._remote_task_pid = {}
 
     def _record_benchmark_run(self):
         record = BenchmarkRunRecord(uuid=self.uuid, instance=self.instance_config, run=self.config)
@@ -165,10 +181,45 @@ class BenchmarkBase(TemplateConfigContext):
     def register_plot(self, plotter):
         self.plots.append(plotter)
 
+    def _build_remote_command(self, cmd: str, args: list, env={}):
+        """
+        asyncss does not return the pid of the process so we need to print it.
+        We also use this to work around any restriction on the environment variables
+        we are able to set on the guest.
+        The first thing that the remote command will print will contain the process PID,
+        this is handled by the _cmd_io() loop.
+        """
+        cmdline = f"{cmd} " + " ".join(args)
+        exports = [f"export {name}={value};" for name, value in env.items()]
+        export_line = " ".join(exports)
+        sh_cmd = ["sh", "-c", f"'echo $$;{export_line} exec {cmdline}'"]
+        return sh_cmd
+
+    def _parse_pid_line(self, ssh_task, line: str) -> int:
+        """
+        Parse the first line of the output with the process PID number
+        """
+        try:
+            self.logger.debug("Attempt to resolve PID %s", line)
+            pid = int(line)
+            self._remote_task_pid[ssh_task] = pid
+            self.logger.debug("Bind remote command %s to PID %d", ssh_task.command, pid)
+        except ValueError:
+            raise BenchmarkError(self, f"Can not determine running process pid for {ssh_task.command}, bailing out.")
+
     async def _cmd_io(self, proc_task, callback):
         try:
-            while proc_task.returncode is None:
+            while proc_task.returncode is None and not proc_task.stdout.at_eof():
                 out = await proc_task.stdout.readline()
+                if not out:
+                    continue
+                # Expect to receive the PID of the command in the first output line
+                if proc_task not in self._remote_task_pid:
+                    try:
+                        self._parse_pid_line(proc_task, out)
+                    except BenchmarkError as ex:
+                        proc_task.terminate()
+                        raise ex
                 try:
                     if callback:
                         callback(out)
@@ -176,30 +227,19 @@ class BenchmarkBase(TemplateConfigContext):
                     raise ex
                 except Exception as ex:
                     self.logger.error("Error while processing output for %s: %s", proc_task.command, ex)
-                self.logger.debug(out)
+                if out:
+                    self.logger.debug(out)
         except aio.CancelledError as ex:
             proc_task.terminate()
             raise ex
         finally:
             self.logger.debug("Background task %s done", proc_task.command)
 
-    async def _find_remote_pid(self, cmd_match: str):
-        pid = None
-        result = await self._run_cmd("ps", ["-x", "-o", "pid,command"])
-        for line in io.StringIO(result.stdout):
-            fields = line.strip().split(" ")
-            cmd = " ".join(fields[1:])
-            if re.match(str(cmd_match), cmd):
-                pid = int(fields[0])
-                break
-        return pid
-
     async def _run_bg_cmd(self, command: str, args: list, env={}, iocallback=None):
         """Run a background command without waiting for termination"""
-        cmdline = f"{command} " + " ".join(args)
-        env_str = [f"{k}={v}" for k, v in env.items()]
-        self.logger.debug("exec background: %s env=%s", cmdline, env)
-        proc_task = await self._conn.create_process(cmdline, env=env_str)
+        remote_cmd = self._build_remote_command(command, args, env)
+        self.logger.debug("SH exec background: %s", remote_cmd)
+        proc_task = await self._conn.create_process(" ".join(remote_cmd))
         self._command_tasks.append(aio.create_task(self._cmd_io(proc_task, iocallback)))
         return proc_task
 
@@ -207,24 +247,30 @@ class BenchmarkBase(TemplateConfigContext):
         """
         Work around the unreliability of asyncssh/openssh signal delivery
         """
-        cmd = task.command.split(" ")[0]
-        pid = await self._find_remote_pid(cmd)
-        if pid is None:
+        try:
+            pid = self._remote_task_pid[task]
+            result = await self._conn.run(f"kill -TERM {pid}")
+            if result.returncode != 0:
+                self.logger.error("Failed to stop remote process %d: %s", pid, task.command)
+            else:
+                await task.wait()
+        except KeyError:
             self.logger.error("Can not stop %s, missing pid", task.command)
-        else:
-            await self._run_cmd("kill", ["-TERM", str(pid)])
-            await task.wait()
 
-    async def _run_cmd(self, command: str, args: list, env={}, outfile=PIPE):
+    async def _run_cmd(self, command: str, args: list, env={}, outfile=None):
         """Run a command and wait for the process to complete"""
-        cmdline = f"{command} " + " ".join(args)
-        env_str = [f"{k}={v}" for k, v in env.items()]
-        self.logger.debug("exec: %s env=%s", cmdline, env)
-        result = await self._conn.run(cmdline, env=env_str, stdout=outfile)
+        remote_cmd = self._build_remote_command(command, args, env)
+        self.logger.debug("SH exec: %s", remote_cmd)
+        result = await self._conn.run(" ".join(remote_cmd))
         if result.returncode != 0:
             self.logger.error("Failed to run %s: %s", command, result.stderr)
         else:
             self.logger.debug("%s done: %s", command, result.stdout)
+        stdout = io.StringIO(result.stdout)
+        # Expect to receive the PID of the command in the first output line
+        self._parse_pid_line(result, stdout.readline())
+        if outfile:
+            outfile.write(stdout.read())
         return result
 
     async def _extract_file(self, guest_src: Path, host_dst: Path):
@@ -241,6 +287,21 @@ class BenchmarkBase(TemplateConfigContext):
                                       passphrase="")
         self.logger.debug("Connected to instance")
         return conn
+
+    async def _extract_pid_mappings(self):
+        """
+        Extract system PID to process mappings for dataset to use
+        """
+        self.logger.info("Extract system PIDs")
+        pid_raw_data = io.StringIO()
+        await self._run_cmd("ps", ["-a", "-x", "-o", "uid,pid,command", "--libxo", "json"], outfile=pid_raw_data)
+        # Append the PIDs for all processes executed by the benchmark to the pid map
+        pid_json = json.loads(pid_raw_data.getvalue())
+        proc_list = pid_json["process-information"]["process"]
+        for ssh_proc_task, pid in self._remote_task_pid.items():
+            proc_list.append({"uid": 1, "pid": pid, "command": ssh_proc_task.command})
+        with open(self.pid_map_output, "w+") as pid_fd:
+            json.dump(pid_json, pid_fd)
 
     async def _run_benchmark(self):
         """
@@ -265,7 +326,8 @@ class BenchmarkBase(TemplateConfigContext):
             await self._run_procstat()
             with timing("Benchmark completed", self.logger):
                 await self._run_benchmark()
-                self._record_benchmark_run()
+            await self._extract_pid_mappings()
+            self._record_benchmark_run()
             # Stop all pending background processes
             for t in self._command_tasks:
                 t.cancel()
@@ -307,10 +369,15 @@ class BenchmarkBase(TemplateConfigContext):
             self.logger.debug("Load implicit procstat dataset")
             pstat = ProcstatDataset(self, "procstat")
             pstat.load(self.procstat_output)
-            self.datasets["procstat"] = pstat
+            self.datasets[DataSetParser.PROCSTAT] = pstat
             for base, guest_path in pstat.mapped_binaries(self.uuid):
                 local_path = self.rootfs / guest_path.relative_to("/")
                 self.sym_resolver.import_symbols(local_path, base)
+        if self.pid_map_output.exists():
+            # If we have the process PID mapping, import the dataset
+            self.logger.debug("Load implicit PID dataset")
+            pidmap = PidMapDataset(self, "pidmap")
+            self.datasets[DataSetParser.PIDMAP] = pidmap
 
     def get_dataset(self, parser_id: DataSetParser):
         return self.datasets.get(parser_id, None)

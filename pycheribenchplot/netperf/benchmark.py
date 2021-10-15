@@ -33,13 +33,11 @@ class NetperfBenchmark(BenchmarkBase):
         await super()._run_procstat()
         # Grab the memory mapping for the process
         netperf_stopped = await self._run_bg_cmd(self.netperf_bin, ["-z"], env=self.env)
-        await aio.sleep(1)
+        await aio.sleep(5)  # Give some time to settle
         try:
-            pid = await self._find_remote_pid(self.netperf_bin)
-            if pid is None:
-                self.logger.error("netperf -z not running?")
-                raise Exception("Process died unexpectedly")
-            await self._run_cmd("procstat", ["-v", str(pid)], env=self.env, outfile=self.procstat_output)
+            pid = self._remote_task_pid[netperf_stopped]
+            with open(self.procstat_output, "w+") as outfd:
+                await self._run_cmd("procstat", ["-v", str(pid)], env=self.env, outfile=outfd)
             self.logger.debug("Collected procstat info")
         finally:
             await self._stop_bg_cmd(netperf_stopped)
@@ -51,10 +49,8 @@ class NetperfBenchmark(BenchmarkBase):
             self.logger.info("Prime benchmark")
             await self._run_cmd(self.netperf_bin, self.netperf_config.netperf_prime_options, env=self.env)
             self.logger.info("Run benchmark iterations")
-            await self._run_cmd(self.netperf_bin,
-                                self.netperf_config.netperf_options,
-                                outfile=self.result_path / self.config.output_file,
-                                env=self.env)
+            with open(self.result_path / self.config.output_file, "w+") as outfd:
+                await self._run_cmd(self.netperf_bin, self.netperf_config.netperf_options, outfile=outfd, env=self.env)
         finally:
             await self._stop_bg_cmd(netserver)
         self.logger.info("Gather results")
