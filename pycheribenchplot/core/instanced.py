@@ -1,4 +1,3 @@
-import logging
 import asyncio as aio
 import os
 import re
@@ -15,6 +14,7 @@ import asyncssh
 import zmq
 import zmq.asyncio as zaio
 
+from .util import new_logger
 from .config import Config, TemplateConfig, path_field
 
 ctx = zaio.Context()
@@ -207,7 +207,7 @@ class InstanceClient:
             await self.event.wait()
 
     def __init__(self, loop: aio.AbstractEventLoop):
-        self.logger = logging.getLogger("cheri-instanced-client")
+        self.logger = new_logger("cheri-instanced-client")
         self.loop = loop
         self.cmd_socket = ctx.socket(zmq.REQ)
         self.cmd_socket.connect("tcp://127.0.0.1:15555")
@@ -319,7 +319,7 @@ class Instance(ABC):
         self.config = config
         # Unique ID of the instance
         self.uuid = uuid.uuid4()
-        self.logger = logging.getLogger(f"{self.uuid}({self.config.name})")
+        self.logger = new_logger(f"{self.uuid}({self.config.name})")
         # SSH port allocated for the benchmarks to connect to the instance
         self.ssh_port = self._get_ssh_port()
         # The task associated to this instance main loop
@@ -659,7 +659,7 @@ class InstanceDaemon:
     """
     def __init__(self, config: InstanceDaemonConfig):
         self.config = config
-        self.logger = logging.getLogger("cheri-instanced")
+        self.logger = new_logger("cheri-instanced")
         # Daemon event loop
         self.loop = aio.get_event_loop()
         # Socket used by clients to request things

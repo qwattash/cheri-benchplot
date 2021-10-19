@@ -6,6 +6,7 @@ import uuid
 
 from pathlib import Path
 
+from pycheribenchplot.core.util import setup_logging
 from pycheribenchplot.core.manager import BenchmarkManager, BenchmarkManagerConfig
 
 def main():
@@ -24,11 +25,8 @@ def main():
 
     args = parser.parse_args()
 
-    level = logging.INFO
-    if args.verbose:
-        level = logging.DEBUG
-    logging.basicConfig(filename=args.l, level=level, filemode="w")
-    logging.debug("Loading config %s", args.json_config)
+    logger = setup_logging(args.verbose, args.l)
+    logger.debug("Loading config %s", args.json_config)
     config = BenchmarkManagerConfig.load_json(args.json_config)
     if args.verbose:
         # Override from command line

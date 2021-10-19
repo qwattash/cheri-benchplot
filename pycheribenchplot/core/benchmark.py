@@ -1,13 +1,10 @@
-import logging
 import io
 import re
-import time
 import uuid
 import typing
 import json
 import asyncio as aio
 import traceback
-from contextlib import contextmanager
 from pathlib import Path
 from enum import Enum
 from dataclasses import dataclass, field
@@ -21,20 +18,9 @@ from .instanced import InstanceConfig, BenchmarkInfo
 from .config import TemplateConfig, TemplateConfigContext
 from .dataset import DataSetParser
 from .elf import SymResolver
+from .util import new_logger, timing
 from ..pmc import PMCStatData
 from ..qemu_stats import (QEMUStatsBBHistogramDataset, QEMUStatsBranchHistogramDataset)
-
-
-@contextmanager
-def timing(name, logger=None):
-    if logger is None:
-        logger = logging
-    start = time.time()
-    try:
-        yield
-    finally:
-        end = time.time()
-        logger.info("%s in %.2fs", name, end - start)
 
 
 class BenchmarkError(Exception):
@@ -138,7 +124,7 @@ class BenchmarkBase(TemplateConfigContext):
         self.result_path = self.manager.session_output_path / str(self.uuid)
         self.result_path.mkdir(parents=True, exist_ok=True)
 
-        self.logger = logging.getLogger(f"{config.name}:{instance_config.name}:{self.uuid}")
+        self.logger = new_logger(f"{config.name}:{instance_config.name}:{self.uuid}")
         self._reserved_instance = None  # BenchmarkInfo of the instance the daemon has reserved us
         self._conn = None  # Connection to the CheriBSD instance
         self._command_tasks = []  # Commands being run on the instance

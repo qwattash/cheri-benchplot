@@ -1,4 +1,3 @@
-import logging
 from pathlib import Path
 
 import pandas as pd
@@ -149,7 +148,7 @@ class FluteStatcountersData(PMCStatData):
                 if base_metric not in self.df.columns:
                     base_metric = base_metric + "_access"
                     if base_metric not in self.df.columns:
-                        logging.warning("Can not determine base column for %s, skipping", c)
+                        self.logger.warning("Can not determine base column for %s, skipping", c)
                         continue
 
                 hit = self.df[base_metric] - self.df[c]
@@ -157,10 +156,10 @@ class FluteStatcountersData(PMCStatData):
                     hit_rate = hit / self.df[base_metric]
                 else:
                     if (self.df[base_metric] == 0).all():
-                        logging.warning("Invalid hit count for %s, maybe %s is unimplemented", c, base_metric)
+                        self.logger.warning("Invalid hit count for %s, maybe %s is unimplemented", c, base_metric)
                         hit_rate = np.NaN
                     else:
-                        logging.critical("Negative hit count %s".format(base_metric))
+                        self.logger.critical("Negative hit count %s".format(base_metric))
                         exit(1)
                 new_columns["{}_hit_rate".format(base_metric)] = hit_rate
         self.df = self.df.assign(**new_columns)

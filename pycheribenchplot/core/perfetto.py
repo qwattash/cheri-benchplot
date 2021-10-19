@@ -1,10 +1,10 @@
-import logging
 from abc import abstractmethod
 from pathlib import Path
 
 import pandas as pd
 from perfetto.trace_processor import TraceProcessor
 
+from .util import new_logger
 from .dataset import DataSetContainer
 
 
@@ -23,7 +23,7 @@ class _TraceProcessorCache:
     def __init__(self, manager_config: "BenchmarkManagerConfig"):
         self._manager_config = manager_config
         self._instances = {}
-        self.logger = logging.getLogger("perfetto-trace-processor-cache")
+        self.logger = new_logger("perfetto-trace-processor-cache")
 
     def _trace_processor_path(self):
         return self._manager_config.perfetto_path / "trace_processor_shell"

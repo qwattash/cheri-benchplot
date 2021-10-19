@@ -1,4 +1,3 @@
-import logging
 import typing
 from abc import ABC, abstractmethod
 from enum import Enum
@@ -7,6 +6,8 @@ from contextlib import contextmanager
 
 import pandas as pd
 import numpy as np
+
+from .util import new_logger
 
 
 class DatasetProcessingException(Exception):
@@ -104,7 +105,7 @@ class DataSetContainer(ABC):
         self.name = dset_key
         self.benchmark = benchmark
         self.config = benchmark.config
-        self.logger = logging.getLogger(f"{self.config.name}:{dset_key}")
+        self.logger = new_logger(f"{self.config.name}:{dset_key}")
         self.df = pd.DataFrame(columns=self.all_columns())
         self.df = self.df.astype(self._get_column_dtypes())
         self.df.set_index(self.index_columns(), inplace=True)

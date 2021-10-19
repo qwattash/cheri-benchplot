@@ -12,8 +12,10 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Enum
 
+import termcolor
 import asyncssh
 
+from .util import new_logger
 from .config import Config, TemplateConfig, TemplateConfigContext, path_field
 from .benchmark import BenchmarkRunConfig, BenchmarkRunRecord, BenchmarkType
 from .instanced import InstanceClient, InstanceConfig
@@ -54,7 +56,7 @@ class BenchmarkManager(TemplateConfigContext):
         self._config_template = config
         # The ID for this benchplot session
         self.session = uuid.uuid4()
-        self.logger = logging.getLogger("benchplot")
+        self.logger = new_logger("manager")
         self.loop = aio.get_event_loop()
         self.instance_manager = InstanceClient(self.loop)
         self.benchmark_instances = {}
@@ -148,7 +150,7 @@ class BenchmarkManager(TemplateConfigContext):
             records = BenchmarkManagerRecord.load_json(record_file)
             fstat = record_file.stat()
             mtime = datetime.fromtimestamp(fstat.st_mtime, tz=timezone.utc)
-            print(f"SESSION {records.session} [{mtime}]")
+            print(termcolor.colored(f"SESSION {records.session} [{mtime:%d-%m-%Y %H:%M}]", "blue"))
             for bench_record in records.records:
                 print(f"\t{bench_record.run.type}:{bench_record.run.name} on instance " +
                       f"{bench_record.instance.name} ({bench_record.uuid})")

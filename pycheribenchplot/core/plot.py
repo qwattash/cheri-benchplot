@@ -1,4 +1,3 @@
-import logging
 import typing
 import itertools as it
 from abc import ABC, abstractmethod
@@ -14,6 +13,7 @@ import matplotlib.patches as mpatches
 import matplotlib.colors as mcolors
 
 from .dataset import *
+
 
 
 class PlotError(Exception):
