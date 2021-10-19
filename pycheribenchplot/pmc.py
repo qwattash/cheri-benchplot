@@ -15,16 +15,6 @@ class PMCStatData(CSVDataSetContainer):
         IndexField("archname", dtype=str),
     ]
 
-    @classmethod
-    def get_parser(cls, benchmark: "BenchmarkBase", dset_key: str):
-        target = benchmark.instance_config.cheri_target
-        platform = benchmark.instance_config.platform
-        if target.is_riscv():
-            if platform == InstancePlatform.QEMU:
-                return FluteStatcountersData(benchmark, dset_key)
-        self.logger.error("XXX Unimplemented")
-        return None
-
     def __init__(self, benchmark: "BenchmarkBase", dset_key: str):
         self._index_transform = lambda df: []
         super().__init__(benchmark, dset_key)
@@ -63,6 +53,7 @@ class FluteStatcountersData(PMCStatData):
     """
     Statcounters description and processing for CHERI Flute (RISC-V)
     """
+    dataset_id = "pmc"
     fields = [
         DataField("cycles"),
         DataField("instructions"),

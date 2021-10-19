@@ -11,10 +11,9 @@ from ..core.config import TemplateConfig, path_field
 from ..core.manager import BenchmarkManager
 from ..core.benchmark import (BenchmarkBase, BenchmarkDataSetConfig, BenchmarkType)
 from ..core.instanced import InstancePlatform
-from ..core.dataset import DataSetParser
+from ..core.dataset import DatasetID
 from ..core.excel import SpreadsheetSurface
 from ..core.html import HTMLSurface
-from ..qemu_stats import QEMUStatsBBHistogramDataset
 from .plot import *
 from .dataset import NetperfData
 
@@ -79,24 +78,8 @@ class NetperfBenchmark(BenchmarkBase):
             shutil.copy(self._reserved_instance.qemu_pftrace_file,
                         self.result_path / self.netperf_config.qemu_log_output)
 
-    def _get_dataset_parser(self, dset_key: str, dset: BenchmarkDataSetConfig):
-        if dset.parser == DataSetParser.NETPERF_DATA:
-            return NetperfData.get_parser(self, dset_key)
-        return super()._get_dataset_parser(dset_key, dset)
-
-    def plot(self):
-        pmc_dset = self.get_dataset(DataSetParser.PMC)
-        qemu_bb_dset = self.get_dataset(DataSetParser.QEMU_STATS_BB_HIST)
-        qemu_call_dset = self.get_dataset(DataSetParser.QEMU_STATS_CALL_HIST)
-        self.register_plot(
-            NetperfQEMUStatsExplorationTable(self, pmc_dset, qemu_bb_dset, qemu_call_dset, surface=HTMLSurface()))
-        self.register_plot(
-            NetperfQEMUStatsExplorationTable(self, pmc_dset, qemu_bb_dset, qemu_call_dset,
-                                             surface=SpreadsheetSurface()))
-        super().plot()
-
     def verify(self):
-        dset = self.get_dataset(DataSetParser.NETPERF_DATA)
+        dset = self.get_dataset(DatasetID.NETPERF_DATA)
         # Check that all benchmarks report the same number of iterations
         if "Confidence Iterations Run" in dset.agg_df.columns:
             if len(dset.agg_df["Confidence Iterations Run"].unique()) > 1:
@@ -106,7 +89,7 @@ class NetperfBenchmark(BenchmarkBase):
                 "Can not verify netperf iteration count, consider enabling the CONFIDENCE_ITERATION output")
         # Check that all benchmarks ran a consistent amount of sampling
         # functions in libstatcounters
-        dset = self.get_dataset(DataSetParser.QEMU_STATS_CALL_HIST)
+        dset = self.get_dataset(DatasetID.QEMU_STATS_CALL_HIST)
         if dset:
             syms_index = dset.agg_df.index.get_level_values("symbol")
             cpu_start = syms_index == "cpu_start"

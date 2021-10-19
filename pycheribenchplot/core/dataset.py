@@ -1,5 +1,4 @@
 import typing
-from abc import ABC, abstractmethod
 from enum import Enum
 from pathlib import Path
 from contextlib import contextmanager
@@ -14,10 +13,9 @@ class DatasetProcessingException(Exception):
     pass
 
 
-class DataSetParser(Enum):
+class DatasetID(Enum):
     """
-    Parser names to resolve a dataset configuration to the
-    correct factory for the parser.
+    Internal enum to reference datasets
     """
     PMC = "pmc"
     NETPERF_DATA = "netperf-data"
@@ -28,6 +26,16 @@ class DataSetParser(Enum):
 
     def __str__(self):
         return self.value
+
+
+class DatasetRegistry(type):
+    dataset_types = {}
+
+    def __init__(self, name, bases, kdict):
+        super().__init__(name, bases, kdict)
+        if self.dataset_id:
+            did = DatasetID(self.dataset_id)
+            DatasetRegistry.dataset_types[did] = self
 
 
 class Field:
@@ -86,12 +94,22 @@ class DerivedField(Field):
         super().__init__(name, desc, **kwargs)
 
 
-class DataSetContainer(ABC):
+class FieldTracker:
+    """
+    Manage field name transformations so that we know which derived fields come
+    from which top-level fields
+    """
+    pass
+
+
+class DataSetContainer(metaclass=DatasetRegistry):
     """
     Base class to hold collections of fields containing benchmark data
     Each benchmark run is associated with an UUID which is used to cross-reference
     data from different files.
     """
+    dataset_id = None
+
     @classmethod
     def get_parser(cls, benchmark: "BenchmarkBase", dset_key: str):
         return cls(benchmark, dset_key)
@@ -127,9 +145,9 @@ class DataSetContainer(ABC):
         """All column names in the container dataframe, including the index names"""
         return set(self.index_columns() + [f.name for f in self.raw_fields(include_derived)])
 
-    def index_columns(self):
+    def index_columns(self, include_derived=False):
         """All column names that are to be used as dataset index in the container dataframe"""
-        return ["__dataset_id"] + [f.name for f in self.raw_fields() if f.isindex]
+        return ["__dataset_id"] + [f.name for f in self.raw_fields(include_derived) if f.isindex]
 
     def all_columns_noindex(self) -> "typing.Sequence[str]":
         return set(self.all_columns()) - set(self.index_columns())
@@ -158,10 +176,9 @@ class DataSetContainer(ABC):
     def _register_plots(self, benchmark: "BenchmarkBase"):
         pass
 
-    @abstractmethod
     def load(self, path: Path):
         """Load the dataset from the given file"""
-        ...
+        pass
 
     def pre_merge(self):
         """

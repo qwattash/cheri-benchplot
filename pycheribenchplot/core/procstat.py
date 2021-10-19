@@ -10,6 +10,7 @@ from .instanced import InstanceCheriBSD, InstancePlatform
 
 
 class ProcstatDataset(CSVDataSetContainer):
+    dataset_id = "procstat"
     fields = [
         Field("PID", dtype=int),
         DataField("START", dtype=int, importfn=lambda x: int(x, 16)),

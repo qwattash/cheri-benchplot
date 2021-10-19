@@ -19,6 +19,18 @@ from .util import new_logger
 from .config import Config, TemplateConfig, TemplateConfigContext, path_field
 from .benchmark import BenchmarkRunConfig, BenchmarkRunRecord, BenchmarkType
 from .instanced import InstanceClient, InstanceConfig
+from .dataset import DatasetRegistry
+from .analysis import BenchmarkAnalysisRegistry
+from .html import HTMLSurface
+from .excel import SpreadsheetSurface
+
+
+@dataclass
+class BenchmarkManagerPlotConfig(TemplateConfig):
+    """
+    Plot analysis configuration.
+    """
+    backends: list[str] = field(default_factory=lambda: ["html"])
 
 
 @dataclass
@@ -34,6 +46,7 @@ class BenchmarkManagerConfig(TemplateConfig):
     perfetto_path: Path = path_field("~/cheri/cheri-perfetto/build")
     instances: list[InstanceConfig] = field(default_factory=list)
     benchmarks: list[BenchmarkRunConfig] = field(default_factory=list)
+    plot_options: BenchmarkManagerPlotConfig = field(default_factory=BenchmarkManagerPlotConfig)
 
 
 @dataclass
@@ -72,8 +85,24 @@ class BenchmarkManager(TemplateConfigContext):
         matplotlib_logger = logging.getLogger("matplotlib")
         matplotlib_logger.setLevel(logging.WARNING)
 
+        self.logger.debug("Registered datasets %s", [str(k) for k in DatasetRegistry.dataset_types.keys()])
+        self.logger.debug("Registered analysis %s", BenchmarkAnalysisRegistry.analysis_steps)
+
     def record_benchmark(self, record: BenchmarkRunRecord):
         self.benchmark_records.records.append(record)
+
+    def get_requested_plot_backends(self):
+        """Return a list of plot surface classes to use for plots"""
+        backends = []
+        for name in self.config.plot_options.backends:
+            if name == "html":
+                backends.append(HTMLSurface)
+            elif name == "excel":
+                backends.append(SpreadsheetSurface)
+            elif name == "matplotlib":
+                raise NotImplementedError("Not yet implemented")
+                # backends.append(MatplotlibSurface)
+        return backends
 
     def _init_session(self):
         """Session-ID dependant initialization"""
@@ -110,8 +139,7 @@ class BenchmarkManager(TemplateConfigContext):
                 break
         if resolved is None:
             self.logger.error("Can not resolve benchmark session %s in %s",
-                              session if session is not None else "DEFAULT",
-                              self.config.output_path)
+                              session if session is not None else "DEFAULT", self.config.output_path)
             raise Exception("Benchmark session not found")
         self.session = resolved.session
         self._init_session()

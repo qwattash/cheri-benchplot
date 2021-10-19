@@ -12,15 +12,16 @@ from dataclasses import dataclass, field
 import pandas as pd
 import asyncssh
 
+from .config import TemplateConfig, TemplateConfigContext
+from .instanced import InstanceConfig, BenchmarkInfo
 from .procstat import ProcstatDataset
 from .pidmap import PidMapDataset
-from .instanced import InstanceConfig, BenchmarkInfo
-from .config import TemplateConfig, TemplateConfigContext
-from .dataset import DataSetParser
+from .dataset import DatasetRegistry, DatasetID
+from .analysis import BenchmarkAnalysisRegistry
+from .plot import BenchmarkPlot
 from .elf import SymResolver
 from .util import new_logger, timing
 from ..pmc import PMCStatData
-from ..qemu_stats import (QEMUStatsBBHistogramDataset, QEMUStatsBranchHistogramDataset)
 
 
 class BenchmarkError(Exception):
@@ -52,7 +53,7 @@ class BenchmarkDataSetConfig(TemplateConfig):
     parser: the dataset parser that imports the dataset for plotting
     """
     name: str
-    parser: DataSetParser
+    parser: DatasetID
 
 
 @dataclass
@@ -133,8 +134,6 @@ class BenchmarkBase(TemplateConfigContext):
         # Map uuids to benchmarks that have been merged into the current instance (which is the baseline)
         # so that we can look them up if necessary
         self.merged_benchmarks = {}
-        # Plots to show for this benchmark. Note: this is only relevant for baseline instances
-        self.plots = []
         self.sym_resolver = SymResolver(self)
         # Extra implicit dataset to extract procstat -v mappings
         self.procstat_output = self.result_path / f"procstat-{self.uuid}.csv"
@@ -163,9 +162,6 @@ class BenchmarkBase(TemplateConfigContext):
     def _record_benchmark_run(self):
         record = BenchmarkRunRecord(uuid=self.uuid, instance=self.instance_config, run=self.config)
         self.manager.record_benchmark(record)
-
-    def register_plot(self, plotter):
-        self.plots.append(plotter)
 
     def _build_remote_command(self, cmd: str, args: list, env={}):
         """
@@ -315,7 +311,7 @@ class BenchmarkBase(TemplateConfigContext):
         try:
             self._conn = await self._connect_instance(self._reserved_instance)
             await self._run_procstat()
-            with timing("Benchmark completed", self.logger):
+            with timing("Benchmark completed", logger=self.logger):
                 await self._run_benchmark()
             await self._extract_pid_mappings()
             self._record_benchmark_run()
@@ -332,15 +328,12 @@ class BenchmarkBase(TemplateConfigContext):
 
     def _get_dataset_parser(self, dset_key: str, dset: BenchmarkDataSetConfig):
         """Resolve the parser for the given dataset"""
-        if dset.parser == DataSetParser.PMC:
-            parser = PMCStatData.get_parser(self, dset_key)
-        elif dset.parser == DataSetParser.QEMU_STATS_BB_HIST:
-            parser = QEMUStatsBBHistogramDataset.get_parser(self, dset_key)
-        elif dset.parser == DataSetParser.QEMU_STATS_CALL_HIST:
-            parser = QEMUStatsBranchHistogramDataset.get_parser(self, dset_key)
-        else:
+        did = DatasetID(dset.parser)
+        parser_klass = DatasetRegistry.dataset_types.get(did, None)
+        if parser_klass is None:
             self.logger.error("No parser for dataset %s", dset.name)
             raise Exception("No parser")
+        parser = parser_klass(self, dset_key)
         return parser
 
     def _load_dataset(self, dset_key: str, dset: BenchmarkDataSetConfig):
@@ -360,7 +353,7 @@ class BenchmarkBase(TemplateConfigContext):
             self.logger.debug("Load implicit procstat dataset")
             pstat = ProcstatDataset(self, "procstat")
             pstat.load(self.procstat_output)
-            self.datasets[DataSetParser.PROCSTAT] = pstat
+            self.datasets[pstat.dataset_id] = pstat
             for base, guest_path in pstat.mapped_binaries(self.uuid):
                 local_path = self.rootfs / guest_path.relative_to("/")
                 self.sym_resolver.import_symbols(local_path, base)
@@ -368,9 +361,9 @@ class BenchmarkBase(TemplateConfigContext):
             # If we have the process PID mapping, import the dataset
             self.logger.debug("Load implicit PID dataset")
             pidmap = PidMapDataset(self, "pidmap")
-            self.datasets[DataSetParser.PIDMAP] = pidmap
+            self.datasets[pidmap.dataset_id] = pidmap
 
-    def get_dataset(self, parser_id: DataSetParser):
+    def get_dataset(self, parser_id: DatasetID):
         return self.datasets.get(parser_id, None)
 
     def load(self):
@@ -420,55 +413,15 @@ class BenchmarkBase(TemplateConfigContext):
         Plot the data from the generated datasets
         Note that this is called only on the baseline benchmark instance
         """
-        self.logger.debug("Plot datasets")
-        for plot in self.plots:
-            plot.prepare()
-            plot.draw()
+        self.logger.info("Plot datasets")
+        plotters = []
+        for step_klass in BenchmarkAnalysisRegistry.analysis_steps:
+            if issubclass(step_klass, BenchmarkPlot) and step_klass.check_required_datasets(self.datasets.keys()):
+                plot = step_klass(self)
+                plotters.append(plot)
+        self.logger.debug("Resolved plotters %s", plotters)
+        for plot in plotters:
+            plot.process_datasets()
 
     def __str__(self):
         return f"{self.config.name}:{self.uuid}"
-
-
-class _BenchmarkBase:
-    def plot(self):
-        # Common libpmc input
-        self.pmc = PMCStatData.get_pmc_for_cpu(self.cpu, self.options, self)
-        """Entry point for plotting benchmark results or analysis files"""
-        for dirpath in self.options.stats:
-            if not dirpath.exists():
-                fatal("Source directory {} does not exist".format(dirpath))
-            self._load_dir(dirpath)
-        logging.info("Process data")
-        self._process_data_sources()
-        self.merged_raw_data = self._merge_raw_data()
-        self.merged_stats = self._merge_stats()
-        logging.info("Generate relative data for baseline %s", self.options.baseline)
-        self._compute_relative_stats()
-        logging.info("Generate plots")
-        self._draw()
-
-    def pmc_map_index(self, df):
-        """
-        Map the progname and archname columns from statcounters
-        to new columns to be used as part of the index, or an empty
-        dataframe.
-        """
-        return pd.DataFrame()
-
-    def _merge_raw_data(self):
-        return self.pmc.df
-
-    def _merge_stats(self):
-        return self.pmc.stats_df
-
-    def _process_data_sources(self):
-        self.pmc.process()
-
-    def _load_dir(self, path):
-        for fpath in path.glob("*.csv"):
-            self._load_file(path, fpath)
-
-    def _load_file(self, dirpath, filepath):
-        logging.info("Loading %s", filepath)
-        if self._is_pmc_input(filepath):
-            self._load_pmc(filepath)

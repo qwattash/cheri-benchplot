@@ -15,7 +15,7 @@
             "platform_options": {
                 "qemu_tmp_dir": "~/git/cheri/cheri-benchplot/demo/demo-netperf-multi-instance/tmp",
                 "qemu_trace": true,
-                "qemu_trace_categories": ["ctrl", "stats"]
+                "qemu_trace_categories": ["ctrl", "stats", "sched"]
             }
         },
         {
@@ -28,7 +28,7 @@
             "platform_options": {
                 "qemu_tmp_dir": "~/git/cheri/cheri-benchplot/demo/demo-netperf-multi-instance/tmp",
                 "qemu_trace": true,
-                "qemu_trace_categories": ["ctrl", "stats"]
+                "qemu_trace_categories": ["ctrl", "stats", "sched"]
             }
         }
     ],

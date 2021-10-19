@@ -9,6 +9,7 @@ from ..core.csv import CSVDataSetContainer
 
 
 class NetperfData(CSVDataSetContainer):
+    dataset_id = "netperf-data"
     fields = [
         StrField("Socket Type"),
         StrField("Protocol"),

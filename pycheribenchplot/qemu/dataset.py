@@ -6,105 +6,38 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .core.dataset import (IndexField, DataField, DerivedField, Field, align_multi_index_levels,
-                           rotate_multi_index_level, subset_xs, check_multi_index_aligned, DatasetProcessingException)
-from .core.perfetto import PerfettoDataSetContainer
-from .core.plot import Plot, MatplotlibSurface, CellData, DataView
-from .core.html import HTMLSurface
+from ..core.dataset import (IndexField, DataField, DerivedField, Field, align_multi_index_levels,
+                            rotate_multi_index_level, subset_xs, check_multi_index_aligned, DatasetProcessingException)
+from ..core.perfetto import PerfettoDataSetContainer
+from ..core.util import timing
 
 
-class QEMUAddrRangeHistBars(Plot):
-    def __init__(self, benchmark, dataset):
-        super().__init__(benchmark, dataset, MatplotlibSurface())
-
-    def _get_plot_title(self):
-        return "QEMU PC hit count"
-
-    def _get_plot_file(self):
-        return self.benchmark.manager.session_output_path / "qemu-pc-hist-bars.pdf"
-
-    def prepare(self):
-        """
-        For each non-baseline dataset_id in the aggregate frame, we extract the
-        file/function pair on the X axis and the count on the y axis.
-        We plot the absolute count (normalized) and the diff count on two separate cells
-        of the same surface.
-        """
-        super().prepare()
-        baseline = self.benchmark.uuid
-        df = self.dataset.agg_df.sort_values(by="diff", key=abs, ascending=False)
-        self.surface.set_layout(3, 1)
-        not_baseline = df.index.get_level_values("__dataset_id") != baseline
-        df = df[not_baseline]
-        df = df.reset_index(["file", "symbol"])
-        df["file_sym"] = df["file"] + ":" + df["symbol"]
-        df = df.set_index("file_sym", append=True)
-        # Put everything into dataframes formatted for Surface.add_view
-        abs_diff_df = df.rename(columns={"diff": "y_left"}).rename(index={"file_sym": "x"})
-        self.surface.add_view("bar-group", abs_diff_df)
-        # view_df = df.rename(columns={"norm_diff": "y_left"}).rename(index={"file_sym": "x"})
-
-
-class QEMUAddrRangeHistTable(Plot):
+class QEMUTracingCtxDataset(PerfettoDataSetContainer):
     """
-    Note: this only supports the HTML surface
+    Helper dataset mostly useful for debugging purposes.
+    This records tracing slice periods associated to the relative contexts.
     """
-    def __init__(self, benchmark, dataset):
-        super().__init__(benchmark, HTMLSurface())
-        self.dataset = dataset
+    fields = []
 
-    def _get_plot_title(self):
-        return "QEMU Stats"
+    def raw_fields(self, include_derived=False):
+        fields = super().raw_fields(include_derived)
+        fields += [f for f in QEMUTracingCtxDataset.fields if include_derived or not f.isderived]
+        return fields
 
-    def _get_plot_file(self):
-        return self.benchmark.manager.session_output_path / "qemu-pc-hist-table.html"
-
-    def _get_legend_map(self):
-        legend = {
-            uuid: str(bench.instance_config.kernelabi)
-            for uuid, bench in self.benchmark.merged_benchmarks.items()
-        }
-        legend[self.benchmark.uuid] = f"{self.benchmark.instance_config.kernelabi}(baseline)"
-        return legend
-
-    def prepare(self):
-        """
-        For each dataset (including the baseline) we show the dataframes as tables in
-        an HTML page.
-        """
-        legend_map = self._get_legend_map()
-        baseline = self.benchmark.uuid
-        # Stacked plots on a single column
-        self.surface.set_layout(1, 1, expand=True, how="row")
-        # Make sure we copy it and do not mess with the original
-        df = self.dataset.agg_df.copy()
-        if not check_multi_index_aligned(df, "__dataset_id"):
-            self.logger.error("Unaligned index, skipping plot")
-            return
-
-        data_cols = self.dataset.data_columns(include_derived=True)
-        # Make normalized fields a percentage
-        norm_cols = [col for col in data_cols if col.startswith("norm_")]
-        df[norm_cols] = df[norm_cols] * 100
-        # base data columns, displayed for both baseline and measure runs
-        common_cols = self.dataset.data_columns()
-        # derived data columns, displayed only for measure runs as they are comparative results
-        measure_cols = list(set(data_cols) - set(common_cols))
-
-        # Table for common functions
-        view_df, colmap = rotate_multi_index_level(df, "__dataset_id", legend_map)
-        show_cols = np.append(colmap.loc[:, common_cols].to_numpy().transpose().ravel(),
-                              colmap.loc[colmap.index != baseline, measure_cols].to_numpy().transpose().ravel())
-        cell = self.surface.make_cell(title="QEMU stats for common functions")
-        view = self.surface.make_view("table", df=view_df, yleft=show_cols)
-        cell.add_view(view)
-        self.surface.next_cell(cell)
+    def _extract_events(self, tp: "TraceProcessor"):
+        super()._extract_events()
 
 
 class QEMUStatsHistogramDataset(PerfettoDataSetContainer):
     fields = [
-        IndexField("arg_set_id", dtype=int),
         IndexField("bucket", dtype=int),
+        IndexField("file", dtype=str, isderived=True),
+        IndexField("symbol", dtype=str, isderived=True),
+        IndexField("ctx_pid", dtype=int),
+        IndexField("ctx_tid", dtype=int),
+        IndexField("ctx_cid", dtype=int),
+        IndexField("ctx_EL", dtype=int),
+        IndexField("ctx_AS", dtype=int),
         Field("start", dtype=np.uint),
         DerivedField("valid_symbol", dtype=object, isdata=False)
     ]
@@ -113,6 +46,27 @@ class QEMUStatsHistogramDataset(PerfettoDataSetContainer):
         fields = super().raw_fields(include_derived)
         fields += [f for f in QEMUStatsHistogramDataset.fields if include_derived or not f.isderived]
         return fields
+
+    def _get_slice_name(self) -> str:
+        raise NotImplementedError("Subclass must specialize")
+
+    def _extract_events(self, tp: "TraceProcessor"):
+        super()._extract_events(tp)
+        slice_name = self._get_slice_name()
+        query_str = (f"SELECT * FROM slice INNER JOIN args ON " + "slice.arg_set_id = args.arg_set_id WHERE " +
+                     f"slice.category = 'stats' AND slice.name = '{slice_name}' AND " + "args.flat_key LIKE 'qemu%'")
+        # query_str = (f"SELECT * FROM track INNER JOIN slice ON track.id = slice.track_id " +
+        #              f"INNER JOIN args ON slice.arg_set_id = args.arg_set_id " +
+        #              f"WHERE slice.cat = 'stats' AND slice.name = '{slice_name}' AND " +
+        #              f"args.flat_key LIKE 'qemu%'")
+        with timing("Extract qemu stats events query", logging.DEBUG, self.logger):
+            result = tp.query(query_str)
+        # XXX-AM: This is unreasonably slow, build the dataframe manually for now
+        # df = result.as_pandas_dataframe()
+        query_df = pd.DataFrame.from_records(map(lambda row: row.__dict__, result))
+        df = self._build_df(query_df)
+        # Append dataframe to dataset
+        self.df = pd.concat([self.df, df])
 
     def _build_df(self, input_df: pd.DataFrame):
         """
@@ -125,7 +79,7 @@ class QEMUStatsHistogramDataset(PerfettoDataSetContainer):
         # Check that the dataframe matches the expected format
         assert input_df["key"].apply(lambda k: k.startswith("qemu.histogram.bucket[")).all(
         ), "Malformed input perfetto dataframe: expected all argument keys as qemu.histogram.bucket[n].<field>"
-        # First assign the bucket index as a column
+        # First assign the bucket index as a column (a bit sad to use regex)
         extractor = re.compile("\[([0-9]+)\]")
         input_df["bucket"] = input_df["key"].apply(lambda k: int(extractor.search(k).group(1)))
         # Make sure the index is now aligned for all bucket field groups
@@ -135,12 +89,16 @@ class QEMUStatsHistogramDataset(PerfettoDataSetContainer):
         for c in tmp_df.columns:
             # Assume all bucket fields are int_values (int or uint)
             tmp_df[c] = input_df[input_df["flat_key"] == c]["int_value"]
-
-        # XXX-AM: this is somewhat common to all perfetto dataset processing
         # Fixup column names
         tmp_df = tmp_df.rename(columns=self.field_names_map())
-        # Add dataset ID
+        # Fill extra columns
         tmp_df["__dataset_id"] = self.benchmark.uuid
+        # XXX-AM: For now initialize unimplemented index fields with empty stuff
+        tmp_df["ctx_pid"] = 0
+        tmp_df["ctx_tid"] = 0
+        tmp_df["ctx_cid"] = 0
+        tmp_df["ctx_EL"] = 0
+        tmp_df["ctx_AS"] = 0
         # Normalize fields
         tmp_df = tmp_df.reset_index(drop=False).astype(self._get_column_dtypes(include_converted=True))
         tmp_df.set_index(self.index_columns(), inplace=True)
@@ -170,6 +128,7 @@ class QEMUStatsHistogramDataset(PerfettoDataSetContainer):
         # We also have to handle rtld manually to map its name.
         self.df["file"] = resolved.map(lambda syminfo: syminfo.filepath.name if syminfo else None)
         self.df.loc[invalid_syms, "file"] = "unknown"
+        self.df.set_index(["file", "symbol"], append=True)
 
     def _get_agg_strategy(self):
         """Return mapping of column-name => aggregation function for the columns we need to aggregate"""
@@ -218,7 +177,7 @@ class QEMUStatsHistogramDataset(PerfettoDataSetContainer):
 
 class QEMUStatsBBHistogramDataset(QEMUStatsHistogramDataset):
     """Basic-block hit count histogram"""
-
+    dataset_id = "qemu-stats-bb"
     fields = [
         Field("end", dtype=np.uint),
         DataField("bb_count", dtype=int),
@@ -239,14 +198,8 @@ class QEMUStatsBBHistogramDataset(QEMUStatsHistogramDataset):
             "qemu.histogram.bucket.value": "bb_count"
         }
 
-    def _get_sql_expr(self):
-        query = ("SELECT * FROM slice INNER JOIN args ON " + "slice.arg_set_id = args.arg_set_id WHERE " +
-                 "slice.category = 'stats' AND slice.name = 'bb_hist' AND " + "args.flat_key LIKE 'qemu%'")
-        return query
-
-    def _register_plots(self, benchmark):
-        super()._register_plots(benchmark)
-        benchmark.register_plot(QEMUAddrRangeHistTable(benchmark, self))
+    def _get_slice_name(self):
+        return "bb_hist"
 
     def pre_merge(self):
         super().pre_merge()
@@ -264,7 +217,7 @@ class QEMUStatsBBHistogramDataset(QEMUStatsHistogramDataset):
 
 class QEMUStatsBranchHistogramDataset(QEMUStatsHistogramDataset):
     """Branch instruction target hit count histogram"""
-
+    dataset_id = "qemu-stats-call"
     fields = [
         DataField("branch_count", dtype=int),
         DerivedField("call_count", dtype=int),
@@ -272,10 +225,8 @@ class QEMUStatsBranchHistogramDataset(QEMUStatsHistogramDataset):
         DerivedField("norm_delta_call_count", dtype=float)
     ]
 
-    def _get_sql_expr(self):
-        query = ("SELECT * FROM slice INNER JOIN args ON " + "slice.arg_set_id = args.arg_set_id WHERE " +
-                 "slice.category = 'stats' AND slice.name = 'branch_hist' AND " + "args.flat_key LIKE 'qemu%'")
-        return query
+    def _get_slice_name(self):
+        return "branch_hist"
 
     def raw_fields(self, include_derived=False):
         fields = super().raw_fields(include_derived)
@@ -284,11 +235,6 @@ class QEMUStatsBranchHistogramDataset(QEMUStatsHistogramDataset):
 
     def field_names_map(self):
         return {"qemu.histogram.bucket.start": "start", "qemu.histogram.bucket.value": "branch_count"}
-
-    def _register_plots(self, benchmark):
-        super()._register_plots(benchmark)
-        benchmark.register_plot(QEMUAddrRangeHistTable(benchmark, self))
-        # benchmark.register_plot(QEMUAddrRangeHistBars(benchmark, self))
 
     def pre_merge(self):
         """

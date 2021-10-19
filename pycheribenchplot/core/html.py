@@ -21,17 +21,14 @@ class HTMLSurface(Surface):
             template = self.default_template
         self.template = self.get_template(template)
 
-    def output_file_ext(self):
-        return "html"
-
     def get_template(self, name: str):
         return self.env.get_template(name)
 
     def draw(self, title, dest):
         self.logger.debug("Drawing...")
-        rows, cols = self.layout_shape
+        rows, cols = self._layout.shape
         html = self.template.render(nrows=rows, ncols=cols, title=title, cell_layout=self._layout)
-        with open(dest, "w+") as dest_file:
+        with open(dest.with_suffix(".html"), "w+") as dest_file:
             dest_file.write(html)
 
     def make_cell(self, **kwargs):

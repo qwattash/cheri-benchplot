@@ -56,43 +56,8 @@ class PerfettoDataSetContainer(DataSetContainer):
         if rows[0].value != 0:
             self.logger.error("!!!Perfetto packet loss detected!!!")
 
-    def _get_sql_table(self):
-        """Get the table to select from"""
-        return "slice"
-
-    def _get_sql_where(self):
-        """Build the SQL where clause to filter events"""
-        return ""
-
-    @abstractmethod
-    def _get_sql_expr(self):
-        """
-        Return the SQL expression to get the data for the dataset
-        """
-        ...
-        # fields = self.raw_fields()
-        # table = self._get_sql_table()
-        # where = self._get_sql_where()
-        # return f"select {fields} from {table} {where}"
-
-    def _map_row_to_df(self, df_dict, row):
-        for col, value in row.__dict__.items():
-            df_dict[col].append(value)
-
-    @abstractmethod
-    def _build_df(self, result: pd.DataFrame):
-        ...
-
     def _extract_events(self, tp: TraceProcessor):
         self._integrity_check(tp)
-        query_str = self._get_sql_expr()
-        result = tp.query(query_str)
-        # XXX-AM: This is unreasonably slow, build the dataframe manually for now
-        # df = result.as_pandas_dataframe()
-        query_df = pd.DataFrame.from_records(map(lambda row: row.__dict__, result))
-        df = self._build_df(query_df)
-        # Append dataframe to dataset
-        self.df = pd.concat([self.df, df])
 
     def load(self, path: Path):
         processor = self._tp_cache.get_trace_processor(path)
