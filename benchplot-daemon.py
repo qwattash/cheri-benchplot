@@ -18,7 +18,7 @@ def main():
     logger = setup_logging(args.verbose, args.l)
     logger.debug("Loading config %s", args.json_config)
     config = InstanceDaemonConfig.load_json(args.json_config)
-    if args.v:
+    if args.verbose:
         # Override from command line
         config.verbose = True
     daemon = InstanceDaemon(config)

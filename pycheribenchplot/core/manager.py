@@ -173,12 +173,20 @@ class BenchmarkManager(TemplateConfigContext):
 
     async def _list_task(self):
         self.logger.debug("List recorded sessions at %s", self.config.output_path)
+        sessions = []
         for next_dir in self._iter_output_session_dirs():
             record_file = next_dir / self.records_filename
             records = BenchmarkManagerRecord.load_json(record_file)
             fstat = record_file.stat()
             mtime = datetime.fromtimestamp(fstat.st_mtime, tz=timezone.utc)
-            print(termcolor.colored(f"SESSION {records.session} [{mtime:%d-%m-%Y %H:%M}]", "blue"))
+            sessions.append((mtime, records))
+        sessions = sorted(sessions, key=lambda tup: tup[0], reverse=True)
+        for mtime, records in sessions:
+            if records == sessions[0][1]:
+                is_default = " (default)"
+            else:
+                is_default = ""
+            print(termcolor.colored(f"SESSION {records.session} [{mtime:%d-%m-%Y %H:%M}]{is_default}", "blue"))
             for bench_record in records.records:
                 print(f"\t{bench_record.run.type}:{bench_record.run.name} on instance " +
                       f"{bench_record.instance.name} ({bench_record.uuid})")

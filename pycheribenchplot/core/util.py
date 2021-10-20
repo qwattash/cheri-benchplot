@@ -43,7 +43,7 @@ def setup_logging(verbose: bool = False, logfile: Path = None):
     logger.addHandler(console_handler)
     # File logging
     if logfile:
-        file_handler = logging.FileHandler(logfile, filemode="w")
+        file_handler = logging.FileHandler(logfile, mode="w")
         file_handler.setFormatter(logging.Formatter(fmt=log_fmt))
         file_handler.setLevel(logging.DEBUG)
         logger.addHandler(file_handler)

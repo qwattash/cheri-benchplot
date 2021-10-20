@@ -95,12 +95,16 @@ class NetperfBenchmark(BenchmarkBase):
             cpu_start = syms_index == "cpu_start"
             cpu_stop = syms_index == "cpu_stop"
             statcounters_sample = syms_index == "statcounters_sample"
-            if len(dset.agg_df.loc[cpu_start, "call_count"]) > 1:
-                self.logger.error("netperf::cpu_start anomalous #calls")
-            if len(dset.agg_df.loc[cpu_stop, "call_count"]) > 1:
-                self.logger.error("netperf::cpu_stop anomalous #calls")
-            if len(dset.agg_df.loc[statcounters_sample, "call_count"]) > 1:
-                self.logger.error("libstatcounters::statcounters_sample anomalous #calls")
+            check = dset.agg_df.loc[cpu_start, "call_count"]
+            if len(check) > 1:
+                self.logger.error("netperf::cpu_start anomalous #calls %s", check.unique())
+            check = dset.agg_df.loc[cpu_stop, "call_count"]
+            if len(check) > 1:
+                self.logger.error("netperf::cpu_stop anomalous #calls %s", check.unique())
+            check = dset.agg_df.loc[statcounters_sample, "call_count"]
+            if len(check) > 1:
+                self.logger.error("libstatcounters::statcounters_sample anomalous #calls %s",
+                                  check.unique())
 
 
 BenchmarkManager.register_benchmark(BenchmarkType.NETPERF, NetperfBenchmark)
