@@ -2,6 +2,7 @@ import logging
 import uuid
 import json
 import asyncio as aio
+import itertools as it
 import traceback
 import typing
 import argparse as ap
@@ -77,7 +78,7 @@ class BenchmarkManager(TemplateConfigContext):
         self.queued_tasks = []
 
         self._init_session()
-        self.logger.info("Start benchplot session %s", self.session)
+        self.logger.debug("Assign initial session %s", self.session)
         # Adjust libraries log level
         if not self.config.verbose:
             ssh_logger = logging.getLogger("asyncssh")
@@ -127,16 +128,19 @@ class BenchmarkManager(TemplateConfigContext):
         self.logger.debug("Lookup session records in %s", self.config.output_path)
         resolved = None
         resolved_mtime = 0
+        sessions = []
         for next_dir in self._iter_output_session_dirs():
             record_file = next_dir / self.records_filename
             record = BenchmarkManagerRecord.load_json(record_file)
-            if session is None:
-                fstat = record_file.stat()
-                if fstat.st_mtime > resolved_mtime:
-                    resolved = record
-            elif session == record.session:
+            if session is not None and session == record.session:
                 resolved = record
                 break
+            fstat = record_file.stat()
+            mtime = datetime.fromtimestamp(fstat.st_mtime, tz=timezone.utc)
+            sessions.append((mtime, record))
+        if resolved is None and len(sessions):
+            recent_session = sorted(sessions, key=lambda tup: tup[0], reverse=True)[0]
+            resolved = recent_session[1]
         if resolved is None:
             self.logger.error("Can not resolve benchmark session %s in %s",
                               session if session is not None else "DEFAULT", self.config.output_path)
@@ -209,9 +213,9 @@ class BenchmarkManager(TemplateConfigContext):
         # each benchmark variant
         aggregate_baseline = {}
         aggregate_groups = defaultdict(list)
+
         for record in self.benchmark_records.records:
             bench = self.create_benchmark(record.run, record.instance, record.uuid)
-            bench.load()
             if record.instance.baseline:
                 if record.run.name in aggregate_baseline:
                     self.logger.error("Multiple baseline instances?")
@@ -226,21 +230,41 @@ class BenchmarkManager(TemplateConfigContext):
         self.logger.debug("Benchmark aggregation groups: %s",
                           {k: map(lambda b: b.uuid, v)
                            for k, v in aggregate_groups.items()})
+        # Load datasets concurrently
+        loading_tasks = []
+        self.logger.info("Loading datasets")
+        try:
+            # XXX in theory we can run the whole aggregation steps concurrently, is it worth it though?
+            for bench in it.chain(aggregate_baseline.values(), it.chain.from_iterable(aggregate_groups.values())):
+                bench.task = self.loop.run_in_executor(None, bench.load)
+                loading_tasks.append(bench.task)
+                # Wait for everything to have loaded
+            await aio.gather(*loading_tasks)
+        except aio.CancelledError as ex:
+            # Cancel any pending loading
+            for task in loading_tasks:
+                task.cancel()
+            await aio.gather(*loading_tasks, return_exceptions=True)
+            raise ex
+        self.logger.info("Merge datasets")
         self.logger.debug("Benchmark aggregation baselines: %s", {k: b.uuid for k, b in aggregate_baseline.items()})
         # Merge compatible benchmark datasets into the baseline instance
         for name, baseline_bench in aggregate_baseline.items():
             baseline_bench.merge(aggregate_groups[name])
         # From now on we ony operate on the merged data
+        self.logger.info("Aggregate datasets")
         for bench in aggregate_baseline.values():
             bench.aggregate()
             bench.verify()
         # Now we have processed all the input data, do the plotting
+        self.logger.info("Generate plots")
         for bench in aggregate_baseline.values():
             bench.plot()
 
     def _handle_run_command(self, args: ap.Namespace):
         self.instance_manager.start()
         self.session_output_path.mkdir(parents=True)
+        self.logger.info("Start benchplot session %s", self.session)
         for conf in self.config.benchmarks:
             self.logger.debug("Found benchmark %s", conf.name)
             for inst_conf in self.config.instances:
@@ -250,6 +274,7 @@ class BenchmarkManager(TemplateConfigContext):
 
     def _handle_plot_command(self, args: ap.Namespace):
         self._resolve_recorded_session(args.session)
+        self.logger.info("Using recorded session %s", self.session)
         self.queued_tasks.append(self.loop.create_task(self._plot_task()))
 
     def _handle_list_command(self, args: ap.Namespace):

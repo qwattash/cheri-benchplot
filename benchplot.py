@@ -13,6 +13,7 @@ def main():
     parser = ap.ArgumentParser(description="Benchmark run and plot tool")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     parser.add_argument("-l", type=Path, help="logfile", default=None)
+    # parser.add_argument("-r", type=Path, help="record all commands issued", default=None)
     parser.add_argument("json_config", type=Path, help="Configuration file")
     sub = parser.add_subparsers(help="command", dest="command")
     sub_run = sub.add_parser("run", help="run benchmarks in configuration")

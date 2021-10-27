@@ -52,7 +52,7 @@ class NetperfBenchmark(BenchmarkBase):
         netperf_stopped = await self._run_bg_cmd(self.netperf_bin, ["-z"], env=self.env)
         await aio.sleep(5)  # Give some time to settle
         try:
-            pid = self._remote_task_pid[netperf_stopped]
+            pid = self._remote_task_info[netperf_stopped].pid
             with open(self.procstat_output, "w+") as outfd:
                 await self._run_cmd("procstat", ["-v", str(pid)], env=self.env, outfile=outfd)
             self.logger.debug("Collected procstat info")
@@ -64,6 +64,7 @@ class NetperfBenchmark(BenchmarkBase):
         netserver = await self._run_bg_cmd(self.netserver_bin, self.netperf_config.netserver_options, env=self.env)
         try:
             self.logger.info("Prime benchmark")
+            await aio.sleep(5) # Give some time to settle
             await self._run_cmd(self.netperf_bin, self.netperf_config.netperf_prime_options, env=self.env)
             self.logger.info("Run benchmark iterations")
             with open(self.result_path / self.config.output_file, "w+") as outfd:
@@ -95,16 +96,16 @@ class NetperfBenchmark(BenchmarkBase):
             cpu_start = syms_index == "cpu_start"
             cpu_stop = syms_index == "cpu_stop"
             statcounters_sample = syms_index == "statcounters_sample"
-            check = dset.agg_df.loc[cpu_start, "call_count"]
+            check = dset.agg_df.loc[cpu_start, "call_count"].unique()
             if len(check) > 1:
-                self.logger.error("netperf::cpu_start anomalous #calls %s", check.unique())
-            check = dset.agg_df.loc[cpu_stop, "call_count"]
+                self.logger.error("netperf::cpu_start anomalous #calls %s", check)
+            check = dset.agg_df.loc[cpu_stop, "call_count"].unique()
             if len(check) > 1:
-                self.logger.error("netperf::cpu_stop anomalous #calls %s", check.unique())
-            check = dset.agg_df.loc[statcounters_sample, "call_count"]
+                self.logger.error("netperf::cpu_stop anomalous #calls %s", check)
+            check = dset.agg_df.loc[statcounters_sample, "call_count"].unique()
             if len(check) > 1:
                 self.logger.error("libstatcounters::statcounters_sample anomalous #calls %s",
-                                  check.unique())
+                                  check)
 
 
 BenchmarkManager.register_benchmark(BenchmarkType.NETPERF, NetperfBenchmark)

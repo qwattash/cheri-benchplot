@@ -103,6 +103,13 @@ class BenchmarkBase(TemplateConfigContext):
     """
     Base class for all the benchmarks
     """
+
+    @dataclass
+    class _TaskPIDInfo:
+        """Internal helper to bind commands to PIDs of running tasks"""
+        cmd: str
+        pid: int = None
+
     def __init__(self, manager, config, instance_config, run_id=None):
         super().__init__()
         if run_id:
@@ -129,6 +136,8 @@ class BenchmarkBase(TemplateConfigContext):
         self._reserved_instance = None  # BenchmarkInfo of the instance the daemon has reserved us
         self._conn = None  # Connection to the CheriBSD instance
         self._command_tasks = []  # Commands being run on the instance
+        # Map tasks to _TaskPIDInfo to track the PID of spawned benchmarks
+        self._remote_task_info = {}
         # Datasets loaded for the benchmark
         self.datasets = {}
         # Map uuids to benchmarks that have been merged into the current instance (which is the baseline)
@@ -157,7 +166,6 @@ class BenchmarkBase(TemplateConfigContext):
         # Second pass
         self.instance_config = instance_config.bind(self)
         self.config = config.bind(self)
-        self._remote_task_pid = {}
 
     def _record_benchmark_run(self):
         record = BenchmarkRunRecord(uuid=self.uuid, instance=self.instance_config, run=self.config)
@@ -184,7 +192,7 @@ class BenchmarkBase(TemplateConfigContext):
         try:
             self.logger.debug("Attempt to resolve PID %s", line)
             pid = int(line)
-            self._remote_task_pid[ssh_task] = pid
+            self._remote_task_info[ssh_task].pid = pid
             self.logger.debug("Bind remote command %s to PID %d", ssh_task.command, pid)
         except ValueError:
             raise BenchmarkError(self, f"Can not determine running process pid for {ssh_task.command}, bailing out.")
@@ -196,7 +204,7 @@ class BenchmarkBase(TemplateConfigContext):
                 if not out:
                     continue
                 # Expect to receive the PID of the command in the first output line
-                if proc_task not in self._remote_task_pid:
+                if self._remote_task_info[proc_task].pid is None:
                     try:
                         self._parse_pid_line(proc_task, out)
                     except BenchmarkError as ex:
@@ -222,6 +230,7 @@ class BenchmarkBase(TemplateConfigContext):
         remote_cmd = self._build_remote_command(command, args, env)
         self.logger.debug("SH exec background: %s", remote_cmd)
         proc_task = await self._conn.create_process(" ".join(remote_cmd))
+        self._remote_task_info[proc_task] = self._TaskPIDInfo(command)
         self._command_tasks.append(aio.create_task(self._cmd_io(proc_task, iocallback)))
         return proc_task
 
@@ -230,7 +239,7 @@ class BenchmarkBase(TemplateConfigContext):
         Work around the unreliability of asyncssh/openssh signal delivery
         """
         try:
-            pid = self._remote_task_pid[task]
+            pid = self._remote_task_info[task].pid
             result = await self._conn.run(f"kill -TERM {pid}")
             if result.returncode != 0:
                 self.logger.error("Failed to stop remote process %d: %s", pid, task.command)
@@ -248,6 +257,7 @@ class BenchmarkBase(TemplateConfigContext):
             self.logger.error("Failed to run %s: %s", command, result.stderr)
         else:
             self.logger.debug("%s done: %s", command, result.stdout)
+        self._remote_task_info[result] = self._TaskPIDInfo(command)
         stdout = io.StringIO(result.stdout)
         # Expect to receive the PID of the command in the first output line
         self._parse_pid_line(result, stdout.readline())
@@ -285,8 +295,8 @@ class BenchmarkBase(TemplateConfigContext):
         # Append the PIDs for all processes executed by the benchmark to the pid map
         pid_json = json.loads(pid_raw_data.getvalue())
         proc_list = pid_json["process-information"]["process"]
-        for ssh_proc_task, pid in self._remote_task_pid.items():
-            proc_list.append({"uid": 1, "pid": pid, "command": ssh_proc_task.command})
+        for ssh_proc_task, pid_info in self._remote_task_info.items():
+            proc_list.append({"uid": 1, "pid": pid_info.pid, "command": str(pid_info.cmd)})
         with open(self.pid_map_output, "w+") as pid_fd:
             json.dump(pid_json, pid_fd)
 
@@ -361,6 +371,7 @@ class BenchmarkBase(TemplateConfigContext):
             # If we have the process PID mapping, import the dataset
             self.logger.debug("Load implicit PID dataset")
             pidmap = PidMapDataset(self, "pidmap")
+            pidmap.load(self.pid_map_output)
             self.datasets[pidmap.dataset_id] = pidmap
 
     def get_dataset(self, parser_id: DatasetID):
@@ -369,6 +380,7 @@ class BenchmarkBase(TemplateConfigContext):
     def load(self):
         """
         Setup benchmark metadata and load results into datasets from the currently assigned run configuration.
+        Note: this runs in the aio loop executor asyncronously so beware of concurrency quirks
         """
         self._load_extra_data()
         for name, dset in self.config.datasets.items():

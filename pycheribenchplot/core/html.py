@@ -71,10 +71,10 @@ class HTMLTable(DataView):
         """
         hide_cols = set(self.df.columns) - set(self.yleft)
         table_template = surface.get_template("table.html")
-        styler = self.df.reset_index().style
+        styler = self.df[self.yleft].reset_index().style
         if self.colormap is not None:
             styler.apply(lambda df: self._apply_colormap(df), axis=None)
         styler.format(self.fmt, precision=3)
         styler.set_table_attributes('class="table table-striped table-responsive"')
-        table_html = styler.hide_index().hide_columns(hide_cols).render()
+        table_html = styler.hide_index().render()
         return table_template.render(cell_num=cell.cell_id, table=table_html)

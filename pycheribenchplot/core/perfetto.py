@@ -1,10 +1,11 @@
+import logging
 from abc import abstractmethod
 from pathlib import Path
 
 import pandas as pd
 from perfetto.trace_processor import TraceProcessor
 
-from .util import new_logger
+from .util import new_logger, timing
 from .dataset import DataSetContainer
 
 
@@ -58,6 +59,14 @@ class PerfettoDataSetContainer(DataSetContainer):
 
     def _extract_events(self, tp: TraceProcessor):
         self._integrity_check(tp)
+
+    def _query_to_df(self, tp: TraceProcessor, query_str):
+        # XXX-AM: This is unreasonably slow, build the dataframe manually for now
+        # df = result.as_pandas_dataframe()
+        with timing(query_str, logging.DEBUG, self.logger):
+            result = tp.query(query_str)
+            query_df = pd.DataFrame.from_records(map(lambda row: row.__dict__, result))
+        return query_df
 
     def load(self, path: Path):
         processor = self._tp_cache.get_trace_processor(path)

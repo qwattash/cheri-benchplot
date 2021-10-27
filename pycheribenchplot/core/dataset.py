@@ -21,6 +21,7 @@ class DatasetID(Enum):
     NETPERF_DATA = "netperf-data"
     QEMU_STATS_BB_HIST = "qemu-stats-bb"
     QEMU_STATS_CALL_HIST = "qemu-stats-call"
+    QEMU_CTX_CTRL = "qemu-ctx-tracks"
     PROCSTAT = "procstat"
     PIDMAP = "pidmap"
 

@@ -6,10 +6,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from ..core.dataset import (IndexField, DataField, DerivedField, Field, align_multi_index_levels,
+from ..core.dataset import (IndexField, DataField, DerivedField, Field, DatasetID, align_multi_index_levels,
                             rotate_multi_index_level, subset_xs, check_multi_index_aligned, DatasetProcessingException)
 from ..core.perfetto import PerfettoDataSetContainer
-from ..core.util import timing
 
 
 class QEMUTracingCtxDataset(PerfettoDataSetContainer):
@@ -17,6 +16,7 @@ class QEMUTracingCtxDataset(PerfettoDataSetContainer):
     Helper dataset mostly useful for debugging purposes.
     This records tracing slice periods associated to the relative contexts.
     """
+    dataset_id = "qemu-ctx-tracks"
     fields = []
 
     def raw_fields(self, include_derived=False):
@@ -25,19 +25,26 @@ class QEMUTracingCtxDataset(PerfettoDataSetContainer):
         return fields
 
     def _extract_events(self, tp: "TraceProcessor"):
-        super()._extract_events()
+        super()._extract_events(tp)
+        tracks = self._query_to_df(tp, "SELECT * FROM track")
+        tracing_ctrl = self._query_to_df(tp, "SELECT ts, dur FROM slice WHERE category = 'ctrl'")
+        sched_ctrl = self._query_to_df(tp, "SELECT ts, flat_key, int_value FROM slice JOIN args ON " +
+                                       "slice.arg_set_id = args.arg_set_id WHERE category = 'sched'")
+        # ts|pid|tid|cid|evtname sorted by time
 
 
 class QEMUStatsHistogramDataset(PerfettoDataSetContainer):
     fields = [
+        IndexField("histogram", dtype=int),
         IndexField("bucket", dtype=int),
         IndexField("file", dtype=str, isderived=True),
         IndexField("symbol", dtype=str, isderived=True),
-        IndexField("ctx_pid", dtype=int),
-        IndexField("ctx_tid", dtype=int),
-        IndexField("ctx_cid", dtype=int),
-        IndexField("ctx_EL", dtype=int),
-        IndexField("ctx_AS", dtype=int),
+        IndexField("process", dtype=str, isderived=True),
+        IndexField("pid", dtype=int),
+        IndexField("tid", dtype=int),
+        IndexField("cid", dtype=int),
+        IndexField("EL", dtype=int),
+        # IndexField("AS", dtype=int),
         Field("start", dtype=np.uint),
         DerivedField("valid_symbol", dtype=object, isdata=False)
     ]
@@ -50,59 +57,66 @@ class QEMUStatsHistogramDataset(PerfettoDataSetContainer):
     def _get_slice_name(self) -> str:
         raise NotImplementedError("Subclass must specialize")
 
+    def _decode_track_name(self, track_name: str):
+        """
+        XXX-AM: we should have a table for contexts as we have one for processes and threads.
+        """
+        track_info = {"pid": -1, "tid": -1, "cid": -1, "EL": -1}
+        if track_name.startswith("CTX"):
+            parts = track_name.split(":")
+            assert len(parts) == 4, "Malformed context track name"
+            pid = int(parts[0][len("CTX "):])
+            track_info.update({"pid": pid, "tid": int(parts[1]), "cid": int(parts[2]), "EL": int(parts[3])})
+        return track_info
+
+    def _get_arg_key_map(self):
+        """
+        Get mapping of argument flat_key to destination column in the imported dataframe
+        """
+        return {"qemu.histogram.bucket.start": "start"}
+
+    def _extract_track_stats(self, tp, track):
+        """
+        Build subsection of the dataframe pertaining to a given track.
+        Note that we are expected to return a dataframe with a flat index as this happens before
+        assigning the final index.
+        """
+        slice_name = self._get_slice_name()
+        track_info = self._decode_track_name(track["name"])
+        data_cols = {}
+        for query_col, mapped_col in self._get_arg_key_map().items():
+            query_str = (f"SELECT slice.id, int_value FROM slice JOIN args ON slice.arg_set_id = args.arg_set_id " +
+                         f"WHERE slice.category = 'stats' AND slice.name = '{slice_name}' AND " +
+                         f"args.flat_key = '{query_col}' AND slice.track_id = {track.id} ORDER BY args.id")
+            mapped_col_data = self._query_to_df(tp, query_str)
+            mapped_col_data.rename(columns={"id": "histogram"}, inplace=True)
+            mapped_col_data.index.name = "bucket"  # Current index in just row count ordered by args.id
+            mapped_col_data.set_index("histogram", append=True, inplace=True)
+            # Note it is important that the data_cols are Series objects otherwise we will end up
+            # with a multi-level column index in the concatenation result
+            data_cols[mapped_col] = mapped_col_data["int_value"]
+        df = pd.concat(data_cols, axis=1)
+        for key, value in track_info.items():
+            df[key] = value
+        return df.reset_index(drop=False)
+
     def _extract_events(self, tp: "TraceProcessor"):
         super()._extract_events(tp)
         slice_name = self._get_slice_name()
-        query_str = (f"SELECT * FROM slice INNER JOIN args ON " + "slice.arg_set_id = args.arg_set_id WHERE " +
-                     f"slice.category = 'stats' AND slice.name = '{slice_name}' AND " + "args.flat_key LIKE 'qemu%'")
-        # query_str = (f"SELECT * FROM track INNER JOIN slice ON track.id = slice.track_id " +
-        #              f"INNER JOIN args ON slice.arg_set_id = args.arg_set_id " +
-        #              f"WHERE slice.cat = 'stats' AND slice.name = '{slice_name}' AND " +
-        #              f"args.flat_key LIKE 'qemu%'")
-        with timing("Extract qemu stats events query", logging.DEBUG, self.logger):
-            result = tp.query(query_str)
-        # XXX-AM: This is unreasonably slow, build the dataframe manually for now
-        # df = result.as_pandas_dataframe()
-        query_df = pd.DataFrame.from_records(map(lambda row: row.__dict__, result))
-        df = self._build_df(query_df)
-        # Append dataframe to dataset
-        self.df = pd.concat([self.df, df])
-
-    def _build_df(self, input_df: pd.DataFrame):
-        """
-        Convert the input dataframe into the dataset dataframe
-        This involves mappint the values of the key column into columns
-        qemu.histogram.bucket[n].start -> start
-        qemu.histogram.bucket[n].end -> end
-        qemu.histogram.bucket[n].value -> count
-        """
-        # Check that the dataframe matches the expected format
-        assert input_df["key"].apply(lambda k: k.startswith("qemu.histogram.bucket[")).all(
-        ), "Malformed input perfetto dataframe: expected all argument keys as qemu.histogram.bucket[n].<field>"
-        # First assign the bucket index as a column (a bit sad to use regex)
-        extractor = re.compile("\[([0-9]+)\]")
-        input_df["bucket"] = input_df["key"].apply(lambda k: int(extractor.search(k).group(1)))
-        # Make sure the index is now aligned for all bucket field groups
-        input_df.set_index(["arg_set_id", "bucket"], inplace=True)
-        # Rotate the keys into columns using the bucket index as row index
-        tmp_df = pd.DataFrame(columns=input_df["flat_key"].unique())
-        for c in tmp_df.columns:
-            # Assume all bucket fields are int_values (int or uint)
-            tmp_df[c] = input_df[input_df["flat_key"] == c]["int_value"]
-        # Fixup column names
-        tmp_df = tmp_df.rename(columns=self.field_names_map())
-        # Fill extra columns
-        tmp_df["__dataset_id"] = self.benchmark.uuid
-        # XXX-AM: For now initialize unimplemented index fields with empty stuff
-        tmp_df["ctx_pid"] = 0
-        tmp_df["ctx_tid"] = 0
-        tmp_df["ctx_cid"] = 0
-        tmp_df["ctx_EL"] = 0
-        tmp_df["ctx_AS"] = 0
-        # Normalize fields
-        tmp_df = tmp_df.reset_index(drop=False).astype(self._get_column_dtypes(include_converted=True))
-        tmp_df.set_index(self.index_columns(), inplace=True)
-        return tmp_df
+        # Look up tracks in the datasets that have data slices we are interested in
+        tracks_query_str = ("SELECT DISTINCT(track.id), track.name FROM track JOIN slice ON track.id = slice.track_id " +
+                            "JOIN args ON slice.arg_set_id = args.arg_set_id WHERE args.flat_key LIKE 'qemu%' AND " +
+                            f"slice.category = 'stats' AND slice.name = '{slice_name}'")
+        tracks = self._query_to_df(tp, tracks_query_str)
+        # Dataframe skeleton with all non-derived columns (no index)
+        df = pd.DataFrame(columns=self.all_columns())
+        for idx, track in tracks.iterrows():
+            self.logger.debug("Detected track %s: extracting stats", track["name"])
+            track_df = self._extract_track_stats(tp, track)
+            track_df["__dataset_id"] = self.benchmark.uuid
+            track_df = track_df.astype(self._get_column_dtypes(include_converted=True))
+            track_df.set_index(self.index_columns(), inplace=True)
+            self.df = pd.concat([self.df, track_df])
 
     def pre_merge(self):
         """
@@ -128,7 +142,15 @@ class QEMUStatsHistogramDataset(PerfettoDataSetContainer):
         # We also have to handle rtld manually to map its name.
         self.df["file"] = resolved.map(lambda syminfo: syminfo.filepath.name if syminfo else None)
         self.df.loc[invalid_syms, "file"] = "unknown"
-        self.df.set_index(["file", "symbol"], append=True)
+        self.df.set_index(["file", "symbol"], append=True, inplace=True)
+
+        # Assign commands to PIDs
+        pidmap = self.benchmark.get_dataset(DatasetID.PIDMAP)
+        assert pidmap is not None
+        pid_df = pidmap.df.set_index("pid").add_suffix("_pidmap") # Avoid accidental column clash in join
+        pids = self.df.join(pid_df, how="left", on="pid")["command_pidmap"]
+        self.df["process"] = pids
+        self.df.set_index("process", append=True, inplace=True)
 
     def _get_agg_strategy(self):
         """Return mapping of column-name => aggregation function for the columns we need to aggregate"""
@@ -138,8 +160,7 @@ class QEMUStatsHistogramDataset(PerfettoDataSetContainer):
 
     def aggregate(self):
         super().aggregate()
-        tmp = self.merged_df.set_index(["file", "symbol"], append=True)
-        grouped = tmp.groupby(["__dataset_id", "file", "symbol"])
+        grouped = self.merged_df.groupby(["__dataset_id", "process", "EL", "file", "symbol"])
         self.agg_df = grouped.agg(self._get_agg_strategy())
 
     def delta_columns(self):
@@ -149,10 +170,13 @@ class QEMUStatsHistogramDataset(PerfettoDataSetContainer):
         super().post_aggregate()
         # Align dataframe on the (file, symbol) pairs where we want to get an union of
         # the symbols set for each file, repeated for each dataset_id.
-        new_df = align_multi_index_levels(self.agg_df, ["file", "symbol"], fill_value=0)
+        align_levels = ["process", "EL", "file", "symbol"]
+        # new_df = align_multi_index_levels(self.agg_df, ["file", "symbol"], fill_value=0)
+        new_df = align_multi_index_levels(self.agg_df, align_levels, fill_value=0)
         # Backfill after alignment
         new_df.loc[new_df["valid_symbol"] == 0, "valid_symbol"] = "missing"
-
+        # import code
+        # code.interact(local=locals())
         # Now we can safely assign as there are no missing values.
         # 1) Compute delta for each metric for each function w.r.t. the baseline.
         # 2) Build the normalized delta for each metric, note that this will generate infinities where
@@ -181,7 +205,6 @@ class QEMUStatsBBHistogramDataset(QEMUStatsHistogramDataset):
     fields = [
         Field("end", dtype=np.uint),
         DataField("bb_count", dtype=int),
-        DerivedField("bb_bytes", dtype=int),
         DerivedField("delta_bb_count", dtype=int),
         DerivedField("norm_delta_bb_count", dtype=float)
     ]
@@ -191,27 +214,20 @@ class QEMUStatsBBHistogramDataset(QEMUStatsHistogramDataset):
         fields += [f for f in QEMUStatsBBHistogramDataset.fields if include_derived or not f.isderived]
         return fields
 
-    def field_names_map(self):
-        return {
-            "qemu.histogram.bucket.start": "start",
+    def _get_arg_key_map(self):
+        mapping = super()._get_arg_key_map()
+        mapping.update({
             "qemu.histogram.bucket.end": "end",
             "qemu.histogram.bucket.value": "bb_count"
-        }
+        })
+        return mapping
 
     def _get_slice_name(self):
         return "bb_hist"
 
-    def pre_merge(self):
-        super().pre_merge()
-        # Generate number of bytes hit for each range of start/end addresses as a proxy for
-        # real instruction count. The real number will be some fraction of this number, depending
-        # on instruction size.
-        self.df["bb_bytes"] = (self.df["end"] - self.df["start"]) * self.df["bb_count"]
-
     def _get_agg_strategy(self):
         agg = super()._get_agg_strategy()
         agg["end"] = "max"
-        agg["bb_bytes"] = "sum"
         return agg
 
 
@@ -233,8 +249,12 @@ class QEMUStatsBranchHistogramDataset(QEMUStatsHistogramDataset):
         fields += [f for f in QEMUStatsBranchHistogramDataset.fields if include_derived or not f.isderived]
         return fields
 
-    def field_names_map(self):
-        return {"qemu.histogram.bucket.start": "start", "qemu.histogram.bucket.value": "branch_count"}
+    def _get_arg_key_map(self):
+        mapping = super()._get_arg_key_map()
+        mapping.update({
+            "qemu.histogram.bucket.value": "branch_count"
+        })
+        return mapping
 
     def pre_merge(self):
         """
