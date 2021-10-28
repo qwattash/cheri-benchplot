@@ -17,6 +17,11 @@ class PidMapDataset(JSONDataSetContainer):
     dataset_id = DatasetID.PIDMAP
     fields = [Field("pid", dtype=int), Field("uid", dtype=int), StrField("command")]
 
+    def __init__(self, benchmark, dset_key):
+        super().__init__(benchmark, dset_key)
+        # Add a synthetic entry for unknown/unmatched PID number -1
+        self.df.append({"pid": -1, "uid": -1, "command": "unknown"}, ignore_index=True)
+
     def raw_fields(self, include_derived=False):
         return PidMapDataset.fields
 
@@ -26,4 +31,5 @@ class PidMapDataset(JSONDataSetContainer):
         records = raw_data["process-information"]["process"]
         df = pd.DataFrame.from_records(records)
         df["__dataset_id"] = self.benchmark.uuid
+        df = df.astype(self._get_column_dtypes())
         self._internalize_json(df)

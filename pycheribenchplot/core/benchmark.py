@@ -19,7 +19,7 @@ from .pidmap import PidMapDataset
 from .dataset import DatasetRegistry, DatasetID
 from .analysis import BenchmarkAnalysisRegistry
 from .plot import BenchmarkPlot
-from .elf import SymResolver
+from .elf import Symbolizer
 from .util import new_logger, timing
 from ..pmc import PMCStatData
 
@@ -103,7 +103,6 @@ class BenchmarkBase(TemplateConfigContext):
     """
     Base class for all the benchmarks
     """
-
     @dataclass
     class _TaskPIDInfo:
         """Internal helper to bind commands to PIDs of running tasks"""
@@ -143,7 +142,7 @@ class BenchmarkBase(TemplateConfigContext):
         # Map uuids to benchmarks that have been merged into the current instance (which is the baseline)
         # so that we can look them up if necessary
         self.merged_benchmarks = {}
-        self.sym_resolver = SymResolver(self)
+        self.sym_resolver = Symbolizer()
         # Extra implicit dataset to extract procstat -v mappings
         self.procstat_output = self.result_path / f"procstat-{self.uuid}.csv"
         # Extra implicit dataset to extract PID to command mapping
@@ -357,7 +356,7 @@ class BenchmarkBase(TemplateConfigContext):
         if not kernel.exists():
             self.logger.warning("Kernel name not found in kernel.<CONF> directories, using the default kernel")
             kernel = self.rootfs / "kernel" / "kernel.full"
-        self.sym_resolver.import_symbols(kernel, 0)
+        self.sym_resolver.register_sym_source(0, "kernel.full", kernel, shared=True)
         if self.procstat_output.exists():
             # If we have procstat output, import all the symbols
             self.logger.debug("Load implicit procstat dataset")
@@ -366,13 +365,19 @@ class BenchmarkBase(TemplateConfigContext):
             self.datasets[pstat.dataset_id] = pstat
             for base, guest_path in pstat.mapped_binaries(self.uuid):
                 local_path = self.rootfs / guest_path.relative_to("/")
-                self.sym_resolver.import_symbols(local_path, base)
+                self.sym_resolver.register_sym_source(base, self._get_addrspace_key(), local_path)
         if self.pid_map_output.exists():
             # If we have the process PID mapping, import the dataset
             self.logger.debug("Load implicit PID dataset")
             pidmap = PidMapDataset(self, "pidmap")
             pidmap.load(self.pid_map_output)
             self.datasets[pidmap.dataset_id] = pidmap
+
+    def _get_addrspace_key(self):
+        """
+        Return the name of the address-space to use for the benchmark address space in the symbolizer
+        """
+        return "benchmark"
 
     def get_dataset(self, parser_id: DatasetID):
         return self.datasets.get(parser_id, None)

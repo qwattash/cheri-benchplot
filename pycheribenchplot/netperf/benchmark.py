@@ -46,6 +46,9 @@ class NetperfBenchmark(BenchmarkBase):
             self.logger.error("Malformed config: missing netperf output file")
             raise Exception("Benchmark config error")
 
+    def _get_addrspace_key(self):
+        return self.netperf_bin.name
+
     async def _run_procstat(self):
         await super()._run_procstat()
         # Grab the memory mapping for the process
@@ -64,7 +67,7 @@ class NetperfBenchmark(BenchmarkBase):
         netserver = await self._run_bg_cmd(self.netserver_bin, self.netperf_config.netserver_options, env=self.env)
         try:
             self.logger.info("Prime benchmark")
-            await aio.sleep(5) # Give some time to settle
+            await aio.sleep(5)  # Give some time to settle
             await self._run_cmd(self.netperf_bin, self.netperf_config.netperf_prime_options, env=self.env)
             self.logger.info("Run benchmark iterations")
             with open(self.result_path / self.config.output_file, "w+") as outfd:
@@ -104,8 +107,7 @@ class NetperfBenchmark(BenchmarkBase):
                 self.logger.error("netperf::cpu_stop anomalous #calls %s", check)
             check = dset.agg_df.loc[statcounters_sample, "call_count"].unique()
             if len(check) > 1:
-                self.logger.error("libstatcounters::statcounters_sample anomalous #calls %s",
-                                  check)
+                self.logger.error("libstatcounters::statcounters_sample anomalous #calls %s", check)
 
 
 BenchmarkManager.register_benchmark(BenchmarkType.NETPERF, NetperfBenchmark)

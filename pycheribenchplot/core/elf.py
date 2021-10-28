@@ -5,26 +5,8 @@ from dataclasses import dataclass
 import pandas as pd
 from sortedcontainers import SortedDict
 from elftools.elf.elffile import ELFFile
-from elftools.elf.enums import ENUM_ST_SHNDX, ENUM_E_TYPE
 
-
-class ELFInfo:
-    def __init__(self, path: Path):
-        self.path = path
-        self.ef = ELFFile(open(path, "rb"))
-
-    def is_dynamic(self):
-        if self.ef.header.e_type == ENUM_E_TYPE["ET_DYN"]:
-            return True
-        return False
-
-    def image_end_addr(self):
-        maxaddr = 0
-        for p in self.ef.iter_segments():
-            pend =  p["p_vaddr"] + p["p_memsz"]
-            if p["p_type"] == "PT_LOAD" and pend > maxaddr:
-                maxaddr = pend
-        return maxaddr
+from .util import new_logger
 
 
 @dataclass
@@ -34,100 +16,142 @@ class SymInfo:
     size: int
     addr: int
 
-@dataclass
-class MapInfo:
-    end: int
-    elf: ELFInfo
-    symbols: SortedDict
-    functions: SortedDict
 
-class SymResolver:
+class SymbolizerMapping:
     """
-    Resolve symbols from a set of ELF files with optional mapping addresses
+    Per-mapping set of symbols.
     """
-    def __init__(self, benchmark: "BenchmarkBase"):
-        self.bench = benchmark
-        self.files = {}
+    def __init__(self, sset, mapbase: int, path: Path):
+        self.logger = sset.logger
+        self.symbols = SortedDict()
+        self.functions = SortedDict()
+        with open(path, "rb") as fd:
+            ef = ELFFile(fd)
+            if not self._is_dynamic(ef):
+                base = 0
+            else:
+                base = mapbase
+            self.logger.debug("Load symbols for %s base=0x%x dyn=%s", path, base, self._is_dynamic(ef))
+            symtab = ef.get_section_by_name(".symtab")
+            for sym in symtab.iter_symbols():
+                addr = base + sym["st_value"]
+                syminfo = SymInfo(name=sym.name, filepath=path, addr=addr, size=sym["st_size"])
+                st_info = sym["st_info"]
+                if st_info.type == "STT_FUNC":
+                    self.functions[addr] = syminfo
+                else:
+                    self.symbols[addr] = syminfo
+            self.map_end = base + self._get_end_addr(ef)
+        assert self.map_end > mapbase
 
-        # Map base address to the corresponding ELF object
-        # For each ELF object we have a functions map for looking up.
-        self.mapping = SortedDict()
+    def _is_dynamic(self, ef):
+        if ef.header.e_type == "ET_DYN":
+            return True
+        return False
 
-    def import_symbols(self, path: Path, mapbase: int, mapend: int=None):
-        info = ELFInfo(path)
-        if info.is_dynamic():
-            mapbase = 0
-        if mapend is None:
-            # Try to infer size of image
-            mapend = mapbase + info.image_end_addr()
-        self.files[mapbase] = info
-        print("XXX", path, f"0x{mapbase:x}", f"0x{mapend:x}")
+    def _get_end_addr(self, ef):
+        maxaddr = 0
+        for p in ef.iter_segments():
+            pend = p["p_vaddr"] + p["p_memsz"]
+            if p["p_type"] == "PT_LOAD" and pend > maxaddr:
+                maxaddr = pend
+        return maxaddr
 
-        functions = SortedDict()
-        symbols = SortedDict()
-        symtab = info.ef.get_section_by_name(".symtab")
-        for sym in symtab.iter_symbols():
-            addr = sym["st_value"] + mapbase
-            syminfo = SymInfo(name=sym.name, filepath=path, addr=addr, size=sym["st_size"])
-            st_info = sym["st_info"]
-            symbols[addr] = syminfo
-            if st_info.type == "STT_FUNC":
-                functions[addr] = syminfo
-        self.mapping[mapbase] = MapInfo(end=mapend, elf=info, functions=functions, symbols=symbols)
-
-    def get_sym_addr(self, sym_name: str):
-        for base, mapping in self.mapping.items():
-            for addr, sym in mapping.symbols.items():
-                if sym.name == sym_name:
-                    return addr
-        return None
-
-    def _lookup_mapping(self, addr: int) -> typing.Optional[MapInfo]:
-        """
-        Find mapping containing the given symbol
-        """
-        mapidx = self.mapping.bisect(addr) - 1
-        if mapidx < 0:
+    def lookup_fn(self, addr: int):
+        idx = self.functions.bisect(addr) - 1
+        if idx < 0:
             return None
-        mapinfo = self.mapping.values()[mapidx]
-        if mapinfo.end < addr:
-            return None
-        return mapinfo
+        syminfo = self.functions.values()[idx]
+        # XXX Symbol size check seems unreliable for some reason?
+        # if syminfo.addr + syminfo.size < addr:
+        #     return None
+        return syminfo
 
-    def _lookup_symbol(self, sym_map: SortedDict[int, SymInfo], addr: int) -> typing.Optional[SymInfo]:
-        """
-        Find the symbol preceding the given address, if it belongs to a valid mapping
-        """
-        symidx = sym_map.bisect(addr) - 1
-        if symidx < 0:
-            return None
-        info = sym_map.values()[symidx]
-        return info
 
-    def lookup_fn(self, addr: int) -> typing.Optional[SymInfo]:
-        mapinfo = self._lookup_mapping(addr)
-        if mapinfo is None:
+class SymbolizerSet:
+    """
+    Per-AS set of mappings that have associated symbols.
+    """
+    def __init__(self, symbolizer):
+        self.logger = symbolizer.logger
+        self.mappings = SortedDict()
+
+    def add_sym_source(self, mapbase: int, path: Path):
+        mapping = SymbolizerMapping(self, mapbase, path)
+        self.mappings[mapbase] = mapping
+
+    def _lookup_mapping(self, addr):
+        idx = self.mappings.bisect(addr) - 1
+        if idx < 0:
             return None
-        syminfo = self._lookup_symbol(mapinfo.functions, addr)
+        return self.mappings.values()[idx]
+
+    def lookup_fn(self, addr: int):
+        mapping = self._lookup_mapping(addr)
+        if mapping is None or mapping.map_end < addr:
+            return None
+        return mapping.lookup_fn(addr)
+
+
+class Symbolizer:
+    """
+    Resolve addresses to symbols by address-space.
+    Symbol sources must be registered to an address space, this is identified
+    by a custom string (generally the name of the process owning the address space).
+    Shared address spaces are used to match all symbols.
+    """
+    def __init__(self):
+        self.logger = new_logger("symbolizer")
+        self.addrspace = {}
+
+    def _get_or_create_addrspace(self, key: str):
+        if key not in self.addrspace:
+            self.logger.debug("New symbolizer address space %s", key)
+            self.addrspace[key] = SymbolizerSet(self)
+        return self.addrspace[key]
+
+    def register_sym_source(self, mapbase: int, as_key: str, path: Path, shared=False):
+        """
+        Register a symbol source with the given address space key. If the
+        as_key is None, the symbols are considered to be shared.
+        """
+        if shared:
+            # also add the symbol to the shared AS key=None
+            shared_addrspace = self._get_or_create_addrspace(None)
+            shared_addrspace.add_sym_source(mapbase, path)
+        addrspace = self._get_or_create_addrspace(as_key)
+        addrspace.add_sym_source(mapbase, path)
+
+    def _lookup_fn_shared(self, addr):
+        addrspace = self.addrspace.get(None, None)
+        if addrspace is None:
+            return None
+        return addrspace.lookup_fn(addr)
+
+    def lookup_fn(self, addr: int, as_key: str):
+        """
+        Lookup a function in the given address space
+        """
+        addrspace = self.addrspace.get(as_key, None)
+        if addrspace is None:
+            # Try the shared addrspace
+            return self._lookup_fn_shared(addr)
+        syminfo = addrspace.lookup_fn(addr)
         if syminfo is None:
-            return None
+            return self._lookup_fn_shared(addr)
         return syminfo
 
-    def lookup_fn_bounded(self, addr: int) -> typing.Optional[SymInfo]:
-        mapinfo = self._lookup_mapping(addr)
-        if mapinfo is None:
-            return None
-        syminfo = self._lookup_symbol(mapinfo.functions, addr)
-        if syminfo is None or addr > syminfo.addr + syminfo.size:
+    def match_fn(self, addr: int, as_key: str):
+        """
+        Lookup for an exact match between the address and the resolved symbol
+        """
+        addrspace = self.addrspace.get(as_key, None)
+        if addrspace is None:
+            syminfo = self._lookup_fn_shared(addr)
+        else:
+            syminfo = addrspace.lookup_fn(addr)
+            if syminfo is None:
+                syminfo = self._lookup_fn_shared(addr)
+        if syminfo is None or addr != syminfo.addr:
             return None
         return syminfo
-
-    def lookup_fn_exact(self, addr: int) -> typing.Optional[SymInfo]:
-        """
-        Find the symbol matching exactly the given address.
-        If none is found, return None.
-        """
-        mapinfo = self._lookup_mapping(addr)
-        if mapinfo is None:
-            return None
-        return mapinfo.functions.get(addr, None)

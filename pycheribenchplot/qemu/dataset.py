@@ -28,12 +28,19 @@ class QEMUTracingCtxDataset(PerfettoDataSetContainer):
         super()._extract_events(tp)
         tracks = self._query_to_df(tp, "SELECT * FROM track")
         tracing_ctrl = self._query_to_df(tp, "SELECT ts, dur FROM slice WHERE category = 'ctrl'")
-        sched_ctrl = self._query_to_df(tp, "SELECT ts, flat_key, int_value FROM slice JOIN args ON " +
-                                       "slice.arg_set_id = args.arg_set_id WHERE category = 'sched'")
+        sched_ctrl = self._query_to_df(
+            tp, "SELECT ts, flat_key, int_value FROM slice JOIN args ON " +
+            "slice.arg_set_id = args.arg_set_id WHERE category = 'sched'")
         # ts|pid|tid|cid|evtname sorted by time
 
 
-class QEMUStatsHistogramDataset(PerfettoDataSetContainer):
+class ContextStatsHistogramBase(PerfettoDataSetContainer):
+    """
+    Base class that handles loading QEMU stats tracks from the perfetto backend, and attempts to resolve
+    the context to which data records are associated.
+    This delegates the actual data aggregation strategy to subclasses.
+    """
+
     fields = [
         IndexField("histogram", dtype=int),
         IndexField("bucket", dtype=int),
@@ -51,7 +58,7 @@ class QEMUStatsHistogramDataset(PerfettoDataSetContainer):
 
     def raw_fields(self, include_derived=False):
         fields = super().raw_fields(include_derived)
-        fields += [f for f in QEMUStatsHistogramDataset.fields if include_derived or not f.isderived]
+        fields += [f for f in ContextStatsHistogramBase.fields if include_derived or not f.isderived]
         return fields
 
     def _get_slice_name(self) -> str:
@@ -104,9 +111,10 @@ class QEMUStatsHistogramDataset(PerfettoDataSetContainer):
         super()._extract_events(tp)
         slice_name = self._get_slice_name()
         # Look up tracks in the datasets that have data slices we are interested in
-        tracks_query_str = ("SELECT DISTINCT(track.id), track.name FROM track JOIN slice ON track.id = slice.track_id " +
-                            "JOIN args ON slice.arg_set_id = args.arg_set_id WHERE args.flat_key LIKE 'qemu%' AND " +
-                            f"slice.category = 'stats' AND slice.name = '{slice_name}'")
+        tracks_query_str = (
+            "SELECT DISTINCT(track.id), track.name FROM track JOIN slice ON track.id = slice.track_id " +
+            "JOIN args ON slice.arg_set_id = args.arg_set_id WHERE args.flat_key LIKE 'qemu%' AND " +
+            f"slice.category = 'stats' AND slice.name = '{slice_name}'")
         tracks = self._query_to_df(tp, tracks_query_str)
         # Dataframe skeleton with all non-derived columns (no index)
         df = pd.DataFrame(columns=self.all_columns())
@@ -125,8 +133,18 @@ class QEMUStatsHistogramDataset(PerfettoDataSetContainer):
         """
         super().pre_merge()
         resolver = self.benchmark.sym_resolver
+        # Assign commands to PIDs
+        pidmap = self.benchmark.get_dataset(DatasetID.PIDMAP)
+        assert pidmap is not None
+        pid_df = pidmap.df.set_index("pid").add_suffix("_pidmap")  # Avoid accidental column clash in join
+        pids = self.df.join(pid_df, how="left", on="pid")["command_pidmap"]
+        # There may be some NaN due to PID that were running during the benchmark but have since been terminated
+        # We mark these as 'undetected'
+        self.df["process"] = pids.fillna("undetected")
+
+        # Resolve file:symbol for each address so that we can aggregate counts for each one of them
+        resolved = self.df.apply(lambda row: resolver.lookup_fn(row["start"], Path(row["process"]).name), axis=1)
         self.df["valid_symbol"] = "ok"
-        resolved = self.df["start"].map(lambda addr: resolver.lookup_fn(addr))
         self.df.loc[resolved.isna(), "valid_symbol"] = "no-match"
         # XXX-AM: the symbol size does not appear to be reliable?
         # sym_end = resolved.map(lambda syminfo: syminfo.addr + syminfo.size if syminfo else np.nan)
@@ -134,23 +152,16 @@ class QEMUStatsHistogramDataset(PerfettoDataSetContainer):
         # self.df.loc[size_mismatch, "valid_symbol"] = "size-mismatch"
 
         invalid_syms = self.df["valid_symbol"] != "ok"
-        self.df["symbol"] = resolved.map(lambda syminfo: syminfo.name if syminfo else None)
+        self.df["symbol"] = resolved[~invalid_syms].map(lambda syminfo: syminfo.name)
+        # self.df["symbol"] = resolved.map(lambda syminfo: syminfo.name if syminfo else None)
         self.df.loc[invalid_syms, "symbol"] = self.df.loc[invalid_syms, "start"].transform(lambda addr: f"0x{addr:x}")
         # Note: For the file name, we omit the directory part as otherwise the same executable
         # in different directories will be picked up as a completely different file. This is
         # not useful when comparing different compilations that have different paths e.g. the kernel
         # We also have to handle rtld manually to map its name.
-        self.df["file"] = resolved.map(lambda syminfo: syminfo.filepath.name if syminfo else None)
+        self.df["file"] = resolved[~invalid_syms].map(lambda syminfo: syminfo.filepath.name)
         self.df.loc[invalid_syms, "file"] = "unknown"
-        self.df.set_index(["file", "symbol"], append=True, inplace=True)
-
-        # Assign commands to PIDs
-        pidmap = self.benchmark.get_dataset(DatasetID.PIDMAP)
-        assert pidmap is not None
-        pid_df = pidmap.df.set_index("pid").add_suffix("_pidmap") # Avoid accidental column clash in join
-        pids = self.df.join(pid_df, how="left", on="pid")["command_pidmap"]
-        self.df["process"] = pids
-        self.df.set_index("process", append=True, inplace=True)
+        self.df.to_csv(f"debug-dump-pre-merge-{self.benchmark.uuid}.csv")
 
     def _get_agg_strategy(self):
         """Return mapping of column-name => aggregation function for the columns we need to aggregate"""
@@ -171,10 +182,11 @@ class QEMUStatsHistogramDataset(PerfettoDataSetContainer):
         # Align dataframe on the (file, symbol) pairs where we want to get an union of
         # the symbols set for each file, repeated for each dataset_id.
         align_levels = ["process", "EL", "file", "symbol"]
-        # new_df = align_multi_index_levels(self.agg_df, ["file", "symbol"], fill_value=0)
+        self.agg_df.to_csv(f"debug-dump-post-agg-{self.benchmark.uuid}.csv")
         new_df = align_multi_index_levels(self.agg_df, align_levels, fill_value=0)
         # Backfill after alignment
         new_df.loc[new_df["valid_symbol"] == 0, "valid_symbol"] = "missing"
+        new_df.to_csv(f"debug-dump-post-agg-{self.benchmark.uuid}-aligned.csv")
         # import code
         # code.interact(local=locals())
         # Now we can safely assign as there are no missing values.
@@ -199,7 +211,7 @@ class QEMUStatsHistogramDataset(PerfettoDataSetContainer):
         self.agg_df = new_df
 
 
-class QEMUStatsBBHistogramDataset(QEMUStatsHistogramDataset):
+class QEMUStatsBBHistogramDataset(ContextStatsHistogramBase):
     """Basic-block hit count histogram"""
     dataset_id = "qemu-stats-bb"
     fields = [
@@ -216,10 +228,7 @@ class QEMUStatsBBHistogramDataset(QEMUStatsHistogramDataset):
 
     def _get_arg_key_map(self):
         mapping = super()._get_arg_key_map()
-        mapping.update({
-            "qemu.histogram.bucket.end": "end",
-            "qemu.histogram.bucket.value": "bb_count"
-        })
+        mapping.update({"qemu.histogram.bucket.end": "end", "qemu.histogram.bucket.value": "bb_count"})
         return mapping
 
     def _get_slice_name(self):
@@ -231,7 +240,7 @@ class QEMUStatsBBHistogramDataset(QEMUStatsHistogramDataset):
         return agg
 
 
-class QEMUStatsBranchHistogramDataset(QEMUStatsHistogramDataset):
+class QEMUStatsBranchHistogramDataset(ContextStatsHistogramBase):
     """Branch instruction target hit count histogram"""
     dataset_id = "qemu-stats-call"
     fields = [
@@ -251,9 +260,7 @@ class QEMUStatsBranchHistogramDataset(QEMUStatsHistogramDataset):
 
     def _get_arg_key_map(self):
         mapping = super()._get_arg_key_map()
-        mapping.update({
-            "qemu.histogram.bucket.value": "branch_count"
-        })
+        mapping.update({"qemu.histogram.bucket.value": "branch_count"})
         return mapping
 
     def pre_merge(self):
@@ -266,7 +273,9 @@ class QEMUStatsBranchHistogramDataset(QEMUStatsHistogramDataset):
         # Generate now a new column only for entries that exactly match symbols, meaning that
         # these are function calls is the first basic-block of the function and is considered as an individual call
         # to that function
-        is_call = self.df["start"].map(lambda addr: resolver.lookup_fn_exact(addr) is not None)
+        is_call = self.df.apply(lambda row: resolver.match_fn(row["start"],
+                                                              Path(row["process"]).name) is not None,
+                                axis=1)
         self.df["call_count"] = self.df["branch_count"].mask(~is_call, 0).astype(int)
 
     def delta_columns(self):
