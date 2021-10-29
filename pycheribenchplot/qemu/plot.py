@@ -26,7 +26,7 @@ class QEMUHistSubPlot(BenchmarkSubPlot):
         """
         bb_df = self.get_dataset(DatasetID.QEMU_STATS_BB_HIST).agg_df
         call_df = self.get_dataset(DatasetID.QEMU_STATS_CALL_HIST).agg_df
-        return bb_df.join(call_df, how="inner", lsuffix="", rsuffix="_call")
+        return bb_df.join(call_df, how="outer", lsuffix="", rsuffix="_call")
 
     def _get_group_levels(self, indf: pd.DataFrame):
         assert "__dataset_id" in indf.index.names, "Missing __dataset_id index level"
@@ -119,14 +119,18 @@ class QEMUHistTable(QEMUHistSubPlot):
         common_cols = self._get_common_display_columns()
         rel_cols = self._get_non_baseline_display_columns()
         baseline = self.benchmark.uuid
-        show_cols = np.append(colmap.loc[:, common_cols].values.T.ravel(),
-                              colmap.loc[colmap.index != baseline, rel_cols].values.T.ravel())
+        show_cols = np.append(colmap.loc[:, common_cols].values.T.ravel(), colmap.loc[colmap.index != baseline,
+                                                                                      rel_cols].values.T.ravel())
         return show_cols
 
     def _get_sort_metric(self, df):
         # We should always compute a sort metric index in the dataset instead (post_agg)
         relevance = df["delta_call_count"]
         return relevance
+
+    def generate2(self, surface: Surface, cell: CellData):
+        df = self._get_filtered_df()
+        grouped = df.groupby(["process"])
 
     def generate(self, surface: Surface, cell: CellData):
         df = self._get_filtered_df()
@@ -204,19 +208,57 @@ class QEMUStrangeSymbolHistTable(QEMUHistTable):
         return self.filter_by_inconsistent_symbols(df)
 
 
+class QEMUContextHistTable(QEMUHistTable):
+
+    def __init__(self, plot, context_procname):
+        super().__init__(plot)
+        self.process = context_procname
+
+    def get_cell_title(self):
+        return f"QEMU PC stats for {self.process}"
+
+    def _get_filtered_df(self):
+        df = self.get_all_stats_df()
+        df = df.xs(self.process, level="process")
+        return df
+
+
 class QEMUTables(BenchmarkPlot):
     """
     Show QEMU datasets as tabular output for inspection.
     """
     subplots = [
-        QEMUAllSymbolHistTable,
-        QEMUCommonSymbolHistTable,
-        QEMUExtraSymbolHistTable,
-        QEMUStrangeSymbolHistTable,
+        QEMUContextHistTable,
+        # QEMUAllSymbolHistTable,
+        # QEMUCommonSymbolHistTable,
+        # QEMUExtraSymbolHistTable,
+        # QEMUStrangeSymbolHistTable,
     ]
+
+    @classmethod
+    def check_required_datasets(cls, dsets: list[DatasetID]):
+        """
+        Check dataset list against qemu stats dataset names
+        """
+        required = set([DatasetID.QEMU_STATS_BB_HIST, DatasetID.QEMU_STATS_CALL_HIST])
+        return required.issubset(set(dsets))
 
     def __init__(self, benchmark):
         super().__init__(benchmark, [HTMLSurface()])  #TODO add ExcelSurface()
+
+    def _make_subplots(self):
+        """
+        Dynamically create subplots for each context ID
+        """
+        subplots = []
+        contexts = set()
+        bb_df = self.benchmark.get_dataset(DatasetID.QEMU_STATS_BB_HIST).agg_df
+        contexts.update(bb_df.index.get_level_values("process").unique())
+        call_df = self.benchmark.get_dataset(DatasetID.QEMU_STATS_CALL_HIST).agg_df
+        contexts.update(call_df.index.get_level_values("process").unique())
+        for ctx in contexts:
+            subplots.append(QEMUContextHistTable(self, ctx))
+        return subplots
 
     def get_plot_name(self):
         return "QEMU Stats Tables"

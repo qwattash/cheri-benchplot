@@ -302,12 +302,7 @@ class BenchmarkPlot(BenchmarkAnalysis):
         super().__init__(benchmark)
         assert len(surfaces), "Empty plot surface list"
         self.surfaces = surfaces
-        dset_avail = set(self.benchmark.datasets.keys())
-        self.active_subplots = []
-        for plot_klass in self.subplots:
-            dset_req = set(plot_klass.get_required_datasets())
-            if dset_req.issubset(dset_avail):
-                self.active_subplots.append(plot_klass(self))
+        self.active_subplots = self._make_subplots()
 
     def get_plot_name(self):
         """
@@ -322,6 +317,18 @@ class BenchmarkPlot(BenchmarkAnalysis):
         append it later.
         """
         return self.benchmark.manager.session_ouput_path / self.__class__.__name__
+
+    def _make_subplots(self) -> list["BenchmarkSubPlot"]:
+        """
+        By default, we create one instance for each subplot class listed in the class
+        """
+        dset_avail = set(self.benchmark.datasets.keys())
+        active_subplots = []
+        for plot_klass in self.subplots:
+            dset_req = set(plot_klass.get_required_datasets())
+            if dset_req.issubset(dset_avail):
+                active_subplots.append(plot_klass(self))
+        return active_subplots
 
     def _setup_surface(self, surface: Surface):
         """
