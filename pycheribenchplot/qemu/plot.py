@@ -4,7 +4,7 @@ import pandas as pd
 from ..core.dataset import (DatasetID, subset_xs, check_multi_index_aligned, rotate_multi_index_level)
 from ..core.plot import (CellData, DataView, BenchmarkPlot, BenchmarkSubPlot, Surface)
 from ..core.html import HTMLSurface
-from ..core.matplotlib import MatplotlibSurface
+#from ..core.matplotlib import MatplotlibSurface
 
 
 class QEMUHistSubPlot(BenchmarkSubPlot):
