@@ -71,6 +71,10 @@
                 "netperf-vmstat-malloc": {
                     "name": "vmstat-{uuid}.json",
                     "parser": "vmstat-malloc"
+                },
+                "netperf-vmstat-uma": {
+                    "name": "vmstat-{uuid}.json",
+                    "parser": "vmstat-uma"
                 }
             }
         }

@@ -10,7 +10,7 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from enum import Enum
 
 import termcolor
@@ -19,11 +19,21 @@ import asyncssh
 from .util import new_logger
 from .config import Config, TemplateConfig, TemplateConfigContext, path_field
 from .benchmark import BenchmarkRunConfig, BenchmarkRunRecord, BenchmarkType
-from .instanced import InstanceClient, InstanceConfig
+from .instanced import InstanceConfig, InstanceManager
 from .dataset import DatasetRegistry
 from .analysis import BenchmarkAnalysisRegistry
 from .html import HTMLSurface
 from .excel import SpreadsheetSurface
+
+@dataclass
+class BenchplotUserConfig(Config):
+    """
+    User-environment configuration.
+    This defines system paths for programs and source code we use
+    """
+    sdk_path: Path = path_field("~/cheri/cherisdk")
+    perfetto_path: Path = path_field("~/cheri/cheri-perfetto/build")
+    cheribuild_path: Path = path_field("~/cheri/cheribuild/cheribuild.py")
 
 
 @dataclass
@@ -35,19 +45,24 @@ class BenchmarkManagerPlotConfig(TemplateConfig):
 
 
 @dataclass
-class BenchmarkManagerConfig(TemplateConfig):
+class BenchmarkSessionConfig(TemplateConfig):
     """
-    Describe a set of benchmarks to run on each instance.
-    This is the top-level configuration object loaded from the json config.
+    Describe the benchmarks to run in the current benchplot session.
     """
     verbose: bool = False
     ssh_key: Path = Path("~/.ssh/id_rsa")
     output_path: Path = field(default_factory=Path.cwd)
-    sdk_path: Path = Path("~/cheri/cherisdk")
-    perfetto_path: Path = path_field("~/cheri/cheri-perfetto/build")
     instances: list[InstanceConfig] = field(default_factory=list)
     benchmarks: list[BenchmarkRunConfig] = field(default_factory=list)
     plot_options: BenchmarkManagerPlotConfig = field(default_factory=BenchmarkManagerPlotConfig)
+
+@dataclass
+class BenchmarkManagerConfig(BenchmarkSessionConfig, BenchplotUserConfig):
+    """
+    Internal configuration object merging user and session top-level configurations.
+    This is the top-level configuration object passed around as manager_config.
+    """
+    pass
 
 
 @dataclass
@@ -64,15 +79,19 @@ class BenchmarkManager(TemplateConfigContext):
     def register_benchmark(cls, type_: BenchmarkType, bench_class):
         cls.benchmark_runner_map[type_] = bench_class
 
-    def __init__(self, config: BenchmarkManagerConfig):
+    def __init__(self, user_config: BenchplotUserConfig, config: BenchmarkSessionConfig):
         super().__init__()
+        # Merge configurations
+        merged_conf = asdict(user_config)
+        merged_conf.update(asdict(config))
+        manager_config = BenchmarkManagerConfig(**merged_conf)
         # Cached copy of the configuration template
-        self._config_template = config
+        self._config_template = manager_config
         # The ID for this benchplot session
         self.session = uuid.uuid4()
         self.logger = new_logger("manager")
         self.loop = aio.get_event_loop()
-        self.instance_manager = InstanceClient(self.loop)
+        self.instance_manager = InstanceManager(self.loop, manager_config)
         self.benchmark_instances = {}
         self.failed_benchmarks = []
         self.queued_tasks = []
@@ -175,6 +194,16 @@ class BenchmarkManager(TemplateConfigContext):
         self.logger.debug("Created benchmark run %s on %s id=%s", bench_config.name, instance.name, bench.uuid)
         return bench
 
+    async def _run_tasks(self):
+        await aio.gather(*self.queued_tasks)
+        await self.instance_manager.shutdown()
+
+    async def _shutdown_tasks(self):
+        for t in self.queued_tasks:
+            t.cancel()
+        await aio.gather(*self.queued_tasks, return_exceptions=True)
+        await self.instance_manager.shutdown()
+
     async def _list_task(self):
         self.logger.debug("List recorded sessions at %s", self.config.output_path)
         sessions = []
@@ -199,10 +228,6 @@ class BenchmarkManager(TemplateConfigContext):
         self.logger.debug("Clean all sessions from the output directory")
         for next_dir in self._iter_output_session_dirs():
             shutil.rmtree(next_dir)
-
-    async def _run_tasks(self):
-        await aio.gather(*self.queued_tasks)
-        await self.instance_manager.stop()
 
     async def _plot_task(self):
         # Find all benchmark variants we were supposed to run
@@ -262,7 +287,6 @@ class BenchmarkManager(TemplateConfigContext):
             bench.plot()
 
     def _handle_run_command(self, args: ap.Namespace):
-        self.instance_manager.start()
         self.session_output_path.mkdir(parents=True)
         self.logger.info("Start benchplot session %s", self.session)
         for conf in self.config.benchmarks:
@@ -282,12 +306,6 @@ class BenchmarkManager(TemplateConfigContext):
 
     def _handle_clean_command(self, args: ap.Namespace):
         self.queued_tasks.append(self.loop.create_task(self._clean_task()))
-
-    async def _shutdown_tasks(self):
-        for t in self.queued_tasks:
-            t.cancel()
-        await aio.gather(*self.queued_tasks, return_exceptions=True)
-        await self.instance_manager.stop()
 
     def run(self, args: ap.Namespace):
         """Main entry point to execute benchmark tasks."""

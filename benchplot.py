@@ -7,14 +7,16 @@ import uuid
 from pathlib import Path
 
 from pycheribenchplot.core.util import setup_logging
-from pycheribenchplot.core.manager import BenchmarkManager, BenchmarkManagerConfig
+from pycheribenchplot.core.manager import BenchmarkManager, BenchmarkSessionConfig, BenchplotUserConfig
 
 def main():
     parser = ap.ArgumentParser(description="Benchmark run and plot tool")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     parser.add_argument("-l", type=Path, help="logfile", default=None)
     # parser.add_argument("-r", type=Path, help="record all commands issued", default=None)
-    parser.add_argument("json_config", type=Path, help="Configuration file")
+    parser.add_argument("-c", "--config", type=Path, help="User environment configuration file",
+                        default=Path("~/.config/cheri-benchplot.json").expanduser())
+    parser.add_argument("session_config", type=Path, help="Session configuration file")
     sub = parser.add_subparsers(help="command", dest="command")
     sub_run = sub.add_parser("run", help="run benchmarks in configuration")
     sub_plot = sub.add_parser("plot", help="process benchmarks and generate plots")
@@ -27,12 +29,20 @@ def main():
     args = parser.parse_args()
 
     logger = setup_logging(args.verbose, args.l)
-    logger.debug("Loading config %s", args.json_config)
-    config = BenchmarkManagerConfig.load_json(args.json_config)
+    logger.debug("Loading user config %s", args.config)
+    if not args.config.exists():
+        logger.error("Missing user configuration file %s", args.config)
+        exit(1)
+    user_config = BenchplotUserConfig.load_json(args.config)
+    logger.debug("Loading session config %s", args.session_config)
+    if not args.session_config.exists():
+        logger.error("Session config does not exist %s", args.session_config)
+        exit(1)
+    config = BenchmarkSessionConfig.load_json(args.session_config)
     if args.verbose:
         # Override from command line
         config.verbose = True
-    benchmark_manager = BenchmarkManager(config)
+    benchmark_manager = BenchmarkManager(user_config, config)
     benchmark_manager.run(args)
 
 if __name__ == "__main__":

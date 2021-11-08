@@ -25,6 +25,7 @@ class DatasetID(Enum):
     PROCSTAT = "procstat"
     PIDMAP = "pidmap"
     VMSTAT_MALLOC = "vmstat-malloc"
+    VMSTAT_UMA = "vmstat-uma"
 
     def __str__(self):
         return self.value
@@ -237,16 +238,6 @@ def dataframe_debug():
         yield
 
 
-# Deprecated
-def get_numeric_columns(self, df):
-    columns = []
-    for idx, col in enumerate(self.stats.columns):
-        if np.issubdtype(self.stats.dtypes[i], np.number):
-            columns.append(col)
-    return columns
-
-
-# Deprecated
 def col2stat(prefix, colnames):
     """
     Map base column namens to the respective statistic column with
@@ -273,6 +264,7 @@ def align_multi_index_levels(df: pd.DataFrame, align_levels: list[str], fill_val
     The union set is then repeated for each other dataframe index level, so that every
     combination of the other levels, have the same set of aligned level combinations.
     """
+    assert df.index.is_unique, "Need unique index"
     # Get an union of the sets of levels to align as the index of the grouped dataframe
     align_sets = df.groupby(align_levels).count()
     # Values of the non-aggregated levels of the dataframe

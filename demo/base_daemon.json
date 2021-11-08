@@ -1,6 +1,0 @@
-{
-    "sdk_path": "~/cheri/cherisdk",
-    "cheribuild_path": "~/cheri/cheribuild/cheribuild.py",
-    "ssh_key": "~/cheri/cheri-benchplot/extra_files/freebsd_test_id_rsa",
-    "instances": []
-}

@@ -13,7 +13,7 @@ import pandas as pd
 import asyncssh
 
 from .config import TemplateConfig, TemplateConfigContext
-from .instanced import InstanceConfig, BenchmarkInfo
+from .instanced import InstanceConfig, InstanceInfo
 from .procstat import ProcstatDataset
 from .pidmap import PidMapDataset
 from .dataset import DatasetRegistry, DatasetID
@@ -116,7 +116,7 @@ class BenchmarkBase(TemplateConfigContext):
         else:
             self.uuid = uuid.uuid4()
         self.manager = manager
-        self.daemon = manager.instance_manager
+        self.instance_manager = manager.instance_manager
         self.manager_config = manager.config
         self.instance_config = instance_config
         self.config = config
@@ -132,7 +132,7 @@ class BenchmarkBase(TemplateConfigContext):
         self.result_path.mkdir(parents=True, exist_ok=True)
 
         self.logger = new_logger(f"{config.name}:{instance_config.name}:{self.uuid}")
-        self._reserved_instance = None  # BenchmarkInfo of the instance the daemon has reserved us
+        self._reserved_instance = None  # InstanceInfo of the instance we have allocated
         self._conn = None  # Connection to the CheriBSD instance
         self._command_tasks = []  # Commands being run on the instance
         # Map tasks to _TaskPIDInfo to track the PID of spawned benchmarks
@@ -276,13 +276,10 @@ class BenchmarkBase(TemplateConfigContext):
         dst = (self._conn, guest_dst)
         await asyncssh.scp(host_src, dst)
 
-    async def _connect_instance(self, info: BenchmarkInfo):
-        conn = await asyncssh.connect(info.ssh_host,
-                                      port=info.ssh_port,
-                                      known_hosts=None,
-                                      client_keys=[self.manager_config.ssh_key],
-                                      username="root",
-                                      passphrase="")
+    async def _connect_instance(self, info: InstanceInfo):
+        conn = await asyncssh.connect(
+            info.ssh_host, port=info.ssh_port, known_hosts=None, client_keys=[self.manager_config.ssh_key],
+            username="root", passphrase="")
         self.logger.debug("Connected to instance")
         return conn
 
@@ -333,10 +330,7 @@ class BenchmarkBase(TemplateConfigContext):
 
     async def run(self):
         self.logger.info("Waiting for instance")
-        self._reserved_instance = await self.daemon.request_instance(self.uuid, self.instance_config)
-        if self._reserved_instance is None:
-            self.logger.error("Can not reserve instance, bailing out...")
-            return
+        self._reserved_instance = await self.instance_manager.request_instance(self.uuid, self.instance_config)
         try:
             self._conn = await self._connect_instance(self._reserved_instance)
             # Collect pre-benchmark datasets
@@ -359,7 +353,7 @@ class BenchmarkBase(TemplateConfigContext):
             traceback.print_tb(ex.__traceback__)
             self.manager.failed_benchmarks.append(self)
         finally:
-            await self.daemon.release_instance(self.uuid, self._reserved_instance)
+            await self.instance_manager.release_instance(self.uuid)
 
     def _has_dataset(self, ds_id: DatasetID):
         """
