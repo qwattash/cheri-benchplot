@@ -161,7 +161,6 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
         # We also have to handle rtld manually to map its name.
         self.df["file"] = resolved[~invalid_syms].map(lambda syminfo: syminfo.filepath.name)
         self.df.loc[invalid_syms, "file"] = "unknown"
-        self.df.to_csv(f"debug-dump-pre-merge-{self.benchmark.uuid}.csv")
 
     def _get_agg_strategy(self):
         """Return mapping of column-name => aggregation function for the columns we need to aggregate"""
@@ -182,13 +181,9 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
         # Align dataframe on the (file, symbol) pairs where we want to get an union of
         # the symbols set for each file, repeated for each dataset_id.
         align_levels = ["process", "EL", "file", "symbol"]
-        self.agg_df.to_csv(f"debug-dump-post-agg-{self.benchmark.uuid}.csv")
         new_df = align_multi_index_levels(self.agg_df, align_levels, fill_value=0)
         # Backfill after alignment
         new_df.loc[new_df["valid_symbol"] == 0, "valid_symbol"] = "missing"
-        new_df.to_csv(f"debug-dump-post-agg-{self.benchmark.uuid}-aligned.csv")
-        # import code
-        # code.interact(local=locals())
         # Now we can safely assign as there are no missing values.
         # 1) Compute delta for each metric for each function w.r.t. the baseline.
         # 2) Build the normalized delta for each metric, note that this will generate infinities where

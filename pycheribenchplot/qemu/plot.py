@@ -4,6 +4,7 @@ import pandas as pd
 from ..core.dataset import (DatasetID, subset_xs, check_multi_index_aligned, rotate_multi_index_level)
 from ..core.plot import (CellData, DataView, BenchmarkPlot, BenchmarkSubPlot, Surface)
 from ..core.html import HTMLSurface
+
 #from ..core.matplotlib import MatplotlibSurface
 
 
@@ -128,14 +129,10 @@ class QEMUHistTable(QEMUHistSubPlot):
         relevance = df["delta_call_count"]
         return relevance
 
-    def generate2(self, surface: Surface, cell: CellData):
-        df = self._get_filtered_df()
-        grouped = df.groupby(["process"])
-
     def generate(self, surface: Surface, cell: CellData):
         df = self._get_filtered_df()
         if not check_multi_index_aligned(df, "__dataset_id"):
-            self.logger.error("Unaligned index, skipping plot!")
+            self.logger.error("Unaligned index, skipping plot")
             return
         # Make normalized fields a percentage
         norm_cols = [col for col in df.columns if col.startswith("norm_")]
@@ -209,7 +206,6 @@ class QEMUStrangeSymbolHistTable(QEMUHistTable):
 
 
 class QEMUContextHistTable(QEMUHistTable):
-
     def __init__(self, plot, context_procname):
         super().__init__(plot)
         self.process = context_procname
