@@ -147,6 +147,8 @@ class BenchmarkBase(TemplateConfigContext):
         self.procstat_output = self.result_path / f"procstat-{self.uuid}.csv"
         # Extra implicit dataset to extract PID to command mapping
         self.pid_map_output = self.result_path / f"pid-map-{self.uuid}.json"
+        # vmstat output
+        self.vmstat_output = self.result_path / f"vmstat-{self.uuid}.json"
 
     def _bind_configs(self):
         """
@@ -311,6 +313,24 @@ class BenchmarkBase(TemplateConfigContext):
         """
         self.logger.info("Collect procstat info")
 
+    async def _run_vmstat_pre(self):
+        """
+        Run a vmstat snapshot before the benchmark runs.
+        """
+        self.logger.info("Pre-benchmark vmstat snapshot")
+        with open(self.vmstat_output.with_suffix(".pre"), "w+") as vmstat_out:
+            result = await self._run_cmd("vmstat", ["--libxo", "json", "-H", "-i", "-m", "-o", "-P", "-z"],
+                                         outfile=vmstat_out)
+
+    async def _run_vmstat_post(self):
+        """
+        Run a vmstat snapshot after the benchmark runs.
+        """
+        self.logger.info("Post-benchmark vmstat snapshot")
+        with open(self.vmstat_output.with_suffix(".post"), "w+") as vmstat_out:
+            result = await self._run_cmd("vmstat", ["--libxo", "json", "-H", "-i", "-m", "-o", "-P", "-z"],
+                                         outfile=vmstat_out)
+
     async def run(self):
         self.logger.info("Waiting for instance")
         self._reserved_instance = await self.daemon.request_instance(self.uuid, self.instance_config)
@@ -319,9 +339,15 @@ class BenchmarkBase(TemplateConfigContext):
             return
         try:
             self._conn = await self._connect_instance(self._reserved_instance)
+            # Collect pre-benchmark datasets
             await self._run_procstat()
+            if self._has_dataset(DatasetID.VMSTAT_MALLOC):
+                await self._run_vmstat_pre()
             with timing("Benchmark completed", logger=self.logger):
                 await self._run_benchmark()
+            # Collect post-benchmark datasets
+            if self._has_dataset(DatasetID.VMSTAT_MALLOC):
+                await self._run_vmstat_post()
             await self._extract_pid_mappings()
             self._record_benchmark_run()
             # Stop all pending background processes
@@ -334,6 +360,12 @@ class BenchmarkBase(TemplateConfigContext):
             self.manager.failed_benchmarks.append(self)
         finally:
             await self.daemon.release_instance(self.uuid, self._reserved_instance)
+
+    def _has_dataset(self, ds_id: DatasetID):
+        """
+        Check if a dataset is configured
+        """
+        return ds_id in [DatasetID(ds.parser) for ds in self.config.datasets.values()]
 
     def _get_dataset_parser(self, dset_key: str, dset: BenchmarkDataSetConfig):
         """Resolve the parser for the given dataset"""

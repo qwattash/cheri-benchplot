@@ -24,6 +24,7 @@ class DatasetID(Enum):
     QEMU_CTX_CTRL = "qemu-ctx-tracks"
     PROCSTAT = "procstat"
     PIDMAP = "pidmap"
+    VMSTAT_MALLOC = "vmstat-malloc"
 
     def __str__(self):
         return self.value
@@ -219,6 +220,8 @@ class DataSetContainer(metaclass=DatasetRegistry):
         Aggregate the metrics in the merged runs.
         """
         self.logger.debug("Aggregate %s", self.config.name)
+        # Do nothing by default
+        self.agg_df = self.merged_df
 
     def post_aggregate(self):
         """

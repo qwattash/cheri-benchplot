@@ -1,9 +1,9 @@
 {
-    "output_path": "~/git/cheri/cheri-benchplot/demo/demo-netperf-multi-instance",
-    "sdk_path": "~/git/cheri/cherisdk",
-    "ssh_key": "~/git/cheri/cheri-benchplot/demo/freebsd_id_rsa",
-    "cheribuild_path": "~/git/cheri/cheribuild/cheribuild.py",
-    "perfetto_path": "~/git/cheri/cheri-perfetto/build",
+    "output_path": "~/cheri/cheri-benchplot/demo/demo-netperf-multi-instance",
+    "sdk_path": "~/cheri/cherisdk",
+    "ssh_key": "~/cheri/cheri-benchplot/extra_files/freebsd_test_id_rsa",
+    "cheribuild_path": "~/cheri/cheribuild/cheribuild.py",
+    "perfetto_path": "~/cheri/cheri-perfetto/build",
     "instances": [
         {
             "baseline": true,
@@ -13,7 +13,6 @@
             "cheri_target": "riscv64-purecap",
             "kernelabi": "hybrid",
             "platform_options": {
-                "qemu_tmp_dir": "~/git/cheri/cheri-benchplot/demo/demo-netperf-multi-instance/tmp",
                 "qemu_trace": true,
                 "qemu_trace_categories": ["ctrl", "stats"]
             }
@@ -26,7 +25,6 @@
             "cheri_target": "riscv64-purecap",
             "kernelabi": "purecap",
             "platform_options": {
-                "qemu_tmp_dir": "~/git/cheri/cheri-benchplot/demo/demo-netperf-multi-instance/tmp",
                 "qemu_trace": true,
                 "qemu_trace_categories": ["ctrl", "stats"]
             }
@@ -69,6 +67,10 @@
                 "netperf-qemu-stats-call": {
                     "name": "netperf-qemu-stats-{uuid}.pb",
                     "parser": "qemu-stats-call"
+                },
+                "netperf-vmstat-malloc": {
+                    "name": "vmstat-{uuid}.json",
+                    "parser": "vmstat-malloc"
                 }
             }
         }

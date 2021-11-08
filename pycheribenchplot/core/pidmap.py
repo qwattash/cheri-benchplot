@@ -6,7 +6,6 @@ import numpy as np
 
 from .dataset import DatasetID, DataField, StrField, Field
 from .json import JSONDataSetContainer
-from .instanced import InstanceCheriBSD, InstancePlatform
 
 
 class PidMapDataset(JSONDataSetContainer):
