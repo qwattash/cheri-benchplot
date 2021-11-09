@@ -5,20 +5,10 @@ from ..core.dataset import (DatasetID, subset_xs, check_multi_index_aligned, rot
 from ..core.plot import (CellData, DataView, BenchmarkPlot, BenchmarkSubPlot, Surface)
 from ..core.html import HTMLSurface
 
-
-class VMStatMallocTable(BenchmarkSubPlot):
+class VMStatTable(BenchmarkSubPlot):
     """
-    Export a table with the vmstat malloc data for each kernel malloc zone.
+    Base class for vmstat tables
     """
-    @classmethod
-    def get_required_datasets(cls):
-        dsets = super().get_required_datasets()
-        dsets += [DatasetID.VMSTAT_MALLOC]
-        return dsets
-
-    def get_cell_title(self):
-        return "Kernel malloc stats"
-
     def get_legend_map(self):
         legend = {
             uuid: str(bench.instance_config.kernelabi)
@@ -26,14 +16,6 @@ class VMStatMallocTable(BenchmarkSubPlot):
         }
         legend[self.benchmark.uuid] = f"{self.benchmark.instance_config.kernelabi}(baseline)"
         return legend
-
-    def _get_common_display_columns(self):
-        """Columns to display for all benchmark runs"""
-        return ["requests", "large-malloc"]
-
-    def _get_non_baseline_display_columns(self):
-        """Columns to display for benchmarks that are not baseline (because they are meaningless)"""
-        return ["delta_requests", "norm_delta_requests", "delta_large-malloc", "norm_delta_large-malloc"]
 
     def _remap_display_columns(self, colmap: pd.DataFrame):
         """
@@ -48,7 +30,7 @@ class VMStatMallocTable(BenchmarkSubPlot):
         return show_cols
 
     def generate(self, surface: Surface, cell: CellData):
-        df = self.get_dataset(DatasetID.VMSTAT_MALLOC).agg_df.copy()
+        df = self._get_vmstat_dataset()
         if not check_multi_index_aligned(df, "__dataset_id"):
             self.logger.error("Unaligned index, skipping plot")
             return
@@ -63,12 +45,63 @@ class VMStatMallocTable(BenchmarkSubPlot):
         cell.add_view(view)
 
 
+class VMStatMallocTable(VMStatTable):
+    """
+    Export a table with the vmstat malloc data for each kernel malloc zone.
+    """
+    @classmethod
+    def get_required_datasets(cls):
+        dsets = super().get_required_datasets()
+        dsets += [DatasetID.VMSTAT_MALLOC]
+        return dsets
+
+    def get_cell_title(self):
+        return "Kernel malloc stats"
+
+    def _get_common_display_columns(self):
+        """Columns to display for all benchmark runs"""
+        return ["requests", "large-malloc"]
+
+    def _get_non_baseline_display_columns(self):
+        """Columns to display for benchmarks that are not baseline (because they are meaningless)"""
+        return ["delta_requests", "norm_delta_requests", "delta_large-malloc", "norm_delta_large-malloc"]
+
+    def _get_vmstat_dataset(self):
+        return self.get_dataset(DatasetID.VMSTAT_MALLOC).agg_df.copy()
+
+
+class VMStatUMATable(VMStatTable):
+    """
+    Export a table with the vmstat UMA data.
+    """
+    @classmethod
+    def get_required_datasets(cls):
+        dsets = super().get_required_datasets()
+        dsets += [DatasetID.VMSTAT_UMA]
+        return dsets
+
+    def get_cell_title(self):
+        return "Kernel UMA stats"
+
+    def _get_common_display_columns(self):
+        """Columns to display for all benchmark runs"""
+        return ["size", "requests"]
+
+    def _get_non_baseline_display_columns(self):
+        """Columns to display for benchmarks that are not baseline (because they are meaningless)"""
+        return ["delta_size", "norm_delta_size", "delta_requests", "norm_delta_requests"]
+
+    def _get_vmstat_dataset(self):
+        return self.get_dataset(DatasetID.VMSTAT_UMA).agg_df.copy()
+
+
 class VMStatTables(BenchmarkPlot):
     """
     Show QEMU datasets as tabular output for inspection.
     """
     subplots = [
         VMStatMallocTable,
+        VMStatUMATable,
     ]
 
     def __init__(self, benchmark):

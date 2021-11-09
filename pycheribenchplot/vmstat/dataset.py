@@ -36,6 +36,30 @@ class VMStatDataset(JSONDataSetContainer):
             pre.close()
             post.close()
 
+    def aggregate(self):
+        super().aggregate()
+        # We just sum if there are repeated index entries
+        self.agg_df = self.merged_df.groupby(self.merged_df.index.names).sum()
+
+    def post_aggregate(self):
+        super().post_aggregate()
+        new_df = align_multi_index_levels(self.agg_df, self._get_align_levels(), fill_value=0)
+        # Compute delta for each metric
+        baseline = new_df.xs(self.benchmark.uuid, level="__dataset_id")
+        datasets = new_df.index.get_level_values("__dataset_id").unique()
+        base_cols = self.data_columns()
+        delta_cols = [f"delta_{col}" for col in base_cols]
+        norm_cols = [f"norm_{col}" for col in delta_cols]
+        new_df[delta_cols] = 0
+        new_df[norm_cols] = 0
+        for ds_id in datasets:
+            other = new_df.xs(ds_id, level="__dataset_id")
+            delta = other[base_cols].subtract(baseline[base_cols])
+            norm_delta = delta[base_cols].divide(baseline[base_cols])
+            new_df.loc[ds_id, delta_cols] = delta[base_cols].values
+            new_df.loc[ds_id, norm_cols] = norm_delta[base_cols].values
+        self.agg_df = new_df
+
 
 class VMStatKMalloc(VMStatDataset):
     dataset_id = DatasetID.VMSTAT_MALLOC
@@ -52,6 +76,9 @@ class VMStatKMalloc(VMStatDataset):
     def raw_fields(self, include_derived=False):
         return VMStatKMalloc.fields
 
+    def _get_align_levels(self):
+        return ["type"]
+
     def _get_vmstat_records(self, data):
         return data["malloc-statistics"]["memory"]
 
@@ -62,21 +89,35 @@ class VMStatKMalloc(VMStatDataset):
         post_df["size"] = post_df["size"].map(lambda v: set(v))
         return post_df.subtract(pre_df).reset_index()
 
-    def post_aggregate(self):
-        super().post_aggregate()
-        new_df = align_multi_index_levels(self.agg_df, ["type"], fill_value=0)
-        # Compute delta for each metric
-        baseline = new_df.xs(self.benchmark.uuid, level="__dataset_id")
-        datasets = new_df.index.get_level_values("__dataset_id").unique()
-        base_cols = self.data_columns()
-        delta_cols = [f"delta_{col}" for col in base_cols]
-        norm_cols = [f"norm_{col}" for col in delta_cols]
-        new_df[delta_cols] = 0
-        new_df[norm_cols] = 0
-        for ds_id in datasets:
-            other = new_df.xs(ds_id, level="__dataset_id")
-            delta = other[base_cols].subtract(baseline[base_cols])
-            norm_delta = delta[base_cols].divide(baseline[base_cols])
-            new_df.loc[ds_id, delta_cols] = delta[base_cols].values
-            new_df.loc[ds_id, norm_cols] = norm_delta[base_cols].values
-        self.agg_df = new_df
+
+class VMStatUMA(VMStatDataset):
+    dataset_id = DatasetID.VMSTAT_UMA
+    fields = [
+        IndexField("name", dtype=str),
+        DataField("size", dtype=int),
+        DataField("limit", dtype=int),
+        DataField("used", dtype=int),
+        DataField("free", dtype=int),
+        DataField("requests", dtype=int),
+        DataField("fail", dtype=int),
+        DataField("sleep", dtype=int),
+        DataField("xdomain", dtype=int),
+    ]
+
+    def raw_fields(self, include_derived=False):
+        return VMStatUMA.fields
+
+    def _get_align_levels(self):
+        return ["name"]
+
+    def _get_vmstat_records(self, data):
+        return data["memory-zone-statistics"]["zone"]
+
+    def _vmstat_delta(self, pre_df, post_df):
+        pre_df = pre_df.set_index(["name"])
+        post_df = post_df.set_index(["name"])
+        # The size field is not supposed to change from pre to post
+        # so we use the initial size for each bucket
+        delta = post_df.subtract(pre_df)
+        delta["size"] = pre_df["size"]
+        return delta.reset_index()
