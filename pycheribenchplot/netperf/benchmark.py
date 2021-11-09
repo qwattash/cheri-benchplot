@@ -10,7 +10,7 @@ import pandas as pd
 from ..core.config import TemplateConfig, path_field
 from ..core.manager import BenchmarkManager
 from ..core.benchmark import (BenchmarkBase, BenchmarkDataSetConfig, BenchmarkType)
-from ..core.instanced import InstancePlatform
+from ..core.instance import InstancePlatform
 from ..core.dataset import DatasetID
 from ..core.excel import SpreadsheetSurface
 from ..core.html import HTMLSurface

@@ -13,7 +13,7 @@ import pandas as pd
 import asyncssh
 
 from .config import TemplateConfig, TemplateConfigContext
-from .instanced import InstanceConfig, InstanceInfo
+from .instance import InstanceConfig, InstanceInfo
 from .procstat import ProcstatDataset
 from .pidmap import PidMapDataset
 from .dataset import DatasetRegistry, DatasetID

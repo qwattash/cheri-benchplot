@@ -6,7 +6,6 @@ import numpy as np
 
 from .dataset import DatasetID, DataField, StrField, Field
 from .csv import CSVDataSetContainer
-from .instanced import InstanceCheriBSD, InstancePlatform
 
 
 class ProcstatDataset(CSVDataSetContainer):

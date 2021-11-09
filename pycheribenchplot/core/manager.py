@@ -19,7 +19,7 @@ import asyncssh
 from .util import new_logger
 from .config import Config, TemplateConfig, TemplateConfigContext, path_field
 from .benchmark import BenchmarkRunConfig, BenchmarkRunRecord, BenchmarkType
-from .instanced import InstanceConfig, InstanceManager
+from .instance import InstanceConfig, InstanceManager
 from .dataset import DatasetRegistry
 from .analysis import BenchmarkAnalysisRegistry
 from .html import HTMLSurface
