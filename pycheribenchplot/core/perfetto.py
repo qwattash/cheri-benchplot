@@ -46,8 +46,8 @@ class PerfettoDataSetContainer(DataSetContainer):
     # Map columns in the SQL expression
     key_to_column_map = {}
 
-    def __init__(self, benchmark: "BenchmarkBase", dset_key: str):
-        super().__init__(benchmark, dset_key)
+    def __init__(self, benchmark, dset_key, config):
+        super().__init__(benchmark, dset_key, config)
         self._tp_cache = _TraceProcessorCache.get_instance(benchmark.manager_config)
 
     def _integrity_check(self, tp: TraceProcessor):

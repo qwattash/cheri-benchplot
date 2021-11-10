@@ -23,6 +23,7 @@ class DatasetID(Enum):
     QEMU_STATS_CALL_HIST = "qemu-stats-call"
     QEMU_CTX_CTRL = "qemu-ctx-tracks"
     PROCSTAT = "procstat"
+    PROCSTAT_NETPERF = "procstat-netperf"
     PIDMAP = "pidmap"
     VMSTAT_MALLOC = "vmstat-malloc"
     VMSTAT_UMA = "vmstat-uma"
@@ -111,13 +112,16 @@ class DataSetContainer(metaclass=DatasetRegistry):
     Each benchmark run is associated with an UUID which is used to cross-reference
     data from different files.
     """
+    # Identifier of the dataset used for registration
     dataset_id = None
+    # Filter to enable this dataset only when the given benchmark_dataset ID is active
+    # If None, this dataset is the default one used if there are no other matching datasets
+    # for the ID.
+    benchmark_dataset_id = None
+    # Data class for the dataset-specific run options in the configuration file
+    run_options_class = None
 
-    @classmethod
-    def get_parser(cls, benchmark: "BenchmarkBase", dset_key: str):
-        return cls(benchmark, dset_key)
-
-    def __init__(self, benchmark: "Benchmarkbase", dset_key: str):
+    def __init__(self, benchmark: "Benchmarkbase", dset_key: str, config: "BenchmarkDataSetConfig"):
         """
         Arguments:
         benchmark: the benchmark instance this dataset belongs to
@@ -125,15 +129,18 @@ class DataSetContainer(metaclass=DatasetRegistry):
         """
         self.name = dset_key
         self.benchmark = benchmark
-        self.config = benchmark.config
-        self.logger = new_logger(f"{self.config.name}:{dset_key}")
+        self.config = config
+        self.logger = new_logger(f"{benchmark.config.name}:{dset_key}")
         self.df = pd.DataFrame(columns=self.all_columns())
         self.df = self.df.astype(self._get_column_dtypes())
         self.df.set_index(self.index_columns(), inplace=True)
         self.merged_df = None
         self.agg_df = None
-        if self.benchmark.instance_config.baseline:
-            self._register_plots(benchmark)
+
+    @property
+    def bench_config(self):
+        # This needs to be dynamic to grab the up-to-date configuration of the benchmark
+        return self.benchmark.config
 
     def raw_fields(self, include_derived=False) -> "typing.Sequence[Field]":
         """
@@ -176,8 +183,38 @@ class DataSetContainer(metaclass=DatasetRegistry):
     def _get_column_conv(self) -> dict:
         return {f.name: f.importfn for f in self.raw_fields() if f.importfn is not None}
 
-    def _register_plots(self, benchmark: "BenchmarkBase"):
-        pass
+    def output_file(self):
+        """
+        Generate the output file for this dataset.
+        Any extension suffix should be added in subclasses.
+        """
+        return self.benchmark.result_path / f"{self.name}-{self.benchmark.uuid}"
+
+    def get_addrspace_key(self):
+        """
+        Return the name of the address-space to use for the benchmark address space in the symbolizer.
+        This is only relevant for datasets that are intended to be used as the main benchmark dataset.
+        """
+        raise NotImplementedError("The address-space key must be specified by subclasses")
+
+    def configure(self, options: "PlatformOptions"):
+        """
+        Finalize the dataset run_options configuration and add any relevant platform options
+        to generate the dataset.
+        """
+        self.logger.debug("Configure dataset")
+        if self.run_options_class:
+            self.config = self.run_options_class(**self.config.run_options).bind(self.benchmark)
+        return options
+
+    async def run_pre_benchmark(self):
+        self.logger.debug("Pre-benchmark")
+
+    async def run_benchmark(self):
+        self.logger.debug("Benchmark")
+
+    async def run_post_benchmark(self):
+        self.logger.debug("Post-benchmark")
 
     def load(self, path: Path):
         """Load the dataset from the given file"""
@@ -188,7 +225,7 @@ class DataSetContainer(metaclass=DatasetRegistry):
         Pre-process a dataset from a single benchmark run.
         This can be used as a hook to generate composite metrics before merging the datasets.
         """
-        self.logger.debug("Pre-process %s", self.config.name)
+        self.logger.debug("Pre-process")
 
     def init_merge(self):
         """
@@ -203,7 +240,7 @@ class DataSetContainer(metaclass=DatasetRegistry):
         Note that the merged dataset will be associated with the baseline run, so the
         benchmark.uuid on the merge and post-merge operations will refer to the baseline implicitly.
         """
-        self.logger.debug("Merge %s", self.config.name)
+        self.logger.debug("Merge")
         if self.merged_df is None:
             src = self.df
         else:
@@ -214,13 +251,13 @@ class DataSetContainer(metaclass=DatasetRegistry):
         """
         After merging, this is used to generate composite or relative metrics on the merged dataset.
         """
-        self.logger.debug("Post-merge %s", self.config.name)
+        self.logger.debug("Post-merge")
 
     def aggregate(self):
         """
         Aggregate the metrics in the merged runs.
         """
-        self.logger.debug("Aggregate %s", self.config.name)
+        self.logger.debug("Aggregate")
         # Do nothing by default
         self.agg_df = self.merged_df
 
@@ -228,7 +265,7 @@ class DataSetContainer(metaclass=DatasetRegistry):
         """
         Generate composite metrics or relative metrics after aggregation.
         """
-        self.logger.debug("Post-aggregate %s", self.config.name)
+        self.logger.debug("Post-aggregate")
 
 
 @contextmanager

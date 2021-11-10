@@ -25,6 +25,7 @@ from .analysis import BenchmarkAnalysisRegistry
 from .html import HTMLSurface
 from .excel import SpreadsheetSurface
 
+
 @dataclass
 class BenchplotUserConfig(Config):
     """
@@ -56,13 +57,25 @@ class BenchmarkSessionConfig(TemplateConfig):
     benchmarks: list[BenchmarkRunConfig] = field(default_factory=list)
     plot_options: BenchmarkManagerPlotConfig = field(default_factory=BenchmarkManagerPlotConfig)
 
+
+#class BenchmarkManagerConfig(TemplateConfig):
 @dataclass
-class BenchmarkManagerConfig(BenchmarkSessionConfig, BenchplotUserConfig):
+class BenchmarkManagerConfig(BenchplotUserConfig, BenchmarkSessionConfig):
     """
     Internal configuration object merging user and session top-level configurations.
     This is the top-level configuration object passed around as manager_config.
     """
-    pass
+
+    # user: typing.Optional[BenchplotUserConfig] = None
+    # session: typing.Optional[BenchmarkSessionConfig] = None
+
+    def __post_init__(self):
+        super().__post_init__()
+        # Verify basic sanity of the configuration
+        if len(self.benchmarks) == 0:
+            raise ValueError("No benchmarks specified in configuration")
+        if len(self.instances) == 0:
+            raise ValueError("No instances specified in configuration")
 
 
 @dataclass
@@ -82,9 +95,7 @@ class BenchmarkManager(TemplateConfigContext):
     def __init__(self, user_config: BenchplotUserConfig, config: BenchmarkSessionConfig):
         super().__init__()
         # Merge configurations
-        merged_conf = asdict(user_config)
-        merged_conf.update(asdict(config))
-        manager_config = BenchmarkManagerConfig(**merged_conf)
+        manager_config = BenchmarkManagerConfig.merge(user_config, config)
         # Cached copy of the configuration template
         self._config_template = manager_config
         # The ID for this benchplot session
@@ -330,8 +341,7 @@ class BenchmarkManager(TemplateConfigContext):
             self.logger.error("Shutdown")
             self.loop.run_until_complete(self._shutdown_tasks())
         except Exception as ex:
-            self.logger.error("Died %s", ex)
-            traceback.print_tb(ex.__traceback__)
+            self.logger.exception("Died %s", ex)
             self.loop.run_until_complete(self._shutdown_tasks())
         finally:
             self.loop.run_until_complete(self.loop.shutdown_asyncgens())

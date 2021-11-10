@@ -1,4 +1,5 @@
 import json
+import io
 from pathlib import Path
 
 import pandas as pd
@@ -16,8 +17,8 @@ class PidMapDataset(JSONDataSetContainer):
     dataset_id = DatasetID.PIDMAP
     fields = [Field("pid", dtype=int), Field("uid", dtype=int), StrField("command")]
 
-    def __init__(self, benchmark, dset_key):
-        super().__init__(benchmark, dset_key)
+    def __init__(self, benchmark, dset_key, config):
+        super().__init__(benchmark, dset_key, config)
         # Add a synthetic entry for unknown/unmatched PID number -1
         self.df.append({"pid": -1, "uid": -1, "command": "unknown"}, ignore_index=True)
 
@@ -32,3 +33,24 @@ class PidMapDataset(JSONDataSetContainer):
         df["__dataset_id"] = self.benchmark.uuid
         df = df.astype(self._get_column_dtypes())
         self._internalize_json(df)
+
+    def output_file(self):
+        return super().output_file().with_suffix(".json")
+
+    async def run_post_benchmark(self):
+        """
+        Post-benchmark hook to extract PID mappings.
+        Note: we also use the command history from the benchmark runner to resolve any
+        extra processes we have been running and that have since terminated.
+        """
+        self.logger.info("Extract system PIDs")
+        pid_raw_data = io.StringIO()
+        await self.benchmark.run_cmd("ps", ["-a", "-x", "-o", "uid,pid,command", "--libxo", "json"],
+                                     outfile=pid_raw_data)
+        # Append the PIDs for all processes executed by the benchmark to the pid map
+        pid_json = json.loads(pid_raw_data.getvalue())
+        proc_list = pid_json["process-information"]["process"]
+        for history_entry in self.benchmark.command_history.values():
+            proc_list.append({"uid": 1, "pid": history_entry.pid, "command": str(history_entry.cmd)})
+        with open(self.output_file(), "w+") as pid_fd:
+            json.dump(pid_json, pid_fd)

@@ -5,6 +5,7 @@ from ..core.dataset import (DatasetID, subset_xs, check_multi_index_aligned, rot
 from ..core.plot import (CellData, DataView, BenchmarkPlot, BenchmarkSubPlot, Surface)
 from ..core.html import HTMLSurface
 
+
 class VMStatTable(BenchmarkSubPlot):
     """
     Base class for vmstat tables

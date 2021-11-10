@@ -1,15 +1,49 @@
 import logging
+import asyncio as aio
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from ..core.dataset import Field, DataField, StrField, IndexField, col2stat
+from ..core.config import TemplateConfig, path_field
+from ..core.dataset import (DatasetID, Field, DataField, StrField, IndexField, col2stat)
 from ..core.csv import CSVDataSetContainer
+from ..core.procstat import ProcstatDataset
+
+
+@dataclass
+class NetperfRunConfig(TemplateConfig):
+    netperf_path: Path = path_field("opt/{cheri_target}/netperf/bin")
+    netperf_ktrace_options: list[str] = field(default_factory=list)
+    netperf_prime_options: list[str] = field(default_factory=list)
+    netperf_options: list[str] = field(default_factory=list)
+    netserver_options: list[str] = field(default_factory=list)
+
+
+class NetperfProcstat(ProcstatDataset):
+    """
+    Netperf procstat runner and parser.
+    This replaces the base procstat dataset in netperf.
+    TODO support multiple outputs per dataset to split the generator/parser interfaces
+    This will be tacked on the netperf generator instead.
+    """
+    dataset_id = "procstat-netperf"
+
+    async def run_pre_benchmark(self):
+        netperf = self.benchmark.get_dataset(DatasetID.NETPERF_DATA)
+        netperf_stopped = await self.benchmark.run_bg_cmd(netperf.netperf_bin, ["-z"], env=netperf.run_env)
+        await aio.sleep(5)  # Give some time to settle
+        try:
+            pid = self.benchmark.command_history[netperf_stopped].pid
+            await self._run_procstat(pid)
+        finally:
+            await self.benchmark.stop_bg_cmd(netperf_stopped)
 
 
 class NetperfData(CSVDataSetContainer):
     dataset_id = "netperf-data"
+    run_options_class = NetperfRunConfig
     fields = [
         StrField("Socket Type"),
         StrField("Protocol"),
@@ -156,6 +190,12 @@ class NetperfData(CSVDataSetContainer):
         StrField("CHERI Kernel ABI")
     ]
 
+    def __init__(self, benchmark, dset_key, config):
+        super().__init__(benchmark, dset_key, config)
+        self.netserver_bin = None
+        self.netperf_bin = None
+        self.run_env = {"STATCOUNTERS_NO_AUTOSAMPLE": "1"}
+
     def raw_fields(self, include_derived=False):
         return NetperfData.fields
 
@@ -171,3 +211,56 @@ class NetperfData(CSVDataSetContainer):
     def aggregate(self):
         super().aggregate()
         self.agg_df = self.merged_df.copy()
+
+    def output_file(self):
+        return super().output_file().with_suffix(".csv")
+
+    def get_addrspace_key(self):
+        return self.netperf_bin.name
+
+    def _set_netperf_option(self, flag, value):
+        """
+        Set a netperf CLI option if one is not specified by the configuration already
+        """
+        if flag in self.config.netperf_options:
+            return
+        self.config.netperf_options = [flag, value] + self.config.netperf_options
+
+    def configure(self, opts):
+        opts = super().configure(opts)
+        # Resolve binaries here as the configuration is stable at this point
+        rootfs_netperf_base = self.benchmark.rootfs / self.config.netperf_path
+        rootfs_netperf_bin = list(rootfs_netperf_base.glob("*-netperf"))
+        rootfs_netserver_bin = list(rootfs_netperf_base.glob("*-netserver"))
+        # Paths relative to the remote root directory
+        self.netperf_bin = Path("/") / rootfs_netperf_bin[0].relative_to(self.benchmark.rootfs)
+        self.netserver_bin = Path("/") / rootfs_netserver_bin[0].relative_to(self.benchmark.rootfs)
+        self.logger.debug("Using %s %s", self.netperf_bin, self.netserver_bin)
+        # Determine any extra options for cooperation with other datasets
+        pmc = self.benchmark.get_dataset(DatasetID.PMC)
+        qemu = (self.benchmark.get_dataset(DatasetID.QEMU_STATS_BB_HIST)
+                or self.benchmark.get_dataset(DatasetID.QEMU_STATS_BB_CALL)
+                or self.benchmark.get_dataset(DatasetID.QEMU_CTX_CTRL))
+        if pmc:
+            self._set_netperf_option("-G", pmc.output_file().name)
+            if not qemu:
+                self._set_netperf_option("-g", "all")
+        if qemu:
+            self._set_netperf_option("-g", "qemu-thread")
+        return opts
+
+    async def run_benchmark(self):
+        await super().run_benchmark()
+        netserver = await self.benchmark.run_bg_cmd(self.netserver_bin, self.config.netserver_options, env=self.run_env)
+        try:
+            self.logger.info("Prime benchmark")
+            await aio.sleep(5)  # Give some time to settle
+            await self.benchmark.run_cmd(self.netperf_bin, self.config.netperf_prime_options, env=self.run_env)
+            self.logger.info("Run benchmark iterations")
+            with open(self.output_file(), "w+") as outfd:
+                await self.benchmark.run_cmd(self.netperf_bin,
+                                             self.config.netperf_options,
+                                             outfile=outfd,
+                                             env=self.run_env)
+        finally:
+            await self.benchmark.stop_bg_cmd(netserver)

@@ -14,9 +14,9 @@ class PMCStatData(CSVDataSetContainer):
         IndexField("archname", dtype=str),
     ]
 
-    def __init__(self, benchmark: "BenchmarkBase", dset_key: str):
+    def __init__(self, benchmark, dset_key, config):
         self._index_transform = lambda df: []
-        super().__init__(benchmark, dset_key)
+        super().__init__(benchmark, dset_key, config)
         self.stats_df = None
         # self._gen_extra_index = lambda df: self.benchmark.pmc_map_index(df)
         # extra = self._gen_extra_index(pd.DataFrame(columns=["progname", "archname"]))
@@ -184,6 +184,15 @@ class FluteStatcountersData(PMCStatData):
             other = self.agg_df.xs(ds_id, level="__dataset_id")[data_cols]
             diff = other.subtract(baseline)
             self.agg_df.loc[ds_id, diff_cols] = diff.values
+
+    def output_file(self):
+        """
+        The output file that the benchmark should generate.
+        """
+        return super().output_file().with_suffix(".csv")
+
+    async def run_post_benchmark(self):
+        await self.benchmark.extract_file(self.output_file().name, self.output_file())
 
 
 class BeriStatcountersData:

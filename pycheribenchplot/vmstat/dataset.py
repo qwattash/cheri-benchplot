@@ -60,6 +60,33 @@ class VMStatDataset(JSONDataSetContainer):
             new_df.loc[ds_id, norm_cols] = norm_delta[base_cols].values
         self.agg_df = new_df
 
+    def output_file(self):
+        """
+        The output file is shared by all vmstat datasets. This will have the side-effect of having only
+        one of the vmstat datasets running the pre/post benchmark steps.
+        """
+        return self.benchmark.result_path / f"vmstat-{self.benchmark.uuid}.json"
+
+    async def run_pre_benchmark(self):
+        """
+        Run a vmstat snapshot before the benchmark runs.
+        """
+        self.logger.info("Pre-benchmark vmstat snapshot")
+        pre_output = self.output_file().with_suffix(".pre")
+        with open(pre_output, "w+") as vmstat_out:
+            await self.benchmark.run_cmd("vmstat", ["--libxo", "json", "-H", "-i", "-m", "-o", "-P", "-z"],
+                                         outfile=vmstat_out)
+
+    async def run_post_benchmark(self):
+        """
+        Run a vmstat snapshot after the benchmark runs.
+        """
+        self.logger.info("Post-benchmark vmstat snapshot")
+        post_output = self.output_file().with_suffix(".post")
+        with open(post_output, "w+") as vmstat_out:
+            await self.benchmark.run_cmd("vmstat", ["--libxo", "json", "-H", "-i", "-m", "-o", "-P", "-z"],
+                                         outfile=vmstat_out)
+
 
 class VMStatKMalloc(VMStatDataset):
     dataset_id = DatasetID.VMSTAT_MALLOC

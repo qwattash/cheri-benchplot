@@ -7,10 +7,11 @@ import copy
 import typing
 import traceback
 from abc import ABC, abstractmethod
-import asyncssh
 from pathlib import Path
 from enum import Enum
 from dataclasses import dataclass, field
+
+import asyncssh
 
 from .util import new_logger
 from .config import Config, TemplateConfig, path_field
@@ -57,11 +58,15 @@ class InstanceKernelABI(Enum):
 
 
 @dataclass
-class QemuInstanceConfig(TemplateConfig):
-    """QEMU-specific instance configuration"""
-    qemu_tmp_dir: Path = path_field("/tmp")
+class PlatformOptions(Config):
+    """
+    Base class for platform-specific options.
+    This is internally used during benchmark dataset collection to
+    set options for the instance that is to be run.
+    """
+    qemu_trace_file: Path = path_field("/tmp/qemu.pb")
     qemu_trace: bool = False
-    qemu_trace_categories: list[str] = field(default_factory=list)
+    qemu_trace_categories: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -76,8 +81,8 @@ class InstanceConfig(TemplateConfig):
     platform: InstancePlatform = InstancePlatform.QEMU
     cheri_target: InstanceCheriBSD = InstanceCheriBSD.RISCV64_PURECAP
     kernelabi: InstanceKernelABI = InstanceKernelABI.HYBRID
-    platform_options: typing.Union[QemuInstanceConfig] = None
-    terminate_on_reset: bool = False
+    # Internal fields, should not appear in the config file and are missing by default
+    platform_options: typing.Optional[PlatformOptions] = field(default=None, init=False)
 
     def __post_init__(self):
         super().__post_init__()
@@ -109,12 +114,6 @@ class InstanceInfo:
     ssh_host: typing.Optional[str] = None
     # SSH port to reach the instance
     ssh_port: typing.Optional[int] = None
-    # If the instance has qemu trace output, it will be
-    # sent to this file
-    qemu_trace_file: typing.Optional[Path] = None
-    # If the instance has qemu-perfetto trace output, it will
-    # be sent to this file
-    qemu_pftrace_file: typing.Optional[Path] = None
 
 
 class Instance(ABC):
@@ -143,11 +142,6 @@ class Instance(ABC):
         self.status_update_event = aio.Event()
         self.status = InstanceStatus.INIT
 
-    def _get_ssh_port(self):
-        port = Instance.last_ssh_port
-        Instance.last_ssh_port += 1
-        return port
-
     def set_status(self, next_status):
         self.logger.debug("STATUS %s -> %s", self.status, next_status)
         self.status = next_status
@@ -160,17 +154,42 @@ class Instance(ABC):
         info = InstanceInfo(uuid=self.uuid, ssh_host="localhost", ssh_port=self.ssh_port)
         return info
 
+    def start(self):
+        """Create the runner task that will boot the instance"""
+        self.task = self.event_loop.create_task(self._run_instance())
+
+    def release(self):
+        """
+        Release instance from the current benchmark. This indicates that the benchmark
+        is done running and we can trigger the instance reset before advancing to the
+        next benchmark in the run_queue.
+        """
+        self.logger.info("Release instance")
+        self.release_event.set()
+
+    def stop(self):
+        self.logger.info("Stopping instance")
+        if self.task:
+            self.task.cancel()
+
+    def __str__(self):
+        return (f"Instance {self.uuid} {self.config.platform} cheribsd:{self.config.cheribsd} " +
+                f"kernel:{self.config.kernel}")
+
     async def wait(self, status: InstanceStatus):
         while self.status != status:
             await self.status_update_event.wait()
             self.status_update_event.clear()
-            if (self.status == InstanceStatus.DEAD and
-                status != InstanceStatus.DEAD):
+            if (self.status == InstanceStatus.DEAD and status != InstanceStatus.DEAD):
                 # If the instance died but we are not waiting the DEAD status
                 # we die so that the waiting task is unblocked
-                self.logger.error("Instance %s died while waiting for %s",
-                                  self.uuid, status)
+                self.logger.error("Instance %s died while waiting for %s", self.uuid, status)
                 raise InstanceManagerError("Instance died unexpectedly")
+
+    def _get_ssh_port(self):
+        port = Instance.last_ssh_port
+        Instance.last_ssh_port += 1
+        return port
 
     async def _run_cmd(self, prog, *args):
         cmdline = f"{prog}" + " ".join(args)
@@ -191,9 +210,12 @@ class Instance(ABC):
         retry = 3
         while True:
             try:
-                self._ssh_ctrl_conn = await asyncssh.connect(
-                    "localhost", port=self.ssh_port, known_hosts=None, client_keys=[ssh_keyfile],
-                    username="root", passphrase="")
+                self._ssh_ctrl_conn = await asyncssh.connect("localhost",
+                                                             port=self.ssh_port,
+                                                             known_hosts=None,
+                                                             client_keys=[ssh_keyfile],
+                                                             username="root",
+                                                             passphrase="")
                 break
             except Exception as ex:
                 if retry == 0:
@@ -245,28 +267,6 @@ class Instance(ABC):
             self.set_status(InstanceStatus.DEAD)
             self.logger.debug("Exiting benchmark instance main loop")
 
-    def start(self):
-        """Create the runner task that will boot the instance"""
-        self.task = self.event_loop.create_task(self._run_instance())
-
-    def release(self):
-        """
-        Release instance from the current benchmark. This indicates that the benchmark
-        is done running and we can trigger the instance reset before advancing to the
-        next benchmark in the run_queue.
-        """
-        self.logger.info("Release instance")
-        self.release_event.set()
-
-    def stop(self):
-        self.logger.info("Stopping instance")
-        if self.task:
-            self.task.cancel()
-
-    def __str__(self):
-        return (f"Instance {self.uuid} {self.config.platform} cheribsd:{self.config.cheribsd} " +
-                f"kernel:{self.config.kernel}")
-
 
 class CheribuildInstance(Instance):
     def __init__(self, inst_manager: "InstanceManager", config: InstanceConfig):
@@ -291,19 +291,12 @@ class CheribuildInstance(Instance):
         return f"--{prefix}/{opt}"
 
     def _get_qemu_trace_sink(self):
-        qemu_tmp_dir = self.config.platform_options.qemu_tmp_dir.expanduser()
-        return qemu_tmp_dir / f"trace-{self.uuid}.out"
-
-    def _get_qemu_perfetto_sink(self):
         # This will be a binary file containing serialized perfetto protobufs.
-        qemu_tmp_dir = self.config.platform_options.qemu_tmp_dir.expanduser()
-        return qemu_tmp_dir / f"pftrace-{self.uuid}.pb"
+        return self.config.platform_options.qemu_trace_file
 
     def get_info(self) -> InstanceInfo:
         info = super().get_info()
         info.ssh_host = "localhost"
-        info.qemu_trace_file = self._get_qemu_trace_sink()
-        info.qemu_pftrace_file = self._get_qemu_perfetto_sink()
         return info
 
     async def _stdout_loop(self):
@@ -352,15 +345,12 @@ class CheribuildInstance(Instance):
             self._cheribsd_option("build-fpga-kernels")
         ]
         # Extra qemu options and tracing tags?
-        plat_opts = self.config.platform_options
-        if (plat_opts and isinstance(plat_opts, QemuInstanceConfig) and plat_opts.qemu_trace):
-            common_trace_sink = str(self._get_qemu_trace_sink())
-            qemu_options = ["-D", common_trace_sink]
+        if (self.config.platform_options.qemu_trace):
             # Other backends are not as powerful, so focus on this one
-            qemu_options += [
+            qemu_options = [
                 "--cheri-trace-backend", "perfetto", "--cheri-trace-perfetto-logfile",
-                str(self._get_qemu_perfetto_sink()), "--cheri-trace-perfetto-categories",
-                ",".join(plat_opts.qemu_trace_categories)
+                str(self._get_qemu_trace_sink()), "--cheri-trace-perfetto-categories",
+                ",".join(self.config.platform_options.qemu_trace_categories)
             ]
             run_cmd += [self._run_option("extra-options"), " ".join(qemu_options)]
 
@@ -399,9 +389,6 @@ class CheribuildInstance(Instance):
             os.killpg(os.getpgid(self._cheribuild_task.pid), signal.SIGINT)
         if len(self._io_tasks):
             await aio.gather(*self._io_tasks, return_exceptions=True)
-        # Delete temporary files
-        with open(self._get_qemu_trace_sink(), "w") as fd:
-            fd.truncate(0)
         # Cleanup to avoid accidental reuse
         self._cheribuild_task = None
         self._ssh_ctrl_conn = None
@@ -460,13 +447,9 @@ class InstanceManager:
             self.logger.debug("Released instance: %s", instance.uuid)
 
     async def shutdown(self):
-        # Force-release everything
-        self.logger.debug("Instances shutdown release")
-        await aio.gather(*[i.release() for i in self._active_instances.values()], return_exceptions=True)
-        # Wait for everything to die
-        self.logger.debug("Instances shutdown wait")
+        # Force-release everything and wait for shutdown
+        for instance in self._active_instances.values():
+            instance.release()
         await aio.gather(*[i.wait(InstanceStatus.DEAD) for i in self._shutdown_instances], return_exceptions=True)
         # XXX possibly report any errors here
-        self.logger.debug("Instances shutdown done")
-
-
+        self.logger.debug("Instances shutdown completed")

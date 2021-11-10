@@ -4,7 +4,7 @@ import itertools
 import typing
 import json
 from pathlib import Path
-from dataclasses import dataclass, fields, is_dataclass, replace, Field, field
+from dataclasses import (dataclass, fields, is_dataclass, replace, Field, field, MISSING)
 from enum import Enum
 
 from dataclasses_json import DataClassJsonMixin, config
@@ -23,10 +23,38 @@ def path_field(default=None):
 
 @dataclass
 class Config(DataClassJsonMixin):
+    """
+    Base class for JSON-based configuration file parsing.
+    Each field in this dataclass is deserialized from a json file, with support to
+    nested configuration dataclasses.
+    Types of the fields are normalized to the type annotation given in the dataclass.
+    """
     @classmethod
     def load_json(cls, jsonpath):
         with open(jsonpath, "r") as jsonfile:
             return super().from_json(jsonfile.read())
+
+    @classmethod
+    def merge(cls, *other: tuple["Config"]):
+        """
+        Similar to dataclass replace but uses fields from another dataclass that must be
+        a parent class of the instance type we are replacing into.
+        This allows to merge separate dataclasses into a combined view.
+        Useful for merging multiple configuration files that specify different fields together.
+        """
+        init_fields = {}
+        other_fields = {}
+        for section in other:
+            assert issubclass(cls, type(section)), "Can only merge config in child classes"
+            for f in fields(section):
+                if f.init:
+                    init_fields[f.name] = getattr(section, f.name)
+                else:
+                    other_fields[f.name] = getattr(section, f.name)
+        inst = cls(**init_fields)
+        for name, val in other_fields.items():
+            setattr(inst, name, val)
+        return inst
 
     def _normalize_sequence(self, f, sequence):
         type_args = typing.get_args(f.type)
@@ -51,6 +79,8 @@ class Config(DataClassJsonMixin):
 
     def __post_init__(self):
         for f in fields(self):
+            # Check for existence as this will cause issues down the line
+            assert hasattr(self, f.name), f"Missing field {f.name}, use a default value"
             origin = typing.get_origin(f.type)
             type_args = typing.get_args(f.type)
             value = getattr(self, f.name)

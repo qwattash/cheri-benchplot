@@ -8,6 +8,7 @@ import pandas as pd
 
 from ..core.dataset import (IndexField, DataField, DerivedField, Field, DatasetID, align_multi_index_levels,
                             rotate_multi_index_level, subset_xs, check_multi_index_aligned, DatasetProcessingException)
+from ..core.instance import PlatformOptions
 from ..core.perfetto import PerfettoDataSetContainer
 
 
@@ -204,6 +205,18 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
             new_df.loc[ds_id, norm_cols] = norm_delta[base_cols].values
         assert not new_df["valid_symbol"].isna().any()
         self.agg_df = new_df
+
+    def configure(self, opts: PlatformOptions) -> PlatformOptions:
+        opts = super().configure(opts)
+        opts.qemu_trace = True
+        opts.qemu_trace_file = self.output_file()
+        opts.qemu_trace_categories.add("ctrl")
+        opts.qemu_trace_categories.add("stats")
+        return opts
+
+    def output_file(self):
+        # This must be shared by all the histogram datasets
+        return self.benchmark.result_path / f"qemu-stats-{self.benchmark.uuid}.pb"
 
 
 class QEMUStatsBBHistogramDataset(ContextStatsHistogramBase):
