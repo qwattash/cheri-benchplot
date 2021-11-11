@@ -50,9 +50,10 @@ def setup_logging(verbose: bool = False, logfile: Path = None):
     return logger
 
 
-def new_logger(name):
-    root = logging.getLogger("cheri-benchplot")
-    return root.getChild(name)
+def new_logger(name, parent=None):
+    if parent is None:
+        parent = logging.getLogger("cheri-benchplot")
+    return parent.getChild(name)
 
 
 @contextmanager

@@ -12,8 +12,7 @@ from pycheribenchplot.core.manager import BenchmarkManager, BenchmarkSessionConf
 def main():
     parser = ap.ArgumentParser(description="Benchmark run and plot tool")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
-    parser.add_argument("-l", type=Path, help="logfile", default=None)
-    # parser.add_argument("-r", type=Path, help="record all commands issued", default=None)
+    parser.add_argument("-l", "--logfile", type=Path, help="logfile", default=None)
     parser.add_argument("-c", "--config", type=Path, help="User environment configuration file",
                         default=Path("~/.config/cheri-benchplot.json").expanduser())
     parser.add_argument("session_config", type=Path, help="Session configuration file")
@@ -28,7 +27,7 @@ def main():
 
     args = parser.parse_args()
 
-    logger = setup_logging(args.verbose, args.l)
+    logger = setup_logging(args.verbose, args.logfile)
     logger.debug("Loading user config %s", args.config)
     if not args.config.exists():
         logger.error("Missing user configuration file %s", args.config)

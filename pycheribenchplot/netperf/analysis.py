@@ -1,20 +1,17 @@
-import pandas as pd
-
-from ..core.manager import BenchmarkManager
-from ..core.benchmark import BenchmarkBase, BenchmarkType
 from ..core.dataset import DatasetID
-from .dataset import NetperfProcstat
+from ..core.analysis import BenchmarkAnalysis
 
 
-class NetperfBenchmark(BenchmarkBase):
-    def _get_dataset_handler(self, dset_key, config):
-        dset_type = DatasetID(config.type)
-        if dset_type == DatasetID.PROCSTAT:
-            # Use the netperf-specific variant instead
-            config.type = DatasetID.PROCSTAT_NETPERF
-        return super()._get_dataset_handler(dset_key, config)
+class NetperfSanityCheck(BenchmarkAnalysis):
+    """
+    Sanity check for netperf stats
+    """
+    @classmethod
+    def check_required_datasets(cls, dsets):
+        return DatasetID.NETPERF_DATA in set(dsets)
 
-    def verify(self):
+    def process_datasets(self):
+        self.logger.info("Verify integrity of netperf datasets")
         dset = self.get_dataset(DatasetID.NETPERF_DATA)
         # Check that all benchmarks report the same number of iterations
         if "Confidence Iterations Run" in dset.agg_df.columns:
@@ -40,6 +37,3 @@ class NetperfBenchmark(BenchmarkBase):
             check = dset.agg_df.loc[statcounters_sample, "call_count"].unique()
             if len(check) > 1:
                 self.logger.error("libstatcounters::statcounters_sample anomalous #calls %s", check)
-
-
-BenchmarkManager.register_benchmark(BenchmarkType.NETPERF, NetperfBenchmark)

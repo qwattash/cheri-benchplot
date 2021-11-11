@@ -28,7 +28,7 @@ class NetperfProcstat(ProcstatDataset):
     TODO support multiple outputs per dataset to split the generator/parser interfaces
     This will be tacked on the netperf generator instead.
     """
-    dataset_id = "procstat-netperf"
+    benchmark_dataset_filter = [DatasetID.NETPERF_DATA]
 
     async def run_pre_benchmark(self):
         netperf = self.benchmark.get_dataset(DatasetID.NETPERF_DATA)
@@ -246,7 +246,7 @@ class NetperfData(CSVDataSetContainer):
             if not qemu:
                 self._set_netperf_option("-g", "all")
         if qemu:
-            self._set_netperf_option("-g", "qemu-thread")
+            self._set_netperf_option("-g", "qemu")
         return opts
 
     async def run_benchmark(self):

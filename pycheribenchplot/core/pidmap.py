@@ -1,5 +1,6 @@
 import json
 import io
+import typing
 from pathlib import Path
 
 import pandas as pd
@@ -15,7 +16,12 @@ class PidMapDataset(JSONDataSetContainer):
     Currently we only support a subset of the output values
     """
     dataset_id = DatasetID.PIDMAP
-    fields = [Field("pid", dtype=int), Field("uid", dtype=int), StrField("command")]
+    fields = [
+        Field("pid", dtype=int),
+        Field("uid", dtype=int),
+        StrField("command"),
+        Field("flags", dtype=int, importfn=lambda x: int(x, 16))
+    ]
 
     def __init__(self, benchmark, dset_key, config):
         super().__init__(benchmark, dset_key, config)
@@ -30,9 +36,31 @@ class PidMapDataset(JSONDataSetContainer):
             raw_data = json.load(fd)
         records = raw_data["process-information"]["process"]
         df = pd.DataFrame.from_records(records)
+        df["flags"].fillna("0", inplace=True)
         df["__dataset_id"] = self.benchmark.uuid
-        df = df.astype(self._get_column_dtypes())
         self._internalize_json(df)
+
+    def resolve_user_binaries(self, dataset_id) -> pd.DataFrame:
+        df = self.df.xs(dataset_id)
+        P_KPROC_MASK = 0x4
+        user_commands = (df["flags"] & P_KPROC_MASK) == 0
+
+        def resolve_path(cmd):
+            target_path = Path(cmd)
+            if target_path.is_absolute():
+                return self.benchmark.rootfs / target_path.relative_to("/")
+            else:
+                # attempt to locate file in /bin /usr/bin /usr/sbin
+                dollarpath = [Path("bin"), Path("usr/bin"), Path("usr/sbin")]
+                for path in dollarpath:
+                    candidate = self.benchmark.rootfs / path / target_path
+                    if candidate.exists():
+                        return candidate
+            return None
+
+        result_df = df.copy()
+        result_df["command"] = df["command"].map(resolve_path)
+        return result_df[~result_df["command"].isna()]
 
     def output_file(self):
         return super().output_file().with_suffix(".json")
@@ -45,7 +73,7 @@ class PidMapDataset(JSONDataSetContainer):
         """
         self.logger.info("Extract system PIDs")
         pid_raw_data = io.StringIO()
-        await self.benchmark.run_cmd("ps", ["-a", "-x", "-o", "uid,pid,command", "--libxo", "json"],
+        await self.benchmark.run_cmd("ps", ["-a", "-x", "-c", "-o", "uid,pid,command,flags", "--libxo", "json"],
                                      outfile=pid_raw_data)
         # Append the PIDs for all processes executed by the benchmark to the pid map
         pid_json = json.loads(pid_raw_data.getvalue())

@@ -27,6 +27,10 @@ class JSONDataSetContainer(DataSetContainer):
         - The index columns must be in the given dataframe and must agree with the container dataframe.
         - The columns must be a subset of all_columns().
         """
+        json_df = json_df.astype(self._get_column_dtypes(include_converted=False))
+        for f in self.raw_fields():
+            if f.importfn:
+                json_df[f.name] = json_df[f.name].transform(f.importfn)
         json_df.set_index(self.index_columns(), inplace=True)
         column_subset = set(json_df.columns).intersection(set(self.all_columns_noindex()))
         self.df = pd.concat([self.df, json_df[column_subset]])

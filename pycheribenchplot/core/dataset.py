@@ -1,4 +1,5 @@
 import typing
+from collections import defaultdict
 from enum import Enum
 from pathlib import Path
 from contextlib import contextmanager
@@ -23,7 +24,6 @@ class DatasetID(Enum):
     QEMU_STATS_CALL_HIST = "qemu-stats-call"
     QEMU_CTX_CTRL = "qemu-ctx-tracks"
     PROCSTAT = "procstat"
-    PROCSTAT_NETPERF = "procstat-netperf"
     PIDMAP = "pidmap"
     VMSTAT_MALLOC = "vmstat-malloc"
     VMSTAT_UMA = "vmstat-uma"
@@ -33,13 +33,40 @@ class DatasetID(Enum):
 
 
 class DatasetRegistry(type):
-    dataset_types = {}
+    dataset_types = defaultdict(list)
+
+    @classmethod
+    def resolve(cls, ds_id: DatasetID, bench_id: DatasetID) -> typing.Type["DataSetContainer"]:
+        candidates = cls.dataset_types[ds_id]
+        if len(candidates) == 0:
+            raise KeyError(f"No handler for dataset {ds_id}")
+        # The matched default candidate, if any
+        default_candidate = None
+        # The matched candidate from filtering, if any
+        filtered_candidate = None
+        # Both candidates must be unique.
+        for ds_class in candidates:
+            if ds_class.benchmark_dataset_filter:
+                if bench_id not in ds_class.benchmark_dataset_filter:
+                    continue
+                if filtered_candidate is not None:
+                    raise ValueError(f"Multiple handlers for dataset {ds_id}")
+                filtered_candidate = ds_class
+            else:
+                if default_candidate is not None:
+                    raise ValueError(f"Multiple default handlers for dataset {ds_id}")
+                default_candidate = ds_class
+        if filtered_candidate:
+            return filtered_candidate
+        if default_candidate is None:
+            raise ValueError(f"Missing default handler for dataset {ds_id}")
+        return default_candidate
 
     def __init__(self, name, bases, kdict):
         super().__init__(name, bases, kdict)
         if self.dataset_id:
             did = DatasetID(self.dataset_id)
-            DatasetRegistry.dataset_types[did] = self
+            DatasetRegistry.dataset_types[did].append(self)
 
 
 class Field:
@@ -114,10 +141,10 @@ class DataSetContainer(metaclass=DatasetRegistry):
     """
     # Identifier of the dataset used for registration
     dataset_id = None
-    # Filter to enable this dataset only when the given benchmark_dataset ID is active
-    # If None, this dataset is the default one used if there are no other matching datasets
+    # Filter to enable this dataset only when one of the given benchmark_dataset ID is active
+    # If empty, this dataset is the default one used if there are no other matching datasets
     # for the ID.
-    benchmark_dataset_id = None
+    benchmark_dataset_filter = []
     # Data class for the dataset-specific run options in the configuration file
     run_options_class = None
 
@@ -130,7 +157,7 @@ class DataSetContainer(metaclass=DatasetRegistry):
         self.name = dset_key
         self.benchmark = benchmark
         self.config = config
-        self.logger = new_logger(f"{benchmark.config.name}:{dset_key}")
+        self.logger = new_logger(f"{dset_key}", parent=self.benchmark.logger)
         self.df = pd.DataFrame(columns=self.all_columns())
         self.df = self.df.astype(self._get_column_dtypes())
         self.df.set_index(self.index_columns(), inplace=True)

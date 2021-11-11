@@ -32,6 +32,10 @@ class BenchmarkAnalysis(metaclass=BenchmarkAnalysisRegistry):
         self.benchmark = benchmark
         self.logger = benchmark.logger
 
+    def get_dataset(self, dset_id: DatasetID):
+        """Helper to access datasets in the benchmark"""
+        return self.benchmark.get_dataset(dset_id)
+
     def process_datasets(self):
         """
         Process the datasets to generate the intermediate data representation

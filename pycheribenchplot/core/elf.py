@@ -1,4 +1,5 @@
 import typing
+import itertools as it
 from pathlib import Path
 from dataclasses import dataclass
 
@@ -21,8 +22,8 @@ class SymbolizerMapping:
     """
     Per-mapping set of symbols.
     """
-    def __init__(self, sset, mapbase: int, path: Path):
-        self.logger = sset.logger
+    def __init__(self, logger, mapbase: int, path: Path):
+        self.logger = logger
         self.symbols = SortedDict()
         self.functions = SortedDict()
         with open(path, "rb") as fd:
@@ -57,7 +58,7 @@ class SymbolizerMapping:
                 maxaddr = pend
         return maxaddr
 
-    def lookup_fn(self, addr: int):
+    def lookup_fn(self, addr: int) -> typing.Optional[SymInfo]:
         idx = self.functions.bisect(addr) - 1
         if idx < 0:
             return None
@@ -67,17 +68,27 @@ class SymbolizerMapping:
         #     return None
         return syminfo
 
+    def lookup_addr_for_symbol(self, sym: str) -> typing.Optional[SymInfo]:
+        """
+        Find address of a symbol given its name.
+        Note that this is not optimized.
+        """
+        for syminfo in it.chain(self.functions.values(), self.symbols.values()):
+            if syminfo.name == sym:
+                return syminfo
+        return None
+
 
 class SymbolizerSet:
     """
     Per-AS set of mappings that have associated symbols.
     """
-    def __init__(self, symbolizer):
-        self.logger = symbolizer.logger
+    def __init__(self, logger):
+        self.logger = logger
         self.mappings = SortedDict()
 
     def add_sym_source(self, mapbase: int, path: Path):
-        mapping = SymbolizerMapping(self, mapbase, path)
+        mapping = SymbolizerMapping(self.logger, mapbase, path)
         self.mappings[mapbase] = mapping
 
     def _lookup_mapping(self, addr):
@@ -100,15 +111,27 @@ class Symbolizer:
     by a custom string (generally the name of the process owning the address space).
     Shared address spaces are used to match all symbols.
     """
-    def __init__(self):
-        self.logger = new_logger("symbolizer")
+    def __init__(self, benchmark: "BenchmarkBase"):
+        self.logger = new_logger(f"{benchmark.uuid}.symbolizer")
         self.addrspace = {}
 
     def _get_or_create_addrspace(self, key: str):
         if key not in self.addrspace:
             self.logger.debug("New symbolizer address space %s", key)
-            self.addrspace[key] = SymbolizerSet(self)
+            self.addrspace[key] = SymbolizerSet(self.logger)
         return self.addrspace[key]
+
+    def guess_load_address(self, path: Path, symbol: str, addr: int) -> int:
+        """
+        Attempt to guess the load address of the given binary given a symbol name
+        and its address in the loaded image.
+        """
+        mapping = SymbolizerMapping(self.logger, 0, path)
+        syminfo = mapping.lookup_addr_for_symbol(symbol)
+        if syminfo is None:
+            self.logger.warning("Can not guess load address for %s given %s=0x%x", path, symbol, addr)
+            raise ValueError("Can not guess load address")
+        return addr - syminfo.addr
 
     def register_sym_source(self, mapbase: int, as_key: str, path: Path, shared=False):
         """

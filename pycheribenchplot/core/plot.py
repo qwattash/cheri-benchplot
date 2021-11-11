@@ -368,7 +368,8 @@ class BenchmarkSubPlot(ABC):
         self.benchmark = self.plot.benchmark
 
     def get_dataset(self, dset_id: DatasetID):
-        dset = self.plot.benchmark.get_dataset(dset_id)
+        """Helper to access datasets in the benchmark"""
+        dset = self.plot.get_dataset(dset_id)
         assert dset is not None, "Subplot scheduled with missing dependency"
         return dset
 

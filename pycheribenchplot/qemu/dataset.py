@@ -141,7 +141,8 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
         pids = self.df.join(pid_df, how="left", on="pid")["command_pidmap"]
         # There may be some NaN due to PID that were running during the benchmark but have since been terminated
         # We mark these as 'undetected'
-        self.df["process"] = pids.fillna("undetected")
+        pids[pids.isna()] = pids.index.get_level_values("pid")[pids.isna()].map(lambda pid: f"undetected - {pid}")
+        self.df["process"] = pids
 
         # Resolve file:symbol for each address so that we can aggregate counts for each one of them
         resolved = self.df.apply(lambda row: resolver.lookup_fn(row["start"], Path(row["process"]).name), axis=1)

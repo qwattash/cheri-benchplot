@@ -1,4 +1,5 @@
 import logging
+import typing
 from pathlib import Path
 
 import pandas as pd
@@ -38,7 +39,7 @@ class ProcstatDataset(CSVDataSetContainer):
             local_path = self.benchmark.rootfs / guest_path.relative_to("/")
             self.benchmark.register_mapped_binary(base, local_path)
 
-    def mapped_binaries(self, dataset_id) -> tuple[int, str]:
+    def mapped_binaries(self, dataset_id) -> typing.Iterator[tuple[int, str]]:
         """
         Iterate over (base_addr, path) of all the binaries mapped for the
         given dataset id.

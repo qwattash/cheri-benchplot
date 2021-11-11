@@ -4,7 +4,6 @@ import uuid
 import typing
 import json
 import asyncio as aio
-import traceback
 from pathlib import Path
 from enum import Enum
 from dataclasses import dataclass, field
@@ -35,14 +34,6 @@ class BenchmarkError(Exception):
         return f"BenchmarkError: {msg} on benchmark instance {self.benchmark.uuid}"
 
 
-class BenchmarkType(Enum):
-    NETPERF = "netperf"
-    TEST = "TEST"  # Reserved for tests
-
-    def __str__(self):
-        return self.value
-
-
 @dataclass
 class BenchmarkDataSetConfig(TemplateConfig):
     """
@@ -50,6 +41,7 @@ class BenchmarkDataSetConfig(TemplateConfig):
 
     Attributes
     type: identifier of the dataset handler that generates and imports the dataset
+    run_options: dataset-specific options to produce the dataset
     """
     type: DatasetID
     run_options: dict[str, any] = field(default_factory=dict)
@@ -71,7 +63,6 @@ class BenchmarkRunConfig(TemplateConfig):
       is used to generate additional information about the benchmark and process it.
     """
     name: str
-    type: BenchmarkType
     benchmark_dataset: BenchmarkDataSetConfig
     datasets: dict[str, BenchmarkDataSetConfig]
     desc: str = ""
@@ -106,7 +97,7 @@ class BenchmarkBase(TemplateConfigContext):
             self.uuid = run_id
         else:
             self.uuid = uuid.uuid4()
-        self.logger = new_logger(f"{config.name}:{instance_config.name}:{self.uuid}")
+        self.logger = new_logger(f"{config.name}:{instance_config.name}")
         self.manager = manager
         self.instance_manager = manager.instance_manager
         self.manager_config = manager.config
@@ -137,7 +128,8 @@ class BenchmarkBase(TemplateConfigContext):
         # Map uuids to benchmarks that have been merged into the current instance (which is the baseline)
         # so that we can look them up if necessary
         self.merged_benchmarks = {}
-        self.sym_resolver = Symbolizer()
+        self.sym_resolver = Symbolizer(self)
+        self.logger.info("Benchmark instance with UUID=%s", self.uuid)
 
     def _bind_early_configs(self):
         """First pass of configuration template subsitution"""
@@ -193,15 +185,13 @@ class BenchmarkBase(TemplateConfigContext):
                 generator_status = f"generator for {dataset_file}"
             else:
                 generator_status = f"depends on {dataset_file}"
-            self.logger.debug("Configured %s dataset: %s %s", role, dset.name, generator_status)
+            self.logger.debug("Configured %s dataset: %s (%s) %s", role, dset.name, dset.__class__.__name__,
+                              generator_status)
 
     def _get_dataset_handler(self, dset_key: str, config: BenchmarkDataSetConfig):
         """Resolve the parser for the given dataset"""
-        did = DatasetID(config.type)
-        handler_class = DatasetRegistry.dataset_types.get(did, None)
-        if handler_class is None:
-            self.logger.error("No handler for dataset %s", config.name)
-            raise Exception("Missing handler")
+        ds_id = DatasetID(config.type)
+        handler_class = DatasetRegistry.resolve(ds_id, self.config.benchmark_dataset.type)
         handler = handler_class(self, dset_key, config)
         return handler
 
@@ -405,26 +395,20 @@ class BenchmarkBase(TemplateConfigContext):
             dset.aggregate()
             dset.post_aggregate()
 
-    def verify(self):
+    def analyse(self):
         """
-        Verify the integrity of the aggregate / post-processed data
-        """
-        self.logger.debug("Verify dataset integrity for %s", self.config.name)
-
-    def plot(self):
-        """
-        Plot the data from the generated datasets
+        Run analysis steps on this benchmark. This includes plotting.
+        Currently there is no ordering guarantee among analysis steps.
         Note that this is called only on the baseline benchmark instance
         """
-        self.logger.info("Plot datasets")
-        plotters = []
-        for step_klass in BenchmarkAnalysisRegistry.analysis_steps:
-            if issubclass(step_klass, BenchmarkPlot) and step_klass.check_required_datasets(self.datasets.keys()):
-                plot = step_klass(self)
-                plotters.append(plot)
-        self.logger.debug("Resolved plotters %s", plotters)
-        for plot in plotters:
-            plot.process_datasets()
+        self.logger.debug("Analise %s", self.config.name)
+        analysers = []
+        for handler_class in BenchmarkAnalysisRegistry.analysis_steps:
+            if handler_class.check_required_datasets(self.datasets.keys()):
+                analysers.append(handler_class(self))
+        self.logger.debug("Resolved analysys steps %s", [str(a) for a in analysers])
+        for handler in analysers:
+            handler.process_datasets()
 
     def __str__(self):
-        return f"{self.config.name}:{self.uuid}"
+        return f"{self.config.name}({self.uuid})"

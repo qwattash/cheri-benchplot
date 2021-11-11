@@ -3,7 +3,6 @@ import uuid
 import json
 import asyncio as aio
 import itertools as it
-import traceback
 import typing
 import argparse as ap
 import shutil
@@ -18,7 +17,7 @@ import asyncssh
 
 from .util import new_logger
 from .config import Config, TemplateConfig, TemplateConfigContext, path_field
-from .benchmark import BenchmarkRunConfig, BenchmarkRunRecord, BenchmarkType
+from .benchmark import BenchmarkBase, BenchmarkRunConfig, BenchmarkRunRecord
 from .instance import InstanceConfig, InstanceManager
 from .dataset import DatasetRegistry
 from .analysis import BenchmarkAnalysisRegistry
@@ -85,12 +84,7 @@ class BenchmarkManagerRecord(Config):
 
 
 class BenchmarkManager(TemplateConfigContext):
-    benchmark_runner_map = {}
     records_filename = "benchplot-run.json"
-
-    @classmethod
-    def register_benchmark(cls, type_: BenchmarkType, bench_class):
-        cls.benchmark_runner_map[type_] = bench_class
 
     def __init__(self, user_config: BenchplotUserConfig, config: BenchmarkSessionConfig):
         super().__init__()
@@ -196,11 +190,7 @@ class BenchmarkManager(TemplateConfigContext):
 
     def create_benchmark(self, bench_config: BenchmarkRunConfig, instance: InstanceConfig, uid: uuid.UUID = None):
         """Create a benchmark run on an instance"""
-        try:
-            bench_class = self.benchmark_runner_map[bench_config.type]
-        except KeyError:
-            self.logger.error("Invalid benchmark type %s", bench_config.type)
-        bench = bench_class(self, bench_config, instance, run_id=uid)
+        bench = BenchmarkBase(self, bench_config, instance, run_id=uid)
         self.benchmark_instances[bench.uuid] = bench
         self.logger.debug("Created benchmark run %s on %s id=%s", bench_config.name, instance.name, bench.uuid)
         return bench
@@ -291,11 +281,9 @@ class BenchmarkManager(TemplateConfigContext):
         self.logger.info("Aggregate datasets")
         for bench in aggregate_baseline.values():
             bench.aggregate()
-            bench.verify()
-        # Now we have processed all the input data, do the plotting
-        self.logger.info("Generate plots")
+        self.logger.info("Run analysis steps")
         for bench in aggregate_baseline.values():
-            bench.plot()
+            bench.analyse()
 
     def _handle_run_command(self, args: ap.Namespace):
         self.session_output_path.mkdir(parents=True)
