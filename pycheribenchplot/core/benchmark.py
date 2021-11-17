@@ -360,15 +360,27 @@ class BenchmarkBase(TemplateConfigContext):
     def load(self):
         """
         Setup benchmark metadata and load results into datasets from the currently assigned run configuration.
-        Note: this runs in the aio loop executor asyncronously so beware of concurrency quirks
+        Note: this runs in the aio loop executor asyncronously
         """
         self._load_kernel_symbols()
         for dset in self.datasets.values():
             dset_file = dset.output_file()
             self.logger.info("Loading %s from %s", dset.name, dset_file)
             dset.load(dset_file)
+
+    def pre_merge(self):
+        """
+        Perform pre-processing step for all datasets. This may generate derived fields.
+        Note: this runs in the aio loop executor asyncronously
+        """
         for dset in self.datasets.values():
+            self.logger.info("Pre-process %s", dset.name)
             dset.pre_merge()
+
+    def load_and_pre_merge(self):
+        """Shortcut to perform both the load and pre-merge steps"""
+        self.load()
+        self.pre_merge()
 
     def merge(self, others: list["BenchmarkBase"]):
         """

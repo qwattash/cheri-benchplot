@@ -18,10 +18,13 @@ def main():
     parser.add_argument("session_config", type=Path, help="Session configuration file")
     sub = parser.add_subparsers(help="command", dest="command")
     sub_run = sub.add_parser("run", help="run benchmarks in configuration")
-    sub_plot = sub.add_parser("plot", help="process benchmarks and generate plots")
-    sub_plot.add_argument("session", type=uuid.UUID,
+    sub_analyse = sub.add_parser("analyse", help="process benchmarks and generate plots")
+    sub_analyse.add_argument("session", type=uuid.UUID,
                           help="session ID to plot for, defaults to the latest session recorded",
                           nargs="?", default=None)
+    sub_analyse.add_argument("--interactive",
+                             choices=["load", "pre-merge", "merge", "aggregate"],
+                             help="Interact with live datasets")
     sub_clean = sub.add_parser("clean", help="clean output directory")
     sub_list = sub.add_parser("list", help="list sessions in the output directory")
 

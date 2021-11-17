@@ -6,6 +6,7 @@ import itertools as it
 import typing
 import argparse as ap
 import shutil
+import code
 from datetime import datetime, timezone
 from pathlib import Path
 from collections import defaultdict
@@ -14,6 +15,7 @@ from enum import Enum
 
 import termcolor
 import asyncssh
+import pandas
 
 from .util import new_logger
 from .config import Config, TemplateConfig, TemplateConfigContext, path_field
@@ -195,6 +197,17 @@ class BenchmarkManager(TemplateConfigContext):
         self.logger.debug("Created benchmark run %s on %s id=%s", bench_config.name, instance.name, bench.uuid)
         return bench
 
+    def _interactive_analysis(self):
+        self.logger.info("Enter interactive analysis")
+        local_env = {"pd": pandas, "manager": self}
+        try:
+            code.interact(local=local_env)
+        except aio.CancelledError:
+            raise
+        except Exception as ex:
+            self.logger.exception("Exiting interactive analysis with error")
+        self.logger.info("Interactive analysis done")
+
     async def _run_tasks(self):
         await aio.gather(*self.queued_tasks)
         await self.instance_manager.shutdown()
@@ -230,7 +243,7 @@ class BenchmarkManager(TemplateConfigContext):
         for next_dir in self._iter_output_session_dirs():
             shutil.rmtree(next_dir)
 
-    async def _plot_task(self):
+    async def _analysis_task(self, interactive_step=None):
         # Find all benchmark variants we were supposed to run
         # Note: this assumes that we aggregate to compare the same benchmark across OS configs,
         # it can be easily changed to also support comparison of different benchmark runs on
@@ -260,12 +273,18 @@ class BenchmarkManager(TemplateConfigContext):
         loading_tasks = []
         self.logger.info("Loading datasets")
         try:
-            # XXX in theory we can run the whole aggregation steps concurrently, is it worth it though?
             for bench in it.chain(aggregate_baseline.values(), it.chain.from_iterable(aggregate_groups.values())):
-                bench.task = self.loop.run_in_executor(None, bench.load)
+                if interactive_step == "load":
+                    executor_fn = bench.load
+                else:
+                    executor_fn = bench.load_and_pre_merge
+                bench.task = self.loop.run_in_executor(None, executor_fn)
                 loading_tasks.append(bench.task)
                 # Wait for everything to have loaded
             await aio.gather(*loading_tasks)
+            if interactive_step == "load" or interactive_step == "pre-merge":
+                self._interactive_analysis()
+                return
         except aio.CancelledError as ex:
             # Cancel any pending loading
             for task in loading_tasks:
@@ -277,10 +296,16 @@ class BenchmarkManager(TemplateConfigContext):
         # Merge compatible benchmark datasets into the baseline instance
         for name, baseline_bench in aggregate_baseline.items():
             baseline_bench.merge(aggregate_groups[name])
+        if interactive_step == "merge":
+            self._interactive_analysis()
+            return
         # From now on we ony operate on the merged data
         self.logger.info("Aggregate datasets")
         for bench in aggregate_baseline.values():
             bench.aggregate()
+        if interactive_step == "aggregate":
+            self._interactive_analysis()
+            return
         self.logger.info("Run analysis steps")
         for bench in aggregate_baseline.values():
             bench.analyse()
@@ -295,10 +320,14 @@ class BenchmarkManager(TemplateConfigContext):
                 bench.task = self.loop.create_task(bench.run())
                 self.queued_tasks.append(bench.task)
 
-    def _handle_plot_command(self, args: ap.Namespace):
+    def _handle_analysis_command(self, args: ap.Namespace):
         self._resolve_recorded_session(args.session)
         self.logger.info("Using recorded session %s", self.session)
-        self.queued_tasks.append(self.loop.create_task(self._plot_task()))
+        task = self.loop.create_task(self._analysis_task(args.interactive))
+        self.queued_tasks.append(task)
+
+    def _handle_interactive_analysis_command(self, args: ap.Namespace):
+        self._resolve_recorded_session(args.session)
 
     def _handle_list_command(self, args: ap.Namespace):
         self.queued_tasks.append(self.loop.create_task(self._list_task()))
@@ -311,8 +340,8 @@ class BenchmarkManager(TemplateConfigContext):
         command = args.command
         if command == "run":
             self._handle_run_command(args)
-        elif command == "plot":
-            self._handle_plot_command(args)
+        elif command == "analyse":
+            self._handle_analysis_command(args)
         elif command == "list":
             self._handle_list_command(args)
         elif command == "clean":
