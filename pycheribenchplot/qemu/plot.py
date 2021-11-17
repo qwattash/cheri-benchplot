@@ -30,12 +30,14 @@ class QEMUHistSubPlot(BenchmarkSubPlot):
         return bb_df.join(call_df, how="outer", lsuffix="", rsuffix="_call")
 
     def _get_group_levels(self, indf: pd.DataFrame):
+        # This should be in sync with the dataset aggregation index
         assert "__dataset_id" in indf.index.names, "Missing __dataset_id index level"
         assert "process" in indf.index.names, "Missing process index level"
+        assert "thread" in indf.index.names, "Missing thread index level"
         assert "EL" in indf.index.names, "Missing EL index level"
         assert "file" in indf.index.names, "Missing file index level"
         assert "symbol" in indf.index.names, "Missing symbol index level"
-        return ["process", "EL", "file", "symbol"]
+        return ["process", "thread", "EL", "file", "symbol"]
 
     def filter_by_common_symbols(self, indf):
         """
@@ -104,13 +106,17 @@ class QEMUHistTable(QEMUHistSubPlot):
     def _get_filtered_df(self):
         return self.get_all_stats_df()
 
-    def _get_common_display_columns(self):
+    def _get_common_display_columns(self, debug_columns=False):
         """Columns to display for all benchmark runs"""
-        return ["bb_count", "call_count", "start", "start_call", "valid_symbol"]
+        cols = ["bb_count", "call_count"]
+        if debug_columns:
+            cols += ["start", "start_call", "valid_symbol"]
+        return cols
 
-    def _get_non_baseline_display_columns(self):
+    def _get_non_baseline_display_columns(self, debug_columns=False):
         """Columns to display for benchmarks that are not baseline (because they are meaningless)"""
-        return ["delta_bb_count", "norm_delta_bb_count", "delta_call_count", "norm_delta_call_count"]
+        cols = ["delta_bb_count", "norm_delta_bb_count", "delta_call_count", "norm_delta_call_count"]
+        return cols
 
     def _remap_display_columns(self, colmap: pd.DataFrame):
         """
@@ -125,7 +131,6 @@ class QEMUHistTable(QEMUHistSubPlot):
         return show_cols
 
     def _get_sort_metric(self, df):
-        # We should always compute a sort metric index in the dataset instead (post_agg)
         relevance = df["delta_call_count"]
         return relevance
 

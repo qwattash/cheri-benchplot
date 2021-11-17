@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 
-from .dataset import DatasetID, DataField, StrField, Field
+from .dataset import DatasetID, DataField, StrField, IndexField
 from .json import JSONDataSetContainer
 
 
@@ -16,17 +16,7 @@ class PidMapDataset(JSONDataSetContainer):
     Currently we only support a subset of the output values
     """
     dataset_id = DatasetID.PIDMAP
-    fields = [
-        Field("pid", dtype=int),
-        Field("uid", dtype=int),
-        StrField("command"),
-        Field("flags", dtype=int, importfn=lambda x: int(x, 16))
-    ]
-
-    def __init__(self, benchmark, dset_key, config):
-        super().__init__(benchmark, dset_key, config)
-        # Add a synthetic entry for unknown/unmatched PID number -1
-        self.df.append({"pid": -1, "uid": -1, "command": "unknown"}, ignore_index=True)
+    fields = [IndexField("pid", dtype=int), IndexField("tid", dtype=int), StrField("command"), StrField("thread_name")]
 
     def raw_fields(self, include_derived=False):
         return PidMapDataset.fields
@@ -34,9 +24,13 @@ class PidMapDataset(JSONDataSetContainer):
     def load(self, path: Path):
         with open(path, "r") as fd:
             raw_data = json.load(fd)
-        records = raw_data["process-information"]["process"]
-        df = pd.DataFrame.from_records(records)
-        df["flags"].fillna("0", inplace=True)
+        data_map = raw_data["procstat"]["threads"]
+        # normalize records in the json first
+        data = list(data_map.values())
+        for proc_desc in data:
+            proc_desc["threads"] = list(proc_desc["threads"].values())
+        df = pd.json_normalize(data, "threads", ["process_id", "command"])
+        df.rename(columns={"process_id": "pid", "thread_id": "tid"}, inplace=True)
         df["__dataset_id"] = self.benchmark.uuid
         self._internalize_json(df)
 
@@ -73,12 +67,24 @@ class PidMapDataset(JSONDataSetContainer):
         """
         self.logger.info("Extract system PIDs")
         pid_raw_data = io.StringIO()
-        await self.benchmark.run_cmd("ps", ["-a", "-x", "-c", "-o", "uid,pid,command,flags", "--libxo", "json"],
-                                     outfile=pid_raw_data)
+        await self.benchmark.run_cmd("procstat", ["-a", "-t", "--libxo", "json"], outfile=pid_raw_data)
         # Append the PIDs for all processes executed by the benchmark to the pid map
         pid_json = json.loads(pid_raw_data.getvalue())
-        proc_list = pid_json["process-information"]["process"]
+        proc_map = pid_json["procstat"]["threads"]
         for history_entry in self.benchmark.command_history.values():
-            proc_list.append({"uid": 1, "pid": history_entry.pid, "command": str(history_entry.cmd)})
+            entry = {
+                str(history_entry.pid): {
+                    "process_id": history_entry.pid,
+                    "command": str(history_entry.cmd),
+                    # We do not have thread info for these, should really use KTR instead
+                    "threads": {
+                        "-1": {
+                            "thread_id": "-1",
+                            "thread_name": "-"
+                        }
+                    }
+                }
+            }
+            proc_map.update(entry)
         with open(self.output_file(), "w+") as pid_fd:
             json.dump(pid_json, pid_fd)

@@ -48,6 +48,7 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
         IndexField("file", dtype=str, isderived=True),
         IndexField("symbol", dtype=str, isderived=True),
         IndexField("process", dtype=str, isderived=True),
+        IndexField("thread", dtype=str, isderived=True),
         IndexField("pid", dtype=int),
         IndexField("tid", dtype=int),
         IndexField("cid", dtype=int),
@@ -134,15 +135,22 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
         """
         super().pre_merge()
         resolver = self.benchmark.sym_resolver
-        # Assign commands to PIDs
+        # Resolve command and thread names for PIDs and TIDs
         pidmap = self.benchmark.get_dataset(DatasetID.PIDMAP)
-        assert pidmap is not None
-        pid_df = pidmap.df.set_index("pid").add_suffix("_pidmap")  # Avoid accidental column clash in join
-        pids = self.df.join(pid_df, how="left", on="pid")["command_pidmap"]
+        assert pidmap is not None, "The pidmap dataset is required for qemu stats"
+        # Suffix is added to avoid accidental column clash in join
+        pid_df = pidmap.df.add_suffix("_pidmap")
+        join_df = self.df.join(pid_df, how="left", on=["__dataset_id", "pid", "tid"])
         # There may be some NaN due to PID that were running during the benchmark but have since been terminated
-        # We mark these as 'undetected'
-        pids[pids.isna()] = pids.index.get_level_values("pid")[pids.isna()].map(lambda pid: f"undetected - {pid}")
-        self.df["process"] = pids
+        # We mark these as undetected
+        na_cmd = join_df["command_pidmap"].isna()
+        na_thr = join_df["thread_name_pidmap"].isna()
+        join_df.loc[na_cmd, "command_pidmap"] = join_df.index.get_level_values("pid")[na_cmd].map(
+            lambda pid: f"undetected:{pid}")
+        join_df.loc[na_thr, "thread_name_pidmap"] = join_df.index.get_level_values("tid")[na_thr].map(
+            lambda tid: f"unknown:{tid}")
+        self.df["process"] = join_df["command_pidmap"]
+        self.df["thread"] = join_df["thread_name_pidmap"]
 
         # Resolve file:symbol for each address so that we can aggregate counts for each one of them
         resolved = self.df.apply(lambda row: resolver.lookup_fn(row["start"], Path(row["process"]).name), axis=1)
@@ -170,9 +178,13 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
         agg.update({col: "sum" for col in self.delta_columns()})
         return agg
 
+    def get_aggregate_index(self):
+        """Index levels on which we aggregate"""
+        return ["process", "thread", "EL", "file", "symbol"]
+
     def aggregate(self):
         super().aggregate()
-        grouped = self.merged_df.groupby(["__dataset_id", "process", "EL", "file", "symbol"])
+        grouped = self.merged_df.groupby(["__dataset_id"] + self.get_aggregate_index())
         self.agg_df = grouped.agg(self._get_agg_strategy())
 
     def delta_columns(self):
@@ -182,7 +194,7 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
         super().post_aggregate()
         # Align dataframe on the (file, symbol) pairs where we want to get an union of
         # the symbols set for each file, repeated for each dataset_id.
-        align_levels = ["process", "EL", "file", "symbol"]
+        align_levels = self.get_aggregate_index()
         new_df = align_multi_index_levels(self.agg_df, align_levels, fill_value=0)
         # Backfill after alignment
         new_df.loc[new_df["valid_symbol"] == 0, "valid_symbol"] = "missing"
