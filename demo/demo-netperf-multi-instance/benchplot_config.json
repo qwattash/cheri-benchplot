@@ -22,7 +22,7 @@
     "benchmarks": [
         {
             "name": "udp_rr_50_1b",
-            "desc": "UDP RR 5K transactions 1-byte",
+            "desc": "UDP RR 50 transactions 1-byte",
             "type": "netperf",
             "benchmark_dataset": {
                 "type": "netperf-data",

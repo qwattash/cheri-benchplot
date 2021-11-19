@@ -128,19 +128,18 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
             track_df.set_index(self.index_columns(), inplace=True)
             self.df = pd.concat([self.df, track_df])
 
-    def pre_merge(self):
+    def _resolve_pid_tid(self):
         """
-        Resolve symbols to mach each entry to the function containing it.
-        We update the raw-data dataframe with a new column accordingly.
+        Resolve process and thread names
         """
-        super().pre_merge()
-        resolver = self.benchmark.sym_resolver
-        # Resolve command and thread names for PIDs and TIDs
         pidmap = self.benchmark.get_dataset(DatasetID.PIDMAP)
         assert pidmap is not None, "The pidmap dataset is required for qemu stats"
-        # Suffix is added to avoid accidental column clash in join
-        pid_df = pidmap.df.add_suffix("_pidmap")
-        join_df = self.df.join(pid_df, how="left", on=["__dataset_id", "pid", "tid"])
+        # Find missing TIDs in pidmap and attempt to match them with the QEMU data
+        detected = self.df.groupby(["pid", "tid"]).size().reset_index()[["pid", "tid"]]
+        # Suffix is added to avoid clash during join
+        pid_df = pidmap.fixup_missing_tid(detected)
+        pid_df = pid_df.set_index(["pid", "tid"]).add_suffix("_pidmap")
+        join_df = self.df.join(pid_df, how="left", on=["pid", "tid"])
         # There may be some NaN due to PID that were running during the benchmark but have since been terminated
         # We mark these as undetected
         na_cmd = join_df["command_pidmap"].isna()
@@ -152,7 +151,16 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
         self.df["process"] = join_df["command_pidmap"]
         self.df["thread"] = join_df["thread_name_pidmap"]
 
+    def pre_merge(self):
+        """
+        Resolve symbols to mach each entry to the function containing it.
+        We update the raw-data dataframe with a new column accordingly.
+        """
+        super().pre_merge()
+        self._resolve_pid_tid()
+
         # Resolve file:symbol for each address so that we can aggregate counts for each one of them
+        resolver = self.benchmark.sym_resolver
         resolved = self.df.apply(lambda row: resolver.lookup_fn(row["start"], Path(row["process"]).name), axis=1)
         self.df["valid_symbol"] = "ok"
         self.df.loc[resolved.isna(), "valid_symbol"] = "no-match"

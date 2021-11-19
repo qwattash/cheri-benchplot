@@ -203,11 +203,6 @@ class NetperfData(CSVDataSetContainer):
         kwargs["skiprows"] = 1
         return super()._load_csv(path, **kwargs)
 
-    def process(self):
-        err_columns = (col2stat("errhi", self.data_columns()) + col2stat("errlo", self.data_columns()))
-        err_df = pd.DataFrame(0, index=self.df.index, columns=err_columns)
-        self.df = pd.concat([self.df, err_df], axis=1)
-
     def aggregate(self):
         super().aggregate()
         self.agg_df = self.merged_df.copy()
@@ -230,11 +225,11 @@ class NetperfData(CSVDataSetContainer):
         opts = super().configure(opts)
         # Resolve binaries here as the configuration is stable at this point
         rootfs_netperf_base = self.benchmark.rootfs / self.config.netperf_path
-        rootfs_netperf_bin = list(rootfs_netperf_base.glob("*-netperf"))
-        rootfs_netserver_bin = list(rootfs_netperf_base.glob("*-netserver"))
+        rootfs_netperf_bin = rootfs_netperf_base / "netperf"
+        rootfs_netserver_bin = rootfs_netperf_base / "netserver"
         # Paths relative to the remote root directory
-        self.netperf_bin = Path("/") / rootfs_netperf_bin[0].relative_to(self.benchmark.rootfs)
-        self.netserver_bin = Path("/") / rootfs_netserver_bin[0].relative_to(self.benchmark.rootfs)
+        self.netperf_bin = Path("/") / rootfs_netperf_bin.relative_to(self.benchmark.rootfs)
+        self.netserver_bin = Path("/") / rootfs_netserver_bin.relative_to(self.benchmark.rootfs)
         self.logger.debug("Using %s %s", self.netperf_bin, self.netserver_bin)
         # Determine any extra options for cooperation with other datasets
         pmc = self.benchmark.get_dataset(DatasetID.PMC)
@@ -262,5 +257,9 @@ class NetperfData(CSVDataSetContainer):
                                              self.config.netperf_options,
                                              outfile=outfd,
                                              env=self.run_env)
+            pidmap = self.benchmark.get_dataset(DatasetID.PIDMAP)
+            if pidmap:
+                # Sample PIDs before stopping netserver
+                await pidmap.sample_system_pids()
         finally:
             await self.benchmark.stop_bg_cmd(netserver)

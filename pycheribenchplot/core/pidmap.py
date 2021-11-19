@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 
-from .dataset import DatasetID, DataField, StrField, IndexField
+from .dataset import DatasetID, DataField, StrField, Field
 from .json import JSONDataSetContainer
 
 
@@ -16,23 +16,14 @@ class PidMapDataset(JSONDataSetContainer):
     Currently we only support a subset of the output values
     """
     dataset_id = DatasetID.PIDMAP
-    fields = [IndexField("pid", dtype=int), IndexField("tid", dtype=int), StrField("command"), StrField("thread_name")]
+    fields = [Field("pid", dtype=int), Field("tid", dtype=int), StrField("command"), StrField("thread_name")]
+
+    def __init__(self, benchmark, dset_key, config):
+        super().__init__(benchmark, dset_key, config)
+        self._pid_snapshot = {}
 
     def raw_fields(self, include_derived=False):
         return PidMapDataset.fields
-
-    def load(self, path: Path):
-        with open(path, "r") as fd:
-            raw_data = json.load(fd)
-        data_map = raw_data["procstat"]["threads"]
-        # normalize records in the json first
-        data = list(data_map.values())
-        for proc_desc in data:
-            proc_desc["threads"] = list(proc_desc["threads"].values())
-        df = pd.json_normalize(data, "threads", ["process_id", "command"])
-        df.rename(columns={"process_id": "pid", "thread_id": "tid"}, inplace=True)
-        df["__dataset_id"] = self.benchmark.uuid
-        self._internalize_json(df)
 
     def resolve_user_binaries(self, dataset_id) -> pd.DataFrame:
         df = self.df.xs(dataset_id)
@@ -56,8 +47,74 @@ class PidMapDataset(JSONDataSetContainer):
         result_df["command"] = df["command"].map(resolve_path)
         return result_df[~result_df["command"].isna()]
 
-    def output_file(self):
-        return super().output_file().with_suffix(".json")
+    def load(self, path: Path):
+        with open(path, "r") as fd:
+            data_map = json.load(fd)
+        # normalize records in the json first to use lists instead of dicts
+        data = list(data_map.values())
+        for proc_desc in data:
+            proc_desc["threads"] = list(proc_desc["threads"].values())
+        # generate the normalized dataframe from hierarchical data
+        pid_info = pd.json_normalize(data)
+        tid_info = pd.json_normalize(data, "threads", ["process_id"])
+        df = pid_info.merge(tid_info, how="left", left_on="process_id", right_on="process_id")
+        df.rename(columns={"process_id": "pid", "thread_id": "tid"}, inplace=True)
+        df["tid"].fillna(-1, inplace=True)
+        df["__dataset_id"] = self.benchmark.uuid
+        self._internalize_json(df)
+
+    def fixup_missing_tid(self, tid_mapping: pd.DataFrame) -> pd.DataFrame:
+        """
+        Return a copy of the main dataframe replacing the missing TID values
+        using the given mapping dataframe.
+        """
+        assert "pid" in tid_mapping.columns
+        assert "tid" in tid_mapping.columns
+        tid_mapping = tid_mapping.add_suffix("_fixup")
+
+        missing_tid = self.df["tid"] == -1
+        matched_tid = self.df[~missing_tid]
+        guess_tid = self.df[missing_tid].merge(tid_mapping, how="left", left_on="pid", right_on="pid_fixup")
+        guess_tid["tid"] = guess_tid["tid_fixup"].fillna(-1).astype(int)
+        fixup_df = pd.concat((matched_tid, guess_tid[self.all_columns_noindex()]))
+        return fixup_df
+
+    def _merge_procstat_entry(self, entry: dict):
+        pid = entry["process_id"]
+        if str(pid) in self._pid_snapshot:
+            snap_entry = self._pid_snapshot[pid]
+            # Currently, do not support PID/TID reuse
+            if snap_entry["command"] != entry["command"]:
+                self.logger.error("System PID snapshot repeated PID conflict %d: %s != %s", entry["process_id"],
+                                  entry["command"], snap_entry["command"])
+                return
+            for tid, thr_entry in entry["threads"].items():
+                if tid in snap_entry["threads"]:
+                    snap_thr_entry = snap_entry["threads"][tid]
+                    if snap_thr_entry["thread_name"] != thr_entry["thread_name"]:
+                        self.logger.error("System PID snapshot repeated TID conflict for %s %d: %s != %s",
+                                          entry["command"], thr_entry["thread_id"], thr_entry["thread_name"],
+                                          snap_thr_entry["thread_name"])
+                        continue
+                else:
+                    snap_entry["threads"][tid] = thr_entry
+        else:
+            self._pid_snapshot[pid] = entry
+
+    async def sample_system_pids(self):
+        """
+        Add a system PID sample to the output data.
+        This is exposed to other datasets so that snapshots can be taken at interesting
+        times.
+        """
+        self.logger.info("Extract system PIDs")
+        pid_raw_data = io.StringIO()
+        await self.benchmark.run_cmd("procstat", ["-a", "-t", "--libxo", "json"], outfile=pid_raw_data)
+        # Merge the PIDs with any existing sample.
+        raw_data = json.loads(pid_raw_data.getvalue())
+        proc_map = raw_data["procstat"]["threads"]
+        for pid, info in proc_map.items():
+            self._merge_procstat_entry(info)
 
     async def run_post_benchmark(self):
         """
@@ -65,26 +122,17 @@ class PidMapDataset(JSONDataSetContainer):
         Note: we also use the command history from the benchmark runner to resolve any
         extra processes we have been running and that have since terminated.
         """
-        self.logger.info("Extract system PIDs")
-        pid_raw_data = io.StringIO()
-        await self.benchmark.run_cmd("procstat", ["-a", "-t", "--libxo", "json"], outfile=pid_raw_data)
-        # Append the PIDs for all processes executed by the benchmark to the pid map
-        pid_json = json.loads(pid_raw_data.getvalue())
-        proc_map = pid_json["procstat"]["threads"]
+        await self.sample_system_pids()
         for history_entry in self.benchmark.command_history.values():
             entry = {
-                str(history_entry.pid): {
-                    "process_id": history_entry.pid,
-                    "command": str(history_entry.cmd),
-                    # We do not have thread info for these, should really use KTR instead
-                    "threads": {
-                        "-1": {
-                            "thread_id": "-1",
-                            "thread_name": "-"
-                        }
-                    }
-                }
+                "process_id": history_entry.pid,
+                "command": str(history_entry.cmd),
+                # We do not have thread info for these, should really use a different method
+                "threads": {}
             }
-            proc_map.update(entry)
+            self._merge_procstat_entry(entry)
         with open(self.output_file(), "w+") as pid_fd:
-            json.dump(pid_json, pid_fd)
+            json.dump(self._pid_snapshot, pid_fd)
+
+    def output_file(self):
+        return super().output_file().with_suffix(".json")

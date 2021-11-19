@@ -131,8 +131,14 @@ class QEMUHistTable(QEMUHistSubPlot):
         return show_cols
 
     def _get_sort_metric(self, df):
-        relevance = df["delta_call_count"]
+        total_delta_calls = df["delta_call_count"].abs().sum()
+        relevance = (df["delta_call_count"] / total_delta_calls).abs()
         return relevance
+
+    def _remap_sort_columns(self, metric_col: str, colmap: pd.DataFrame):
+        baseline = self.benchmark.uuid
+        sortby = colmap.loc[colmap.index != baseline, metric_col].values.T.ravel()
+        return list(sortby)
 
     def generate(self, surface: Surface, cell: CellData):
         df = self._get_filtered_df()
@@ -151,8 +157,8 @@ class QEMUHistTable(QEMUHistSubPlot):
         # Note: It is essential that the dataframe is aligned on the index level for this.
         view_df, colmap = rotate_multi_index_level(df, "__dataset_id", legend_map)
         show_cols = self._remap_display_columns(colmap)
-        # sort_cols = colmap.loc[:, "sort_metric"]
-        # view_df = view_df.sort_values(sort_cols)
+        sort_cols = self._remap_sort_columns("sort_metric", colmap)
+        view_df = view_df.sort_values(by=sort_cols, ascending=False)
         # Proper hex formatting
         col_formatter = {
             col: lambda v: f"0x{int(v):x}" if not np.isnan(v) else "?"
