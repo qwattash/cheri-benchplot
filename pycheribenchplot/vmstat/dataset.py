@@ -1,11 +1,85 @@
 import json
+import io
 from pathlib import Path
 
 import pandas as pd
 import numpy as np
 
-from ..core.dataset import (DatasetID, DataField, Field, IndexField, align_multi_index_levels)
+from ..core.dataset import (DatasetID, DatasetRunOrder, DataField, Field, IndexField, align_multi_index_levels)
 from ..core.json import JSONDataSetContainer
+from ..core.csv import CSVDataSetContainer
+
+
+class UMAZoneInfoDataset(CSVDataSetContainer):
+    """
+    Extract UMA zone information from the uma SYSCTL nodes
+    XXX processing is essentially the same as the other VMStat datasets so may share some code
+    """
+    dataset_id = DatasetID.VMSTAT_UMA_INFO
+    fields = [
+        IndexField("name", dtype=str),
+        DataField("efficiency", dtype=float),
+        DataField("ipers", dtype=int),
+        DataField("ppera", dtype=int),
+        DataField("rsize", dtype=int)
+    ]
+
+    def raw_fields(self, include_derived=False):
+        return UMAZoneInfoDataset.fields
+
+    def output_file(self):
+        return super().output_file().with_suffix(".csv")
+
+    async def run_pre_benchmark(self):
+        vmstat_out = io.StringIO()
+        await self.benchmark.run_cmd("vmstat", ["--libxo", "json", "-z"], outfile=vmstat_out)
+        vmstat_data = json.loads(vmstat_out.getvalue())
+        # Create mapping between a convenient ID and the vmstat zone name
+        vmstat_df = pd.DataFrame.from_records(vmstat_data["memory-zone-statistics"]["zone"])
+        vmstat_df["zone_tmp_id"] = vmstat_df["name"].str.replace("[ -]", "_", regex=True)
+        vmstat_df = vmstat_df.set_index("zone_tmp_id")["name"]
+        # For each UMA zone extract keg info from sysctl
+        sysctl_out = io.StringIO()
+        await self.benchmark.run_cmd("sysctl", ["vm.uma"], outfile=sysctl_out)
+        sysctl_out.seek(0)
+        sysctl_df = pd.read_csv(sysctl_out, sep=":", names=["node", "value"])
+        keg_info = sysctl_df["node"].str.contains(".keg")
+        sysctl_df = sysctl_df[keg_info]
+        # this should contain ["vm", "uma", "<zone>", ...]
+        sysctl_path = sysctl_df["node"].str.split(".")
+        sysctl_df["zone_tmp_id"] = sysctl_path.map(lambda l: l[2])
+        sysctl_df["metric"] = sysctl_path.map(lambda l: l[-1])
+        output_df = pd.pivot(sysctl_df, index="zone_tmp_id", values="value", columns="metric")
+        output_df = output_df.join(vmstat_df, how="left", on="zone_tmp_id", rsuffix="_vmstat")
+        output_df["name"] = output_df["name_vmstat"]
+        output_df[["name", "efficiency", "ipers", "ppera", "rsize"]].fillna(0).to_csv(self.output_file(), index=False)
+
+    # def _load_csv(self, path):
+    #     csv_df = super()._load_csv(path, dtype=None)
+    #     return csv_df.fillna(0).astype(self._get_column_dtypes(include_converted=False))
+
+    def aggregate(self):
+        super().aggregate()
+        # We just sum if there are repeated index entries
+        self.agg_df = self.merged_df.groupby(self.merged_df.index.names).sum()
+
+    def post_aggregate(self):
+        super().post_aggregate()
+        new_df = align_multi_index_levels(self.agg_df, ["name"], fill_value=0)
+        baseline = new_df.xs(self.benchmark.uuid, level="__dataset_id")
+        datasets = new_df.index.get_level_values("__dataset_id").unique()
+        base_cols = self.data_columns()
+        delta_cols = [f"delta_{c}" for c in base_cols]
+        norm_cols = [f"norm_{c}" for c in delta_cols]
+        new_df[delta_cols] = 0
+        new_df[norm_cols] = 0
+        for ds_id in datasets:
+            other = new_df.xs(ds_id, level="__dataset_id")
+            delta = other[base_cols].subtract(baseline[base_cols])
+            norm_delta = delta[base_cols].divide(baseline[base_cols])
+            new_df.loc[ds_id, delta_cols] = delta[base_cols].values
+            new_df.loc[ds_id, norm_cols] = norm_delta[base_cols].values
+        self.agg_df = new_df
 
 
 class VMStatDataset(JSONDataSetContainer):
@@ -90,6 +164,7 @@ class VMStatDataset(JSONDataSetContainer):
 
 class VMStatKMalloc(VMStatDataset):
     dataset_id = DatasetID.VMSTAT_MALLOC
+    dataset_run_order = DatasetRunOrder.LAST
     fields = [
         IndexField("type", dtype=str),
         DataField("in-use", dtype=int),
@@ -119,16 +194,17 @@ class VMStatKMalloc(VMStatDataset):
 
 class VMStatUMA(VMStatDataset):
     dataset_id = DatasetID.VMSTAT_UMA
+    dataset_run_order = DatasetRunOrder.LAST
     fields = [
         IndexField("name", dtype=str),
         DataField("size", dtype=int),
-        DataField("limit", dtype=int),
-        DataField("used", dtype=int),
-        DataField("free", dtype=int),
+        Field("limit", dtype=int),
+        Field("used", dtype=int),
+        Field("free", dtype=int),
         DataField("requests", dtype=int),
-        DataField("fail", dtype=int),
-        DataField("sleep", dtype=int),
-        DataField("xdomain", dtype=int),
+        Field("fail", dtype=int),
+        Field("sleep", dtype=int),
+        Field("xdomain", dtype=int),
     ]
 
     def raw_fields(self, include_derived=False):

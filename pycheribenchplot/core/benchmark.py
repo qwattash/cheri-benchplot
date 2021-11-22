@@ -15,7 +15,7 @@ from .config import TemplateConfig, TemplateConfigContext
 from .instance import InstanceConfig, InstanceInfo, PlatformOptions
 from .procstat import ProcstatDataset
 from .pidmap import PidMapDataset
-from .dataset import DatasetRegistry, DatasetID
+from .dataset import DatasetRegistry, DatasetID, DataSetContainer
 from .analysis import BenchmarkAnalysisRegistry
 from .plot import BenchmarkPlot
 from .elf import Symbolizer
@@ -195,6 +195,9 @@ class BenchmarkBase(TemplateConfigContext):
         handler = handler_class(self, dset_key, config)
         return handler
 
+    def _dataset_generators_sorted(self, reverse=False) -> list[DataSetContainer]:
+        return sorted(self.datasets_gen.values(), key=lambda ds: ds.dataset_run_order, reverse=reverse)
+
     def get_dataset(self, parser_id: DatasetID):
         return self.datasets.get(parser_id, None)
 
@@ -323,12 +326,12 @@ class BenchmarkBase(TemplateConfigContext):
         self._reserved_instance = await self.instance_manager.request_instance(self.uuid, self.instance_config)
         try:
             self._conn = await self._connect_instance(self._reserved_instance)
-            for dset in self.datasets_gen.values():
+            for dset in self._dataset_generators_sorted():
                 await dset.run_pre_benchmark()
             # Only run the benchmark step for the given benchmark_dataset
             with timing("Benchmark completed", logger=self.logger):
                 await bench_dset.run_benchmark()
-            for dset in self.datasets_gen.values():
+            for dset in self._dataset_generators_sorted(reverse=True):
                 await dset.run_post_benchmark()
             self._record_benchmark_run()
             # Stop all pending background processes

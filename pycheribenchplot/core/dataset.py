@@ -1,6 +1,6 @@
 import typing
 from collections import defaultdict
-from enum import Enum
+from enum import Enum, IntEnum
 from pathlib import Path
 from contextlib import contextmanager
 
@@ -25,11 +25,23 @@ class DatasetID(Enum):
     QEMU_CTX_CTRL = "qemu-ctx-tracks"
     PROCSTAT = "procstat"
     PIDMAP = "pidmap"
+    VMSTAT_UMA_INFO = "vmstat-uma-info"
     VMSTAT_MALLOC = "vmstat-malloc"
     VMSTAT_UMA = "vmstat-uma"
 
     def __str__(self):
         return self.value
+
+
+class DatasetRunOrder(IntEnum):
+    """
+    Run ordering for datasets to extract data.
+    This allows to control which dataset should run closer to the benchmark to
+    avoid probe effect from other operations.
+    """
+    FIRST = 0
+    ANY = 1
+    LAST = 10
 
 
 class DatasetRegistry(type):
@@ -141,6 +153,7 @@ class DataSetContainer(metaclass=DatasetRegistry):
     """
     # Identifier of the dataset used for registration
     dataset_id = None
+    dataset_run_order = DatasetRunOrder.ANY
     # Filter to enable this dataset only when one of the given benchmark_dataset ID is active
     # If empty, this dataset is the default one used if there are no other matching datasets
     # for the ID.

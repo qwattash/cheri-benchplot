@@ -48,6 +48,9 @@
                 "netperf-qemu-stats-call": {
                     "type": "qemu-stats-call"
                 },
+                "netperf-uma-info": {
+                    "type": "vmstat-uma-info"
+                },
                 "netperf-vmstat-malloc": {
                     "type": "vmstat-malloc"
                 },

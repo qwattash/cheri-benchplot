@@ -81,19 +81,35 @@ class VMStatUMATable(VMStatTable):
         dsets += [DatasetID.VMSTAT_UMA]
         return dsets
 
+    def __init__(self, plot):
+        super().__init__(plot)
+        # Optional zone info dataset
+        self.uma_stats = self.get_dataset(DatasetID.VMSTAT_UMA)
+        self.uma_zone_info = self.get_dataset(DatasetID.VMSTAT_UMA_INFO)
+
     def get_cell_title(self):
         return "Kernel UMA stats"
 
     def _get_common_display_columns(self):
         """Columns to display for all benchmark runs"""
-        return ["size", "requests"]
+        stats_cols = self.uma_stats.data_columns()
+        if self.uma_zone_info:
+            stats_cols += self.uma_zone_info.data_columns()
+        return stats_cols
 
     def _get_non_baseline_display_columns(self):
         """Columns to display for benchmarks that are not baseline (because they are meaningless)"""
-        return ["delta_size", "norm_delta_size", "delta_requests", "norm_delta_requests"]
+        delta_cols = [f"delta_{c}" for c in self.uma_stats.data_columns()]
+        if self.uma_zone_info:
+            delta_cols += [f"delta_{c}" for c in self.uma_zone_info.data_columns()]
+        norm_cols = [f"norm_{c}" for c in delta_cols]
+        return delta_cols + norm_cols
 
     def _get_vmstat_dataset(self):
-        return self.get_dataset(DatasetID.VMSTAT_UMA).agg_df.copy()
+        if self.uma_zone_info:
+            return self.uma_stats.agg_df.join(self.uma_zone_info.agg_df, how="left")
+        else:
+            return self.uma_stats.agg_df.copy()
 
 
 class VMStatTables(BenchmarkPlot):
