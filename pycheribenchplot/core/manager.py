@@ -101,7 +101,10 @@ class BenchmarkManager(TemplateConfigContext):
         self.instance_manager = InstanceManager(self.loop, manager_config)
         self.benchmark_instances = {}
         self.failed_benchmarks = []
+        # Task queue for the operations that the manager should run
         self.queued_tasks = []
+        # Cleanup callbacks
+        self.cleanup_callbacks = []
 
         self._init_session()
         self.logger.debug("Assign initial session %s", self.session)
@@ -211,12 +214,19 @@ class BenchmarkManager(TemplateConfigContext):
     async def _run_tasks(self):
         await aio.gather(*self.queued_tasks)
         await self.instance_manager.shutdown()
+        for cbk in self.cleanup_callbacks:
+            cbk()
 
-    async def _shutdown_tasks(self):
+    async def _kill_tasks(self):
         for t in self.queued_tasks:
             t.cancel()
         await aio.gather(*self.queued_tasks, return_exceptions=True)
-        await self.instance_manager.shutdown()
+        await self.instance_manager.kill()
+        for cbk in self.cleanup_callbacks():
+            try:
+                cbk()
+            except ex:
+                self.logger.exception("Cleanup callback failed, skipping")
 
     async def _list_task(self):
         self.logger.debug("List recorded sessions at %s", self.config.output_path)
@@ -356,10 +366,10 @@ class BenchmarkManager(TemplateConfigContext):
                 self._emit_records()
         except KeyboardInterrupt:
             self.logger.error("Shutdown")
-            self.loop.run_until_complete(self._shutdown_tasks())
+            self.loop.run_until_complete(self._kill_tasks())
         except Exception as ex:
-            self.logger.exception("Died %s", ex)
-            self.loop.run_until_complete(self._shutdown_tasks())
+            self.logger.exception("Died because of error: %s", ex)
+            self.loop.run_until_complete(self._kill_tasks())
         finally:
             self.loop.run_until_complete(self.loop.shutdown_asyncgens())
             self.loop.close()

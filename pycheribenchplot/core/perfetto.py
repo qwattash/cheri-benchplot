@@ -16,18 +16,19 @@ class _TraceProcessorCache:
     instance = None
 
     @classmethod
-    def get_instance(cls, manager_config: "BenchmarkManagerConfig"):
+    def get_instance(cls, manager: "BenchmarkManager"):
         if cls.instance is None:
-            cls.instance = _TraceProcessorCache(manager_config)
+            cls.instance = _TraceProcessorCache(manager)
         return cls.instance
 
-    def __init__(self, manager_config: "BenchmarkManagerConfig"):
-        self._manager_config = manager_config
+    def __init__(self, manager: "BenchmarkManager"):
+        self._manager = manager
         self._instances = {}
         self.logger = new_logger("perfetto-trace-processor-cache")
+        self._manager.cleanup_callbacks.append(lambda: self._shutdown())
 
     def _trace_processor_path(self):
-        return self._manager_config.perfetto_path / "trace_processor_shell"
+        return self._manager.config.perfetto_path / "trace_processor_shell"
 
     def get_trace_processor(self, trace_path: Path) -> TraceProcessor:
         if trace_path in self._instances:
@@ -37,7 +38,7 @@ class _TraceProcessorCache:
         self._instances[trace_path] = processor
         return processor
 
-    def __del__(self):
+    def _shutdown(self):
         for tp in self._instances.values():
             tp.close()
 
@@ -48,7 +49,7 @@ class PerfettoDataSetContainer(DataSetContainer):
 
     def __init__(self, benchmark, dset_key, config):
         super().__init__(benchmark, dset_key, config)
-        self._tp_cache = _TraceProcessorCache.get_instance(benchmark.manager_config)
+        self._tp_cache = _TraceProcessorCache.get_instance(benchmark.manager)
 
     def _integrity_check(self, tp: TraceProcessor):
         result = tp.query("SELECT * FROM stats WHERE name = 'traced_buf_trace_writer_packet_loss'")

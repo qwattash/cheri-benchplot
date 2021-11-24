@@ -64,8 +64,11 @@ class PlatformOptions(Config):
     This is internally used during benchmark dataset collection to
     set options for the instance that is to be run.
     """
+    # The trace file used by default unless one of the datasets overrides it
     qemu_trace_file: Path = path_field("/tmp/qemu.pb")
+    # Run qemu with tracing enabled
     qemu_trace: bool = False
+    # Trace categories to enable for qemu-perfetto
     qemu_trace_categories: set[str] = field(default_factory=set)
 
 
@@ -81,6 +84,9 @@ class InstanceConfig(TemplateConfig):
     platform: InstancePlatform = InstancePlatform.QEMU
     cheri_target: InstanceCheriBSD = InstanceCheriBSD.RISCV64_PURECAP
     kernelabi: InstanceKernelABI = InstanceKernelABI.HYBRID
+    # Is the kernel config name managed by cheribuild or is it an extra one
+    # specified via --cheribsd/extra-kernel-configs?
+    cheribuild_kernel: bool = True
     # Internal fields, should not appear in the config file and are missing by default
     platform_options: typing.Optional[PlatformOptions] = field(default=None, init=False)
 
@@ -157,6 +163,10 @@ class Instance(ABC):
     def start(self):
         """Create the runner task that will boot the instance"""
         self.task = self.event_loop.create_task(self._run_instance())
+
+    def kill(self):
+        """Forcibly kill the instance"""
+        self.task.cancel()
 
     def release(self):
         """
@@ -329,8 +339,19 @@ class CheribuildInstance(Instance):
         """Wait for matching I/O from cheribuild on stdout or stderr"""
         event = aio.Event()
         self._io_loop_observers.append((event, matcher))
-        await event.wait()
-        self._io_loop_observers.remove((event, matcher))
+        waiter = self.event_loop.create_task(event.wait())
+        try:
+            done, pending = await aio.wait([waiter, *self._io_tasks], return_when=aio.FIRST_COMPLETED)
+            self._io_loop_observers.remove((event, matcher))
+            errors = [t.exception() for t in done if t.exception() is not None]
+            if errors:
+                self.logger.error("Errors occurred while waiting for instance I/O: %s", errors)
+                raise errors[0]
+        finally:
+            # Mop up the waiter task
+            if not waiter.done() and not waiter.cancelled():
+                waiter.cancel()
+                await waiter
 
     async def _boot(self):
         run_cmd = [self._cheribuild_target("run"), "--skip-update"]
@@ -344,6 +365,10 @@ class CheribuildInstance(Instance):
             self._cheribsd_option("build-bench-kernels"),
             self._cheribsd_option("build-fpga-kernels")
         ]
+        if not self.config.cheribuild_kernel:
+            # If the kernel specified is not a cheribuild-managed kernel we have to tell
+            # cheribuild that it exists
+            run_cmd += [self._cheribsd_option("extra-kernel-configs"), self.config.kernel]
         # Extra qemu options and tracing tags?
         if (self.config.platform_options.qemu_trace):
             # Other backends are not as powerful, so focus on this one
@@ -450,6 +475,14 @@ class InstanceManager:
         # Force-release everything and wait for shutdown
         for instance in self._active_instances.values():
             instance.release()
+        await aio.gather(*[i.wait(InstanceStatus.DEAD) for i in self._active_instances], return_exceptions=True)
         await aio.gather(*[i.wait(InstanceStatus.DEAD) for i in self._shutdown_instances], return_exceptions=True)
         # XXX possibly report any errors here
         self.logger.debug("Instances shutdown completed")
+
+    async def kill(self):
+        # Force kill all instances
+        for instance in self._active_instances.values():
+            instance.kill()
+        await aio.gather(*[i.task for i in self._active_instances.values()], return_exceptions=True)
+        self.logger.debug("Instances killed successfully")
