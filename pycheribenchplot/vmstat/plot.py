@@ -4,6 +4,7 @@ import pandas as pd
 from ..core.dataset import (DatasetID, subset_xs, check_multi_index_aligned, rotate_multi_index_level)
 from ..core.plot import (CellData, DataView, BenchmarkPlot, BenchmarkSubPlot, Surface)
 from ..core.html import HTMLSurface
+from ..core.excel import SpreadsheetSurface
 
 
 class VMStatTable(BenchmarkSubPlot):
@@ -11,11 +12,8 @@ class VMStatTable(BenchmarkSubPlot):
     Base class for vmstat tables
     """
     def get_legend_map(self):
-        legend = {
-            uuid: str(bench.instance_config.kernelabi)
-            for uuid, bench in self.benchmark.merged_benchmarks.items()
-        }
-        legend[self.benchmark.uuid] = f"{self.benchmark.instance_config.kernelabi}(baseline)"
+        legend = {uuid: str(bench.instance_config.name) for uuid, bench in self.benchmark.merged_benchmarks.items()}
+        legend[self.benchmark.uuid] = f"{self.benchmark.instance_config.name}(baseline)"
         return legend
 
     def _remap_display_columns(self, colmap: pd.DataFrame):
@@ -122,7 +120,7 @@ class VMStatTables(BenchmarkPlot):
     ]
 
     def __init__(self, benchmark):
-        super().__init__(benchmark, [HTMLSurface()])  #TODO add ExcelSurface()
+        super().__init__(benchmark, [HTMLSurface(), SpreadsheetSurface()])
 
     def get_plot_name(self):
         return "VMStat Tables"

@@ -226,10 +226,6 @@ class Surface(ABC):
         self.logger = new_logger(str(self))
         self._layout = None
 
-    def output_file_ext(self):
-        """Extension for the output file"""
-        return ""
-
     def set_layout(self, layout: GridLayout):
         """
         Set the layout to use for the surface.

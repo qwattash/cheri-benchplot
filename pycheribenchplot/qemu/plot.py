@@ -4,8 +4,7 @@ import pandas as pd
 from ..core.dataset import (DatasetID, subset_xs, check_multi_index_aligned, rotate_multi_index_level)
 from ..core.plot import (CellData, DataView, BenchmarkPlot, BenchmarkSubPlot, Surface)
 from ..core.html import HTMLSurface
-
-#from ..core.matplotlib import MatplotlibSurface
+from ..core.excel import SpreadsheetSurface
 
 
 class QEMUHistSubPlot(BenchmarkSubPlot):
@@ -14,11 +13,8 @@ class QEMUHistSubPlot(BenchmarkSubPlot):
     The mixin attaches to BenchmarkSubplots.
     """
     def get_legend_map(self):
-        legend = {
-            uuid: str(bench.instance_config.kernelabi)
-            for uuid, bench in self.benchmark.merged_benchmarks.items()
-        }
-        legend[self.benchmark.uuid] = f"{self.benchmark.instance_config.kernelabi}(baseline)"
+        legend = {uuid: str(bench.instance_config.name) for uuid, bench in self.benchmark.merged_benchmarks.items()}
+        legend[self.benchmark.uuid] = f"{self.benchmark.instance_config.name}(baseline)"
         return legend
 
     def get_all_stats_df(self) -> pd.DataFrame:
@@ -217,12 +213,13 @@ class QEMUStrangeSymbolHistTable(QEMUHistTable):
 
 
 class QEMUContextHistTable(QEMUHistTable):
-    def __init__(self, plot, context_procname):
+    def __init__(self, plot: BenchmarkPlot, context_procname: str):
         super().__init__(plot)
         self.process = context_procname
 
     def get_cell_title(self):
-        return f"QEMU PC stats for {self.process}"
+        proc = self.process
+        return f"QEMU PC stats for {proc}"
 
     def _get_filtered_df(self):
         df = self.get_all_stats_df()
@@ -251,7 +248,7 @@ class QEMUTables(BenchmarkPlot):
         return required.issubset(set(dsets))
 
     def __init__(self, benchmark):
-        super().__init__(benchmark, [HTMLSurface()])  #TODO add ExcelSurface()
+        super().__init__(benchmark, [HTMLSurface(), SpreadsheetSurface()])
 
     def _make_subplots(self):
         """
