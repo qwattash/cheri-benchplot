@@ -1,5 +1,6 @@
 import json
 import io
+import re
 import typing
 from pathlib import Path
 
@@ -62,6 +63,27 @@ class PidMapDataset(JSONDataSetContainer):
         df["tid"].fillna(-1, inplace=True)
         df["__dataset_id"] = self.benchmark.uuid
         self._internalize_json(df)
+
+    def load_from_kdump(self, kdump_fd):
+        """
+        Add a system PID sample to the dataset from the output of kdump
+        We inspect the output for fork() syscalls
+        """
+        cols = ["pid", "command", "op", "args"]
+        rows = []
+        for line in kdump_fd:
+            rows.append(re.split("\s+", line.lstrip(), len(cols) - 1))
+        kdump_df = pd.DataFrame.from_records(rows, columns=cols)
+        forks = (kdump_df["op"] == "RET") & (kdump_df["args"].str.startswith("fork"))
+        fork_df = kdump_df[forks].reset_index(drop=True)
+        # fork return is in the form "fork <pid>/<hex-pid>"
+        fork_df["child_pid"] = fork_df["args"].map(lambda arg: arg.split(" ")[1].split("/")[0])
+        pid_df = fork_df[["child_pid", "command"]].rename(columns={"child_pid": "pid"})
+        pid_df["tid"] = -1
+        pid_df["thread_name"] = ""
+        pid_df["__dataset_id"] = self.benchmark.uuid
+        # Assume that the pids do not overlap
+        self._internalize_json(pid_df)
 
     def fixup_missing_tid(self, tid_mapping: pd.DataFrame) -> pd.DataFrame:
         """

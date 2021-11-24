@@ -1,4 +1,4 @@
-import logging
+import io
 import asyncio as aio
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -14,11 +14,16 @@ from ..core.procstat import ProcstatDataset
 
 @dataclass
 class NetperfRunConfig(TemplateConfig):
+    # Path to netperf/netserver in the guest
     netperf_path: Path = path_field("opt/{cheri_target}/netperf/bin")
-    netperf_ktrace_options: list[str] = field(default_factory=list)
+    # Benchmark priming options
     netperf_prime_options: list[str] = field(default_factory=list)
+    # Actual benchmark options
     netperf_options: list[str] = field(default_factory=list)
+    # Netserver options (used for both priming and the actual benchmark)
     netserver_options: list[str] = field(default_factory=list)
+    # use KTRACE netserver to resolve forked netserver PIDs?
+    netserver_resolve_forks: bool = True
 
 
 class NetperfProcstat(ProcstatDataset):
@@ -195,6 +200,8 @@ class NetperfData(CSVDataSetContainer):
         self.netserver_bin = None
         self.netperf_bin = None
         self.run_env = {"STATCOUNTERS_NO_AUTOSAMPLE": "1"}
+        self.netserver_task = None
+        self.kdump_out = self.benchmark.result_path / f"netserver-ktrace-{self.benchmark.uuid}.txt"
 
     def raw_fields(self, include_derived=False):
         return NetperfData.fields
@@ -202,6 +209,15 @@ class NetperfData(CSVDataSetContainer):
     def _load_csv(self, path: Path, **kwargs):
         kwargs["skiprows"] = 1
         return super()._load_csv(path, **kwargs)
+
+    def load(self, path: Path):
+        super().load(path)
+        pidmap = self.benchmark.get_dataset(DatasetID.PIDMAP)
+        if pidmap:
+            # Load the kdump auxiliary data to resolve extra PIDs
+            self.logger.info("Loading netserver PIDs from auxiliary kdump %s", self.kdump_out)
+            with open(self.kdump_out, "r") as kdump_fd:
+                pidmap.load_from_kdump(kdump_fd)
 
     def aggregate(self):
         super().aggregate()
@@ -244,22 +260,41 @@ class NetperfData(CSVDataSetContainer):
             self._set_netperf_option("-g", "qemu")
         return opts
 
+    async def run_pre_benchmark(self):
+        await super().run_pre_benchmark()
+        # Start netserver here so that it does not interfere with any pre-benchmark
+        # mesurements
+        # Note that running the main netserver under ktrace should not affect the benchmark
+        # too much as it forks for each client connnection and ktrace does not follow it, so
+        # the ktrace noise should be limited to the part of the benchmark that is not traced.
+        # This will however introduce some noise in the kernel stats sampled before and after
+        # the whole benchmark run.
+        pidmap = self.benchmark.get_dataset(DatasetID.PIDMAP)
+        if pidmap and self.config.netserver_resolve_forks:
+            netserver_cmd = "ktrace"
+            netserver_options = ["-t", "c", self.netserver_bin] + self.config.netserver_options
+        else:
+            netserver_cmd = self.netserver_bin
+            netserver_options = self.config.netserver_options
+        self.netserver_task = await self.benchmark.run_bg_cmd(netserver_cmd,
+                                                              netserver_options,
+                                                              env=self.run_env,
+                                                              history_command=self.netserver_bin)
+
     async def run_benchmark(self):
         await super().run_benchmark()
-        netserver = await self.benchmark.run_bg_cmd(self.netserver_bin, self.config.netserver_options, env=self.run_env)
-        try:
-            self.logger.info("Prime benchmark")
-            await aio.sleep(5)  # Give some time to settle
-            await self.benchmark.run_cmd(self.netperf_bin, self.config.netperf_prime_options, env=self.run_env)
-            self.logger.info("Run benchmark iterations")
-            with open(self.output_file(), "w+") as outfd:
-                await self.benchmark.run_cmd(self.netperf_bin,
-                                             self.config.netperf_options,
-                                             outfile=outfd,
-                                             env=self.run_env)
-            pidmap = self.benchmark.get_dataset(DatasetID.PIDMAP)
-            if pidmap:
-                # Sample PIDs before stopping netserver
-                await pidmap.sample_system_pids()
-        finally:
-            await self.benchmark.stop_bg_cmd(netserver)
+        self.logger.info("Prime benchmark")
+        await aio.sleep(5)  # Give some time to settle
+        await self.benchmark.run_cmd(self.netperf_bin, self.config.netperf_prime_options, env=self.run_env)
+        self.logger.info("Run benchmark iterations")
+        with open(self.output_file(), "w+") as outfd:
+            await self.benchmark.run_cmd(self.netperf_bin, self.config.netperf_options, outfile=outfd, env=self.run_env)
+
+    async def run_post_benchmark(self):
+        await super().run_post_benchmark()
+        await self.benchmark.stop_bg_cmd(self.netserver_task)
+        pidmap = self.benchmark.get_dataset(DatasetID.PIDMAP)
+        if pidmap and self.config.netserver_resolve_forks:
+            # Grab the extra pids forked by netserver
+            with open(self.kdump_out, "w+") as kdump_fd:
+                await self.benchmark.run_cmd("kdump", ["-s"], outfile=kdump_fd)

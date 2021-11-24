@@ -3,20 +3,29 @@
     "ssh_key": "~/cheri/cheri-benchplot/extra_files/freebsd_test_id_rsa",
     "instances": [
         {
+            "name": "hybrid",
             "baseline": true,
-            "terminate_on_reset": true,
             "kernel": "CHERI-QEMU-NODEBUG",
             "platform": "qemu",
             "cheri_target": "riscv64-purecap",
             "kernelabi": "hybrid"
         },
         {
+            "name": "purecap",
             "baseline": false,
-            "terminate_on_reset": true,
             "kernel": "CHERI-PURECAP-QEMU-NODEBUG",
             "platform": "qemu",
             "cheri_target": "riscv64-purecap",
             "kernelabi": "purecap"
+        },
+        {
+            "name": "purecap-mbuf-pad",
+            "baseline": false,
+            "kernel": "CHERI-PURECAP-QEMU-MBUF-FIXUP",
+            "platform": "qemu",
+            "cheri_target": "riscv64-purecap",
+            "kernelabi": "purecap",
+            "cheribuild_kernel": false
         }
     ],
     "benchmarks": [

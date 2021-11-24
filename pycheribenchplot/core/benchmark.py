@@ -213,7 +213,7 @@ class BenchmarkBase(TemplateConfigContext):
         The first thing that the remote command will print will contain the process PID,
         this is handled by the _cmd_io() loop.
         """
-        cmdline = f"{cmd} " + " ".join(args)
+        cmdline = f"{cmd} " + " ".join(map(str, args))
         exports = [f"export {name}={value};" for name, value in env.items()]
         export_line = " ".join(exports)
         sh_cmd = ["sh", "-c", f"'echo $$;{export_line} exec {cmdline}'"]
@@ -259,12 +259,24 @@ class BenchmarkBase(TemplateConfigContext):
         finally:
             self.logger.debug("Background task %s done", proc_task.command)
 
-    async def run_bg_cmd(self, command: str, args: list, env={}, iocallback=None):
-        """Run a background command without waiting for termination"""
+    async def run_bg_cmd(self, command: str, args: list, env={}, iocallback=None, history_command: str = None):
+        """
+        Run a background command without waiting for termination.
+
+        Arguments:
+        command: the command to execute
+        args: list of command arguments
+        env: any environment variables for the command
+        iocallback: a function to be called to inspect the command output. The function
+        is called asynchronously.
+        history_command: override command name in the command history
+        """
+        if history_command is None:
+            history_command = command
         remote_cmd = self._build_remote_command(command, args, env)
         self.logger.debug("SH exec background: %s", remote_cmd)
         proc_task = await self._conn.create_process(" ".join(remote_cmd))
-        self.command_history[proc_task] = CommandHistoryEntry(command)
+        self.command_history[proc_task] = CommandHistoryEntry(history_command)
         self._command_tasks.append(aio.create_task(self._cmd_io(proc_task, iocallback)))
         return proc_task
 
