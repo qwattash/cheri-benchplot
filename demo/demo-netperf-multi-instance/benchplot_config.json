@@ -33,6 +33,7 @@
             "name": "udp_rr_50_1b",
             "desc": "UDP RR 50 transactions 1-byte",
             "type": "netperf",
+            "iterations": 2,
             "benchmark_dataset": {
                 "type": "netperf-data",
                 "run_options": {
