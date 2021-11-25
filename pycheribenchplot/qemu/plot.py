@@ -106,7 +106,7 @@ class QEMUHistTable(QEMUHistSubPlot):
         """Columns to display for all benchmark runs"""
         cols = ["bb_count", "call_count"]
         if debug_columns:
-            cols += ["start", "start_call", "valid_symbol"]
+            cols += ["start", "target", "valid_symbol"]
         return cols
 
     def _get_non_baseline_display_columns(self, debug_columns=False):
@@ -158,7 +158,7 @@ class QEMUHistTable(QEMUHistSubPlot):
         # Proper hex formatting
         col_formatter = {
             col: lambda v: f"0x{int(v):x}" if not np.isnan(v) else "?"
-            for col in colmap[["start", "start_call"]].values.ravel()
+            for col in colmap[["start", "target"]].values.ravel()
         }
         view = surface.make_view("table", df=view_df, yleft=show_cols, fmt=col_formatter)
         cell.add_view(view)

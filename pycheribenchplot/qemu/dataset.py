@@ -54,7 +54,6 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
         IndexField("cid", dtype=int),
         IndexField("EL", dtype=int),
         # IndexField("AS", dtype=int),
-        Field("start", dtype=np.uint),
         DerivedField("valid_symbol", dtype=object, isdata=False)
     ]
 
@@ -64,7 +63,20 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
         return fields
 
     def _get_slice_name(self) -> str:
-        raise NotImplementedError("Subclass must specialize")
+        """Get the name of the slices containing histogram data for this dataset"""
+        raise NotImplementedError("Must override")
+
+    def _get_arg_key_map(self) -> dict[str, str]:
+        """Get mapping of argument flat_key to destination column in the imported dataframe"""
+        raise NotImplementedError("Must override")
+
+    def _get_symbol_column(self):
+        """Return the colum to use to populate the file/symbol indexes"""
+        raise NotImplementedError("Must override")
+
+    def delta_columns(self):
+        """Return columns for which to compute derived delta columns"""
+        raise NotImplementedError("Must override")
 
     def _decode_track_name(self, track_name: str):
         """
@@ -77,12 +89,6 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
             pid = int(parts[0][len("CTX "):])
             track_info.update({"pid": pid, "tid": int(parts[1]), "cid": int(parts[2]), "EL": int(parts[3])})
         return track_info
-
-    def _get_arg_key_map(self):
-        """
-        Get mapping of argument flat_key to destination column in the imported dataframe
-        """
-        return {"qemu.histogram.bucket.start": "start"}
 
     def _extract_track_stats(self, tp, track):
         """
@@ -151,52 +157,65 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
         self.df["process"] = join_df["command_pidmap"]
         self.df["thread"] = join_df["thread_name_pidmap"]
 
-    def pre_merge(self):
+    def _resolve_sym_column(self, col: str, addrspace_key: str) -> pd.DataFrame:
         """
-        Resolve symbols to mach each entry to the function containing it.
-        We update the raw-data dataframe with a new column accordingly.
+        Resolve symbols given a column containing addresses.
+        The addrspace_key is the column providing the address-space name for the symbol resolver.
+        This will not change the dataframe, instead returns a dataframe with the same index as
+        the main dataframe, with columns "file", "symbol", "valid_symbol" containing the mapped file/symbol
+        and the status result of the mapping process
         """
-        super().pre_merge()
-        self._resolve_pid_tid()
-
-        # Resolve file:symbol for each address so that we can aggregate counts for each one of them
         resolver = self.benchmark.sym_resolver
-        resolved = self.df.apply(lambda row: resolver.lookup_fn(row["start"], Path(row["process"]).name), axis=1)
-        self.df["valid_symbol"] = "ok"
-        self.df.loc[resolved.isna(), "valid_symbol"] = "no-match"
         # XXX-AM: the symbol size does not appear to be reliable?
+        # otherwise we should check also the resolved syminfo size as in:
         # sym_end = resolved.map(lambda syminfo: syminfo.addr + syminfo.size if syminfo else np.nan)
         # size_mismatch = (~sym_end.isna()) & (self.df["start"] > sym_end)
         # self.df.loc[size_mismatch, "valid_symbol"] = "size-mismatch"
+        resolved = self.df.apply(lambda row: resolver.lookup_fn(row[col], row[addrspace_key]), axis=1)
+        resolved_df = pd.DataFrame(None, index=resolved.index)
+        resolved_df["valid_symbol"] = resolved.mask(resolved.isna(), "no-match")
+        resolved_df["valid_symbol"].where(resolved.isna(), "ok", inplace=True)
 
-        invalid_syms = self.df["valid_symbol"] != "ok"
-        self.df["symbol"] = resolved[~invalid_syms].map(lambda syminfo: syminfo.name)
-        # self.df["symbol"] = resolved.map(lambda syminfo: syminfo.name if syminfo else None)
-        self.df.loc[invalid_syms, "symbol"] = self.df.loc[invalid_syms, "start"].transform(lambda addr: f"0x{addr:x}")
+        resolved_df["symbol"] = resolved.map(lambda si: si.name, na_action="ignore")
+        resolved_df["symbol"].mask(resolved.isna(), self.df[col].transform(lambda addr: f"0x{addr:x}"), inplace=True)
         # Note: For the file name, we omit the directory part as otherwise the same executable
         # in different directories will be picked up as a completely different file. This is
         # not useful when comparing different compilations that have different paths e.g. the kernel
-        # We also have to handle rtld manually to map its name.
-        self.df["file"] = resolved[~invalid_syms].map(lambda syminfo: syminfo.filepath.name)
-        self.df.loc[invalid_syms, "file"] = "unknown"
+        # TODO: We also have to handle rtld manually to map its name.
+        resolved_df["file"] = resolved.map(lambda si: si.filepath.name, na_action="ignore")
+        resolved_df["file"].mask(resolved.isna(), "unknown", inplace=True)
+        return resolved_df
 
     def _get_agg_strategy(self):
         """Return mapping of column-name => aggregation function for the columns we need to aggregate"""
-        agg = {"start": "min", "valid_symbol": lambda vec: ",".join(vec.unique())}
-        agg.update({col: "sum" for col in self.delta_columns()})
+        agg = {"valid_symbol": lambda vec: ",".join(vec.unique())}
         return agg
 
     def get_aggregate_index(self):
         """Index levels on which we aggregate"""
         return ["process", "thread", "EL", "file", "symbol"]
 
+    def pre_merge(self):
+        """
+        Common pre-merge resolves the file/symbol and valid symbol column based on
+        the column name given by _get_symbol_column()
+        """
+        super().pre_merge()
+        self._resolve_pid_tid()
+        self.df["process_name"] = self.df["process"].map(lambda p: Path(p).name)
+        sym_col = self._get_symbol_column()
+        resolved = self._resolve_sym_column(sym_col, "process_name")
+        # Populate the file, symbol and valid_symbol columns
+        self.df = pd.concat([self.df, resolved], axis=1)
+
     def aggregate(self):
+        """
+        Common aggregation step, customization should occur via _get_agg_strategy()
+        and get_aggregate_index()
+        """
         super().aggregate()
         grouped = self.merged_df.groupby(["__dataset_id"] + self.get_aggregate_index())
         self.agg_df = grouped.agg(self._get_agg_strategy())
-
-    def delta_columns(self):
-        return self.data_columns()
 
     def post_aggregate(self):
         super().post_aggregate()
@@ -244,6 +263,7 @@ class QEMUStatsBBHistogramDataset(ContextStatsHistogramBase):
     """Basic-block hit count histogram"""
     dataset_id = "qemu-stats-bb"
     fields = [
+        Field("start", dtype=np.uint),
         Field("end", dtype=np.uint),
         DataField("bb_count", dtype=int),
         DerivedField("delta_bb_count", dtype=int),
@@ -255,17 +275,26 @@ class QEMUStatsBBHistogramDataset(ContextStatsHistogramBase):
         fields += [f for f in QEMUStatsBBHistogramDataset.fields if include_derived or not f.isderived]
         return fields
 
-    def _get_arg_key_map(self):
-        mapping = super()._get_arg_key_map()
-        mapping.update({"qemu.histogram.bucket.end": "end", "qemu.histogram.bucket.value": "bb_count"})
-        return mapping
-
     def _get_slice_name(self):
         return "bb_hist"
 
+    def _get_arg_key_map(self):
+        mapping = {
+            "qemu.histogram.bb_bucket.start": "start",
+            "qemu.histogram.bb_bucket.end": "end",
+            "qemu.histogram.bb_bucket.value": "bb_count"
+        }
+        return mapping
+
+    def _get_symbol_column(self):
+        return "start"
+
+    def delta_columns(self):
+        return ["bb_count"]
+
     def _get_agg_strategy(self):
         agg = super()._get_agg_strategy()
-        agg["end"] = "max"
+        agg.update({"start": "min", "end": "max", "bb_count": "sum"})
         return agg
 
 
@@ -273,24 +302,46 @@ class QEMUStatsBranchHistogramDataset(ContextStatsHistogramBase):
     """Branch instruction target hit count histogram"""
     dataset_id = "qemu-stats-call"
     fields = [
-        DataField("branch_count", dtype=int),
+        IndexField("source_file", dtype=str, isderived=True),
+        IndexField("source_symbol", dtype=str, isderived=True),
+        Field("source", dtype=np.uint),
+        Field("target", dtype=np.uint),
+        Field("branch_count", dtype=int),
         DerivedField("call_count", dtype=int),
         DerivedField("delta_call_count", dtype=int),
         DerivedField("norm_delta_call_count", dtype=float)
     ]
-
-    def _get_slice_name(self):
-        return "branch_hist"
 
     def raw_fields(self, include_derived=False):
         fields = super().raw_fields(include_derived)
         fields += [f for f in QEMUStatsBranchHistogramDataset.fields if include_derived or not f.isderived]
         return fields
 
+    def _get_slice_name(self):
+        return "branch_hist"
+
     def _get_arg_key_map(self):
-        mapping = super()._get_arg_key_map()
-        mapping.update({"qemu.histogram.bucket.value": "branch_count"})
+        mapping = {
+            "qemu.histogram.branch_bucket.source": "source",
+            "qemu.histogram.branch_bucket.target": "target",
+            "qemu.histogram.branch_bucket.value": "branch_count"
+        }
         return mapping
+
+    def _get_symbol_column(self):
+        return "target"
+
+    def delta_columns(self):
+        return ["call_count"]
+
+    def _get_agg_strategy(self):
+        agg = super()._get_agg_strategy()
+        agg.update({"source": "min", "target": "min", "call_count": "sum"})
+        return agg
+
+    def get_aggregate_index(self):
+        cols = super().get_aggregate_index()
+        return cols + ["source_file", "source_symbol"]
 
     def pre_merge(self):
         """
@@ -298,15 +349,14 @@ class QEMUStatsBranchHistogramDataset(ContextStatsHistogramBase):
         We update the raw-data dataframe with a new column accordingly.
         """
         super().pre_merge()
-        resolver = self.benchmark.sym_resolver
+        # Resolve the secondary file/symbol index for the source address
+        resolved = self._resolve_sym_column("source", "process_name")
+        resolved = resolved.add_prefix("source_")
+        self.df = pd.concat((self.df, resolved), axis=1)
         # Generate now a new column only for entries that exactly match symbols, meaning that
         # these are function calls is the first basic-block of the function and is considered as an individual call
         # to that function
-        is_call = self.df.apply(lambda row: resolver.match_fn(row["start"],
-                                                              Path(row["process"]).name) is not None,
-                                axis=1)
-        self.df["call_count"] = self.df["branch_count"].mask(~is_call, 0).astype(int)
-
-    def delta_columns(self):
-        cols = super().delta_columns()
-        return cols + ["call_count"]
+        resolver = self.benchmark.sym_resolver
+        match = self.df.apply(lambda row: resolver.match_fn(row["target"], row["process_name"]), axis=1)
+        is_call = ~match.isna()
+        self.df["call_count"] = self.df["branch_count"].where(is_call, 0).astype(int)
