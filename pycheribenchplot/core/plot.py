@@ -10,7 +10,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 from .util import new_logger
-from .dataset import DatasetID
+from .dataset import DatasetArtefact
 from .analysis import BenchmarkAnalysis
 
 
@@ -283,7 +283,7 @@ class BenchmarkPlot(BenchmarkAnalysis):
     subplots = []
 
     @classmethod
-    def check_required_datasets(cls, dsets: list[DatasetID]):
+    def check_required_datasets(cls, dsets: list[DatasetArtefact]):
         """
         Check if any of the subplots we have can be generated
         """
@@ -363,7 +363,7 @@ class BenchmarkSubPlot(ABC):
         self.plot = plot
         self.benchmark = self.plot.benchmark
 
-    def get_dataset(self, dset_id: DatasetID):
+    def get_dataset(self, dset_id: DatasetArtefact):
         """Helper to access datasets in the benchmark"""
         dset = self.plot.get_dataset(dset_id)
         assert dset is not None, "Subplot scheduled with missing dependency"

@@ -1,4 +1,4 @@
-from ..core.dataset import DatasetID
+from ..core.dataset import DatasetName
 from ..core.analysis import BenchmarkAnalysis
 
 
@@ -8,11 +8,11 @@ class NetperfSanityCheck(BenchmarkAnalysis):
     """
     @classmethod
     def check_required_datasets(cls, dsets):
-        return DatasetID.NETPERF_DATA in set(dsets)
+        return DatasetName.NETPERF_DATA in set(dsets)
 
     def process_datasets(self):
         self.logger.info("Verify integrity of netperf datasets")
-        dset = self.get_dataset(DatasetID.NETPERF_DATA)
+        dset = self.get_dataset(DatasetName.NETPERF_DATA)
         # Check that all benchmarks report the same number of iterations
         if "Confidence Iterations Run" in dset.agg_df.columns:
             if len(dset.agg_df["Confidence Iterations Run"].unique()) > 1:
@@ -22,7 +22,7 @@ class NetperfSanityCheck(BenchmarkAnalysis):
                 "Can not verify netperf iteration count, consider enabling the CONFIDENCE_ITERATION output")
         # Check that all benchmarks ran a consistent amount of sampling
         # functions in libstatcounters
-        dset = self.get_dataset(DatasetID.QEMU_STATS_CALL_HIST)
+        dset = self.get_dataset(DatasetName.QEMU_STATS_CALL_HIST)
         if dset:
             syms_index = dset.agg_df.index.get_level_values("symbol")
             cpu_start = syms_index == "cpu_start"

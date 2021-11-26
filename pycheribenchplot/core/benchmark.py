@@ -15,7 +15,7 @@ from .config import TemplateConfig, TemplateConfigContext
 from .instance import InstanceConfig, InstanceInfo, PlatformOptions
 from .procstat import ProcstatDataset
 from .pidmap import PidMapDataset
-from .dataset import DatasetRegistry, DatasetID, DataSetContainer
+from .dataset import (DatasetRegistry, DatasetArtefact, DatasetName, DataSetContainer)
 from .analysis import BenchmarkAnalysisRegistry
 from .plot import BenchmarkPlot
 from .elf import Symbolizer
@@ -43,7 +43,7 @@ class BenchmarkDataSetConfig(TemplateConfig):
     type: identifier of the dataset handler that generates and imports the dataset
     run_options: dataset-specific options to produce the dataset
     """
-    type: DatasetID
+    type: DatasetName
     run_options: dict[str, any] = field(default_factory=dict)
 
 
@@ -57,12 +57,14 @@ class BenchmarkRunConfig(TemplateConfig):
 
     Attributes
     name: display name for the benchmark setup
+    iterations: the number of iterations of the benchmark to run
     desc: human-readable benchmark setup description
     benchmark_dataset: Configuration for the dataset handler that runs the actual benchmark
     datasets: Additional datasets configuration. Each entry describes a dataset handler that
       is used to generate additional information about the benchmark and process it.
     """
     name: str
+    iterations: int
     benchmark_dataset: BenchmarkDataSetConfig
     datasets: dict[str, BenchmarkDataSetConfig]
     desc: str = ""
@@ -106,7 +108,8 @@ class BenchmarkBase(TemplateConfigContext):
 
         self._bind_early_configs()
         # This is needed before collecting datasets as the output file path uses this.
-        self.result_path = self.manager.session_output_path / str(self.uuid)
+        self._result_path = self.manager.session_output_path / str(self.uuid)
+        self.result_path = self._result_path  # XXX backward compat, remove
         self.datasets = {}
         self._collect_datasets()
         self._bind_configs()
@@ -116,7 +119,7 @@ class BenchmarkBase(TemplateConfigContext):
         if not rootfs_path.exists() or not rootfs_path.is_dir():
             raise Exception(f"Invalid rootfs path {rootfs_path} for benchmark instance")
         self.rootfs = rootfs_path
-        self.result_path.mkdir(parents=True, exist_ok=True)
+        self._result_path.mkdir(parents=True, exist_ok=True)
 
         self._configure_datasets()
 
@@ -128,7 +131,10 @@ class BenchmarkBase(TemplateConfigContext):
         # Map uuids to benchmarks that have been merged into the current instance (which is the baseline)
         # so that we can look them up if necessary
         self.merged_benchmarks = {}
+        # Symbol mapping handler for this benchmark instance
         self.sym_resolver = Symbolizer(self)
+        # Current benchmark iteration being run, only valid within the run step.
+        self.current_iteration = None
         self.logger.info("Benchmark instance with UUID=%s", self.uuid)
 
     def _bind_early_configs(self):
@@ -157,49 +163,85 @@ class BenchmarkBase(TemplateConfigContext):
         """
         Initialize dataset instances from the configuration.
         Note that this must happen before we perform the second pass of configuration template resolution
+        XXX-AM: do we really care about template substitution in config anymore?
         """
         # The main dataset for the benchmark
         self.datasets[self.config.benchmark_dataset.type] = self._get_dataset_handler(
             "benchmark", self.config.benchmark_dataset)
         # Implicit auxiliary datasets
-        self.datasets[DatasetID.PROCSTAT] = self._get_dataset_handler("procstat",
-                                                                      BenchmarkDataSetConfig(type=DatasetID.PROCSTAT))
-        self.datasets[DatasetID.PIDMAP] = self._get_dataset_handler("pidmap",
-                                                                    BenchmarkDataSetConfig(type=DatasetID.PIDMAP))
+        # Procstat dataset should be added in configuration file as it depends on the benchmark
+        # self.datasets[DatasetArtefact.PROCSTAT] = self._get_dataset_handler(
+        #     "procstat", BenchmarkDataSetConfig(type=DatasetName.PROCSTAT))
+        self.datasets[DatasetArtefact.PIDMAP] = self._get_dataset_handler(
+            "pidmap", BenchmarkDataSetConfig(type=DatasetName.PIDMAP))
         # Extra datasets configured
         for name, config in self.config.datasets.items():
             assert config.type not in self.datasets, "Duplicate dataset name"
             self.datasets[config.type] = self._get_dataset_handler(name, config)
 
         # Collect the datasets that are supposed to generate output.
-        # If multiple datasets produce the same output, assume it to be equivalent and
+        # These are only used for running the benchmark.
+        # If multiple datasets have the same dataset_source_id, assume it to be equivalent and
         # just pick one of them (this is the case for commands that produce multiple datasets).
-        self.datasets_gen = {dset.output_file(): dset for dset in self.datasets.values()}
+        self.datasets_gen = {}
+        for dset in self.datasets.values():
+            if dset.dataset_source_id not in self.datasets_gen:
+                self.datasets_gen[dset.dataset_source_id] = dset
 
         # Summary
         for did, dset in self.datasets.items():
             role = "benchmark" if did == self.config.benchmark_dataset.type else "aux"
-            dataset_file = dset.output_file()
-            generator = self.datasets_gen[dataset_file]
+            dataset_artefact = dset.dataset_source_id
+            generator = self.datasets_gen[dataset_artefact]
             if generator == dset:
-                generator_status = f"generator for {dataset_file}"
+                generator_status = f"generator for {dataset_artefact}"
             else:
-                generator_status = f"depends on {dataset_file}"
+                generator_status = f"depends on {dataset_artefact}"
             self.logger.debug("Configured %s dataset: %s (%s) %s", role, dset.name, dset.__class__.__name__,
                               generator_status)
 
     def _get_dataset_handler(self, dset_key: str, config: BenchmarkDataSetConfig):
         """Resolve the parser for the given dataset"""
-        ds_id = DatasetID(config.type)
-        handler_class = DatasetRegistry.resolve(ds_id, self.config.benchmark_dataset.type)
+        ds_name = DatasetName(config.type)
+        handler_class = DatasetRegistry.resolve_name(ds_name)
         handler = handler_class(self, dset_key, config)
         return handler
 
     def _dataset_generators_sorted(self, reverse=False) -> list[DataSetContainer]:
         return sorted(self.datasets_gen.values(), key=lambda ds: ds.dataset_run_order, reverse=reverse)
 
-    def get_dataset(self, parser_id: DatasetID):
-        return self.datasets.get(parser_id, None)
+    def get_output_path(self):
+        """
+        Get base output path for the current benchmark instance.
+        This can be used as a base path or to store data that is not specific to a single iteration
+        of the benchmark.
+        """
+        return self.manager.session_output_path / str(self.uuid)
+
+    def get_iter_output_path(self):
+        """
+        Return the output directory path for the current benchmark iteration.
+        This should be used by all datasets to store the output files.
+        """
+        assert self.current_iteration is not None, "current_iteration must be set"
+        iter_path = self.get_output_path() / str(self.current_iteration)
+        iter_path.mkdir(exists_ok=True)
+        return iter_path
+
+    def get_dataset(self, name: DatasetName):
+        return self.datasets.get(name, None)
+
+    def get_dataset_by_artefact(self, ds_id: DatasetArtefact):
+        """
+        Lookup a generic dataset by the artefact ID.
+        Note that this will fail if there are multiple matches
+        """
+        match = [dset for dset in self.datasets.values() if dset.dataset_source_id == ds_id]
+        if len(match) > 1:
+            raise KeyError("Multiple matching dataset for artefact %s", ds_id)
+        if len(match):
+            return match[0]
+        return None
 
     def _record_benchmark_run(self):
         record = BenchmarkRunRecord(uuid=self.uuid, instance=self.instance_config, run=self.config)
@@ -338,15 +380,28 @@ class BenchmarkBase(TemplateConfigContext):
         self._reserved_instance = await self.instance_manager.request_instance(self.uuid, self.instance_config)
         try:
             self._conn = await self._connect_instance(self._reserved_instance)
-            for dset in self._dataset_generators_sorted():
+            pre_generators = self._dataset_generators_sorted()
+            post_generators = self._dataset_generators_sorted(reverse=True)
+
+            for dset in pre_generators:
                 await dset.run_pre_benchmark()
-            # Only run the benchmark step for the given benchmark_dataset
-            with timing("Benchmark completed", logger=self.logger):
-                await bench_dset.run_benchmark()
-            for dset in self._dataset_generators_sorted(reverse=True):
+
+            for i in range(self.config.iterations):
+                self.current_iteration = i
+                self.logger.info("Running benchmark iteration %d", i)
+                for dset in pre_generators:
+                    await dset.run_pre_benchmark_iter()
+                # Only run the benchmark step for the given benchmark_dataset
+                with timing("Benchmark completed", logger=self.logger):
+                    await bench_dset.run_benchmark()
+                for dset in post_generators:
+                    await dset.run_post_benchmark_iter()
+
+            for dset in post_generators:
                 await dset.run_post_benchmark()
+
+            # Record successful run and cleanup any pending background task
             self._record_benchmark_run()
-            # Stop all pending background processes
             for t in self._command_tasks:
                 t.cancel()
             await aio.gather(*self._command_tasks, return_exceptions=True)
@@ -354,6 +409,8 @@ class BenchmarkBase(TemplateConfigContext):
             self.logger.exception("Benchmark run failed: %s", ex)
             self.manager.failed_benchmarks.append(self)
         finally:
+            # Just in case, to avoid accidental reuse
+            self.current_iteration = None
             await self.instance_manager.release_instance(self.uuid)
 
     def _load_kernel_symbols(self):

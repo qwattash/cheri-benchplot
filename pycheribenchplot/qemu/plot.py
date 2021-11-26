@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from ..core.dataset import (DatasetID, subset_xs, check_multi_index_aligned, rotate_multi_index_level)
+from ..core.dataset import (DatasetName, subset_xs, check_multi_index_aligned, rotate_multi_index_level)
 from ..core.plot import (CellData, DataView, BenchmarkPlot, BenchmarkSubPlot, Surface)
 from ..core.html import HTMLSurface
 from ..core.excel import SpreadsheetSurface
@@ -21,8 +21,8 @@ class QEMUHistSubPlot(BenchmarkSubPlot):
         """
         Join the stats datasets on the index
         """
-        bb_df = self.get_dataset(DatasetID.QEMU_STATS_BB_HIST).agg_df
-        call_df = self.get_dataset(DatasetID.QEMU_STATS_CALL_HIST).agg_df
+        bb_df = self.get_dataset(DatasetName.QEMU_STATS_BB_HIST).agg_df
+        call_df = self.get_dataset(DatasetName.QEMU_STATS_CALL_HIST).agg_df
         return bb_df.join(call_df, how="outer", lsuffix="", rsuffix="_call")
 
     def _get_group_levels(self, indf: pd.DataFrame):
@@ -96,7 +96,7 @@ class QEMUHistTable(QEMUHistSubPlot):
     @classmethod
     def get_required_datasets(cls):
         dsets = super().get_required_datasets()
-        dsets += [DatasetID.QEMU_STATS_BB_HIST, DatasetID.QEMU_STATS_CALL_HIST]
+        dsets += [DatasetName.QEMU_STATS_BB_HIST, DatasetName.QEMU_STATS_CALL_HIST]
         return dsets
 
     def _get_filtered_df(self):
@@ -240,11 +240,11 @@ class QEMUTables(BenchmarkPlot):
     ]
 
     @classmethod
-    def check_required_datasets(cls, dsets: list[DatasetID]):
+    def check_required_datasets(cls, dsets: list[DatasetName]):
         """
         Check dataset list against qemu stats dataset names
         """
-        required = set([DatasetID.QEMU_STATS_BB_HIST, DatasetID.QEMU_STATS_CALL_HIST])
+        required = set([DatasetName.QEMU_STATS_BB_HIST, DatasetName.QEMU_STATS_CALL_HIST])
         return required.issubset(set(dsets))
 
     def __init__(self, benchmark):
@@ -256,9 +256,9 @@ class QEMUTables(BenchmarkPlot):
         """
         subplots = []
         contexts = set()
-        bb_df = self.benchmark.get_dataset(DatasetID.QEMU_STATS_BB_HIST).agg_df
+        bb_df = self.benchmark.get_dataset(DatasetName.QEMU_STATS_BB_HIST).agg_df
         contexts.update(bb_df.index.get_level_values("process").unique())
-        call_df = self.benchmark.get_dataset(DatasetID.QEMU_STATS_CALL_HIST).agg_df
+        call_df = self.benchmark.get_dataset(DatasetName.QEMU_STATS_CALL_HIST).agg_df
         contexts.update(call_df.index.get_level_values("process").unique())
         for ctx in contexts:
             subplots.append(QEMUContextHistTable(self, ctx))

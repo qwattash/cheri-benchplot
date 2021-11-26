@@ -39,6 +39,7 @@ class _TraceProcessorCache:
         return processor
 
     def _shutdown(self):
+        self.logger.debug("Shutdown perfetto instances %s", self._instances)
         for tp in self._instances.values():
             tp.close()
 

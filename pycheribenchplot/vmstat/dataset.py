@@ -5,7 +5,8 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 
-from ..core.dataset import (DatasetID, DatasetRunOrder, DataField, Field, IndexField, align_multi_index_levels)
+from ..core.dataset import (DatasetArtefact, DatasetName, DatasetRunOrder, DataField, Field, IndexField,
+                            align_multi_index_levels)
 from ..core.json import JSONDataSetContainer
 from ..core.csv import CSVDataSetContainer
 
@@ -15,7 +16,8 @@ class UMAZoneInfoDataset(CSVDataSetContainer):
     Extract UMA zone information from the uma SYSCTL nodes
     XXX processing is essentially the same as the other VMStat datasets so may share some code
     """
-    dataset_id = DatasetID.VMSTAT_UMA_INFO
+    dataset_config_name = DatasetName.VMSTAT_UMA_INFO
+    dataset_source_id = DatasetArtefact.UMA_ZONE_INFO
     fields = [
         IndexField("name", dtype=str),
         DataField("efficiency", dtype=float),
@@ -141,7 +143,7 @@ class VMStatDataset(JSONDataSetContainer):
         """
         return self.benchmark.result_path / f"vmstat-{self.benchmark.uuid}.json"
 
-    async def run_pre_benchmark(self):
+    async def run_pre_benchmark_iter(self):
         """
         Run a vmstat snapshot before the benchmark runs.
         """
@@ -151,7 +153,7 @@ class VMStatDataset(JSONDataSetContainer):
             await self.benchmark.run_cmd("vmstat", ["--libxo", "json", "-H", "-i", "-m", "-o", "-P", "-z"],
                                          outfile=vmstat_out)
 
-    async def run_post_benchmark(self):
+    async def run_post_benchmark_iter(self):
         """
         Run a vmstat snapshot after the benchmark runs.
         """
@@ -163,7 +165,8 @@ class VMStatDataset(JSONDataSetContainer):
 
 
 class VMStatKMalloc(VMStatDataset):
-    dataset_id = DatasetID.VMSTAT_MALLOC
+    dataset_config_name = DatasetName.VMSTAT_MALLOC
+    dataset_source_id = DatasetArtefact.VMSTAT
     dataset_run_order = DatasetRunOrder.LAST
     fields = [
         IndexField("type", dtype=str),
@@ -193,7 +196,8 @@ class VMStatKMalloc(VMStatDataset):
 
 
 class VMStatUMA(VMStatDataset):
-    dataset_id = DatasetID.VMSTAT_UMA
+    dataset_config_name = DatasetName.VMSTAT_UMA
+    dataset_source_id = DatasetArtefact.VMSTAT
     dataset_run_order = DatasetRunOrder.LAST
     fields = [
         IndexField("name", dtype=str),

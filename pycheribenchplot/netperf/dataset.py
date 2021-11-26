@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 from ..core.config import TemplateConfig, path_field
-from ..core.dataset import (DatasetID, Field, DataField, StrField, IndexField, col2stat)
+from ..core.dataset import (DatasetArtefact, DatasetName, Field, DataField, StrField, IndexField)
 from ..core.csv import CSVDataSetContainer
 from ..core.procstat import ProcstatDataset
 
@@ -28,15 +28,13 @@ class NetperfRunConfig(TemplateConfig):
 
 class NetperfProcstat(ProcstatDataset):
     """
-    Netperf procstat runner and parser.
-    This replaces the base procstat dataset in netperf.
-    TODO support multiple outputs per dataset to split the generator/parser interfaces
-    This will be tacked on the netperf generator instead.
+    Specialized netperf procstat dataset generator/parser.
     """
-    benchmark_dataset_filter = [DatasetID.NETPERF_DATA]
+    dataset_config_name = DatasetName.PROCSTAT_NETPERF
 
     async def run_pre_benchmark(self):
-        netperf = self.benchmark.get_dataset(DatasetID.NETPERF_DATA)
+        netperf = self.benchmark.get_dataset(DatasetName.NETPERF_DATA)
+        assert netperf, "Netperf dataset is missing"
         netperf_stopped = await self.benchmark.run_bg_cmd(netperf.netperf_bin, ["-z"], env=netperf.run_env)
         await aio.sleep(5)  # Give some time to settle
         try:
@@ -47,7 +45,8 @@ class NetperfProcstat(ProcstatDataset):
 
 
 class NetperfData(CSVDataSetContainer):
-    dataset_id = "netperf-data"
+    dataset_config_name = DatasetName.NETPERF_DATA
+    dataset_source_id = DatasetArtefact.NETPERF
     run_options_class = NetperfRunConfig
     fields = [
         StrField("Socket Type"),
@@ -212,7 +211,7 @@ class NetperfData(CSVDataSetContainer):
 
     def load(self, path: Path):
         super().load(path)
-        pidmap = self.benchmark.get_dataset(DatasetID.PIDMAP)
+        pidmap = self.benchmark.get_dataset_by_artefact(DatasetArtefact.PIDMAP)
         if pidmap:
             # Load the kdump auxiliary data to resolve extra PIDs
             self.logger.info("Loading netserver PIDs from auxiliary kdump %s", self.kdump_out)
@@ -248,10 +247,10 @@ class NetperfData(CSVDataSetContainer):
         self.netserver_bin = Path("/") / rootfs_netserver_bin.relative_to(self.benchmark.rootfs)
         self.logger.debug("Using %s %s", self.netperf_bin, self.netserver_bin)
         # Determine any extra options for cooperation with other datasets
-        pmc = self.benchmark.get_dataset(DatasetID.PMC)
-        qemu = (self.benchmark.get_dataset(DatasetID.QEMU_STATS_BB_HIST)
-                or self.benchmark.get_dataset(DatasetID.QEMU_STATS_BB_CALL)
-                or self.benchmark.get_dataset(DatasetID.QEMU_CTX_CTRL))
+        pmc = self.benchmark.get_dataset(DatasetName.PMC)
+        qemu = (self.benchmark.get_dataset(DatasetName.QEMU_STATS_BB_HIST)
+                or self.benchmark.get_dataset(DatasetName.QEMU_STATS_BB_CALL)
+                or self.benchmark.get_dataset(DatasetName.QEMU_CTX_CTRL))
         if pmc:
             self._set_netperf_option("-G", pmc.output_file().name)
             if not qemu:
@@ -269,7 +268,7 @@ class NetperfData(CSVDataSetContainer):
         # the ktrace noise should be limited to the part of the benchmark that is not traced.
         # This will however introduce some noise in the kernel stats sampled before and after
         # the whole benchmark run.
-        pidmap = self.benchmark.get_dataset(DatasetID.PIDMAP)
+        pidmap = self.benchmark.get_dataset_by_artefact(DatasetArtefact.PIDMAP)
         if pidmap and self.config.netserver_resolve_forks:
             netserver_cmd = "ktrace"
             netserver_options = ["-t", "c", self.netserver_bin] + self.config.netserver_options
@@ -280,12 +279,12 @@ class NetperfData(CSVDataSetContainer):
                                                               netserver_options,
                                                               env=self.run_env,
                                                               history_command=self.netserver_bin)
-
-    async def run_benchmark(self):
-        await super().run_benchmark()
         self.logger.info("Prime benchmark")
         await aio.sleep(5)  # Give some time to settle
         await self.benchmark.run_cmd(self.netperf_bin, self.config.netperf_prime_options, env=self.run_env)
+
+    async def run_benchmark(self):
+        await super().run_benchmark()
         self.logger.info("Run benchmark iterations")
         with open(self.output_file(), "w+") as outfd:
             await self.benchmark.run_cmd(self.netperf_bin, self.config.netperf_options, outfile=outfd, env=self.run_env)
@@ -293,7 +292,7 @@ class NetperfData(CSVDataSetContainer):
     async def run_post_benchmark(self):
         await super().run_post_benchmark()
         await self.benchmark.stop_bg_cmd(self.netserver_task)
-        pidmap = self.benchmark.get_dataset(DatasetID.PIDMAP)
+        pidmap = self.benchmark.get_dataset_by_artefact(DatasetArtefact.PIDMAP)
         if pidmap and self.config.netserver_resolve_forks:
             # Grab the extra pids forked by netserver
             with open(self.kdump_out, "w+") as kdump_fd:

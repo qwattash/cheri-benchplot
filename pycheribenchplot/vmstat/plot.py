@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from ..core.dataset import (DatasetID, subset_xs, check_multi_index_aligned, rotate_multi_index_level)
+from ..core.dataset import (DatasetName, subset_xs, check_multi_index_aligned, rotate_multi_index_level)
 from ..core.plot import (CellData, DataView, BenchmarkPlot, BenchmarkSubPlot, Surface)
 from ..core.html import HTMLSurface
 from ..core.excel import SpreadsheetSurface
@@ -51,7 +51,7 @@ class VMStatMallocTable(VMStatTable):
     @classmethod
     def get_required_datasets(cls):
         dsets = super().get_required_datasets()
-        dsets += [DatasetID.VMSTAT_MALLOC]
+        dsets += [DatasetName.VMSTAT_MALLOC]
         return dsets
 
     def get_cell_title(self):
@@ -66,7 +66,7 @@ class VMStatMallocTable(VMStatTable):
         return ["delta_requests", "norm_delta_requests", "delta_large-malloc", "norm_delta_large-malloc"]
 
     def _get_vmstat_dataset(self):
-        return self.get_dataset(DatasetID.VMSTAT_MALLOC).agg_df.copy()
+        return self.get_dataset(DatasetName.VMSTAT_MALLOC).agg_df.copy()
 
 
 class VMStatUMATable(VMStatTable):
@@ -76,14 +76,14 @@ class VMStatUMATable(VMStatTable):
     @classmethod
     def get_required_datasets(cls):
         dsets = super().get_required_datasets()
-        dsets += [DatasetID.VMSTAT_UMA]
+        dsets += [DatasetName.VMSTAT_UMA]
         return dsets
 
     def __init__(self, plot):
         super().__init__(plot)
         # Optional zone info dataset
-        self.uma_stats = self.get_dataset(DatasetID.VMSTAT_UMA)
-        self.uma_zone_info = self.get_dataset(DatasetID.VMSTAT_UMA_INFO)
+        self.uma_stats = self.get_dataset(DatasetName.VMSTAT_UMA)
+        self.uma_zone_info = self.get_dataset(DatasetName.VMSTAT_UMA_INFO)
 
     def get_cell_title(self):
         return "Kernel UMA stats"

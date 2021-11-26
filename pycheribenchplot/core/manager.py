@@ -222,7 +222,7 @@ class BenchmarkManager(TemplateConfigContext):
             t.cancel()
         await aio.gather(*self.queued_tasks, return_exceptions=True)
         await self.instance_manager.kill()
-        for cbk in self.cleanup_callbacks():
+        for cbk in self.cleanup_callbacks:
             try:
                 cbk()
             except ex:

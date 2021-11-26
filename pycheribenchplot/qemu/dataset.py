@@ -6,8 +6,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from ..core.dataset import (IndexField, DataField, DerivedField, Field, DatasetID, align_multi_index_levels,
-                            rotate_multi_index_level, subset_xs, check_multi_index_aligned, DatasetProcessingException)
+from ..core.dataset import (IndexField, DataField, DerivedField, Field, DatasetArtefact, DatasetName,
+                            align_multi_index_levels, rotate_multi_index_level, subset_xs, check_multi_index_aligned,
+                            DatasetProcessingException)
 from ..core.instance import PlatformOptions
 from ..core.perfetto import PerfettoDataSetContainer
 
@@ -17,7 +18,8 @@ class QEMUTracingCtxDataset(PerfettoDataSetContainer):
     Helper dataset mostly useful for debugging purposes.
     This records tracing slice periods associated to the relative contexts.
     """
-    dataset_id = "qemu-ctx-tracks"
+    # dataset_config_name = DatasetName.QEMU_CTX_CTRL
+    # dataset_source_id = DatasetArtefact.QEMU_STATS
     fields = []
 
     def raw_fields(self, include_derived=False):
@@ -41,7 +43,7 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
     the context to which data records are associated.
     This delegates the actual data aggregation strategy to subclasses.
     """
-
+    dataset_source_id = DatasetArtefact.QEMU_STATS
     fields = [
         IndexField("histogram", dtype=int),
         IndexField("bucket", dtype=int),
@@ -138,7 +140,7 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
         """
         Resolve process and thread names
         """
-        pidmap = self.benchmark.get_dataset(DatasetID.PIDMAP)
+        pidmap = self.benchmark.get_dataset_by_artefact(DatasetArtefact.PIDMAP)
         assert pidmap is not None, "The pidmap dataset is required for qemu stats"
         # Find missing TIDs in pidmap and attempt to match them with the QEMU data
         detected = self.df.groupby(["pid", "tid"]).size().reset_index()[["pid", "tid"]]
@@ -261,7 +263,7 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
 
 class QEMUStatsBBHistogramDataset(ContextStatsHistogramBase):
     """Basic-block hit count histogram"""
-    dataset_id = "qemu-stats-bb"
+    dataset_config_name = DatasetName.QEMU_STATS_BB_HIST
     fields = [
         Field("start", dtype=np.uint),
         Field("end", dtype=np.uint),
@@ -300,7 +302,7 @@ class QEMUStatsBBHistogramDataset(ContextStatsHistogramBase):
 
 class QEMUStatsBranchHistogramDataset(ContextStatsHistogramBase):
     """Branch instruction target hit count histogram"""
-    dataset_id = "qemu-stats-call"
+    dataset_config_name = DatasetName.QEMU_STATS_CALL_HIST
     fields = [
         IndexField("source_file", dtype=str, isderived=True),
         IndexField("source_symbol", dtype=str, isderived=True),

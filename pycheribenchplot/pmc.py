@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 
 from .core.cpu import *
-from .core.dataset import StrField, DataField, IndexField
+from .core.dataset import (DatasetArtefact, DatasetName, StrField, DataField, IndexField)
 from .core.csv import CSVDataSetContainer
 
 
@@ -52,7 +52,8 @@ class FluteStatcountersData(PMCStatData):
     """
     Statcounters description and processing for CHERI Flute (RISC-V)
     """
-    dataset_id = "pmc"
+    dataset_config_name = DatasetName.PMC
+    dataset_source_id = DatasetArtefact.PMC
     fields = [
         DataField("cycles"),
         DataField("instructions"),

@@ -1,4 +1,4 @@
-from .dataset import DatasetID
+from .dataset import DatasetName
 
 
 class BenchmarkAnalysisRegistry(type):
@@ -24,7 +24,7 @@ class BenchmarkAnalysis(metaclass=BenchmarkAnalysisRegistry):
     on the dataset dependencies they advertise.
     """
     @classmethod
-    def check_required_datasets(cls, dsets: list[DatasetID]):
+    def check_required_datasets(cls, dsets: list[DatasetName]):
         """Check whether this analysis step can run"""
         return False
 
@@ -32,7 +32,7 @@ class BenchmarkAnalysis(metaclass=BenchmarkAnalysisRegistry):
         self.benchmark = benchmark
         self.logger = benchmark.logger
 
-    def get_dataset(self, dset_id: DatasetID):
+    def get_dataset(self, dset_id: DatasetName):
         """Helper to access datasets in the benchmark"""
         return self.benchmark.get_dataset(dset_id)
 
