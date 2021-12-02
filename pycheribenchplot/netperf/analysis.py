@@ -1,5 +1,5 @@
-from ..core.dataset import DatasetName
 from ..core.analysis import BenchmarkAnalysis
+from ..core.dataset import DatasetName
 
 
 class NetperfSanityCheck(BenchmarkAnalysis):
@@ -24,16 +24,16 @@ class NetperfSanityCheck(BenchmarkAnalysis):
         # functions in libstatcounters
         dset = self.get_dataset(DatasetName.QEMU_STATS_CALL_HIST)
         if dset:
-            syms_index = dset.agg_df.index.get_level_values("symbol")
+            syms_index = dset.ctx_agg_df.index.get_level_values("symbol")
             cpu_start = syms_index == "cpu_start"
             cpu_stop = syms_index == "cpu_stop"
             statcounters_sample = syms_index == "statcounters_sample"
-            check = dset.agg_df.loc[cpu_start, "call_count"].groupby("__dataset_id").sum().unique()
+            check = dset.ctx_agg_df.loc[cpu_start, "call_count"].groupby("__dataset_id").sum().unique()
             if len(check) > 1:
                 self.logger.error("netperf::cpu_start anomalous #calls %s", check)
-            check = dset.agg_df.loc[cpu_stop, "call_count"].groupby("__dataset_id").sum().unique()
+            check = dset.ctx_agg_df.loc[cpu_stop, "call_count"].groupby("__dataset_id").sum().unique()
             if len(check) > 1:
                 self.logger.error("netperf::cpu_stop anomalous #calls %s", check)
-            check = dset.agg_df.loc[statcounters_sample, "call_count"].groupby("__dataset_id").sum().unique()
+            check = dset.ctx_agg_df.loc[statcounters_sample, "call_count"].groupby("__dataset_id").sum().unique()
             if len(check) > 1:
                 self.logger.error("libstatcounters::statcounters_sample anomalous #calls %s", check)

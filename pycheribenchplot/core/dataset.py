@@ -1,16 +1,16 @@
 import typing
 from collections import defaultdict
+from contextlib import contextmanager
 from enum import Enum, IntEnum, auto
 from pathlib import Path
-from contextlib import contextmanager
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 
 from .util import new_logger
 
 
-class DatasetProcessingException(Exception):
+class DatasetProcessingError(Exception):
     pass
 
 
@@ -29,6 +29,7 @@ class DatasetName(Enum):
     VMSTAT_UMA_INFO = "vmstat-uma-info"
     VMSTAT_MALLOC = "vmstat-malloc"
     VMSTAT_UMA = "vmstat-uma"
+    NETSTAT = "netstat"
 
     def __str__(self):
         return self.value
@@ -48,6 +49,7 @@ class DatasetArtefact(Enum):
     PROCSTAT = auto()
     PIDMAP = auto()
     QEMU_STATS = auto()
+    NETSTAT = auto()
 
     def __str__(self):
         return self.name
@@ -154,14 +156,6 @@ class DerivedField(Field):
         super().__init__(name, desc, **kwargs)
 
 
-class FieldTracker:
-    """
-    Manage field name transformations so that we know which derived fields come
-    from which top-level fields
-    """
-    pass
-
-
 class DataSetContainer(metaclass=DatasetRegistry):
     """
     Base class to hold collections of fields containing benchmark data
@@ -213,7 +207,7 @@ class DataSetContainer(metaclass=DatasetRegistry):
 
     def index_columns(self, include_derived=False):
         """All column names that are to be used as dataset index in the container dataframe"""
-        return ["__dataset_id"] + [f.name for f in self.raw_fields(include_derived) if f.isindex]
+        return ["__dataset_id", "__iteration"] + [f.name for f in self.raw_fields(include_derived) if f.isindex]
 
     def all_columns_noindex(self) -> "typing.Sequence[str]":
         return set(self.all_columns()) - set(self.index_columns())
@@ -239,13 +233,43 @@ class DataSetContainer(metaclass=DatasetRegistry):
     def _get_column_conv(self) -> dict:
         return {f.name: f.importfn for f in self.raw_fields() if f.importfn is not None}
 
-    def output_file(self):
+    def _append_df(self, df):
         """
-        Generate the output file for this dataset.
+        Import the given dataframe for one or more iterations into the main container dataframe.
+        This means that:
+        - The index columns must be in the given dataframe and must agree with the container dataframe.
+        - The columns must be a subset of all_columns().
+        """
+        assert "__dataset_id" in df.columns, "Missing __dataset_id column"
+        if "__iteration" not in df.columns:
+            self.logger.debug("No iteration column, using default (-1)")
+            df["__iteration"] = -1
+        df.set_index(self.index_columns(), inplace=True)
+        dataset_columns = set(self.all_columns_noindex())
+        avail_columns = set(df.columns)
+        column_subset = avail_columns.intersection(dataset_columns)
+        self.df = pd.concat([self.df, df[column_subset]])
+        # Check that we did not accidentally change dtype, this may cause weirdness due to conversions
+        dtype_check = self.df.dtypes[column_subset] == df.dtypes[column_subset]
+        if not dtype_check.all():
+            changed = dtype_check.index[~dtype_check]
+            for col in changed:
+                self.logger.error("Unexpected dtype change in %s: %s -> %s", col, df.dtypes[col], self.df.dtypes[col])
+            raise DatasetProcessingError("Unexpected dtype change")
+
+    def iteration_output_file(self):
+        """
+        Generate the output file for this dataset for the current benchmark iteration.
         Any extension suffix should be added in subclasses.
         """
-        return self.benchmark.result_path / f"{self.name}-{self.benchmark.uuid}"
-        # return self.benchmark.get_output_path() / f"{self.name}-{self.benchmark.uuid}"
+        return self.benchmark.get_iter_output_path() / f"{self.name}-{self.benchmark.uuid}"
+
+    def output_file(self):
+        """
+        Generate the iteration-independent output file for this dataset.
+        Any extension suffix should be added in subclasses.
+        """
+        return self.benchmark.get_output_path() / f"{self.name}-{self.benchmark.uuid}"
 
     def get_addrspace_key(self):
         """
@@ -253,6 +277,16 @@ class DataSetContainer(metaclass=DatasetRegistry):
         This is only relevant for datasets that are intended to be used as the main benchmark dataset.
         """
         raise NotImplementedError("The address-space key must be specified by subclasses")
+
+    def configure_platform(self, options: "PlatformOptions"):
+        """
+        Finalize the dataset run_options configuration and add any relevant platform options
+        to generate the dataset.
+        """
+        self.logger.debug("Configure platform")
+        if self.run_options_class:
+            self.config = self.run_options_class(**self.config.run_options).bind(self.benchmark)
+        return options
 
     def configure(self, options: "PlatformOptions"):
         """
@@ -263,6 +297,14 @@ class DataSetContainer(metaclass=DatasetRegistry):
         if self.run_options_class:
             self.config = self.run_options_class(**self.config.run_options).bind(self.benchmark)
         return options
+
+    def configure_iteration(self):
+        """
+        Update configuration for the current benchmark iteration, if any depends on it.
+        This is called for each iteration, before pre_benchmark_iter()
+        (e.g. to update the benchmark output file options)
+        """
+        self.logger.debug("Configure iteration %d", self.benchmark.current_iteration)
 
     async def run_pre_benchmark(self):
         self.logger.debug("Pre-benchmark")
@@ -279,8 +321,19 @@ class DataSetContainer(metaclass=DatasetRegistry):
     async def run_post_benchmark(self):
         self.logger.debug("Post-benchmark")
 
-    def load(self, path: Path):
-        """Load the dataset from the given file"""
+    def load(self):
+        """
+        Load the dataset from the common output files.
+        Note that this is always called after iteration data has been loaded.
+        No-op by default
+        """
+        pass
+
+    def load_iteration(self, iteration: int):
+        """
+        Load the dataset per-iteration data.
+        No-op by default
+        """
         pass
 
     def pre_merge(self):

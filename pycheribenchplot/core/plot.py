@@ -1,17 +1,17 @@
-import typing
 import itertools as it
-from pathlib import Path
+import typing
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
 from collections import OrderedDict
+from dataclasses import dataclass, field
+from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 
-from .util import new_logger
-from .dataset import DatasetArtefact
 from .analysis import BenchmarkAnalysis
+from .dataset import DatasetArtefact
+from .util import new_logger
 
 
 class PlotError(Exception):

@@ -1,10 +1,12 @@
 import numpy as np
 import pandas as pd
 
-from ..core.dataset import (DatasetName, subset_xs, check_multi_index_aligned, rotate_multi_index_level)
-from ..core.plot import (CellData, DataView, BenchmarkPlot, BenchmarkSubPlot, Surface)
-from ..core.html import HTMLSurface
+from ..core.dataset import (DatasetName, check_multi_index_aligned,
+                            rotate_multi_index_level, subset_xs)
 from ..core.excel import SpreadsheetSurface
+from ..core.html import HTMLSurface
+from ..core.plot import (BenchmarkPlot, BenchmarkSubPlot, CellData, DataView,
+                         Surface)
 
 
 class QEMUHistSubPlot(BenchmarkSubPlot):
@@ -35,58 +37,6 @@ class QEMUHistSubPlot(BenchmarkSubPlot):
         assert "symbol" in indf.index.names, "Missing symbol index level"
         return ["process", "thread", "EL", "file", "symbol"]
 
-    def filter_by_common_symbols(self, indf):
-        """
-        Return a dataframe containing the cross section of the input dataframe
-        containing the symbols that are common to all runs (i.e. across all __dataset_id values).
-        We consider valid common symbols those for which we were able to resolve the (file, sym_name)
-        pair and have sensible BB count and call_count values.
-        Care must be taken to keep the multi-index levels aligned.
-        """
-        group_levels = self._get_group_levels(indf)
-        # Isolate the file:symbol pairs for each symbol marked valid in all datasets.
-        # Since the filter is the same for all datasets, the cross-section will stay aligned.
-        valid = (indf["valid_symbol"] == "ok") & (indf["bb_count"] != 0)
-        valid_syms = valid.groupby(group_levels).all()
-        return subset_xs(indf, valid_syms)
-
-        assert "file" in indf.index.names, "Missing file index level"
-        assert "symbol" in indf.index.names, "Missing symbol index level"
-        # Isolate the file:symbol pairs for each symbol marked valid in all datasets.
-        # Since the filter is the same for all datasets, the cross-section will stay aligned.
-        valid = (indf["valid_symbol"] == "ok") & (indf["bb_count"] != 0)
-        valid_syms = valid.groupby(["file", "symbol"]).all()
-        return subset_xs(indf, valid_syms)
-
-    def filter_by_noncommon_symbols(self, indf):
-        """
-        This is complementary to filter_by_common_symbols().
-        """
-        group_levels = self._get_group_levels(indf)
-        # Isolate the file:symbol pairs for each symbol marked valid in at least one dataset,
-        # but not all datasets.
-        valid = indf["valid_symbol"] == "ok"
-        # bb_count is valid if:
-        # symbol is valid and bb_count != 0
-        # symbol is invalid and bb_count == 0
-        bb_count_ok = (indf["bb_count"] == 0) ^ valid
-        # Here we only select symbols that have no issues in the bb_count column
-        all_bb_count_ok = bb_count_ok.groupby(group_levels).all()
-        all_valid = valid.groupby(group_levels).all()
-        some_valid = valid.groupby(group_levels).any()
-        unique_syms = all_bb_count_ok & some_valid & ~all_valid
-        return subset_xs(indf, unique_syms)
-
-    def filter_by_inconsistent_symbols(self, indf):
-        """
-        Return a cross-section of the input dataframe containing inconsistent
-        records, for which we have BB hits but are marked invalid
-        """
-        group_levels = self._get_group_levels(indf)
-        invalid = (indf["valid_symbol"] != "ok") & (indf["bb_count"] != 0)
-        invalid_syms = invalid.groupby(group_levels).all()
-        return subset_xs(indf, invalid_syms)
-
 
 class QEMUHistTable(QEMUHistSubPlot):
     """
@@ -102,16 +52,14 @@ class QEMUHistTable(QEMUHistSubPlot):
     def _get_filtered_df(self):
         return self.get_all_stats_df()
 
-    def _get_common_display_columns(self, debug_columns=False):
+    def _get_common_display_columns(self):
         """Columns to display for all benchmark runs"""
-        cols = ["bb_count", "call_count"]
-        if debug_columns:
-            cols += ["start", "target", "valid_symbol"]
+        cols = ["icount_mean", "icount_std", "call_count_mean", "call_count_std"]
         return cols
 
-    def _get_non_baseline_display_columns(self, debug_columns=False):
+    def _get_non_baseline_display_columns(self):
         """Columns to display for benchmarks that are not baseline (because they are meaningless)"""
-        cols = ["delta_bb_count", "norm_delta_bb_count", "delta_call_count", "norm_delta_call_count"]
+        cols = ["delta_icount_mean", "norm_delta_icount_mean", "delta_call_count_mean", "norm_delta_call_count_mean"]
         return cols
 
     def _remap_display_columns(self, colmap: pd.DataFrame):
@@ -127,8 +75,8 @@ class QEMUHistTable(QEMUHistSubPlot):
         return show_cols
 
     def _get_sort_metric(self, df):
-        total_delta_calls = df["delta_call_count"].abs().sum()
-        relevance = (df["delta_call_count"] / total_delta_calls).abs()
+        total_delta_calls = df["delta_call_count_mean"].abs().sum()
+        relevance = (df["delta_call_count_mean"] / total_delta_calls).abs()
         return relevance
 
     def _remap_sort_columns(self, metric_col: str, colmap: pd.DataFrame):
@@ -155,12 +103,7 @@ class QEMUHistTable(QEMUHistSubPlot):
         show_cols = self._remap_display_columns(colmap)
         sort_cols = self._remap_sort_columns("sort_metric", colmap)
         view_df = view_df.sort_values(by=sort_cols, ascending=False)
-        # Proper hex formatting
-        col_formatter = {
-            col: lambda v: f"0x{int(v):x}" if not np.isnan(v) else "?"
-            for col in colmap[["start", "target"]].values.ravel()
-        }
-        view = surface.make_view("table", df=view_df, yleft=show_cols, fmt=col_formatter)
+        view = surface.make_view("table", df=view_df, yleft=show_cols)
         cell.add_view(view)
 
 

@@ -1,13 +1,13 @@
-import json
 import io
+import json
 import re
 import typing
 from pathlib import Path
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 
-from .dataset import DatasetArtefact, DatasetName, DataField, StrField, Field
+from .dataset import DataField, DatasetArtefact, DatasetName, Field, StrField
 from .json import JSONDataSetContainer
 
 
@@ -49,7 +49,11 @@ class PidMapDataset(JSONDataSetContainer):
         result_df["command"] = df["command"].map(resolve_path)
         return result_df[~result_df["command"].isna()]
 
-    def load(self, path: Path):
+    def iteration_output_file(self):
+        return super().output_file().with_suffix(".json")
+
+    def load(self):
+        path = self.output_file()
         with open(path, "r") as fd:
             data_map = json.load(fd)
         # normalize records in the json first to use lists instead of dicts
@@ -63,7 +67,7 @@ class PidMapDataset(JSONDataSetContainer):
         df.rename(columns={"process_id": "pid", "thread_id": "tid"}, inplace=True)
         df["tid"].fillna(-1, inplace=True)
         df["__dataset_id"] = self.benchmark.uuid
-        self._internalize_json(df)
+        self._append_df(df)
 
     def load_from_kdump(self, kdump_fd):
         """
@@ -84,7 +88,7 @@ class PidMapDataset(JSONDataSetContainer):
         pid_df["thread_name"] = ""
         pid_df["__dataset_id"] = self.benchmark.uuid
         # Assume that the pids do not overlap
-        self._internalize_json(pid_df)
+        self._append_df(pid_df)
 
     def fixup_missing_tid(self, tid_mapping: pd.DataFrame) -> pd.DataFrame:
         """
@@ -139,7 +143,7 @@ class PidMapDataset(JSONDataSetContainer):
         for pid, info in proc_map.items():
             self._merge_procstat_entry(info)
 
-    async def run_post_benchmark_iter(self):
+    async def run_post_benchmark(self):
         """
         Post-benchmark hook to extract PID mappings.
         Note: we also use the command history from the benchmark runner to resolve any
@@ -157,6 +161,3 @@ class PidMapDataset(JSONDataSetContainer):
             self._merge_procstat_entry(entry)
         with open(self.output_file(), "w+") as pid_fd:
             json.dump(self._pid_snapshot, pid_fd)
-
-    def output_file(self):
-        return super().output_file().with_suffix(".json")

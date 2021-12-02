@@ -2,11 +2,11 @@ import logging
 import typing
 from pathlib import Path
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 
-from .dataset import DatasetArtefact, DataField, StrField, Field
 from .csv import CSVDataSetContainer
+from .dataset import DataField, DatasetArtefact, Field, StrField
 
 
 class ProcstatDataset(CSVDataSetContainer):
@@ -32,8 +32,10 @@ class ProcstatDataset(CSVDataSetContainer):
         kwargs["sep"] = "\s+"
         return super()._load_csv(path, **kwargs)
 
-    def load(self, path):
-        super().load(path)
+    def load(self):
+        path = self.output_file()
+        csv_df = self._load_csv(path)
+        self._append_df(csv_df)
         # Register the mapped binaries to the benchmark symbolizer
         for base, guest_path in self.mapped_binaries(self.benchmark.uuid):
             local_path = self.benchmark.rootfs / guest_path.relative_to("/")
@@ -44,7 +46,7 @@ class ProcstatDataset(CSVDataSetContainer):
         Iterate over (base_addr, path) of all the binaries mapped for the
         given dataset id.
         """
-        xsection = self.df.xs(dataset_id)
+        xsection = self.df.xs(dataset_id, level="__dataset_id")
         binaries = xsection["PATH"][xsection["PATH"] != ""].unique()
         for name in binaries:
             addr = xsection.loc[xsection["PATH"] == name]["START"].min()

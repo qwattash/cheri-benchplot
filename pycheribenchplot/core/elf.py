@@ -1,11 +1,11 @@
-import typing
 import itertools as it
-from pathlib import Path
+import typing
 from dataclasses import dataclass
+from pathlib import Path
 
 import pandas as pd
-from sortedcontainers import SortedDict
 from elftools.elf.elffile import ELFFile
+from sortedcontainers import SortedDict
 
 from .util import new_logger
 

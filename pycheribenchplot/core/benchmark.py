@@ -1,26 +1,27 @@
-import io
-import re
-import uuid
-import typing
-import json
 import asyncio as aio
-from pathlib import Path
-from enum import Enum
+import io
+import json
+import re
+import typing
+import uuid
 from dataclasses import dataclass, field
+from enum import Enum
+from pathlib import Path
 
-import pandas as pd
 import asyncssh
+import pandas as pd
 
-from .config import TemplateConfig, TemplateConfigContext
-from .instance import InstanceConfig, InstanceInfo, PlatformOptions
-from .procstat import ProcstatDataset
-from .pidmap import PidMapDataset
-from .dataset import (DatasetRegistry, DatasetArtefact, DatasetName, DataSetContainer)
-from .analysis import BenchmarkAnalysisRegistry
-from .plot import BenchmarkPlot
-from .elf import Symbolizer
-from .util import new_logger, timing
 from ..pmc import PMCStatData
+from .analysis import BenchmarkAnalysisRegistry
+from .config import TemplateConfig, TemplateConfigContext
+from .dataset import (DatasetArtefact, DataSetContainer, DatasetName,
+                      DatasetRegistry)
+from .elf import Symbolizer
+from .instance import InstanceConfig, InstanceInfo, PlatformOptions
+from .pidmap import PidMapDataset
+from .plot import BenchmarkPlot
+from .procstat import ProcstatDataset
+from .util import new_logger, timing
 
 
 class BenchmarkError(Exception):
@@ -106,10 +107,23 @@ class BenchmarkBase(TemplateConfigContext):
         self.instance_config = instance_config
         self.config = config
 
+        # Current benchmark iteration being run, only valid within the run step.
+        self.current_iteration = None
+        # InstanceInfo of the instance we have allocated
+        self._reserved_instance = None
+        # Connection to the CheriBSD instance
+        self._conn = None
+        # Commands being run on the instance
+        self._command_tasks = []
+        # Map tasks to CommandHistoryEntry to track the PID of every command we run during the benchmark
+        self.command_history = {}
+        # Map uuids to benchmarks that have been merged into the current instance (which is the baseline)
+        # so that we can look them up if necessary
+        self.merged_benchmarks = {}
+        # Symbol mapping handler for this benchmark instance
+        self.sym_resolver = Symbolizer(self)
+
         self._bind_early_configs()
-        # This is needed before collecting datasets as the output file path uses this.
-        self._result_path = self.manager.session_output_path / str(self.uuid)
-        self.result_path = self._result_path  # XXX backward compat, remove
         self.datasets = {}
         self._collect_datasets()
         self._bind_configs()
@@ -119,23 +133,23 @@ class BenchmarkBase(TemplateConfigContext):
         if not rootfs_path.exists() or not rootfs_path.is_dir():
             raise Exception(f"Invalid rootfs path {rootfs_path} for benchmark instance")
         self.rootfs = rootfs_path
+        # Ensure that we have the main output directory
+        self._result_path = self.manager.session_output_path / str(self.uuid)
         self._result_path.mkdir(parents=True, exist_ok=True)
 
         self._configure_datasets()
-
-        self._reserved_instance = None  # InstanceInfo of the instance we have allocated
-        self._conn = None  # Connection to the CheriBSD instance
-        self._command_tasks = []  # Commands being run on the instance
-        # Map tasks to CommandHistoryEntry to track the PID of every command we run during the benchmark
-        self.command_history = {}
-        # Map uuids to benchmarks that have been merged into the current instance (which is the baseline)
-        # so that we can look them up if necessary
-        self.merged_benchmarks = {}
-        # Symbol mapping handler for this benchmark instance
-        self.sym_resolver = Symbolizer(self)
-        # Current benchmark iteration being run, only valid within the run step.
-        self.current_iteration = None
         self.logger.info("Benchmark instance with UUID=%s", self.uuid)
+        # Dataset setup summary
+        for did, dset in self.datasets.items():
+            role = "benchmark" if did == self.config.benchmark_dataset.type else "aux"
+            dataset_artefact = dset.dataset_source_id
+            generator = self.datasets_gen[dataset_artefact]
+            if generator == dset:
+                generator_status = f"generator for {dataset_artefact}"
+            else:
+                generator_status = f"depends on {dataset_artefact}"
+            self.logger.debug("Configured %s dataset: %s (%s) %s", role, dset.name, dset.__class__.__name__,
+                              generator_status)
 
     def _bind_early_configs(self):
         """First pass of configuration template subsitution"""
@@ -147,8 +161,8 @@ class BenchmarkBase(TemplateConfigContext):
 
     def _bind_configs(self):
         """Second pass of configuration template substitution"""
-        template_params = {dset.name.replace("-", "_"): dset.output_file() for dset in self.datasets.values()}
-        self.register_template_subst(**template_params)
+        # template_params = {dset.name.replace("-", "_"): dset.output_file() for dset in self.datasets.values()}
+        # self.register_template_subst(**template_params)
         self.instance_config = self.instance_config.bind(self)
         self.config = self.config.bind(self)
 
@@ -188,18 +202,6 @@ class BenchmarkBase(TemplateConfigContext):
             if dset.dataset_source_id not in self.datasets_gen:
                 self.datasets_gen[dset.dataset_source_id] = dset
 
-        # Summary
-        for did, dset in self.datasets.items():
-            role = "benchmark" if did == self.config.benchmark_dataset.type else "aux"
-            dataset_artefact = dset.dataset_source_id
-            generator = self.datasets_gen[dataset_artefact]
-            if generator == dset:
-                generator_status = f"generator for {dataset_artefact}"
-            else:
-                generator_status = f"depends on {dataset_artefact}"
-            self.logger.debug("Configured %s dataset: %s (%s) %s", role, dset.name, dset.__class__.__name__,
-                              generator_status)
-
     def _get_dataset_handler(self, dset_key: str, config: BenchmarkDataSetConfig):
         """Resolve the parser for the given dataset"""
         ds_name = DatasetName(config.type)
@@ -216,7 +218,7 @@ class BenchmarkBase(TemplateConfigContext):
         This can be used as a base path or to store data that is not specific to a single iteration
         of the benchmark.
         """
-        return self.manager.session_output_path / str(self.uuid)
+        return self._result_path
 
     def get_iter_output_path(self):
         """
@@ -225,7 +227,7 @@ class BenchmarkBase(TemplateConfigContext):
         """
         assert self.current_iteration is not None, "current_iteration must be set"
         iter_path = self.get_output_path() / str(self.current_iteration)
-        iter_path.mkdir(exists_ok=True)
+        iter_path.mkdir(exist_ok=True)
         return iter_path
 
     def get_dataset(self, name: DatasetName):
@@ -390,6 +392,8 @@ class BenchmarkBase(TemplateConfigContext):
                 self.current_iteration = i
                 self.logger.info("Running benchmark iteration %d", i)
                 for dset in pre_generators:
+                    dset.configure_iteration()
+                for dset in pre_generators:
                     await dset.run_pre_benchmark_iter()
                 # Only run the benchmark step for the given benchmark_dataset
                 with timing("Benchmark completed", logger=self.logger):
@@ -436,9 +440,12 @@ class BenchmarkBase(TemplateConfigContext):
         """
         self._load_kernel_symbols()
         for dset in self.datasets.values():
-            dset_file = dset.output_file()
-            self.logger.info("Loading %s from %s", dset.name, dset_file)
-            dset.load(dset_file)
+            self.logger.info("Loading %s data", dset.name)
+            for i in range(self.config.iterations):
+                self.current_iteration = i
+                dset.load_iteration(i)
+            dset.load()
+            self.current_iteration = None
 
     def pre_merge(self):
         """

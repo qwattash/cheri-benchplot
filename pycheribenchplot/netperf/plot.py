@@ -1,12 +1,13 @@
 import logging
 from enum import Enum
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 
-from ..core.dataset import (subset_xs, rotate_multi_index_level, reorder_columns, check_multi_index_aligned)
-from ..core.plot import BenchmarkPlot, BenchmarkSubPlot, ColorMap
+from ..core.dataset import (check_multi_index_aligned, reorder_columns,
+                            rotate_multi_index_level, subset_xs)
 from ..core.html import HTMLSurface
+from ..core.plot import BenchmarkPlot, BenchmarkSubPlot, ColorMap
 
 # class NetperfQEMUStatsExplorationTable(Plot):
 #     """

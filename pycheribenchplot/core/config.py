@@ -1,11 +1,12 @@
 import argparse as ap
 import collections
 import itertools
-import typing
 import json
-from pathlib import Path
-from dataclasses import (dataclass, fields, is_dataclass, replace, Field, field, MISSING)
+import typing
+from dataclasses import (MISSING, Field, dataclass, field, fields,
+                         is_dataclass, replace)
 from enum import Enum
+from pathlib import Path
 
 from dataclasses_json import DataClassJsonMixin, config
 

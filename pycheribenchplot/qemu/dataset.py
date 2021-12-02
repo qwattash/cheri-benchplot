@@ -5,36 +5,15 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from pypika import Order, Query
 
-from ..core.dataset import (IndexField, DataField, DerivedField, Field, DatasetArtefact, DatasetName,
-                            align_multi_index_levels, rotate_multi_index_level, subset_xs, check_multi_index_aligned,
-                            DatasetProcessingException)
+from ..core.dataset import (DataField, DatasetArtefact, DatasetName,
+                            DatasetProcessingError, DerivedField, Field,
+                            IndexField, align_multi_index_levels,
+                            check_multi_index_aligned,
+                            rotate_multi_index_level, subset_xs)
 from ..core.instance import PlatformOptions
 from ..core.perfetto import PerfettoDataSetContainer
-
-
-class QEMUTracingCtxDataset(PerfettoDataSetContainer):
-    """
-    Helper dataset mostly useful for debugging purposes.
-    This records tracing slice periods associated to the relative contexts.
-    """
-    # dataset_config_name = DatasetName.QEMU_CTX_CTRL
-    # dataset_source_id = DatasetArtefact.QEMU_STATS
-    fields = []
-
-    def raw_fields(self, include_derived=False):
-        fields = super().raw_fields(include_derived)
-        fields += [f for f in QEMUTracingCtxDataset.fields if include_derived or not f.isderived]
-        return fields
-
-    def _extract_events(self, tp: "TraceProcessor"):
-        super()._extract_events(tp)
-        tracks = self._query_to_df(tp, "SELECT * FROM track")
-        tracing_ctrl = self._query_to_df(tp, "SELECT ts, dur FROM slice WHERE category = 'ctrl'")
-        sched_ctrl = self._query_to_df(
-            tp, "SELECT ts, flat_key, int_value FROM slice JOIN args ON " +
-            "slice.arg_set_id = args.arg_set_id WHERE category = 'sched'")
-        # ts|pid|tid|cid|evtname sorted by time
 
 
 class ContextStatsHistogramBase(PerfettoDataSetContainer):
@@ -92,7 +71,7 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
             track_info.update({"pid": pid, "tid": int(parts[1]), "cid": int(parts[2]), "EL": int(parts[3])})
         return track_info
 
-    def _extract_track_stats(self, tp, track):
+    def _extract_track_stats(self, tp, track, ts_start, ts_end):
         """
         Build subsection of the dataframe pertaining to a given track.
         Note that we are expected to return a dataframe with a flat index as this happens before
@@ -102,10 +81,12 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
         track_info = self._decode_track_name(track["name"])
         data_cols = {}
         for query_col, mapped_col in self._get_arg_key_map().items():
-            query_str = (f"SELECT slice.id, int_value FROM slice JOIN args ON slice.arg_set_id = args.arg_set_id " +
-                         f"WHERE slice.category = 'stats' AND slice.name = '{slice_name}' AND " +
-                         f"args.flat_key = '{query_col}' AND slice.track_id = {track.id} ORDER BY args.id")
-            mapped_col_data = self._query_to_df(tp, query_str)
+            query = self._query_slice_ts(ts_start, ts_end)
+            query = query.select(self.t_slice.id, self.t_args.int_value)
+            query = query.where((self.t_slice.category == "stats") & (self.t_slice.name == slice_name)
+                                & (self.t_args.flat_key == query_col) & (self.t_slice.track_id == track.id)).orderby(
+                                    self.t_args.id, order=Order.asc)
+            mapped_col_data = self._query_to_df(tp, query.get_sql(quote_char=None))
             mapped_col_data.rename(columns={"id": "histogram"}, inplace=True)
             mapped_col_data.index.name = "bucket"  # Current index in just row count ordered by args.id
             mapped_col_data.set_index("histogram", append=True, inplace=True)
@@ -117,24 +98,31 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
             df[key] = value
         return df.reset_index(drop=False)
 
-    def _extract_events(self, tp: "TraceProcessor"):
-        super()._extract_events(tp)
+    def _extract_events(self, tp: "TraceProcessor", i: int, ts_start: int, ts_end: int):
+        """
+        Extract events from an iteration of the benchmark.
+        i: iteration index
+        ts_start: iteration start timestamp
+        ts_end: iteration end timestamp
+        """
         slice_name = self._get_slice_name()
         # Look up tracks in the datasets that have data slices we are interested in
-        tracks_query_str = (
-            "SELECT DISTINCT(track.id), track.name FROM track JOIN slice ON track.id = slice.track_id " +
-            "JOIN args ON slice.arg_set_id = args.arg_set_id WHERE args.flat_key LIKE 'qemu%' AND " +
-            f"slice.category = 'stats' AND slice.name = '{slice_name}'")
-        tracks = self._query_to_df(tp, tracks_query_str)
+        query = self._query_slice_ts(ts_start, ts_end).join(self.t_track).on(self.t_track.id == self.t_slice.track_id)
+        query = query.where(
+            self.t_args.flat_key.like("qemu%") & (self.t_slice.category == "stats")
+            & (self.t_slice.name == slice_name)).select(self.t_track.id, self.t_track.name).distinct()
+        tracks = self._query_to_df(tp, query.get_sql(quote_char=None))
         # Dataframe skeleton with all non-derived columns (no index)
         df = pd.DataFrame(columns=self.all_columns())
         for idx, track in tracks.iterrows():
             self.logger.debug("Detected track %s: extracting stats", track["name"])
-            track_df = self._extract_track_stats(tp, track)
+            track_df = self._extract_track_stats(tp, track, ts_start, ts_end)
             track_df["__dataset_id"] = self.benchmark.uuid
+            track_df["__iteration"] = i
             track_df = track_df.astype(self._get_column_dtypes(include_converted=True))
-            track_df.set_index(self.index_columns(), inplace=True)
-            self.df = pd.concat([self.df, track_df])
+            self._append_df(track_df)
+            # track_df.set_index(self.index_columns(), inplace=True)
+            # self.df = pd.concat([self.df, track_df])
 
     def _resolve_pid_tid(self):
         """
@@ -188,14 +176,30 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
         resolved_df["file"].mask(resolved.isna(), "unknown", inplace=True)
         return resolved_df
 
-    def _get_agg_strategy(self):
-        """Return mapping of column-name => aggregation function for the columns we need to aggregate"""
+    def _get_context_agg_strategy(self):
+        """Return mapping of column-name => aggregation function for the context data aggregation"""
         agg = {"valid_symbol": lambda vec: ",".join(vec.unique())}
         return agg
+
+    def _get_iteration_agg_strategy(self):
+        """Return mapping of column-name => aggregation function for the iteration data aggregation"""
+        return {}
 
     def get_aggregate_index(self):
         """Index levels on which we aggregate"""
         return ["process", "thread", "EL", "file", "symbol"]
+
+    def load(self):
+        tp = self._get_trace_processor(self.output_file())
+        iterations = self._extract_iteration_markers(tp)
+        # Verify that the iteration markers agree with the configured number of iterations
+        if len(iterations) != self.benchmark.config.iterations:
+            self.logger.error("QEMU trace does not have the expected iteration markers: %d configured %d",
+                              len(iterations), self.benchmark.config.iterations)
+            raise DatasetProcessingError("QEMU trace has invalid iteration markers")
+        for i, interval in enumerate(iterations):
+            start, end = interval
+            self._extract_events(tp, i, start, end)
 
     def pre_merge(self):
         """
@@ -212,12 +216,20 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
 
     def aggregate(self):
         """
-        Common aggregation step, customization should occur via _get_agg_strategy()
-        and get_aggregate_index()
+        Aggregation occurs in two steps:
+        The first step aggregates per-context data for each iteration.
+        The second step aggregates data across iterations.
+        Customization should occur via get_aggregate_index(), _get_context_agg_strategy()
+        and _get_iteration_aggregate_stragety().
         """
         super().aggregate()
-        grouped = self.merged_df.groupby(["__dataset_id"] + self.get_aggregate_index())
-        self.agg_df = grouped.agg(self._get_agg_strategy())
+        grouped = self.merged_df.groupby(["__dataset_id", "__iteration"] + self.get_aggregate_index())
+        # Cache the context grouping for later inspection if needed
+        self.ctx_agg_df = grouped.agg(self._get_context_agg_strategy())
+        # Now that we aggregated contexts within the same iteration, aggregate over iterations
+        grouped = self.ctx_agg_df.groupby(["__dataset_id"] + self.get_aggregate_index())
+        self.agg_df = grouped.agg(self._get_iteration_agg_strategy())
+        self.agg_df.columns = ["_".join(c) for c in self.agg_df.columns.to_flat_index()]
 
     def post_aggregate(self):
         super().post_aggregate()
@@ -226,14 +238,14 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
         align_levels = self.get_aggregate_index()
         new_df = align_multi_index_levels(self.agg_df, align_levels, fill_value=0)
         # Backfill after alignment
-        new_df.loc[new_df["valid_symbol"] == 0, "valid_symbol"] = "missing"
+        # new_df.loc[new_df["valid_symbol"] == 0, "valid_symbol"] = "missing"
         # Now we can safely assign as there are no missing values.
         # 1) Compute delta for each metric for each function w.r.t. the baseline.
         # 2) Build the normalized delta for each metric, note that this will generate infinities where
         #   the baseline benchmark count is 0 (e.g. extra functions called only in other samples)
         baseline = new_df.xs(self.benchmark.uuid, level="__dataset_id")
         datasets = new_df.index.get_level_values("__dataset_id").unique()
-        base_cols = self.delta_columns()
+        base_cols = self.agg_df.columns
         delta_cols = [f"delta_{col}" for col in base_cols]
         norm_cols = [f"norm_{col}" for col in delta_cols]
         new_df[delta_cols] = 0
@@ -245,7 +257,7 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
             norm_delta = delta[base_cols].divide(baseline[base_cols])
             new_df.loc[ds_id, delta_cols] = delta[base_cols].values
             new_df.loc[ds_id, norm_cols] = norm_delta[base_cols].values
-        assert not new_df["valid_symbol"].isna().any()
+        # assert not new_df["valid_symbol"].isna().any()
         self.agg_df = new_df
 
     def configure(self, opts: PlatformOptions) -> PlatformOptions:
@@ -254,11 +266,13 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
         opts.qemu_trace_file = self.output_file()
         opts.qemu_trace_categories.add("ctrl")
         opts.qemu_trace_categories.add("stats")
+        opts.qemu_trace_categories.add("marker")
         return opts
 
     def output_file(self):
         # This must be shared by all the histogram datasets
-        return self.benchmark.result_path / f"qemu-stats-{self.benchmark.uuid}.pb"
+        # Note that the output is common to all iterations
+        return self.benchmark.get_output_path() / f"qemu-stats-{self.benchmark.uuid}.pb"
 
 
 class QEMUStatsBBHistogramDataset(ContextStatsHistogramBase):
@@ -267,9 +281,9 @@ class QEMUStatsBBHistogramDataset(ContextStatsHistogramBase):
     fields = [
         Field("start", dtype=np.uint),
         Field("end", dtype=np.uint),
-        DataField("bb_count", dtype=int),
-        DerivedField("delta_bb_count", dtype=int),
-        DerivedField("norm_delta_bb_count", dtype=float)
+        DataField("icount", dtype=int),
+        DerivedField("delta_icount", dtype=int),
+        DerivedField("norm_delta_icount", dtype=float)
     ]
 
     def raw_fields(self, include_derived=False):
@@ -284,19 +298,21 @@ class QEMUStatsBBHistogramDataset(ContextStatsHistogramBase):
         mapping = {
             "qemu.histogram.bb_bucket.start": "start",
             "qemu.histogram.bb_bucket.end": "end",
-            "qemu.histogram.bb_bucket.value": "bb_count"
+            "qemu.histogram.bb_bucket.value": "icount"
         }
         return mapping
 
     def _get_symbol_column(self):
         return "start"
 
-    def delta_columns(self):
-        return ["bb_count"]
+    def _get_context_agg_strategy(self):
+        agg = super()._get_context_agg_strategy()
+        agg.update({"start": "min", "end": "max", "icount": "sum"})
+        return agg
 
-    def _get_agg_strategy(self):
-        agg = super()._get_agg_strategy()
-        agg.update({"start": "min", "end": "max", "bb_count": "sum"})
+    def _get_iteration_agg_strategy(self):
+        agg = super()._get_iteration_agg_strategy()
+        agg.update({"icount": ["mean", "std"]})
         return agg
 
 
@@ -333,12 +349,14 @@ class QEMUStatsBranchHistogramDataset(ContextStatsHistogramBase):
     def _get_symbol_column(self):
         return "target"
 
-    def delta_columns(self):
-        return ["call_count"]
-
-    def _get_agg_strategy(self):
-        agg = super()._get_agg_strategy()
+    def _get_context_agg_strategy(self):
+        agg = super()._get_context_agg_strategy()
         agg.update({"source": "min", "target": "min", "call_count": "sum"})
+        return agg
+
+    def _get_iteration_agg_strategy(self):
+        agg = super()._get_iteration_agg_strategy()
+        agg.update({"call_count": ["mean", "std"]})
         return agg
 
     def get_aggregate_index(self):

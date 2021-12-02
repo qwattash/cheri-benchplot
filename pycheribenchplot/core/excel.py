@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .plot import DataView, CellData, Surface, PlotError
+from .plot import CellData, DataView, PlotError, Surface
 
 
 class SpreadsheetSurface(Surface):

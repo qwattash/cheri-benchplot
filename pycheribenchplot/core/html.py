@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from jinja2 import Environment, PackageLoader, select_autoescape
 
-from .plot import DataView, CellData, Surface, PlotError
+from .plot import CellData, DataView, PlotError, Surface
 
 
 class HTMLSurface(Surface):

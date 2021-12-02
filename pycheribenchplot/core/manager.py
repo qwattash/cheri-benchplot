@@ -1,30 +1,30 @@
-import logging
-import uuid
-import json
-import asyncio as aio
-import itertools as it
-import typing
 import argparse as ap
-import shutil
+import asyncio as aio
 import code
-from datetime import datetime, timezone
-from pathlib import Path
+import itertools as it
+import json
+import logging
+import shutil
+import typing
+import uuid
 from collections import defaultdict
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 
-import termcolor
 import asyncssh
 import pandas
+import termcolor
 
-from .util import new_logger
-from .config import Config, TemplateConfig, TemplateConfigContext, path_field
-from .benchmark import BenchmarkBase, BenchmarkRunConfig, BenchmarkRunRecord
-from .instance import InstanceConfig, InstanceManager
-from .dataset import DatasetRegistry
 from .analysis import BenchmarkAnalysisRegistry
-from .html import HTMLSurface
+from .benchmark import BenchmarkBase, BenchmarkRunConfig, BenchmarkRunRecord
+from .config import Config, TemplateConfig, TemplateConfigContext, path_field
+from .dataset import DatasetRegistry
 from .excel import SpreadsheetSurface
+from .html import HTMLSurface
+from .instance import InstanceConfig, InstanceManager
+from .util import new_logger
 
 
 @dataclass
@@ -245,7 +245,7 @@ class BenchmarkManager(TemplateConfigContext):
                 is_default = ""
             print(termcolor.colored(f"SESSION {records.session} [{mtime:%d-%m-%Y %H:%M}]{is_default}", "blue"))
             for bench_record in records.records:
-                print(f"\t{bench_record.run.type}:{bench_record.run.name} on instance " +
+                print(f"\t{bench_record.run.name}:{bench_record.run.benchmark_dataset.type} on instance " +
                       f"{bench_record.instance.name} ({bench_record.uuid})")
 
     async def _clean_task(self):

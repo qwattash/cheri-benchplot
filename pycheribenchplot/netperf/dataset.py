@@ -1,5 +1,5 @@
-import io
 import asyncio as aio
+import io
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -7,8 +7,9 @@ import numpy as np
 import pandas as pd
 
 from ..core.config import TemplateConfig, path_field
-from ..core.dataset import (DatasetArtefact, DatasetName, Field, DataField, StrField, IndexField)
 from ..core.csv import CSVDataSetContainer
+from ..core.dataset import (DataField, DatasetArtefact, DatasetName, Field,
+                            IndexField, StrField)
 from ..core.procstat import ProcstatDataset
 
 
@@ -200,7 +201,6 @@ class NetperfData(CSVDataSetContainer):
         self.netperf_bin = None
         self.run_env = {"STATCOUNTERS_NO_AUTOSAMPLE": "1"}
         self.netserver_task = None
-        self.kdump_out = self.benchmark.result_path / f"netserver-ktrace-{self.benchmark.uuid}.txt"
 
     def raw_fields(self, include_derived=False):
         return NetperfData.fields
@@ -209,14 +209,23 @@ class NetperfData(CSVDataSetContainer):
         kwargs["skiprows"] = 1
         return super()._load_csv(path, **kwargs)
 
-    def load(self, path: Path):
-        super().load(path)
+    def _kdump_output_path(self):
+        return self.benchmark.get_output_path() / f"netserver-ktrace-{self.benchmark.uuid}.txt"
+
+    def load(self):
         pidmap = self.benchmark.get_dataset_by_artefact(DatasetArtefact.PIDMAP)
         if pidmap:
+            kdump_out = self._kdump_output_path()
             # Load the kdump auxiliary data to resolve extra PIDs
-            self.logger.info("Loading netserver PIDs from auxiliary kdump %s", self.kdump_out)
-            with open(self.kdump_out, "r") as kdump_fd:
+            self.logger.info("Loading netserver PIDs from auxiliary kdump %s", kdump_out)
+            with open(kdump_out, "r") as kdump_fd:
                 pidmap.load_from_kdump(kdump_fd)
+
+    def load_iteration(self, iteration):
+        path = self.iteration_output_file()
+        csv_df = self._load_csv(path)
+        csv_df["__iteration"] = iteration
+        self._append_df(csv_df)
 
     def aggregate(self):
         super().aggregate()
@@ -228,13 +237,20 @@ class NetperfData(CSVDataSetContainer):
     def get_addrspace_key(self):
         return self.netperf_bin.name
 
-    def _set_netperf_option(self, flag, value):
+    def _set_netperf_option(self, flag, value, replace=False):
         """
-        Set a netperf CLI option if one is not specified by the configuration already
+        Set a netperf CLI option,  if one is not specified by the configuration already
         """
         if flag in self.config.netperf_options:
-            return
-        self.config.netperf_options = [flag, value] + self.config.netperf_options
+            if not replace or value is None:
+                return
+            index = self.config.netperf_options.index(flag)
+            self.config.netperf_options[index + 1] = value
+        else:
+            opt_item = [flag]
+            if value is not None:
+                opt_item.append(value)
+            self.config.netperf_options = opt_item + self.config.netperf_options
 
     def configure(self, opts):
         opts = super().configure(opts)
@@ -247,17 +263,21 @@ class NetperfData(CSVDataSetContainer):
         self.netserver_bin = Path("/") / rootfs_netserver_bin.relative_to(self.benchmark.rootfs)
         self.logger.debug("Using %s %s", self.netperf_bin, self.netserver_bin)
         # Determine any extra options for cooperation with other datasets
-        pmc = self.benchmark.get_dataset(DatasetName.PMC)
         qemu = (self.benchmark.get_dataset(DatasetName.QEMU_STATS_BB_HIST)
                 or self.benchmark.get_dataset(DatasetName.QEMU_STATS_BB_CALL)
                 or self.benchmark.get_dataset(DatasetName.QEMU_CTX_CTRL))
-        if pmc:
-            self._set_netperf_option("-G", pmc.output_file().name)
-            if not qemu:
-                self._set_netperf_option("-g", "all")
+        pmc = self.benchmark.get_dataset(DatasetName.PMC)
+        if pmc and not qemu:
+            self._set_netperf_option("-g", "all")
         if qemu:
             self._set_netperf_option("-g", "qemu")
         return opts
+
+    def configure_iteration(self):
+        super().configure_iteration()
+        pmc = self.benchmark.get_dataset(DatasetName.PMC)
+        if pmc:
+            self._set_netperf_option("-G", pmc.iteration_output_file().name)
 
     async def run_pre_benchmark(self):
         await super().run_pre_benchmark()
@@ -286,7 +306,7 @@ class NetperfData(CSVDataSetContainer):
     async def run_benchmark(self):
         await super().run_benchmark()
         self.logger.info("Run benchmark iterations")
-        with open(self.output_file(), "w+") as outfd:
+        with open(self.iteration_output_file(), "w+") as outfd:
             await self.benchmark.run_cmd(self.netperf_bin, self.config.netperf_options, outfile=outfd, env=self.run_env)
 
     async def run_post_benchmark(self):
@@ -295,5 +315,5 @@ class NetperfData(CSVDataSetContainer):
         pidmap = self.benchmark.get_dataset_by_artefact(DatasetArtefact.PIDMAP)
         if pidmap and self.config.netserver_resolve_forks:
             # Grab the extra pids forked by netserver
-            with open(self.kdump_out, "w+") as kdump_fd:
+            with open(self._kdump_output_path(), "w+") as kdump_fd:
                 await self.benchmark.run_cmd("kdump", ["-s"], outfile=kdump_fd)

@@ -1,14 +1,15 @@
-import json
 import io
+import json
 from pathlib import Path
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 
-from ..core.dataset import (DatasetArtefact, DatasetName, DatasetRunOrder, DataField, Field, IndexField,
+from ..core.csv import CSVDataSetContainer
+from ..core.dataset import (DataField, DatasetArtefact, DatasetName,
+                            DatasetRunOrder, Field, IndexField,
                             align_multi_index_levels)
 from ..core.json import JSONDataSetContainer
-from ..core.csv import CSVDataSetContainer
 
 
 class UMAZoneInfoDataset(CSVDataSetContainer):
@@ -29,8 +30,16 @@ class UMAZoneInfoDataset(CSVDataSetContainer):
     def raw_fields(self, include_derived=False):
         return UMAZoneInfoDataset.fields
 
+    def iteration_output_file(self):
+        raise RuntimeError("zone info dataset does not produce per-iteration output")
+
     def output_file(self):
         return super().output_file().with_suffix(".csv")
+
+    def load(self):
+        path = self.output_file()
+        csv_df = self._load_csv(path)
+        self._append_df(csv_df)
 
     async def run_pre_benchmark(self):
         vmstat_out = io.StringIO()
@@ -56,13 +65,9 @@ class UMAZoneInfoDataset(CSVDataSetContainer):
         output_df["name"] = output_df["name_vmstat"]
         output_df[["name", "efficiency", "ipers", "ppera", "rsize"]].fillna(0).to_csv(self.output_file(), index=False)
 
-    # def _load_csv(self, path):
-    #     csv_df = super()._load_csv(path, dtype=None)
-    #     return csv_df.fillna(0).astype(self._get_column_dtypes(include_converted=False))
-
     def aggregate(self):
         super().aggregate()
-        # We just sum if there are repeated index entries
+        # We just sum if there are repeated index entries, we have no per-iteration data here
         self.agg_df = self.merged_df.groupby(self.merged_df.index.names).sum()
 
     def post_aggregate(self):
@@ -81,6 +86,7 @@ class UMAZoneInfoDataset(CSVDataSetContainer):
             norm_delta = delta[base_cols].divide(baseline[base_cols])
             new_df.loc[ds_id, delta_cols] = delta[base_cols].values
             new_df.loc[ds_id, norm_cols] = norm_delta[base_cols].values
+        self.logger.debug("XXX post-aggregate columns %s", self.agg_df.columns)
         self.agg_df = new_df
 
 
@@ -96,7 +102,8 @@ class VMStatDataset(JSONDataSetContainer):
     def _vmstat_delta(self, pre_df, post_df):
         raise NotImplementedError("Must be defined by subclasses")
 
-    def load(self, path: Path):
+    def load_iteration(self, iteration):
+        path = self.iteration_output_file()
         pre = open(path.with_suffix(".pre"), "r")
         post = open(path.with_suffix(".post"), "r")
         try:
@@ -106,16 +113,23 @@ class VMStatDataset(JSONDataSetContainer):
             post_df = pd.DataFrame.from_records(self._get_vmstat_records(post_data))
             df = self._vmstat_delta(pre_df, post_df)
             df["__dataset_id"] = self.benchmark.uuid
+            df["__iteration"] = iteration
             df = df.astype(self._get_column_dtypes())
-            self._internalize_json(df)
+            self._append_df(df)
         finally:
             pre.close()
             post.close()
 
     def aggregate(self):
         super().aggregate()
-        # We just sum if there are repeated index entries
-        self.agg_df = self.merged_df.groupby(self.merged_df.index.names).sum()
+        # We sum if there are repeated index entries for each iteration
+        tmp = self.merged_df.groupby(self.merged_df.index.names).sum()
+        # Then aggregate across iterations
+        iter_index = list(self.merged_df.index.names)
+        iter_index.remove("__iteration")
+        agg = {c: ["mean", "std"] for c in self.data_columns()}
+        self.agg_df = tmp.groupby(iter_index).agg(agg)
+        self.agg_df.columns = ["_".join(c) for c in self.agg_df.columns.to_flat_index()]
 
     def post_aggregate(self):
         super().post_aggregate()
@@ -123,7 +137,7 @@ class VMStatDataset(JSONDataSetContainer):
         # Compute delta for each metric
         baseline = new_df.xs(self.benchmark.uuid, level="__dataset_id")
         datasets = new_df.index.get_level_values("__dataset_id").unique()
-        base_cols = self.data_columns()
+        base_cols = self.agg_df.columns
         delta_cols = [f"delta_{col}" for col in base_cols]
         norm_cols = [f"norm_{col}" for col in delta_cols]
         new_df[delta_cols] = 0
@@ -136,29 +150,25 @@ class VMStatDataset(JSONDataSetContainer):
             new_df.loc[ds_id, norm_cols] = norm_delta[base_cols].values
         self.agg_df = new_df
 
+    def iteration_output_file(self):
+        """The output file is shared by all vmstat datasets."""
+        return self.benchmark.get_iter_output_path() / f"vmstat-{self.benchmark.uuid}.json"
+
     def output_file(self):
-        """
-        The output file is shared by all vmstat datasets. This will have the side-effect of having only
-        one of the vmstat datasets running the pre/post benchmark steps.
-        """
-        return self.benchmark.result_path / f"vmstat-{self.benchmark.uuid}.json"
+        raise RuntimeError("vmstat only generates per-iteration data")
 
     async def run_pre_benchmark_iter(self):
-        """
-        Run a vmstat snapshot before the benchmark runs.
-        """
+        """Run a vmstat snapshot before the benchmark runs."""
         self.logger.info("Pre-benchmark vmstat snapshot")
-        pre_output = self.output_file().with_suffix(".pre")
+        pre_output = self.iteration_output_file().with_suffix(".pre")
         with open(pre_output, "w+") as vmstat_out:
             await self.benchmark.run_cmd("vmstat", ["--libxo", "json", "-H", "-i", "-m", "-o", "-P", "-z"],
                                          outfile=vmstat_out)
 
     async def run_post_benchmark_iter(self):
-        """
-        Run a vmstat snapshot after the benchmark runs.
-        """
+        """Run a vmstat snapshot after the benchmark runs."""
         self.logger.info("Post-benchmark vmstat snapshot")
-        post_output = self.output_file().with_suffix(".post")
+        post_output = self.iteration_output_file().with_suffix(".post")
         with open(post_output, "w+") as vmstat_out:
             await self.benchmark.run_cmd("vmstat", ["--libxo", "json", "-H", "-i", "-m", "-o", "-P", "-z"],
                                          outfile=vmstat_out)

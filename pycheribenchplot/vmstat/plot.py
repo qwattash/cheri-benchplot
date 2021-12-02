@@ -1,10 +1,12 @@
 import numpy as np
 import pandas as pd
 
-from ..core.dataset import (DatasetName, subset_xs, check_multi_index_aligned, rotate_multi_index_level)
-from ..core.plot import (CellData, DataView, BenchmarkPlot, BenchmarkSubPlot, Surface)
-from ..core.html import HTMLSurface
+from ..core.dataset import (DatasetName, check_multi_index_aligned,
+                            rotate_multi_index_level, subset_xs)
 from ..core.excel import SpreadsheetSurface
+from ..core.html import HTMLSurface
+from ..core.plot import (BenchmarkPlot, BenchmarkSubPlot, CellData, DataView,
+                         Surface)
 
 
 class VMStatTable(BenchmarkSubPlot):
@@ -36,7 +38,6 @@ class VMStatTable(BenchmarkSubPlot):
         # Make normalized fields a percentage
         norm_cols = [col for col in df.columns if col.startswith("norm_")]
         df[norm_cols] = df[norm_cols] * 100
-
         legend_map = self.get_legend_map()
         view_df, colmap = rotate_multi_index_level(df, "__dataset_id", legend_map)
         show_cols = self._remap_display_columns(colmap)
@@ -59,11 +60,13 @@ class VMStatMallocTable(VMStatTable):
 
     def _get_common_display_columns(self):
         """Columns to display for all benchmark runs"""
-        return ["requests", "large-malloc"]
+        return ["requests_mean", "large-malloc_mean", "requests_std", "large-malloc_std"]
 
     def _get_non_baseline_display_columns(self):
         """Columns to display for benchmarks that are not baseline (because they are meaningless)"""
-        return ["delta_requests", "norm_delta_requests", "delta_large-malloc", "norm_delta_large-malloc"]
+        return [
+            "delta_requests_mean", "norm_delta_requests_mean", "delta_large-malloc_mean", "norm_delta_large-malloc_mean"
+        ]
 
     def _get_vmstat_dataset(self):
         return self.get_dataset(DatasetName.VMSTAT_MALLOC).agg_df.copy()
@@ -90,18 +93,21 @@ class VMStatUMATable(VMStatTable):
 
     def _get_common_display_columns(self):
         """Columns to display for all benchmark runs"""
-        stats_cols = self.uma_stats.data_columns()
+        stats_cols = []
+        for c in self.uma_stats.data_columns():
+            stats_cols.append(f"{c}_mean")
+            stats_cols.append(f"{c}_std")
         if self.uma_zone_info:
-            stats_cols += self.uma_zone_info.data_columns()
+            stats_cols.extend(self.uma_zone_info.data_columns())
         return stats_cols
 
     def _get_non_baseline_display_columns(self):
         """Columns to display for benchmarks that are not baseline (because they are meaningless)"""
-        delta_cols = [f"delta_{c}" for c in self.uma_stats.data_columns()]
-        if self.uma_zone_info:
-            delta_cols += [f"delta_{c}" for c in self.uma_zone_info.data_columns()]
-        norm_cols = [f"norm_{c}" for c in delta_cols]
-        return delta_cols + norm_cols
+        cols = []
+        for c in self._get_common_display_columns():
+            cols.append(f"delta_{c}")
+            cols.append(f"norm_delta_{c}")
+        return cols
 
     def _get_vmstat_dataset(self):
         if self.uma_zone_info:
