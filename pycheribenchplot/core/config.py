@@ -3,8 +3,7 @@ import collections
 import itertools
 import json
 import typing
-from dataclasses import (MISSING, Field, dataclass, field, fields,
-                         is_dataclass, replace)
+from dataclasses import (MISSING, Field, dataclass, field, fields, is_dataclass, replace)
 from enum import Enum
 from pathlib import Path
 

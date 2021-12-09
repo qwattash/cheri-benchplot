@@ -14,8 +14,7 @@ import pandas as pd
 from ..pmc import PMCStatData
 from .analysis import BenchmarkAnalysisRegistry
 from .config import TemplateConfig, TemplateConfigContext
-from .dataset import (DatasetArtefact, DataSetContainer, DatasetName,
-                      DatasetRegistry)
+from .dataset import (DatasetArtefact, DataSetContainer, DatasetName, DatasetRegistry)
 from .elf import Symbolizer
 from .instance import InstanceConfig, InstanceInfo, PlatformOptions
 from .pidmap import PidMapDataset
@@ -90,6 +89,186 @@ class CommandHistoryEntry:
     pid: int = None
 
 
+@dataclass
+class BenchmarkScriptCommand:
+    """
+    Represent a single command executed by the benchmark script
+    """
+    cmd: str
+    args: list[str]
+    env: dict[str, str]
+    background: bool = False
+    collect_pid: bool = True
+    remote_output: Path = None
+    local_output: Path = None
+    extra_output: dict[Path, Path] = field(default_factory=dict)
+    extractfn: typing.Callable[["BenchmarkBase", Path, Path], None] = None
+
+    def build_sh_command(self, cmd_index: int):
+        cmdargs = f"{self.cmd} " + " ".join(map(str, self.args))
+        env_vars = [f"{name}={value}" for name, value in self.env.items()]
+        if self.remote_output:
+            output_redirect = f" >> {self.remote_output}"
+        else:
+            output_redirect = " >> /dev/null"
+        envstr = " ".join(env_vars)
+        if self.background:
+            cmdline = f"{envstr} {cmdargs} {output_redirect} &\n"
+            if self.collect_pid:
+                cmdline += f"PID_{cmd_index}=$!"
+        else:
+            cmdline = f"{cmdargs} {output_redirect}"
+            if self.collect_pid:
+                cmdline = f"PID_{cmd_index}=`sh -c \"echo \\\\$\\\\$; {envstr} exec {cmdline}\"`"
+            else:
+                cmdline = f"{envstr} {cmdline}"
+        return cmdline
+
+
+class BenchmarkScript:
+    """
+    Generate a shell script that runs the benchmark steps as they are scheduled by
+    datasets.
+    When the script is done, data is extracted from the guest as needed and the
+    datasets get a chance to perform a post-processing step.
+    """
+    @dataclass
+    class VariableRef:
+        name: str
+
+        def __str__(self):
+            return f"${{{self.name}}}"
+
+    def __init__(self, benchmark):
+        self.benchmark = benchmark
+        # Main command list
+        self._commands = []
+        # Intentionally relative to the run-script location.
+        # We may want to add a knob to be able to store these in tmpfs or other places.
+        self._guest_output = Path("benchmark-output")
+
+        self._prepare_guest_output_dirs()
+
+    def _add_command(self, command, args, env=None, collect_pid=False):
+        env = env or {}
+        cmd = BenchmarkScriptCommand(command, args, env)
+        cmd.collect_pid = collect_pid
+        self._commands.append(cmd)
+
+    def _prepare_guest_output_dirs(self):
+        """
+        Prepare the guest output environment to store the files to mirror the local benchmark instance
+        output directory.
+        This makes it easier to share file paths by just using directories relative to the benchmark
+        output_path.
+        """
+        self._add_command("mkdir", [self._guest_output])
+        for i in range(self.benchmark.config.iterations):
+            self._add_command("mkdir", [self._guest_output / str(i)])
+
+    def local_to_remote_path(self, host_path: Path) -> Path:
+        assert host_path.is_absolute(), "Ensure host_path is absolute"
+        assert host_path.is_relative_to(self.benchmark.get_output_path()), "Ensure host_path is in benchmark output"
+        return self._guest_output / host_path.relative_to(self.benchmark.get_output_path())
+
+    def command_history_path(self):
+        return self.benchmark.get_output_path() / "command-history.csv"
+
+    def get_commands_with_pid(self):
+        """Return a list of commands for which we recorded the PID in the command history"""
+        commands = []
+        for cmd in self._commands:
+            if cmd.collect_pid:
+                commands.append(cmd.cmd)
+        return commands
+
+    def get_variable(self, name: str) -> VariableRef:
+        return self.VariableRef(name)
+
+    def gen_cmd(self,
+                command: str,
+                args: list,
+                outfile: Path = None,
+                env: dict[str, str] = None,
+                extractfn=None,
+                extra_outfiles: list[Path] = []):
+        """
+        Add a foreground command to the run script.
+        If the output is to be captured, the outfile argument specifies the host path in which it will be
+        extracted. The host path must be within the benchmark instance output path
+        (see BenchmarkBase.get_output_path()), the guest output path will be derived automatically from it.
+        If extra post-processing should be performed upon file extraction, a callback can be given via
+        extractfn. This function will be called to extract the remote file to the output file as
+        `extractfn(benchmark, remote_path, host_path)`.
+        """
+        env = env or {}
+        cmd = BenchmarkScriptCommand(command, args, env)
+        if outfile is not None:
+            cmd.remote_output = self.local_to_remote_path(outfile)
+        cmd.local_output = outfile
+        cmd.extra_output = {self.local_to_remote_path(p): p for p in extra_outfiles}
+        cmd.extractfn = extractfn
+        self._commands.append(cmd)
+
+    def gen_bg_cmd(self,
+                   command: str,
+                   args: list,
+                   outfile: Path = None,
+                   env: dict[str, str] = None,
+                   extractfn=None) -> VariableRef:
+        """
+        Similar to add_cmd() but will return an handle that can be used at a later time to terminate the
+        background process.
+        """
+        env = env or {}
+        cmd = BenchmarkScriptCommand(command, args, env)
+        if outfile is not None:
+            cmd.remote_output = self.local_to_remote_path(outfile)
+        cmd.local_output = outfile
+        cmd.extractfn = extractfn
+        cmd.background = True
+        cmd.collect_pid = True
+        self._commands.append(cmd)
+        cmd_index = len(self._commands) - 1
+        return self.VariableRef(f"PID_{cmd_index}")
+
+    def gen_stop_bg_cmd(self, command_handle: VariableRef):
+        self._add_command("kill", ["-TERM", command_handle])
+
+    def gen_sleep(self, seconds: int):
+        self._add_command("sleep", [seconds])
+
+    def to_shell_script(self, fd: typing.IO[str]):
+        fd.write("#!/bin/sh\n\n")
+        for i, cmd in enumerate(self._commands):
+            fd.write(cmd.build_sh_command(i))
+            fd.write("\n")
+        # Dump all the collected PIDs in the command history metadata file
+        command_history = self.command_history_path()
+        pid_history_path = self.local_to_remote_path(command_history)
+        for i, cmd in enumerate(self._commands):
+            if cmd.collect_pid:
+                var = self.get_variable(f"PID_{i}")
+                fd.write(f"echo {var} >> {pid_history_path}\n")
+
+    def get_extract_files(self) -> list[tuple[Path, Path, typing.Optional[typing.Callable]]]:
+        """
+        Get a list of all files to extract for the benchmark.
+        Each list item is a tuple of the form (remote_file, local_file, extract_fn)
+        If a custom extract function is given, it will be passed along as the
+        last tuple item for each file.
+        """
+        entries = []
+        for cmd in self._commands:
+            if cmd.remote_output:
+                assert cmd.local_output, "Missing local output file"
+                entries.append((cmd.remote_output, cmd.local_output, cmd.extractfn))
+            if cmd.extra_output:
+                for remote_path, local_path in cmd.extra_output.items():
+                    entries.append((remote_path, local_path, cmd.extractfn))
+        return entries
+
+
 class BenchmarkBase(TemplateConfigContext):
     """
     Base class for all the benchmarks
@@ -107,16 +286,12 @@ class BenchmarkBase(TemplateConfigContext):
         self.instance_config = instance_config
         self.config = config
 
-        # Current benchmark iteration being run, only valid within the run step.
-        self.current_iteration = None
         # InstanceInfo of the instance we have allocated
         self._reserved_instance = None
         # Connection to the CheriBSD instance
         self._conn = None
-        # Commands being run on the instance
-        self._command_tasks = []
-        # Map tasks to CommandHistoryEntry to track the PID of every command we run during the benchmark
-        self.command_history = {}
+        # Benchmark script assembler
+        self._script = BenchmarkScript(self)
         # Map uuids to benchmarks that have been merged into the current instance (which is the baseline)
         # so that we can look them up if necessary
         self.merged_benchmarks = {}
@@ -220,13 +395,12 @@ class BenchmarkBase(TemplateConfigContext):
         """
         return self._result_path
 
-    def get_iter_output_path(self):
+    def get_iter_output_path(self, iteration: int):
         """
         Return the output directory path for the current benchmark iteration.
         This should be used by all datasets to store the output files.
         """
-        assert self.current_iteration is not None, "current_iteration must be set"
-        iter_path = self.get_output_path() / str(self.current_iteration)
+        iter_path = self.get_output_path() / str(iteration)
         iter_path.mkdir(exist_ok=True)
         return iter_path
 
@@ -245,125 +419,76 @@ class BenchmarkBase(TemplateConfigContext):
             return match[0]
         return None
 
+    def get_script_builder(self) -> BenchmarkScript:
+        return self._script
+
     def _record_benchmark_run(self):
         record = BenchmarkRunRecord(uuid=self.uuid, instance=self.instance_config, run=self.config)
         self.manager.record_benchmark(record)
 
-    def _build_remote_command(self, cmd: str, args: list, env={}):
+    def _build_remote_script(self) -> Path:
         """
-        asyncss does not return the pid of the process so we need to print it.
-        We also use this to work around any restriction on the environment variables
-        we are able to set on the guest.
-        The first thing that the remote command will print will contain the process PID,
-        this is handled by the _cmd_io() loop.
+        Build the remote benchmark script to run
         """
-        cmdline = f"{cmd} " + " ".join(map(str, args))
-        exports = [f"export {name}={value};" for name, value in env.items()]
-        export_line = " ".join(exports)
-        sh_cmd = ["sh", "-c", f"'echo $$;{export_line} exec {cmdline}'"]
-        return sh_cmd
+        bench_dset = self.get_dataset(self.config.benchmark_dataset.type)
+        assert bench_dset, "Missing benchmark dataset"
+        pre_generators = self._dataset_generators_sorted()
+        post_generators = self._dataset_generators_sorted(reverse=True)
+        self.logger.info("Generate benchmark script")
 
-    def _parse_pid_line(self, ssh_task, line: str) -> int:
-        """
-        Parse the first line of the output with the process PID number
-        """
-        try:
-            self.logger.debug("Attempt to resolve PID %s", line)
-            pid = int(line)
-            self.command_history[ssh_task].pid = pid
-            self.logger.debug("Bind remote command %s to PID %d", ssh_task.command, pid)
-        except ValueError:
-            raise BenchmarkError(self, f"Can not determine running process pid for {ssh_task.command}, bailing out.")
+        for dset in pre_generators:
+            dset.gen_pre_benchmark()
 
-    async def _cmd_io(self, proc_task, callback):
-        try:
-            while proc_task.returncode is None and not proc_task.stdout.at_eof():
-                out = await proc_task.stdout.readline()
-                if not out:
-                    continue
-                # Expect to receive the PID of the command in the first output line
-                if self.command_history[proc_task].pid is None:
-                    try:
-                        self._parse_pid_line(proc_task, out)
-                    except BenchmarkError as ex:
-                        proc_task.terminate()
-                        raise ex
-                try:
-                    if callback:
-                        callback(out)
-                except aio.CancelledError as ex:
-                    raise ex
-                except Exception as ex:
-                    self.logger.error("Error while processing output for %s: %s", proc_task.command, ex)
-                if out:
-                    self.logger.debug(out)
-        except aio.CancelledError as ex:
-            proc_task.terminate()
-            raise ex
-        finally:
-            self.logger.debug("Background task %s done", proc_task.command)
+        for i in range(self.config.iterations):
+            self.logger.info("Generate benchmark iteration %d", i)
+            for dset in pre_generators:
+                dset.configure_iteration(i)
+            for dset in pre_generators:
+                dset.gen_pre_benchmark_iter(i)
+            # Only run the benchmark step for the given benchmark_dataset
+            bench_dset.gen_benchmark(i)
+            for dset in post_generators:
+                dset.gen_post_benchmark_iter(i)
 
-    async def run_bg_cmd(self, command: str, args: list, env={}, iocallback=None, history_command: str = None):
-        """
-        Run a background command without waiting for termination.
+        for dset in post_generators:
+            dset.gen_post_benchmark()
 
-        Arguments:
-        command: the command to execute
-        args: list of command arguments
-        env: any environment variables for the command
-        iocallback: a function to be called to inspect the command output. The function
-        is called asynchronously.
-        history_command: override command name in the command history
-        """
-        if history_command is None:
-            history_command = command
-        remote_cmd = self._build_remote_command(command, args, env)
-        self.logger.debug("SH exec background: %s", remote_cmd)
-        proc_task = await self._conn.create_process(" ".join(remote_cmd))
-        self.command_history[proc_task] = CommandHistoryEntry(history_command)
-        self._command_tasks.append(aio.create_task(self._cmd_io(proc_task, iocallback)))
-        return proc_task
+        script_path = self._result_path / "runner-script.sh"
+        with open(self._result_path / "runner-script.sh", "w+") as script:
+            self._script.to_shell_script(script)
+        script_path.chmod(0o755)
+        return script_path
 
-    async def stop_bg_cmd(self, task):
-        """
-        Work around the unreliability of asyncssh/openssh signal delivery
-        """
-        try:
-            pid = self.command_history[task].pid
-            result = await self._conn.run(f"kill -TERM {pid}")
-            if result.returncode != 0:
-                self.logger.error("Failed to stop remote process %d: %s", pid, task.command)
-            else:
-                await task.wait()
-        except KeyError:
-            self.logger.error("Can not stop %s, missing pid", task.command)
-
-    async def run_cmd(self, command: str, args: list, env={}, outfile=None):
-        """Run a command and wait for the process to complete"""
-        remote_cmd = self._build_remote_command(command, args, env)
-        self.logger.debug("SH exec: %s", remote_cmd)
-        result = await self._conn.run(" ".join(remote_cmd))
+    async def run_ssh_cmd(self, command: str, args: list = [], env: dict = {}):
+        self.logger.debug("SH exec: %s %s", command, args)
+        cmdline = f"{command} " + " ".join(map(str, args))
+        result = await self._conn.run(cmdline)
         if result.returncode != 0:
             self.logger.error("Failed to run %s: %s", command, result.stderr)
         else:
             self.logger.debug("%s done: %s", command, result.stdout)
-        self.command_history[result] = CommandHistoryEntry(command)
-        stdout = io.StringIO(result.stdout)
-        # Expect to receive the PID of the command in the first output line
-        self._parse_pid_line(result, stdout.readline())
-        if outfile:
-            outfile.write(stdout.read())
-        return result
 
-    async def extract_file(self, guest_src: Path, host_dst: Path):
+    async def run_nohup_ssh_cmd(self, command: str, args: list = [], env: dict = {}):
+        await self.run_ssh_cmd(command, args, env)
+
+    async def extract_file(self, guest_src: Path, host_dst: Path, **kwargs):
         """Extract file from instance"""
         src = (self._conn, guest_src)
-        await asyncssh.scp(src, host_dst)
+        await asyncssh.scp(src, host_dst, **kwargs)
 
-    async def import_file(self, host_src: Path, guest_dst: Path):
+    async def import_file(self, host_src: Path, guest_dst: Path, **kwargs):
         """Import file into instance"""
         dst = (self._conn, guest_dst)
-        await asyncssh.scp(host_src, dst)
+        await asyncssh.scp(host_src, dst, **kwargs)
+
+    async def read_remote_file(self, guest_src: Path, target_fd: typing.TextIO):
+        result = await self._conn.run(f"cat {guest_src}")
+        if result.returncode != 0:
+            self.logger.error("Failed to read remote file %s: %s", guest_src, result.stderr)
+        else:
+            self.logger.debug("Done reading remote file %s", guest_src)
+            # Do this here so that we don't automatically close() the target_fd
+            target_fd.write(result.stdout)
 
     async def _connect_instance(self, info: InstanceInfo):
         conn = await asyncssh.connect(info.ssh_host,
@@ -375,46 +500,46 @@ class BenchmarkBase(TemplateConfigContext):
         self.logger.debug("Connected to instance")
         return conn
 
+    async def _extract_results(self):
+        for remote_path, local_path, custom_extract_fn in self._script.get_extract_files():
+            self.logger.debug("Extract %s -> %s", remote_path, local_path)
+            if custom_extract_fn:
+                await custom_extract_fn(remote_path, local_path)
+            else:
+                await self.extract_file(remote_path, local_path)
+
+        # Extract also the implicit command history
+        cmd_history = self._script.command_history_path()
+        remote_cmd_history = self._script.local_to_remote_path(cmd_history)
+        self.logger.debug("Extract %s -> %s", remote_cmd_history, cmd_history)
+        await self.extract_file(remote_cmd_history, cmd_history)
+
     async def run(self):
-        bench_dset = self.get_dataset(self.config.benchmark_dataset.type)
-        assert bench_dset, "Missing benchmark dataset"
+        remote_script = Path(f"{self.config.name}-{self.uuid}.sh")
+        script_path = self._build_remote_script()
         self.logger.info("Waiting for instance")
         self._reserved_instance = await self.instance_manager.request_instance(self.uuid, self.instance_config)
         try:
             self._conn = await self._connect_instance(self._reserved_instance)
-            pre_generators = self._dataset_generators_sorted()
-            post_generators = self._dataset_generators_sorted(reverse=True)
-
-            for dset in pre_generators:
-                await dset.run_pre_benchmark()
-
-            for i in range(self.config.iterations):
-                self.current_iteration = i
-                self.logger.info("Running benchmark iteration %d", i)
-                for dset in pre_generators:
-                    dset.configure_iteration()
-                for dset in pre_generators:
-                    await dset.run_pre_benchmark_iter()
-                # Only run the benchmark step for the given benchmark_dataset
+            await self.import_file(script_path, remote_script, preserve=True)
+            if self.manager_config.verbose:
+                # run inline
                 with timing("Benchmark completed", logger=self.logger):
-                    await bench_dset.run_benchmark()
-                for dset in post_generators:
-                    await dset.run_post_benchmark_iter()
+                    await self.run_ssh_cmd("sh", [remote_script])
+            else:
+                await self.run_nohup_ssh_cmd(remote_script)
 
-            for dset in post_generators:
-                await dset.run_post_benchmark()
+            await self._extract_results()
+
+            for dset in self._dataset_generators_sorted():
+                await dset.after_extract_results()
 
             # Record successful run and cleanup any pending background task
             self._record_benchmark_run()
-            for t in self._command_tasks:
-                t.cancel()
-            await aio.gather(*self._command_tasks, return_exceptions=True)
         except Exception as ex:
             self.logger.exception("Benchmark run failed: %s", ex)
             self.manager.failed_benchmarks.append(self)
         finally:
-            # Just in case, to avoid accidental reuse
-            self.current_iteration = None
             await self.instance_manager.release_instance(self.uuid)
 
     def _load_kernel_symbols(self):
@@ -442,10 +567,8 @@ class BenchmarkBase(TemplateConfigContext):
         for dset in self.datasets.values():
             self.logger.info("Loading %s data", dset.name)
             for i in range(self.config.iterations):
-                self.current_iteration = i
                 dset.load_iteration(i)
             dset.load()
-            self.current_iteration = None
 
     def pre_merge(self):
         """

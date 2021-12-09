@@ -5,8 +5,7 @@ import pandas as pd
 
 from .core.cpu import *
 from .core.csv import CSVDataSetContainer
-from .core.dataset import (DataField, DatasetArtefact, DatasetName, IndexField,
-                           StrField)
+from .core.dataset import (DataField, DatasetArtefact, DatasetName, IndexField, StrField)
 
 
 class PMCStatData(CSVDataSetContainer):
@@ -49,7 +48,7 @@ class PMCStatData(CSVDataSetContainer):
         return csv_df
 
     def load_iteration(self, iteration):
-        path = self.iteration_output_file()
+        path = self.iteration_output_file(iteration)
         csv_df = self._load_csv(path)
         csv_df["__iteration"] = iteration
         self._append_df(csv_df)
@@ -193,14 +192,12 @@ class FluteStatcountersData(PMCStatData):
             diff = other.subtract(baseline)
             self.agg_df.loc[ds_id, diff_cols] = diff.values
 
-    def iteration_output_file(self):
-        """
-        The output file that the benchmark should generate.
-        """
-        return super().iteration_output_file().with_suffix(".csv")
+    def iteration_output_file(self, iteration):
+        return super().iteration_output_file(iteration).with_suffix(".csv")
 
-    async def run_post_benchmark_iter(self):
-        await self.benchmark.extract_file(self.iteration_output_file().name, self.iteration_output_file())
+    async def after_extract_files(self):
+        # check that the iteration output was extracted
+        pass
 
 
 class BeriStatcountersData:

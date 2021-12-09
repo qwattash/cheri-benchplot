@@ -1,12 +1,10 @@
 import numpy as np
 import pandas as pd
 
-from ..core.dataset import (DatasetName, check_multi_index_aligned,
-                            rotate_multi_index_level, subset_xs)
+from ..core.dataset import (DatasetName, check_multi_index_aligned, rotate_multi_index_level, subset_xs)
 from ..core.excel import SpreadsheetSurface
 from ..core.html import HTMLSurface
-from ..core.plot import (BenchmarkPlot, BenchmarkSubPlot, CellData, DataView,
-                         Surface)
+from ..core.plot import (BenchmarkPlot, BenchmarkSubPlot, CellData, DataView, Surface)
 
 
 class QEMUHistSubPlot(BenchmarkSubPlot):

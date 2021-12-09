@@ -49,7 +49,7 @@ class PidMapDataset(JSONDataSetContainer):
         result_df["command"] = df["command"].map(resolve_path)
         return result_df[~result_df["command"].isna()]
 
-    def iteration_output_file(self):
+    def output_file(self):
         return super().output_file().with_suffix(".json")
 
     def load(self):
@@ -128,36 +128,50 @@ class PidMapDataset(JSONDataSetContainer):
         else:
             self._pid_snapshot[pid] = entry
 
-    async def sample_system_pids(self):
+    def sample_system_pids(self):
         """
         Add a system PID sample to the output data.
         This is exposed to other datasets so that snapshots can be taken at interesting
         times.
         """
+        self.logger.debug("Generate system PIDs sampling command")
+        self._script.gen_cmd("procstat", ["-a", "-t", "--libxo", "json"],
+                             outfile=self.output_file(),
+                             extractfn=self._extract_pid_sample)
+
+    async def _extract_pid_sample(self, remote_path, local_path):
+        # Merge the PIDs with any existing sample.
         self.logger.info("Extract system PIDs")
         pid_raw_data = io.StringIO()
-        await self.benchmark.run_cmd("procstat", ["-a", "-t", "--libxo", "json"], outfile=pid_raw_data)
-        # Merge the PIDs with any existing sample.
+        await self.benchmark.read_remote_file(remote_path, pid_raw_data)
+        self.logger.debug(pid_raw_data.getvalue())
         raw_data = json.loads(pid_raw_data.getvalue())
         proc_map = raw_data["procstat"]["threads"]
         for pid, info in proc_map.items():
             self._merge_procstat_entry(info)
 
-    async def run_post_benchmark(self):
+    async def after_extract_results(self):
+        await super().after_extract_results()
+        # Grab the command history and merge it as well
+        cmd_pids = pd.read_csv(self._script.command_history_path(), index_col=False, names=["pid"])
+        cmd_pids["command"] = self._script.get_commands_with_pid()
+        for _, row in cmd_pids.iterrows():
+            entry = {
+                "process_id": row["pid"],
+                "command": str(row["command"]),
+                # We do not have thread info for these, should really use a different method
+                "threads": {}
+            }
+            self._merge_procstat_entry(entry)
+
+        with open(self.output_file(), "w+") as pid_fd:
+            json.dump(self._pid_snapshot, pid_fd)
+
+    def gen_post_benchmark(self):
         """
         Post-benchmark hook to extract PID mappings.
         Note: we also use the command history from the benchmark runner to resolve any
         extra processes we have been running and that have since terminated.
         """
-        super().run_post_benchmark_iter()
-        await self.sample_system_pids()
-        for history_entry in self.benchmark.command_history.values():
-            entry = {
-                "process_id": history_entry.pid,
-                "command": str(history_entry.cmd),
-                # We do not have thread info for these, should really use a different method
-                "threads": {}
-            }
-            self._merge_procstat_entry(entry)
-        with open(self.output_file(), "w+") as pid_fd:
-            json.dump(self._pid_snapshot, pid_fd)
+        super().gen_post_benchmark()
+        self.sample_system_pids()

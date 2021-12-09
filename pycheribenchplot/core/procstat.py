@@ -55,12 +55,11 @@ class ProcstatDataset(CSVDataSetContainer):
     def output_file(self):
         return super().output_file().with_suffix(".csv")
 
-    async def _run_procstat(self, remote_pid: int):
+    def _gen_run_procstat(self, proc_handle: "VariableRef"):
         """
-        This should be used in subclasses to implement run_pre_benchmark().
+        This should be used in subclasses to implement gen_pre_benchmark().
         Running procstat requires knowledge of the way to stop the benchmark at the correct time,
         unless we can use a generic way to stop at main() or exit()
         """
-        with open(self.output_file(), "w+") as outfd:
-            await self.benchmark.run_cmd("procstat", ["-v", str(remote_pid)], outfile=outfd)
+        self._script.gen_cmd("procstat", ["-v", proc_handle], outfile=self.output_file())
         self.logger.debug("Collected procstat info")

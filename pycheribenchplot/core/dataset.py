@@ -179,6 +179,7 @@ class DataSetContainer(metaclass=DatasetRegistry):
         """
         self.name = dset_key
         self.benchmark = benchmark
+        self._script = self.benchmark.get_script_builder()
         self.config = config
         self.logger = new_logger(f"{dset_key}", parent=self.benchmark.logger)
         self.df = pd.DataFrame(columns=self.all_columns())
@@ -244,6 +245,10 @@ class DataSetContainer(metaclass=DatasetRegistry):
         if "__iteration" not in df.columns:
             self.logger.debug("No iteration column, using default (-1)")
             df["__iteration"] = -1
+        # Normalize type for existing columns
+        col_dtypes = self._get_column_dtypes()
+        col_dtypes = {c: t for c, t in col_dtypes.items() if c in df.columns}
+        df = df.astype(col_dtypes)
         df.set_index(self.index_columns(), inplace=True)
         dataset_columns = set(self.all_columns_noindex())
         avail_columns = set(df.columns)
@@ -257,12 +262,12 @@ class DataSetContainer(metaclass=DatasetRegistry):
                 self.logger.error("Unexpected dtype change in %s: %s -> %s", col, df.dtypes[col], self.df.dtypes[col])
             raise DatasetProcessingError("Unexpected dtype change")
 
-    def iteration_output_file(self):
+    def iteration_output_file(self, iteration):
         """
         Generate the output file for this dataset for the current benchmark iteration.
         Any extension suffix should be added in subclasses.
         """
-        return self.benchmark.get_iter_output_path() / f"{self.name}-{self.benchmark.uuid}"
+        return self.benchmark.get_iter_output_path(iteration) / f"{self.name}-{self.benchmark.uuid}"
 
     def output_file(self):
         """
@@ -298,28 +303,36 @@ class DataSetContainer(metaclass=DatasetRegistry):
             self.config = self.run_options_class(**self.config.run_options).bind(self.benchmark)
         return options
 
-    def configure_iteration(self):
+    def configure_iteration(self, iteration: int):
         """
         Update configuration for the current benchmark iteration, if any depends on it.
         This is called for each iteration, before pre_benchmark_iter()
         (e.g. to update the benchmark output file options)
         """
-        self.logger.debug("Configure iteration %d", self.benchmark.current_iteration)
+        self.logger.debug("Configure iteration %d", iteration)
 
-    async def run_pre_benchmark(self):
-        self.logger.debug("Pre-benchmark")
+    def gen_pre_benchmark(self):
+        self.logger.debug("Gen pre-benchmark")
 
-    async def run_pre_benchmark_iter(self):
-        self.logger.debug("Pre-benchmark iteration %d", self.benchmark.current_iteration)
+    def gen_pre_benchmark_iter(self, iteration: int):
+        self.logger.debug("Gen pre-benchmark iteration %d", iteration)
 
-    async def run_benchmark(self):
-        self.logger.debug("Benchmark iteration %d", self.benchmark.current_iteration)
+    def gen_benchmark(self, iteration: int):
+        self.logger.debug("Gen benchmark iteration %d", iteration)
 
-    async def run_post_benchmark_iter(self):
-        self.logger.debug("Post-benchmark iteration %d", self.benchmark.current_iteration)
+    def gen_post_benchmark_iter(self, iteration: int):
+        self.logger.debug("Gen post-benchmark iteration %d", iteration)
 
-    async def run_post_benchmark(self):
-        self.logger.debug("Post-benchmark")
+    def gen_post_benchmark(self):
+        self.logger.debug("Gen post-benchmark")
+
+    async def after_extract_results(self):
+        """
+        Give a chance to run commands on the live instance after the benchmark has
+        completed. Note that this should only be used to extract auxiliary information
+        that are not part of a dataset main input file, or to post-process output files.
+        """
+        self.logger.debug("Run post-extraction hook")
 
     def load(self):
         """

@@ -8,8 +8,7 @@ import pandas as pd
 
 from ..core.config import TemplateConfig, path_field
 from ..core.csv import CSVDataSetContainer
-from ..core.dataset import (DataField, DatasetArtefact, DatasetName, Field,
-                            IndexField, StrField)
+from ..core.dataset import (DataField, DatasetArtefact, DatasetName, Field, IndexField, StrField)
 from ..core.procstat import ProcstatDataset
 
 
@@ -33,16 +32,14 @@ class NetperfProcstat(ProcstatDataset):
     """
     dataset_config_name = DatasetName.PROCSTAT_NETPERF
 
-    async def run_pre_benchmark(self):
+    def gen_pre_benchmark(self):
         netperf = self.benchmark.get_dataset(DatasetName.NETPERF_DATA)
         assert netperf, "Netperf dataset is missing"
-        netperf_stopped = await self.benchmark.run_bg_cmd(netperf.netperf_bin, ["-z"], env=netperf.run_env)
-        await aio.sleep(5)  # Give some time to settle
-        try:
-            pid = self.benchmark.command_history[netperf_stopped].pid
-            await self._run_procstat(pid)
-        finally:
-            await self.benchmark.stop_bg_cmd(netperf_stopped)
+        netperf_stopped = self._script.gen_bg_cmd(netperf.netperf_bin, ["-z"], env=netperf.run_env)
+        # Sleep to give some time to netperf to settle in the background
+        self._script.gen_sleep(5)
+        self._gen_run_procstat(netperf_stopped)
+        self._script.gen_stop_bg_cmd(netperf_stopped)
 
 
 class NetperfData(CSVDataSetContainer):
@@ -201,6 +198,7 @@ class NetperfData(CSVDataSetContainer):
         self.netperf_bin = None
         self.run_env = {"STATCOUNTERS_NO_AUTOSAMPLE": "1"}
         self.netserver_task = None
+        self._script = self.benchmark.get_script_builder()
 
     def raw_fields(self, include_derived=False):
         return NetperfData.fields
@@ -222,7 +220,7 @@ class NetperfData(CSVDataSetContainer):
                 pidmap.load_from_kdump(kdump_fd)
 
     def load_iteration(self, iteration):
-        path = self.iteration_output_file()
+        path = self.iteration_output_file(iteration)
         csv_df = self._load_csv(path)
         csv_df["__iteration"] = iteration
         self._append_df(csv_df)
@@ -264,7 +262,7 @@ class NetperfData(CSVDataSetContainer):
         self.logger.debug("Using %s %s", self.netperf_bin, self.netserver_bin)
         # Determine any extra options for cooperation with other datasets
         qemu = (self.benchmark.get_dataset(DatasetName.QEMU_STATS_BB_HIST)
-                or self.benchmark.get_dataset(DatasetName.QEMU_STATS_BB_CALL)
+                or self.benchmark.get_dataset(DatasetName.QEMU_STATS_CALL_HIST)
                 or self.benchmark.get_dataset(DatasetName.QEMU_CTX_CTRL))
         pmc = self.benchmark.get_dataset(DatasetName.PMC)
         if pmc and not qemu:
@@ -273,14 +271,16 @@ class NetperfData(CSVDataSetContainer):
             self._set_netperf_option("-g", "qemu")
         return opts
 
-    def configure_iteration(self):
-        super().configure_iteration()
+    def configure_iteration(self, iteration):
+        super().configure_iteration(iteration)
         pmc = self.benchmark.get_dataset(DatasetName.PMC)
         if pmc:
-            self._set_netperf_option("-G", pmc.iteration_output_file().name)
+            pmc_output = pmc.iteration_output_file(iteration)
+            pmc_remote_output = self._script.local_to_remote_path(pmc_output)
+            self._set_netperf_option("-G", pmc_remote_output, replace=True)
 
-    async def run_pre_benchmark(self):
-        await super().run_pre_benchmark()
+    def gen_pre_benchmark(self):
+        super().gen_pre_benchmark()
         # Start netserver here so that it does not interfere with any pre-benchmark
         # mesurements
         # Note that running the main netserver under ktrace should not affect the benchmark
@@ -295,25 +295,27 @@ class NetperfData(CSVDataSetContainer):
         else:
             netserver_cmd = self.netserver_bin
             netserver_options = self.config.netserver_options
-        self.netserver_task = await self.benchmark.run_bg_cmd(netserver_cmd,
-                                                              netserver_options,
-                                                              env=self.run_env,
-                                                              history_command=self.netserver_bin)
-        self.logger.info("Prime benchmark")
-        await aio.sleep(5)  # Give some time to settle
-        await self.benchmark.run_cmd(self.netperf_bin, self.config.netperf_prime_options, env=self.run_env)
+        self.netserver_task = self._script.gen_bg_cmd(netserver_cmd, netserver_options, env=self.run_env)
+        self._script.gen_sleep(5)
+        self._script.gen_cmd(self.netperf_bin, self.config.netperf_prime_options, env=self.run_env)
 
-    async def run_benchmark(self):
-        await super().run_benchmark()
-        self.logger.info("Run benchmark iterations")
-        with open(self.iteration_output_file(), "w+") as outfd:
-            await self.benchmark.run_cmd(self.netperf_bin, self.config.netperf_options, outfile=outfd, env=self.run_env)
+    def gen_benchmark(self, iteration):
+        super().gen_benchmark(iteration)
+        outpath = self.iteration_output_file(iteration)
+        extra_output = []
+        pmc = self.benchmark.get_dataset(DatasetName.PMC)
+        if pmc:
+            extra_output.append(pmc.iteration_output_file(iteration))
+        self._script.gen_cmd(self.netperf_bin,
+                             self.config.netperf_options.copy(),
+                             outfile=outpath,
+                             extra_outfiles=extra_output,
+                             env=self.run_env)
 
-    async def run_post_benchmark(self):
-        await super().run_post_benchmark()
-        await self.benchmark.stop_bg_cmd(self.netserver_task)
+    def gen_post_benchmark(self):
+        super().gen_post_benchmark()
+        self._script.gen_stop_bg_cmd(self.netserver_task)
         pidmap = self.benchmark.get_dataset_by_artefact(DatasetArtefact.PIDMAP)
         if pidmap and self.config.netserver_resolve_forks:
             # Grab the extra pids forked by netserver
-            with open(self._kdump_output_path(), "w+") as kdump_fd:
-                await self.benchmark.run_cmd("kdump", ["-s"], outfile=kdump_fd)
+            self._script.gen_cmd("kdump", ["-s"], outfile=self._kdump_output_path())

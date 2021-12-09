@@ -5,14 +5,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from ..core.csv import CSVDataSetContainer
-from ..core.dataset import (DataField, DatasetArtefact, DatasetName,
-                            DatasetRunOrder, Field, IndexField,
-                            align_multi_index_levels)
+from ..core.dataset import (DataField, DatasetArtefact, DataSetContainer, DatasetName, DatasetRunOrder, Field,
+                            IndexField, align_multi_index_levels)
 from ..core.json import JSONDataSetContainer
 
 
-class UMAZoneInfoDataset(CSVDataSetContainer):
+class UMAZoneInfoDataset(DataSetContainer):
     """
     Extract UMA zone information from the uma SYSCTL nodes
     XXX processing is essentially the same as the other VMStat datasets so may share some code
@@ -27,48 +25,60 @@ class UMAZoneInfoDataset(CSVDataSetContainer):
         DataField("rsize", dtype=int)
     ]
 
+    def __init__(self, benchmark, dset_key, config):
+        super().__init__(benchmark, dset_key, config)
+
     def raw_fields(self, include_derived=False):
         return UMAZoneInfoDataset.fields
 
-    def iteration_output_file(self):
-        raise RuntimeError("zone info dataset does not produce per-iteration output")
+    def _output_file_vmstat(self):
+        base = super().output_file()
+        return base.with_name(base.name + "-vmstat").with_suffix(".json")
 
-    def output_file(self):
-        return super().output_file().with_suffix(".csv")
+    def _output_file_sysctl(self):
+        base = super().output_file()
+        return base.with_name(base.name + "-sysctl").with_suffix(".csv")
 
-    def load(self):
-        path = self.output_file()
-        csv_df = self._load_csv(path)
-        self._append_df(csv_df)
-
-    async def run_pre_benchmark(self):
-        vmstat_out = io.StringIO()
-        await self.benchmark.run_cmd("vmstat", ["--libxo", "json", "-z"], outfile=vmstat_out)
-        vmstat_data = json.loads(vmstat_out.getvalue())
+    def _load_vmstat_file(self) -> pd.DataFrame:
+        with open(self._output_file_vmstat(), "r") as vmstat_out:
+            vmstat_data = json.load(vmstat_out)
         # Create mapping between a convenient ID and the vmstat zone name
         vmstat_df = pd.DataFrame.from_records(vmstat_data["memory-zone-statistics"]["zone"])
         vmstat_df["zone_tmp_id"] = vmstat_df["name"].str.replace("[ -]", "_", regex=True)
         vmstat_df = vmstat_df.set_index("zone_tmp_id")["name"]
+        return vmstat_df
+
+    def _load_sysctl_file(self) -> pd.DataFrame:
+        with open(self._output_file_sysctl(), "r") as sysctl_out:
+            sysctl_df = pd.read_csv(sysctl_out, sep=":", names=["node", "value"])
         # For each UMA zone extract keg info from sysctl
-        sysctl_out = io.StringIO()
-        await self.benchmark.run_cmd("sysctl", ["vm.uma"], outfile=sysctl_out)
-        sysctl_out.seek(0)
-        sysctl_df = pd.read_csv(sysctl_out, sep=":", names=["node", "value"])
         keg_info = sysctl_df["node"].str.contains(".keg")
         sysctl_df = sysctl_df[keg_info]
         # this should contain ["vm", "uma", "<zone>", ...]
         sysctl_path = sysctl_df["node"].str.split(".")
         sysctl_df["zone_tmp_id"] = sysctl_path.map(lambda l: l[2])
         sysctl_df["metric"] = sysctl_path.map(lambda l: l[-1])
-        output_df = pd.pivot(sysctl_df, index="zone_tmp_id", values="value", columns="metric")
-        output_df = output_df.join(vmstat_df, how="left", on="zone_tmp_id", rsuffix="_vmstat")
-        output_df["name"] = output_df["name_vmstat"]
-        output_df[["name", "efficiency", "ipers", "ppera", "rsize"]].fillna(0).to_csv(self.output_file(), index=False)
+        return pd.pivot(sysctl_df, index="zone_tmp_id", values="value", columns="metric")
+
+    def load(self):
+        vmstat_df = self._load_vmstat_file()
+        sysctl_df = self._load_sysctl_file()
+        merged_df = sysctl_df.join(vmstat_df, how="left", on="zone_tmp_id", rsuffix="_vmstat")
+        merged_df["name"] = merged_df["name_vmstat"]
+        df = merged_df[["name", "efficiency", "ipers", "ppera", "rsize"]].fillna(0).reset_index(drop=True)
+        df["__dataset_id"] = self.benchmark.uuid
+        self._append_df(df)
+
+    def gen_pre_benchmark(self):
+        self._script.gen_cmd("vmstat", ["--libxo", "json", "-z"], outfile=self._output_file_vmstat())
+        self._script.gen_cmd("sysctl", ["vm.uma"], outfile=self._output_file_sysctl())
 
     def aggregate(self):
         super().aggregate()
         # We just sum if there are repeated index entries, we have no per-iteration data here
         self.agg_df = self.merged_df.groupby(self.merged_df.index.names).sum()
+        # We expect no iteration information to be present in the data
+        assert (self.agg_df.index.get_level_values("__iteration") == -1).all()
 
     def post_aggregate(self):
         super().post_aggregate()
@@ -103,7 +113,7 @@ class VMStatDataset(JSONDataSetContainer):
         raise NotImplementedError("Must be defined by subclasses")
 
     def load_iteration(self, iteration):
-        path = self.iteration_output_file()
+        path = self.iteration_output_file(iteration)
         pre = open(path.with_suffix(".pre"), "r")
         post = open(path.with_suffix(".post"), "r")
         try:
@@ -150,28 +160,21 @@ class VMStatDataset(JSONDataSetContainer):
             new_df.loc[ds_id, norm_cols] = norm_delta[base_cols].values
         self.agg_df = new_df
 
-    def iteration_output_file(self):
+    def iteration_output_file(self, iteration):
         """The output file is shared by all vmstat datasets."""
-        return self.benchmark.get_iter_output_path() / f"vmstat-{self.benchmark.uuid}.json"
+        return self.benchmark.get_iter_output_path(iteration) / f"vmstat-{self.benchmark.uuid}.json"
 
-    def output_file(self):
-        raise RuntimeError("vmstat only generates per-iteration data")
-
-    async def run_pre_benchmark_iter(self):
+    def gen_pre_benchmark_iter(self, iteration):
         """Run a vmstat snapshot before the benchmark runs."""
-        self.logger.info("Pre-benchmark vmstat snapshot")
-        pre_output = self.iteration_output_file().with_suffix(".pre")
-        with open(pre_output, "w+") as vmstat_out:
-            await self.benchmark.run_cmd("vmstat", ["--libxo", "json", "-H", "-i", "-m", "-o", "-P", "-z"],
-                                         outfile=vmstat_out)
+        super().gen_pre_benchmark_iter(iteration)
+        pre_output = self.iteration_output_file(iteration).with_suffix(".pre")
+        self._script.gen_cmd("vmstat", ["--libxo", "json", "-H", "-i", "-m", "-o", "-P", "-z"], outfile=pre_output)
 
-    async def run_post_benchmark_iter(self):
+    def gen_post_benchmark_iter(self, iteration):
         """Run a vmstat snapshot after the benchmark runs."""
-        self.logger.info("Post-benchmark vmstat snapshot")
-        post_output = self.iteration_output_file().with_suffix(".post")
-        with open(post_output, "w+") as vmstat_out:
-            await self.benchmark.run_cmd("vmstat", ["--libxo", "json", "-H", "-i", "-m", "-o", "-P", "-z"],
-                                         outfile=vmstat_out)
+        super().gen_post_benchmark_iter(iteration)
+        post_output = self.iteration_output_file(iteration).with_suffix(".post")
+        self._script.gen_cmd("vmstat", ["--libxo", "json", "-H", "-i", "-m", "-o", "-P", "-z"], outfile=post_output)
 
 
 class VMStatKMalloc(VMStatDataset):

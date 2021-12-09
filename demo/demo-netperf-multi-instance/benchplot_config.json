@@ -17,15 +17,6 @@
         "platform": "qemu",
         "cheri_target": "riscv64-purecap",
         "kernelabi": "purecap"
-    },
-        {
-        "name": "purecap-mbuf-pad",
-        "baseline": false,
-        "kernel": "CHERI-PURECAP-QEMU-MBUF-FIXUP",
-        "platform": "qemu",
-        "cheri_target": "riscv64-purecap",
-        "kernelabi": "purecap",
-        "cheribuild_kernel": false
     }
     ],
     "benchmarks": [
@@ -69,6 +60,9 @@
             },
             "netperf-vmstat-uma": {
                 "type": "vmstat-uma"
+            },
+            "netperf-netstat": {
+                "type": "netstat"
             }
         }
     }

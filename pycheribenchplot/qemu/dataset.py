@@ -7,11 +7,9 @@ import numpy as np
 import pandas as pd
 from pypika import Order, Query
 
-from ..core.dataset import (DataField, DatasetArtefact, DatasetName,
-                            DatasetProcessingError, DerivedField, Field,
-                            IndexField, align_multi_index_levels,
-                            check_multi_index_aligned,
-                            rotate_multi_index_level, subset_xs)
+from ..core.dataset import (DataField, DatasetArtefact, DatasetName, DatasetProcessingError, DerivedField, Field,
+                            IndexField, align_multi_index_levels, check_multi_index_aligned, rotate_multi_index_level,
+                            subset_xs)
 from ..core.instance import PlatformOptions
 from ..core.perfetto import PerfettoDataSetContainer
 
