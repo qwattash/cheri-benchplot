@@ -18,12 +18,23 @@ class PlotError(Exception):
     pass
 
 
+class PlotUnsupportedError(PlotError):
+    pass
+
+
 class ColorMap:
     @classmethod
-    def from_keys(cls, keys: list, mapname: str = "Pastel1"):
+    def from_keys(cls,
+                  keys: list,
+                  mapname: str = "Pastel1",
+                  labels: list = None,
+                  color_range: typing.Tuple[float, float] = (0, 1)):
         nkeys = len(keys)
         cmap = plt.get_cmap(mapname)
-        return ColorMap(keys, cmap(range(nkeys)), keys)
+        if labels is None:
+            labels = keys
+        cmap_range = np.linspace(color_range[0], color_range[1], nkeys)
+        return ColorMap(keys, cmap(cmap_range), labels)
 
     @classmethod
     def from_index(cls, df: pd.DataFrame, mapname: str = "Pastel1"):
@@ -81,6 +92,9 @@ class ColorMap:
 
     def color_items(self):
         return {k: pair[0] for k, pair in self.cmap.items()}
+
+    def label_items(self):
+        return {k: pair[1] for k, pair in self.cmap.items()}
 
     def __iter__(self):
         return zip(self.colors, self.labels)
@@ -154,13 +168,30 @@ class CellData:
     """
     cell_id_gen = it.count()
 
-    def __init__(self, title="", yleft_text="", yright_text="", x_text="", legend_map={}, legend_col="__dataset_id"):
-        self.title = title  # Title for the cell of the plot
-        self.yleft_text = yleft_text  # Annotation on the left Y axis
-        self.yright_text = yright_text  # Annotation on the right Y axis
-        self.x_text = x_text  # Annotation on the X axis
-        self.legend_map = legend_map  # map index label values to human-readable names
-        self.legend_col = legend_col  # Index label for the legend key of each set of data
+    def __init__(self,
+                 title="",
+                 yleft_text="",
+                 yright_text="",
+                 x_text="",
+                 legend_map=None,
+                 legend_level="__dataset_id"):
+        """
+        Arguments:
+        title: Title for the cell of the plot
+        yleft_text: Annotation on the left Y axis
+        yright_text: Annotation on the right Y axis
+        x_text: Annotation on the X axis
+        legend_map: ColorMap mapping index label values to human-readable names and colors
+        Note that whether the legend is keyed by column names or index level currently
+        depends on the view that renders the data.
+        legend_level: Index label for the legend key of each set of data
+        """
+        self.title = title
+        self.yleft_text = yleft_text
+        self.yright_text = yright_text
+        self.x_text = x_text
+        self.legend_map = legend_map
+        self.legend_level = legend_level
         self.views = []
         self.surface = None
         self.cell_id = next(CellData.cell_id_gen)
@@ -257,7 +288,7 @@ class Surface(ABC):
     def make_view(self, plot_type: str, **kwargs) -> DataView:
         """
         Factory for data views for a given plot type.
-        I the plot type is not supported, we may throw and exception
+        If the plot type is not supported, may throw and exception
         """
         ...
 

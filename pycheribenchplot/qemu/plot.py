@@ -4,7 +4,7 @@ import pandas as pd
 from ..core.dataset import (DatasetName, check_multi_index_aligned, rotate_multi_index_level, subset_xs)
 from ..core.excel import SpreadsheetSurface
 from ..core.html import HTMLSurface
-from ..core.plot import (BenchmarkPlot, BenchmarkSubPlot, CellData, DataView, Surface)
+from ..core.plot import (BenchmarkPlot, BenchmarkSubPlot, CellData, ColorMap, DataView, Surface)
 
 
 class QEMUHistSubPlot(BenchmarkSubPlot):
@@ -12,10 +12,11 @@ class QEMUHistSubPlot(BenchmarkSubPlot):
     Helpers for plots using the QEMU stat histogram dataset.
     The mixin attaches to BenchmarkSubplots.
     """
-    def get_legend_map(self):
+    def get_legend_map(self) -> ColorMap:
         legend = {uuid: str(bench.instance_config.name) for uuid, bench in self.benchmark.merged_benchmarks.items()}
         legend[self.benchmark.uuid] = f"{self.benchmark.instance_config.name}(baseline)"
-        return legend
+        lmap = ColorMap.from_keys(legend.keys(), mapname="Greys", labels=legend.values(), color_range=(0, 0.6))
+        return lmap
 
     def get_all_stats_df(self) -> pd.DataFrame:
         """
@@ -72,6 +73,17 @@ class QEMUHistTable(QEMUHistSubPlot):
                                                                                       rel_cols].values.T.ravel())
         return show_cols
 
+    def _remap_legend_to_pivot_columns(self, legend_map: ColorMap, column_map: pd.DataFrame):
+        """
+        Remap the original dataset-id colormap to use pivoted columns as keys
+        """
+        remap = {}
+        for level_value in column_map.index:
+            level_columns = column_map.loc[level_value]
+            for col in level_columns:
+                remap[col] = legend_map.get_color(level_value)
+        return ColorMap(remap.keys(), remap.values(), remap.keys())
+
     def _get_sort_metric(self, df):
         total_delta_calls = df["delta_call_count_mean"].abs().sum()
         relevance = (df["delta_call_count_mean"] / total_delta_calls).abs()
@@ -97,60 +109,17 @@ class QEMUHistTable(QEMUHistSubPlot):
         # we create a new set of columns with the name remapped as defined by legend_map
         # so instead of having a linear table we can compare benchmark values side-by-side
         # Note: It is essential that the dataframe is aligned on the index level for this.
-        view_df, colmap = rotate_multi_index_level(df, "__dataset_id", legend_map)
+        view_df, colmap = rotate_multi_index_level(df, "__dataset_id", legend_map.label_items())
+        pivot_legend = self._remap_legend_to_pivot_columns(legend_map, colmap)
         show_cols = self._remap_display_columns(colmap)
         sort_cols = self._remap_sort_columns("sort_metric", colmap)
         view_df = view_df.sort_values(by=sort_cols, ascending=False)
         view = surface.make_view("table", df=view_df, yleft=show_cols)
         cell.add_view(view)
 
-
-class QEMUAllSymbolHistTable(QEMUHistTable):
-    """
-    Plot a table of QEMU histogram statistics showing only the values corresponding to symbols
-    being hit in all benchmark samples.
-    """
-    def get_cell_title(self):
-        return "QEMU Raw Stats Table"
-
-
-class QEMUCommonSymbolHistTable(QEMUHistTable):
-    """
-    Plot a table with QEMU histogram statistics restricted to symbols hit in all
-    benchmark runs.
-    """
-    def get_cell_title(self):
-        return "QEMU Common Symbol Stats Table"
-
-    def _get_filtered_df(self):
-        df = super()._get_filtered_df()
-        return self.filter_by_common_symbols(df)
-
-
-class QEMUExtraSymbolHistTable(QEMUHistTable):
-    """
-    Plot a table with QEMU histogram statistics restricted to symbols hit in all
-    benchmark runs.
-    """
-    def get_cell_title(self):
-        return "QEMU Extra Symbol Stats Table"
-
-    def _get_filtered_df(self):
-        df = super()._get_filtered_df()
-        return self.filter_by_noncommon_symbols(df)
-
-
-class QEMUStrangeSymbolHistTable(QEMUHistTable):
-    """
-    Plot a table with QEMU histogram statistics restricted to inconsistent
-    records, mainly for debugging purposes.
-    """
-    def get_cell_title(self):
-        return "QEMU Inconsistent Symbol Stats Table"
-
-    def _get_filtered_df(self):
-        df = super()._get_filtered_df()
-        return self.filter_by_inconsistent_symbols(df)
+        assert cell.legend_map is None
+        cell.legend_map = pivot_legend
+        cell.legend_level = None
 
 
 class QEMUContextHistTable(QEMUHistTable):
@@ -174,10 +143,6 @@ class QEMUTables(BenchmarkPlot):
     """
     subplots = [
         QEMUContextHistTable,
-        # QEMUAllSymbolHistTable,
-        # QEMUCommonSymbolHistTable,
-        # QEMUExtraSymbolHistTable,
-        # QEMUStrangeSymbolHistTable,
     ]
 
     @classmethod
