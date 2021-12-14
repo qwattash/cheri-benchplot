@@ -5,8 +5,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from ..core.dataset import (DataField, DatasetArtefact, DataSetContainer, DatasetName, DatasetRunOrder, Field,
-                            IndexField, align_multi_index_levels)
+from ..core.dataset import (DatasetArtefact, DataSetContainer, DatasetName, DatasetRunOrder, Field,
+                            align_multi_index_levels)
 from ..core.json import JSONDataSetContainer
 
 
@@ -18,11 +18,11 @@ class UMAZoneInfoDataset(DataSetContainer):
     dataset_config_name = DatasetName.VMSTAT_UMA_INFO
     dataset_source_id = DatasetArtefact.UMA_ZONE_INFO
     fields = [
-        IndexField("name", dtype=str),
-        DataField("efficiency", dtype=float),
-        DataField("ipers", dtype=int),
-        DataField("ppera", dtype=int),
-        DataField("rsize", dtype=int)
+        Field.index_field("name", dtype=str),
+        Field.data_field("efficiency", dtype=float),
+        Field.data_field("ipers", dtype=int),
+        Field.data_field("ppera", dtype=int),
+        Field.data_field("rsize", dtype=int)
     ]
 
     def __init__(self, benchmark, dset_key, config):
@@ -96,7 +96,6 @@ class UMAZoneInfoDataset(DataSetContainer):
             norm_delta = delta[base_cols].divide(baseline[base_cols])
             new_df.loc[ds_id, delta_cols] = delta[base_cols].values
             new_df.loc[ds_id, norm_cols] = norm_delta[base_cols].values
-        self.logger.debug("XXX post-aggregate columns %s", self.agg_df.columns)
         self.agg_df = new_df
 
 
@@ -124,7 +123,6 @@ class VMStatDataset(JSONDataSetContainer):
             df = self._vmstat_delta(pre_df, post_df)
             df["__dataset_id"] = self.benchmark.uuid
             df["__iteration"] = iteration
-            df = df.astype(self._get_column_dtypes())
             self._append_df(df)
         finally:
             pre.close()
@@ -182,12 +180,12 @@ class VMStatKMalloc(VMStatDataset):
     dataset_source_id = DatasetArtefact.VMSTAT
     dataset_run_order = DatasetRunOrder.LAST
     fields = [
-        IndexField("type", dtype=str),
-        DataField("in-use", dtype=int),
-        DataField("memory-use", dtype=int),
-        DataField("reservation-use", dtype=int),
-        DataField("requests", dtype=int),
-        DataField("large-malloc", dtype=int),
+        Field.index_field("type", dtype=str),
+        Field.data_field("in-use", dtype=int),
+        Field.data_field("memory-use", dtype=int),
+        Field.data_field("reservation-use", dtype=int),
+        Field.data_field("requests", dtype=int),
+        Field.data_field("large-malloc", dtype=int),
         Field("size", dtype=object),
     ]
 
@@ -213,12 +211,12 @@ class VMStatUMA(VMStatDataset):
     dataset_source_id = DatasetArtefact.VMSTAT
     dataset_run_order = DatasetRunOrder.LAST
     fields = [
-        IndexField("name", dtype=str),
-        DataField("size", dtype=int),
+        Field.index_field("name", dtype=str),
+        Field.data_field("size", dtype=int),
         Field("limit", dtype=int),
         Field("used", dtype=int),
         Field("free", dtype=int),
-        DataField("requests", dtype=int),
+        Field.data_field("requests", dtype=int),
         Field("fail", dtype=int),
         Field("sleep", dtype=int),
         Field("xdomain", dtype=int),

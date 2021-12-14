@@ -1,6 +1,7 @@
 import typing
 from collections import defaultdict
 from contextlib import contextmanager
+from dataclasses import dataclass
 from enum import Enum, IntEnum, auto
 from pathlib import Path
 
@@ -66,6 +67,50 @@ class DatasetRunOrder(IntEnum):
     LAST = 10
 
 
+@dataclass
+class Field:
+    """
+    Helper class to describe column and associated metadata to aid processing
+    XXX-AM: Consider adding some sort of tags to the fields so that we can avoid hardcoding the
+    names for some processing steps (e.g. normalized fields that should be shown as percentage,
+    or address fields for hex visualization).
+    May also help to split derived fields by the stage in which they are created
+    (e.g. pre-merge, post-merge, post-agg). This should move the burden of declaring which fields to process.
+    """
+    name: str
+    desc: str = None
+    dtype: typing.Type = float
+    isdata: bool = False
+    isindex: bool = False
+    isderived: bool = False
+    importfn: typing.Callable = None
+
+    @classmethod
+    def str_field(cls, *args, **kwargs):
+        kwargs.setdefault("importfn", str)
+        return cls(*args, dtype=str, **kwargs)
+
+    @classmethod
+    def data_field(cls, *args, **kwargs):
+        """A field representing benchmark measurement data instead of benchmark information."""
+        return cls(*args, isdata=True, **kwargs)
+
+    @classmethod
+    def index_field(cls, *args, **kwargs):
+        """A field representing benchmark setup index over which we can plot."""
+        return cls(*args, isindex=True, **kwargs)
+
+    @classmethod
+    def derived_field(cls, *args, **kwargs):
+        """A field that is generated during processing."""
+        kwargs.setdefault("isdata", True)
+        return cls(*args, isderived=True, **kwargs)
+
+    def __post_init__(self):
+        if self.desc is None:
+            self.desc = self.name
+
+
 class DatasetRegistry(type):
     dataset_types = defaultdict(list)
 
@@ -98,62 +143,12 @@ class DatasetRegistry(type):
             ]
             assert len(duplicates) == 0
             DatasetRegistry.dataset_types[did].append(self)
-
-
-class Field:
-    """
-    Helper class to describe column and associated metadata to aid processing
-    XXX-AM: Consider adding some sort of tags to the fields so that we can avoid hardcoding the
-    names for some processing steps (e.g. normalized fields that should be shown as percentage,
-    or address fields for hex visualization).
-    May also help to split derived fields by the stage in which they are created
-    (e.g. pre-merge, post-merge, post-agg). This should move the burden of declaring which fields to process.
-    """
-    def __init__(self, name, desc=None, dtype=float, isdata=False, isindex=False, isderived=False, importfn=None):
-        self.name = name
-        self.dtype = dtype
-        self.desc = desc if desc is not None else name
-        self.isdata = isdata
-        self.isindex = isindex
-        self.isderived = isderived
-        self.importfn = importfn
-
-
-class StrField(Field):
-    def __init__(self, name, desc=None, **kwargs):
-        kwargs["dtype"] = str
-        kwargs.setdefault("importfn", str)
-        super().__init__(name, desc=None, **kwargs)
-
-
-class DataField(Field):
-    """
-    A field representing benchmark measurement data instead of
-    benchmark information.
-    """
-    def __init__(self, name, desc=None, dtype=float, **kwargs):
-        kwargs["isdata"] = True
-        super().__init__(name, desc=None, dtype=dtype, **kwargs)
-
-
-class IndexField(Field):
-    """
-    A field representing benchmark setup index over which we can plot.
-    """
-    def __init__(self, name, desc=None, **kwargs):
-        kwargs["isindex"] = True
-        super().__init__(name, desc=None, **kwargs)
-
-
-class DerivedField(Field):
-    """
-    Indicates a field that is generated during processing and will be guaranteed to
-    appear only in the final aggregate dataframe for the dataset.
-    """
-    def __init__(self, name, desc=None, **kwargs):
-        kwargs["isderived"] = True
-        kwargs.setdefault("isdata", True)
-        super().__init__(name, desc, **kwargs)
+        all_fields = []
+        for base in bases:
+            if hasattr(base, "fields"):
+                all_fields += base.fields
+        all_fields += kdict.get("fields", [])
+        self._all_fields = all_fields
 
 
 class DataSetContainer(metaclass=DatasetRegistry):
@@ -161,6 +156,39 @@ class DataSetContainer(metaclass=DatasetRegistry):
     Base class to hold collections of fields containing benchmark data
     Each benchmark run is associated with an UUID which is used to cross-reference
     data from different files.
+
+    Each dataset exposes 3 dataframes:
+    - df: the input dataframe. There is one input dataframe for each instance of the dataset,
+    belonging to each existing benchmark run. This is the dataframe on which we operate until
+    we reach the *merge* step.
+    There are two mandatory index levels: the __dataset_id and __iterations levels.
+    The __dataset_id is the UUID of the benchmark run for which the data was captured.
+    The __iteration index level contains the iteration number, if it is meaningless for the
+    data source, then it is set to -1.
+    - merged_df: the merged dataframe contains the concatenated data from all the benchmark
+    runs of a given benchmark. This dataframe is built only once for each benchmark, in the
+    dataset container belonging to the baseline benchmark run. This is by convention, as the
+    baseline dataset is used to aggregate all the other runs of the benchmark.
+    - agg_df: the aggregate dataset. The aggregation dataset is generated from the merged
+    dataset by aggregating across iterations (to compute mean, median, etc...) and any other
+    index field relevant to the data source. This is considered to be the final output of the
+    dataset processing phase. In the post-aggregation phase, it is expected that the dataset
+    will produce delta values between relevant runs of the benchmark.
+
+    Dataframe indexing and fields:
+    The index, data and metadata fields that we want to import from the raw dataset should be
+    declared as class properties in the DataSetContainer. The registry metaclass will take care
+    to collect all the Field properties and make them available via the get_fields()
+    method.
+    The resulting dataframes use multi-indexes on both rows and columns.
+    The row multi-index levels are dataset-dependent and are declared as IndexField(), in addition
+    to the implicit __dataset_id and __iteration index levels.
+    (Note that the __iteration index level should be absent in the agg_df as it would not make sense).
+    The column index levels are the following (by convention):
+    - The 1st column level contains the name of each non-index field declared as input
+    (including derived fields from pre_merge()).
+    - The 2nd column level contains iteration aggregates for each data field.
+    - The 3rd column level delta and normalized delta values w.r.t. the baseline benchmark run.
     """
     # Unique name of the dataset in the configuration files
     dataset_config_name: DatasetName = None
@@ -182,9 +210,7 @@ class DataSetContainer(metaclass=DatasetRegistry):
         self._script = self.benchmark.get_script_builder()
         self.config = config
         self.logger = new_logger(f"{dset_key}", parent=self.benchmark.logger)
-        self.df = pd.DataFrame(columns=self.all_columns())
-        self.df = self.df.astype(self._get_column_dtypes())
-        self.df.set_index(self.index_columns(), inplace=True)
+        self.df = None
         self.merged_df = None
         self.agg_df = None
 
@@ -193,46 +219,88 @@ class DataSetContainer(metaclass=DatasetRegistry):
         # This needs to be dynamic to grab the up-to-date configuration of the benchmark
         return self.benchmark.config
 
-    def raw_fields(self, include_derived=False) -> "typing.Sequence[Field]":
+    def input_fields(self) -> typing.Sequence[Field]:
         """
-        All fields that MAY be present in the input files.
-        This is the set of fields that we expect to build the input dataframe (self.df).
-        Other processing steps during pre-merge, and post-merge may add derived fields and
-        index levels as necessary.
+        Return a list of fields that we care about in the input data source.
+        This will not contain any derived fields.
         """
-        return []
+        fields = [f for f in self.__class__._all_fields if not f.isderived]
+        return fields
 
-    def all_columns(self, include_derived=False) -> "typing.Sequence[str]":
-        """All column names in the container dataframe, including the index names"""
-        return set(self.index_columns() + [f.name for f in self.raw_fields(include_derived)])
+    def input_index_fields(self) -> typing.Sequence[Field]:
+        """
+        Return a list of fields that are the index levels in the input dataset.
+        This will not include derived index fields.
+        """
+        fields = [f for f in self.input_fields() if f.isindex]
+        return fields
 
-    def index_columns(self, include_derived=False):
-        """All column names that are to be used as dataset index in the container dataframe"""
-        return ["__dataset_id", "__iteration"] + [f.name for f in self.raw_fields(include_derived) if f.isindex]
+    def input_non_index_columns(self) -> typing.Sequence[str]:
+        """
+        Return a list of column names in the input dataset that are not index columns,
+        meaning that we return only data and metadata columns.
+        """
+        return [f.name for f in self.input_fields() if not f.isindex]
 
-    def all_columns_noindex(self) -> "typing.Sequence[str]":
-        return set(self.all_columns()) - set(self.index_columns())
+    def input_all_columns(self) -> typing.Sequence[str]:
+        """
+        Return a list of column names that we are interested in the input data source.
+        """
+        return [f.name for f in self.input_fields()]
 
-    def data_columns(self, include_derived=False):
+    def input_index_columns(self) -> typing.Sequence[str]:
+        """
+        Return a list of column names that represent the index fields present in the
+        input data source.
+        Any implicit index column will be reported here.
+        """
+        return self.implicit_index_columns() + [f.name for f in self.input_index_fields()]
+
+    def implicit_index_columns(self):
+        return ["__dataset_id", "__iteration"]
+
+    def index_columns(self) -> typing.Sequence[str]:
+        """
+        All column names that are to be used as dataset index in the container dataframe.
+        This will contain both input and derived index columns.
+        """
+        input_cols = self.input_index_columns()
+        return input_cols + [f.name for f in self.__class__._all_fields if f.isderived and f.isindex]
+
+    def all_columns(self) -> typing.Sequence[str]:
+        """
+        All columns (derived or not) in the pre-merge dataframe, including index columns.
+        """
+        return self.implicit_index_columns() + [f.name for f in self.__class__._all_fields]
+
+    def data_columns(self) -> typing.Sequence[str]:
         """
         All data column names in the container dataframe.
         This, by default, does not include synthetic data columns that are generated after importing the dataframe.
         """
-        return [f.name for f in self.raw_fields(include_derived) if f.isdata]
+        return [f.name for f in self.__class__._all_fields if f.isdata and not f.isindex]
 
-    def _get_column_dtypes(self, include_converted=True, include_index=True, include_derived=False) -> dict[str, type]:
-        fields = self.raw_fields(include_derived)
-        idx = self.index_columns()
-        dtypes = {}
-        for f in fields:
-            if not include_index and f.name in idx:
-                continue
-            if include_converted or f.importfn is None:
-                dtypes[f.name] = f.dtype
-        return dtypes
+    def _get_input_columns_dtype(self) -> dict[str, type]:
+        """
+        Get a dictionary suitable for pandas DataFrame.astype() to normalize the data type
+        of input fields.
+        This will include both index and non-index fields
+        """
+        return {f.name: f.dtype for f in self.input_fields()}
 
-    def _get_column_conv(self) -> dict:
-        return {f.name: f.importfn for f in self.raw_fields() if f.importfn is not None}
+    def _get_input_columns_conv(self) -> dict:
+        """
+        Get a dictionary mapping input columns to the column conversion function, if any
+        """
+        return {f.name: f.importfn for f in self.input_fields() if f.importfn is not None}
+
+    def _get_all_columns_dtype(self) -> dict[str, type]:
+        """
+        Get a dictionary suitable for pandas DataFrame.astype() to normalize the data type
+        of all dataframe fields.
+        This will include both index and non-index fields
+        """
+        return {f.name: f.dtype for f in self.__class__._all_fields}
 
     def _append_df(self, df):
         """
@@ -246,21 +314,31 @@ class DataSetContainer(metaclass=DatasetRegistry):
             self.logger.debug("No iteration column, using default (-1)")
             df["__iteration"] = -1
         # Normalize type for existing columns
-        col_dtypes = self._get_column_dtypes()
+        col_dtypes = self._get_input_columns_dtype()
         col_dtypes = {c: t for c, t in col_dtypes.items() if c in df.columns}
         df = df.astype(col_dtypes)
-        df.set_index(self.index_columns(), inplace=True)
-        dataset_columns = set(self.all_columns_noindex())
+        df.set_index(self.input_index_columns(), inplace=True)
+        dataset_columns = set(self.input_all_columns())
         avail_columns = set(df.columns)
         column_subset = avail_columns.intersection(dataset_columns)
-        self.df = pd.concat([self.df, df[column_subset]])
-        # Check that we did not accidentally change dtype, this may cause weirdness due to conversions
-        dtype_check = self.df.dtypes[column_subset] == df.dtypes[column_subset]
-        if not dtype_check.all():
-            changed = dtype_check.index[~dtype_check]
-            for col in changed:
-                self.logger.error("Unexpected dtype change in %s: %s -> %s", col, df.dtypes[col], self.df.dtypes[col])
-            raise DatasetProcessingError("Unexpected dtype change")
+        if self.df is None:
+            self.df = df[column_subset]
+        else:
+            self.df = pd.concat([self.df, df[column_subset]])
+            # Check that we did not accidentally change dtype, this may cause weirdness due to conversions
+            dtype_check = self.df.dtypes[column_subset] == df.dtypes[column_subset]
+            if not dtype_check.all():
+                changed = dtype_check.index[~dtype_check]
+                for col in changed:
+                    self.logger.error("Unexpected dtype change in %s: %s -> %s", col, df.dtypes[col],
+                                      self.df.dtypes[col])
+                raise DatasetProcessingError("Unexpected dtype change")
+
+    def _add_derived_column(self, df: pd.DataFrame, level: str = "metric", columns: list = None):
+        """
+        Add a derived column on the given column index level, for the given subset of columns
+        """
+        pass
 
     def iteration_output_file(self, iteration):
         """

@@ -15,14 +15,13 @@ class JSONDataSetContainer(DataSetContainer):
         """
         Load a raw CSV file into a dataframe compatible with the columns given in all_columns.
         """
-        kwargs.setdefault("dtype", self._get_column_dtypes(include_converted=False))
+        kwargs.setdefault("dtype", self._get_input_columns_dtype())
         df = pd.io.json.read_json(path, **kwargs)
         df["__dataset_id"] = self.benchmark.uuid
         return df
 
     def _append_df(self, json_df: pd.DataFrame):
-        json_df = json_df.astype(self._get_column_dtypes(include_converted=False))
-        for f in self.raw_fields():
-            if f.importfn:
-                json_df[f.name] = json_df[f.name].transform(f.importfn)
+        for col, importfn in self._get_input_columns_conv().items():
+            json_df[col] = json_df[col].transform(importfn)
+        json_df = json_df.astype(self._get_input_columns_dtype())
         super()._append_df(json_df)

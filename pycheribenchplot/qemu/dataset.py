@@ -7,9 +7,8 @@ import numpy as np
 import pandas as pd
 from pypika import Order, Query
 
-from ..core.dataset import (DataField, DatasetArtefact, DatasetName, DatasetProcessingError, DerivedField, Field,
-                            IndexField, align_multi_index_levels, check_multi_index_aligned, rotate_multi_index_level,
-                            subset_xs)
+from ..core.dataset import (DatasetArtefact, DatasetName, DatasetProcessingError, Field, align_multi_index_levels,
+                            check_multi_index_aligned, rotate_multi_index_level, subset_xs)
 from ..core.instance import PlatformOptions
 from ..core.perfetto import PerfettoDataSetContainer
 
@@ -22,18 +21,18 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
     """
     dataset_source_id = DatasetArtefact.QEMU_STATS
     fields = [
-        IndexField("histogram", dtype=int),
-        IndexField("bucket", dtype=int),
-        IndexField("file", dtype=str, isderived=True),
-        IndexField("symbol", dtype=str, isderived=True),
-        IndexField("process", dtype=str, isderived=True),
-        IndexField("thread", dtype=str, isderived=True),
-        IndexField("pid", dtype=int),
-        IndexField("tid", dtype=int),
-        IndexField("cid", dtype=int),
-        IndexField("EL", dtype=int),
-        # IndexField("AS", dtype=int),
-        DerivedField("valid_symbol", dtype=object, isdata=False)
+        Field.index_field("histogram", dtype=int),
+        Field.index_field("bucket", dtype=int),
+        Field.index_field("file", dtype=str, isderived=True),
+        Field.index_field("symbol", dtype=str, isderived=True),
+        Field.index_field("process", dtype=str, isderived=True),
+        Field.index_field("thread", dtype=str, isderived=True),
+        Field.index_field("pid", dtype=int),
+        Field.index_field("tid", dtype=int),
+        Field.index_field("cid", dtype=int),
+        Field.index_field("EL", dtype=int),
+        # Field.index_field("AS", dtype=int),
+        Field.derived_field("valid_symbol", dtype=object, isdata=False)
     ]
 
     def raw_fields(self, include_derived=False):
@@ -117,10 +116,7 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
             track_df = self._extract_track_stats(tp, track, ts_start, ts_end)
             track_df["__dataset_id"] = self.benchmark.uuid
             track_df["__iteration"] = i
-            track_df = track_df.astype(self._get_column_dtypes(include_converted=True))
             self._append_df(track_df)
-            # track_df.set_index(self.index_columns(), inplace=True)
-            # self.df = pd.concat([self.df, track_df])
 
     def _resolve_pid_tid(self):
         """
@@ -279,9 +275,9 @@ class QEMUStatsBBHistogramDataset(ContextStatsHistogramBase):
     fields = [
         Field("start", dtype=np.uint),
         Field("end", dtype=np.uint),
-        DataField("icount", dtype=int),
-        DerivedField("delta_icount", dtype=int),
-        DerivedField("norm_delta_icount", dtype=float)
+        Field.data_field("icount", dtype=int),
+        Field.derived_field("delta_icount", dtype=int),
+        Field.derived_field("norm_delta_icount", dtype=float)
     ]
 
     def raw_fields(self, include_derived=False):
@@ -318,14 +314,14 @@ class QEMUStatsBranchHistogramDataset(ContextStatsHistogramBase):
     """Branch instruction target hit count histogram"""
     dataset_config_name = DatasetName.QEMU_STATS_CALL_HIST
     fields = [
-        IndexField("source_file", dtype=str, isderived=True),
-        IndexField("source_symbol", dtype=str, isderived=True),
+        Field.index_field("source_file", dtype=str, isderived=True),
+        Field.index_field("source_symbol", dtype=str, isderived=True),
         Field("source", dtype=np.uint),
         Field("target", dtype=np.uint),
         Field("branch_count", dtype=int),
-        DerivedField("call_count", dtype=int),
-        DerivedField("delta_call_count", dtype=int),
-        DerivedField("norm_delta_call_count", dtype=float)
+        Field.derived_field("call_count", dtype=int),
+        Field.derived_field("delta_call_count", dtype=int),
+        Field.derived_field("norm_delta_call_count", dtype=float)
     ]
 
     def raw_fields(self, include_derived=False):

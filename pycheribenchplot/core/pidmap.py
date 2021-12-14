@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .dataset import DataField, DatasetArtefact, DatasetName, Field, StrField
+from .dataset import DatasetArtefact, DatasetName, Field
 from .json import JSONDataSetContainer
 
 
@@ -18,14 +18,16 @@ class PidMapDataset(JSONDataSetContainer):
     """
     dataset_config_name = DatasetName.PIDMAP
     dataset_source_id = DatasetArtefact.PIDMAP
-    fields = [Field("pid", dtype=int), Field("tid", dtype=int), StrField("command"), StrField("thread_name")]
+    fields = [
+        Field("pid", dtype=int),
+        Field("tid", dtype=int),
+        Field.str_field("command"),
+        Field.str_field("thread_name")
+    ]
 
     def __init__(self, benchmark, dset_key, config):
         super().__init__(benchmark, dset_key, config)
         self._pid_snapshot = {}
-
-    def raw_fields(self, include_derived=False):
-        return PidMapDataset.fields
 
     def resolve_user_binaries(self, dataset_id) -> pd.DataFrame:
         df = self.df.xs(dataset_id)
@@ -103,7 +105,7 @@ class PidMapDataset(JSONDataSetContainer):
         matched_tid = self.df[~missing_tid]
         guess_tid = self.df[missing_tid].merge(tid_mapping, how="left", left_on="pid", right_on="pid_fixup")
         guess_tid["tid"] = guess_tid["tid_fixup"].fillna(-1).astype(int)
-        fixup_df = pd.concat((matched_tid, guess_tid[self.all_columns_noindex()]))
+        fixup_df = pd.concat((matched_tid, guess_tid[self.input_non_index_columns()]))
         return fixup_df
 
     def _merge_procstat_entry(self, entry: dict):

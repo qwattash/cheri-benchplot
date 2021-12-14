@@ -6,27 +6,24 @@ import numpy as np
 import pandas as pd
 
 from .csv import CSVDataSetContainer
-from .dataset import DataField, DatasetArtefact, Field, StrField
+from .dataset import DatasetArtefact, Field
 
 
 class ProcstatDataset(CSVDataSetContainer):
     dataset_source_id = DatasetArtefact.PROCSTAT
     fields = [
         Field("PID", dtype=int),
-        DataField("START", dtype=int, importfn=lambda x: int(x, 16)),
-        DataField("END", dtype=int, importfn=lambda x: int(x, 16)),
-        StrField("PRT"),
+        Field.data_field("START", dtype=int, importfn=lambda x: int(x, 16)),
+        Field.data_field("END", dtype=int, importfn=lambda x: int(x, 16)),
+        Field.str_field("PRT"),
         Field("RES"),
         Field("PRES"),
         Field("REF"),
         Field("SHD"),
-        StrField("FLAG"),
-        StrField("TP"),
-        StrField("PATH")
+        Field.str_field("FLAG"),
+        Field.str_field("TP"),
+        Field.str_field("PATH")
     ]
-
-    def raw_fields(self, include_derived=False):
-        return ProcstatDataset.fields
 
     def _load_csv(self, path: Path, **kwargs):
         kwargs["sep"] = "\s+"

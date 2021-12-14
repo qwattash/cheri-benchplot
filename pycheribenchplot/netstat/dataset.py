@@ -5,8 +5,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from ..core.dataset import (DataField, DatasetArtefact, DatasetName, DatasetRunOrder, Field, IndexField,
-                            align_multi_index_levels)
+from ..core.dataset import (DatasetArtefact, DatasetName, DatasetRunOrder, Field, align_multi_index_levels)
 from ..core.json import JSONDataSetContainer
 
 
@@ -14,16 +13,16 @@ class NetstatDataset(JSONDataSetContainer):
     dataset_config_name = DatasetName.NETSTAT
     dataset_source_id = DatasetArtefact.NETSTAT
     fields = [
-        IndexField("workstream", dtype=int),
-        IndexField("cpu", dtype=int),
-        IndexField("name", dtype=str),
+        Field.index_field("workstream", dtype=int),
+        Field.index_field("cpu", dtype=int),
+        Field.index_field("name", dtype=str),
         Field("length", dtype=int),
         Field("watermark", dtype=int),
-        DataField("dispatched", dtype=int),
+        Field.data_field("dispatched", dtype=int),
         Field("hybrid-dispatched", dtype=int),
-        DataField("queue-drops", dtype=int),
-        DataField("queued", dtype=int),
-        DataField("handled", dtype=int),
+        Field.data_field("queue-drops", dtype=int),
+        Field.data_field("queued", dtype=int),
+        Field.data_field("handled", dtype=int),
     ]
 
     def raw_fields(self, include_derived=False):
