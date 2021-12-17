@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from ..core.dataset import (DatasetName, check_multi_index_aligned, rotate_multi_index_level, subset_xs)
+from ..core.dataset import (DatasetName, check_multi_index_aligned, pivot_multi_index_level, subset_xs)
 from ..core.excel import SpreadsheetSurface
 from ..core.html import HTMLSurface
 from ..core.plot import (BenchmarkPlot, BenchmarkSubPlot, CellData, ColorMap, DataView, Surface)
@@ -14,8 +14,8 @@ class QEMUHistSubPlot(BenchmarkSubPlot):
     """
     def get_legend_map(self) -> ColorMap:
         legend = {uuid: str(bench.instance_config.name) for uuid, bench in self.benchmark.merged_benchmarks.items()}
-        legend[self.benchmark.uuid] = f"{self.benchmark.instance_config.name}(baseline)"
-        lmap = ColorMap.from_keys(legend.keys(), mapname="Greys", labels=legend.values(), color_range=(0, 0.6))
+        legend[self.benchmark.uuid] = f"{self.benchmark.instance_config.name}(*)"
+        lmap = ColorMap.from_keys(legend.keys(), mapname="Greys", labels=legend.values(), color_range=(0, 0.5))
         return lmap
 
     def get_all_stats_df(self) -> pd.DataFrame:
@@ -38,10 +38,7 @@ class QEMUHistSubPlot(BenchmarkSubPlot):
 
 
 class QEMUHistTable(QEMUHistSubPlot):
-    """
-    Common base class for stat histogram filtered plots
-    XXX Make the QEMUHistSubPlotMixin the base class directly...
-    """
+    """Common base class for stat histogram filtered plots"""
     @classmethod
     def get_required_datasets(cls):
         dsets = super().get_required_datasets()
@@ -51,48 +48,41 @@ class QEMUHistTable(QEMUHistSubPlot):
     def _get_filtered_df(self):
         return self.get_all_stats_df()
 
-    def _get_common_display_columns(self):
-        """Columns to display for all benchmark runs"""
-        cols = ["icount_mean", "icount_std", "call_count_mean", "call_count_std"]
-        return cols
-
-    def _get_non_baseline_display_columns(self):
-        """Columns to display for benchmarks that are not baseline (because they are meaningless)"""
-        cols = ["delta_icount_mean", "norm_delta_icount_mean", "delta_call_count_mean", "norm_delta_call_count_mean"]
-        return cols
-
-    def _remap_display_columns(self, colmap: pd.DataFrame):
-        """
-        Remap original column names to the data view frame that has rotated the __dataset_id level.
-        `colmap` is a dataframe in the format of the column mapping from `rotate_multi_index_level()`
-        """
-        common_cols = self._get_common_display_columns()
-        rel_cols = self._get_non_baseline_display_columns()
-        baseline = self.benchmark.uuid
-        show_cols = np.append(colmap.loc[:, common_cols].values.T.ravel(), colmap.loc[colmap.index != baseline,
-                                                                                      rel_cols].values.T.ravel())
-        return show_cols
-
-    def _remap_legend_to_pivot_columns(self, legend_map: ColorMap, column_map: pd.DataFrame):
-        """
-        Remap the original dataset-id colormap to use pivoted columns as keys
-        """
-        remap = {}
-        for level_value in column_map.index:
-            level_columns = column_map.loc[level_value]
-            for col in level_columns:
-                remap[col] = legend_map.get_color(level_value)
-        return ColorMap(remap.keys(), remap.values(), remap.keys())
-
     def _get_sort_metric(self, df):
-        total_delta_calls = df["delta_call_count_mean"].abs().sum()
-        relevance = (df["delta_call_count_mean"] / total_delta_calls).abs()
+        sort_col = ("call_count", "mean", "delta_baseline")
+        total_delta_calls = df[sort_col].abs().sum()
+        relevance = (df[sort_col] / total_delta_calls).abs()
         return relevance
 
-    def _remap_sort_columns(self, metric_col: str, colmap: pd.DataFrame):
-        baseline = self.benchmark.uuid
-        sortby = colmap.loc[colmap.index != baseline, metric_col].values.T.ravel()
-        return list(sortby)
+    def _get_show_columns(self, view_df, legend_map):
+        # For each data column, we show all the aggregation metrics for the
+        # "sample" delta level key.
+        # The remaining delta level keys are shown only for non-baseline columns.
+        baseline = legend_map.get_label(self.benchmark.uuid)
+        data = (view_df.columns.get_level_values("metric") != "sort_metric")
+        sample = data & (view_df.columns.get_level_values("delta") == "sample")
+        delta = data & (~sample) & (view_df.columns.get_level_values("__dataset_id") != baseline)
+        select_cols = view_df.columns[sample]
+        select_cols = select_cols.append(view_df.columns[delta])
+        sorted_cols, _ = select_cols.sortlevel()
+        return sorted_cols
+
+    def _get_sort_columns(self, view_df, sort_col):
+        sel = (slice(None), ) * (view_df.columns.nlevels - 1)
+        indexes = view_df.columns.get_locs((sort_col, ) + sel)
+        return view_df.columns[indexes].to_list()
+
+    def _get_pivot_legend_map(self, df, legend_map):
+        """
+        Generate a legend map for the pivoted view_df.
+        This will map <column index tuple> => (<__dataset_id label>, <color>)
+        """
+        col_df = df.columns.to_frame()
+        by_label = legend_map.with_label_index()
+        _, pivot_colors = col_df.align(by_label["colors"], axis=0, level="__dataset_id")
+        _, pivot_labels = col_df.align(by_label["labels"], axis=0, level="__dataset_id")
+        new_map = ColorMap(df.columns, pivot_colors, pivot_labels)
+        return new_map
 
     def generate(self, surface: Surface, cell: CellData):
         df = self._get_filtered_df()
@@ -100,26 +90,27 @@ class QEMUHistTable(QEMUHistSubPlot):
             self.logger.error("Unaligned index, skipping plot")
             return
         # Make normalized fields a percentage
-        norm_cols = [col for col in df.columns if col.startswith("norm_")]
+        norm_col_idx = df.columns.get_level_values("delta").str.startswith("norm_")
+        norm_cols = df.columns[norm_col_idx]
         df[norm_cols] = df[norm_cols] * 100
         df["sort_metric"] = self._get_sort_metric(df)
 
+        # Remap the __dataset_id according to the legend to make it
+        # more meaningful for visualization
         legend_map = self.get_legend_map()
-        # Remap columns such that for each index entry in the __dataset_id level,
-        # we create a new set of columns with the name remapped as defined by legend_map
-        # so instead of having a linear table we can compare benchmark values side-by-side
-        # Note: It is essential that the dataframe is aligned on the index level for this.
-        view_df, colmap = rotate_multi_index_level(df, "__dataset_id", legend_map.label_items())
-        pivot_legend = self._remap_legend_to_pivot_columns(legend_map, colmap)
-        show_cols = self._remap_display_columns(colmap)
-        sort_cols = self._remap_sort_columns("sort_metric", colmap)
+        view_df = legend_map.map_labels_to_level(df, "__dataset_id", axis=0)
+        # Pivot the __dataset_id level into the columns
+        view_df = pivot_multi_index_level(view_df, "__dataset_id")
+
+        show_cols = self._get_show_columns(view_df, legend_map)
+        sort_cols = self._get_sort_columns(view_df, "sort_metric")
         view_df = view_df.sort_values(by=sort_cols, ascending=False)
+
+        pivot_legend_map = self._get_pivot_legend_map(view_df, legend_map)
+        assert cell.legend_map is None
+        cell.legend_map = pivot_legend_map
         view = surface.make_view("table", df=view_df, yleft=show_cols)
         cell.add_view(view)
-
-        assert cell.legend_map is None
-        cell.legend_map = pivot_legend
-        cell.legend_level = None
 
 
 class QEMUContextHistTable(QEMUHistTable):

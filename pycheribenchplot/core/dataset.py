@@ -187,8 +187,7 @@ class DataSetContainer(metaclass=DatasetRegistry):
     The column index levels are the following (by convention):
     - The 1st column level contains the name of each non-index field declared as input
     (including derived fields from pre_merge()).
-    - The 2nd column level contains iteration aggregates for each data field.
-    - The 3rd column level delta and normalized delta values w.r.t. the baseline benchmark run.
+    - The next levels contain the name of aggregates or derived columns that are generated.
     """
     # Unique name of the dataset in the configuration files
     dataset_config_name: DatasetName = None
@@ -248,11 +247,17 @@ class DataSetContainer(metaclass=DatasetRegistry):
         """
         return [f.name for f in self.input_fields()]
 
-    def input_index_columns(self) -> typing.Sequence[str]:
+    def input_base_index_columns(self) -> typing.Sequence[str]:
         """
         Return a list of column names that represent the index fields present in the
         input data source.
-        Any implicit index column will be reported here.
+        """
+        return [f.name for f in self.input_index_fields()]
+
+    def input_index_columns(self) -> typing.Sequence[str]:
+        """
+        Return a list of column names that represent the index fields present in the
+        input dataframe. Any implicit index column will be reported here as well.
         """
         return self.implicit_index_columns() + [f.name for f in self.input_index_fields()]
 
@@ -334,11 +339,92 @@ class DataSetContainer(metaclass=DatasetRegistry):
                                       self.df.dtypes[col])
                 raise DatasetProcessingError("Unexpected dtype change")
 
-    def _add_derived_column(self, df: pd.DataFrame, level: str = "metric", columns: list = None):
+    def _add_delta_columns(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Add a derived column on the given column index level, for the given subset of columns
+        Initialize and add the delta columns index level.
+        This is generally used as the third index level to hold the delta for each aggregated
+        column with respect to other benchmark runs.
+        The original data columns are labeled "sample".
         """
-        pass
+        col_idx = df.columns.to_frame()
+        col_idx["delta"] = "sample"
+        df = df.copy()
+        df.columns = pd.MultiIndex.from_frame(col_idx)
+        return df
+
+    def _add_aggregate_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Initialize and add the aggregate columns index level.
+        This is intended to be used by datasets that do not aggregate on iterations
+        but still need to have an empty level for alignment purposes.
+        """
+        col_idx = df.columns.to_frame()
+        col_idx["aggregate"] = "-"
+        df = df.copy()
+        df.columns = pd.MultiIndex.from_frame(col_idx)
+        return df
+
+    def _set_delta_columns_name(self, name: str, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Helper to rename a new set of columns along the delta column index level.
+        Note that we rename every column in the level.
+        """
+        level_index = df.columns.names.index("delta")
+        new_index = df.columns.map(lambda t: t[:level_index] + (name, ) + t[level_index + 1:])
+        df.columns = new_index
+        return df
+
+    def _compute_delta_by_dataset(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        General operation to compute the delta of aggregated data columns between
+        benchmark runs (identified by __dataset_id).
+        This will add the "delta_baseline" column in the delta columns index level.
+        It is assumed that the current benchmark instance is the baseline instance,
+        this is the case if called from post_aggregate().
+        """
+        assert check_multi_index_aligned(df, "__dataset_id")
+        datasets = df.index.get_level_values("__dataset_id").unique()
+        baseline = df.xs(self.benchmark.uuid, level="__dataset_id")
+        # broadcast the baseline cross-section across the __dataset_id
+        # and perform the arithmetic operation, we want the right-join
+        # result only
+        _, aligned_baseline = df.align(baseline)
+        delta = df.subtract(aligned_baseline)
+        norm_delta = delta.divide(aligned_baseline)
+        result = pd.concat([
+            df,
+            self._set_delta_columns_name("delta_baseline", delta),
+            self._set_delta_columns_name("norm_delta_baseline", norm_delta)
+        ],
+                           axis=1)
+        return result.sort_index(axis=1)
+
+    def _get_aggregation_strategy(self) -> dict:
+        """
+        Return the aggregation strategy to use for each data column of interest.
+        The return dictionary is suitable to be used in pd.DataFrameGroupBy.aggregate()
+        """
+        def q25(v):
+            return np.quantile(v, q=0.25)
+
+        def q75(v):
+            return np.quantile(v, q=0.75)
+
+        def q90(v):
+            return np.quantile(v, q=0.90)
+
+        agg_list = ["mean", "median", "std", q25, q75, q90]
+        return {c: agg_list for c in self.data_columns()}
+
+    def _compute_aggregations(self, grouped: pd.core.groupby.DataFrameGroupBy) -> pd.DataFrame:
+        """
+        Helper to generate the aggregate dataframe and normalize the column index level names.
+        """
+        agg = grouped.aggregate(self._get_aggregation_strategy())
+        levels = list(agg.columns.names)
+        levels[-1] = "aggregate"
+        agg.columns = agg.columns.set_names(levels)
+        return agg
 
     def iteration_output_file(self, iteration):
         """
@@ -456,9 +542,11 @@ class DataSetContainer(metaclass=DatasetRegistry):
 
     def post_merge(self):
         """
-        After merging, this is used to generate composite or relative metrics on the merged dataset.
+        After merging, this can be used to generate composite or relative metrics on the merged dataset.
         """
         self.logger.debug("Post-merge")
+        # Setup the name for the first hierarchical column index level
+        self.merged_df.columns.name = "metric"
 
     def aggregate(self):
         """
@@ -524,6 +612,36 @@ def align_multi_index_levels(df: pd.DataFrame, align_levels: list[str], fill_val
     new_index = pd.concat([other_cols_rep, align_cols_rep], axis=1)
     new_index = pd.MultiIndex.from_frame(new_index)
     return df.reindex(new_index, fill_value=fill_value).sort_index()
+
+
+def pivot_multi_index_level(df: pd.DataFrame, level: str, rename_map: dict = None) -> pd.DataFrame:
+    """
+    Pivot a row multi index level into the last level of the columns multi index.
+    If a rename_map is given, the resulting column index level values are mapped accordingly to
+    transform them into the new column level values.
+
+    Example:
+    ID  name  |  value
+    A   foo   |    0
+    A   bar   |    1
+    B   foo   |    2
+    B   bar   |    3
+
+    pivots into
+
+    name  | 0:      value
+          | ID:   A   |   B
+          | ------------------
+    foo   |       0   |   2
+    bar   |       1   |   3
+    """
+    keep_index = [lvl for lvl in df.index.names if lvl != level]
+    df = df.reset_index().pivot(index=keep_index, columns=[level])
+    if rename_map is not None:
+        level_index = df.columns.names.index(level)
+        mapped_level = df.columns.levels[level_index].map(lambda value: rename_map[value])
+        df.columns = df.columns.set_levels(mapped_level, level=level)
+    return df
 
 
 def rotate_multi_index_level(df: pd.DataFrame,

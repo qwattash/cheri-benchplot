@@ -22,14 +22,13 @@ class UMAZoneInfoDataset(DataSetContainer):
         Field.data_field("efficiency", dtype=float),
         Field.data_field("ipers", dtype=int),
         Field.data_field("ppera", dtype=int),
-        Field.data_field("rsize", dtype=int)
+        Field.data_field("rsize", dtype=int),
+        Field.data_field("bucket_size", dtype=int),
+        Field.data_field("bucket_size_max", dtype=int),
     ]
 
     def __init__(self, benchmark, dset_key, config):
         super().__init__(benchmark, dset_key, config)
-
-    def raw_fields(self, include_derived=False):
-        return UMAZoneInfoDataset.fields
 
     def _output_file_vmstat(self):
         base = super().output_file()
@@ -52,8 +51,9 @@ class UMAZoneInfoDataset(DataSetContainer):
         with open(self._output_file_sysctl(), "r") as sysctl_out:
             sysctl_df = pd.read_csv(sysctl_out, sep=":", names=["node", "value"])
         # For each UMA zone extract keg info from sysctl
+        base_info = sysctl_df["node"].str.contains(".bucket_size")
         keg_info = sysctl_df["node"].str.contains(".keg")
-        sysctl_df = sysctl_df[keg_info]
+        sysctl_df = sysctl_df[base_info | keg_info]
         # this should contain ["vm", "uma", "<zone>", ...]
         sysctl_path = sysctl_df["node"].str.split(".")
         sysctl_df["zone_tmp_id"] = sysctl_path.map(lambda l: l[2])
@@ -65,7 +65,7 @@ class UMAZoneInfoDataset(DataSetContainer):
         sysctl_df = self._load_sysctl_file()
         merged_df = sysctl_df.join(vmstat_df, how="left", on="zone_tmp_id", rsuffix="_vmstat")
         merged_df["name"] = merged_df["name_vmstat"]
-        df = merged_df[["name", "efficiency", "ipers", "ppera", "rsize"]].fillna(0).reset_index(drop=True)
+        df = merged_df[self.input_all_columns()].fillna(0).reset_index(drop=True)
         df["__dataset_id"] = self.benchmark.uuid
         self._append_df(df)
 
@@ -79,24 +79,14 @@ class UMAZoneInfoDataset(DataSetContainer):
         self.agg_df = self.merged_df.groupby(self.merged_df.index.names).sum()
         # We expect no iteration information to be present in the data
         assert (self.agg_df.index.get_level_values("__iteration") == -1).all()
+        # Add the aggregate index level
+        self.agg_df = self._add_aggregate_columns(self.agg_df)
 
     def post_aggregate(self):
         super().post_aggregate()
         new_df = align_multi_index_levels(self.agg_df, ["name"], fill_value=0)
-        baseline = new_df.xs(self.benchmark.uuid, level="__dataset_id")
-        datasets = new_df.index.get_level_values("__dataset_id").unique()
-        base_cols = self.data_columns()
-        delta_cols = [f"delta_{c}" for c in base_cols]
-        norm_cols = [f"norm_{c}" for c in delta_cols]
-        new_df[delta_cols] = 0
-        new_df[norm_cols] = 0
-        for ds_id in datasets:
-            other = new_df.xs(ds_id, level="__dataset_id")
-            delta = other[base_cols].subtract(baseline[base_cols])
-            norm_delta = delta[base_cols].divide(baseline[base_cols])
-            new_df.loc[ds_id, delta_cols] = delta[base_cols].values
-            new_df.loc[ds_id, norm_cols] = norm_delta[base_cols].values
-        self.agg_df = new_df
+        agg_df = self._add_delta_columns(new_df)
+        self.agg_df = self._compute_delta_by_dataset(agg_df)
 
 
 class VMStatDataset(JSONDataSetContainer):
@@ -135,28 +125,14 @@ class VMStatDataset(JSONDataSetContainer):
         # Then aggregate across iterations
         iter_index = list(self.merged_df.index.names)
         iter_index.remove("__iteration")
-        agg = {c: ["mean", "std"] for c in self.data_columns()}
-        self.agg_df = tmp.groupby(iter_index).agg(agg)
-        self.agg_df.columns = ["_".join(c) for c in self.agg_df.columns.to_flat_index()]
+        grouped = tmp.groupby(iter_index)
+        self.agg_df = self._compute_aggregations(grouped)
 
     def post_aggregate(self):
         super().post_aggregate()
         new_df = align_multi_index_levels(self.agg_df, self._get_align_levels(), fill_value=0)
-        # Compute delta for each metric
-        baseline = new_df.xs(self.benchmark.uuid, level="__dataset_id")
-        datasets = new_df.index.get_level_values("__dataset_id").unique()
-        base_cols = self.agg_df.columns
-        delta_cols = [f"delta_{col}" for col in base_cols]
-        norm_cols = [f"norm_{col}" for col in delta_cols]
-        new_df[delta_cols] = 0
-        new_df[norm_cols] = 0
-        for ds_id in datasets:
-            other = new_df.xs(ds_id, level="__dataset_id")
-            delta = other[base_cols].subtract(baseline[base_cols])
-            norm_delta = delta[base_cols].divide(baseline[base_cols])
-            new_df.loc[ds_id, delta_cols] = delta[base_cols].values
-            new_df.loc[ds_id, norm_cols] = norm_delta[base_cols].values
-        self.agg_df = new_df
+        agg_df = self._add_delta_columns(new_df)
+        self.agg_df = self._compute_delta_by_dataset(agg_df)
 
     def iteration_output_file(self, iteration):
         """The output file is shared by all vmstat datasets."""
@@ -189,9 +165,6 @@ class VMStatKMalloc(VMStatDataset):
         Field("size", dtype=object),
     ]
 
-    def raw_fields(self, include_derived=False):
-        return VMStatKMalloc.fields
-
     def _get_align_levels(self):
         return ["type"]
 
@@ -221,9 +194,6 @@ class VMStatUMA(VMStatDataset):
         Field("sleep", dtype=int),
         Field("xdomain", dtype=int),
     ]
-
-    def raw_fields(self, include_derived=False):
-        return VMStatUMA.fields
 
     def _get_align_levels(self):
         return ["name"]

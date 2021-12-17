@@ -22,9 +22,6 @@ class PMCStatData(CSVDataSetContainer):
         # extra = self._gen_extra_index(pd.DataFrame(columns=["progname", "archname"]))
         # self._extra_index = list(extra.columns)
 
-    def raw_fields(self, include_derived=False):
-        return PMCStatData.fields
-
     def process(self):
         self._gen_composite_metrics()
         self._gen_stats()
@@ -130,9 +127,6 @@ class FluteStatcountersData(PMCStatData):
         Field.data_field("tagcache_set_load", "tag cache set tag read"),  # 0x46
     ]
 
-    def raw_fields(self, include_derived=False):
-        return super().raw_fields() + FluteStatcountersData.fields
-
     def valid_data_columns(self):
         data_cols = set(self.data_columns())
         avail_cols = set(self.df.columns).intersection(data_cols)
@@ -167,43 +161,37 @@ class FluteStatcountersData(PMCStatData):
                 new_columns["{}_hit_rate".format(base_metric)] = hit_rate
         self.df = self.df.assign(**new_columns)
 
+    def _get_aggregation_strategy(self):
+        agg_strat = super()._get_aggregation_strategy()
+        # Remove the columns that are not currently present
+        avail_cols = self.valid_data_columns()
+        return {k: agg_list for k, agg_list in agg_strat.items() if k in avail_cols}
+
     def aggregate(self):
-        # Median and quartiles by index (except sample_index)
-        group_index = self.index_columns()
-        grouped = self.merged_df[self.valid_data_columns()].groupby(level=group_index)
-        self.add_aggregate_col(grouped.median(), "median")
-        self.add_aggregate_col(grouped.quantile(q=0.25), "q25")
-        self.add_aggregate_col(grouped.quantile(q=0.75), "q75")
-        self.add_aggregate_col(grouped.sum(), "total")
+        # Median and quartiles
+        group_index = ["__dataset_id", "progname", "archname"]
+        grouped = self.merged_df[self.valid_data_columns()].groupby(group_index)
+        agg = self._compute_aggregations(grouped)
         # Compute error columns from median and quartiles
+        # XXX this should be in post-aggregate?
         for col in self.valid_data_columns():
-            data_col = f"median_{col}"
-            q75_col = f"q75_{col}"
-            q25_col = f"q25_{col}"
-            err_hi = self.agg_df[q75_col] - self.agg_df[data_col]
-            err_lo = self.agg_df[data_col] - self.agg_df[q25_col]
-            self.agg_df["errhi_{}".format(col)] = err_hi
-            self.agg_df["errlo_{}".format(col)] = err_lo
+            median = agg.loc[:, (col, "median")]
+            q75 = agg.loc[:, (col, "q75")]
+            q25 = agg.loc[:, (col, "q25")]
+            err_hi = q75 - median
+            err_lo = median - q25
+            agg[(col, "errhi")] = err_hi.values
+            agg[(col, "errlo")] = err_lo.values
+        self.agg_df = agg.sort_index(axis=1)
 
     def post_aggregate(self):
         super().post_aggregate()
         # Compute relative metrics with respect to baseline
-        datasets = self.agg_df.index.get_level_values("__dataset_id").unique()
-        data_cols = list(self.agg_df.columns)
-        diff_cols = self.agg_df.columns.map(lambda c: f"diff_{c}")
-        baseline = self.agg_df.xs(self.benchmark.uuid, level="__dataset_id")[data_cols]
-        self.agg_df[diff_cols] = 0
-        for ds_id in datasets:
-            other = self.agg_df.xs(ds_id, level="__dataset_id")[data_cols]
-            diff = other.subtract(baseline)
-            self.agg_df.loc[ds_id, diff_cols] = diff.values
+        tmp_df = self._add_delta_columns(self.agg_df)
+        self.agg_df = self._compute_delta_by_dataset(tmp_df)
 
     def iteration_output_file(self, iteration):
         return super().iteration_output_file(iteration).with_suffix(".csv")
-
-    async def after_extract_files(self):
-        # check that the iteration output was extracted
-        pass
 
 
 class BeriStatcountersData:

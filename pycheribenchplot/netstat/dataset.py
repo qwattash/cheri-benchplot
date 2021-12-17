@@ -25,9 +25,6 @@ class NetstatDataset(JSONDataSetContainer):
         Field.data_field("handled", dtype=int),
     ]
 
-    def raw_fields(self, include_derived=False):
-        return NetstatDataset.fields
-
     def output_file(self):
         return super().output_file().with_suffix(".json")
 
@@ -36,6 +33,7 @@ class NetstatDataset(JSONDataSetContainer):
         pre = open(path.with_suffix(".pre"), "r")
         post = open(path.with_suffix(".post"), "r")
         try:
+            index_cols = self.input_base_index_columns()
             pre_data = json.load(pre)
             post_data = json.load(post)
             pre_records = []
@@ -45,9 +43,9 @@ class NetstatDataset(JSONDataSetContainer):
             for item in post_data["netisr"]["workstream"]:
                 post_records += item["work"]
             pre_df = pd.DataFrame.from_records(pre_records)
-            pre_df.set_index(["workstream", "cpu", "name"], inplace=True)
+            pre_df.set_index(index_cols, inplace=True)
             post_df = pd.DataFrame.from_records(post_records)
-            post_df.set_index(["workstream", "cpu", "name"], inplace=True)
+            post_df.set_index(index_cols, inplace=True)
             df = post_df.subtract(pre_df).reset_index()
             df["__dataset_id"] = self.benchmark.uuid
         finally:

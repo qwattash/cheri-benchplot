@@ -35,11 +35,6 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
         Field.derived_field("valid_symbol", dtype=object, isdata=False)
     ]
 
-    def raw_fields(self, include_derived=False):
-        fields = super().raw_fields(include_derived)
-        fields += [f for f in ContextStatsHistogramBase.fields if include_derived or not f.isderived]
-        return fields
-
     def _get_slice_name(self) -> str:
         """Get the name of the slices containing histogram data for this dataset"""
         raise NotImplementedError("Must override")
@@ -175,10 +170,6 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
         agg = {"valid_symbol": lambda vec: ",".join(vec.unique())}
         return agg
 
-    def _get_iteration_agg_strategy(self):
-        """Return mapping of column-name => aggregation function for the iteration data aggregation"""
-        return {}
-
     def get_aggregate_index(self):
         """Index levels on which we aggregate"""
         return ["process", "thread", "EL", "file", "symbol"]
@@ -214,16 +205,17 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
         The first step aggregates per-context data for each iteration.
         The second step aggregates data across iterations.
         Customization should occur via get_aggregate_index(), _get_context_agg_strategy()
-        and _get_iteration_aggregate_stragety().
+        and _get_aggregation_stragety().
+        Note that we propagate some metadata fields to agg_df, we do not compute the
+        aggregation metrics for these, instead we use the "meta" column name
         """
         super().aggregate()
         grouped = self.merged_df.groupby(["__dataset_id", "__iteration"] + self.get_aggregate_index())
         # Cache the context grouping for later inspection if needed
-        self.ctx_agg_df = grouped.agg(self._get_context_agg_strategy())
+        self.ctx_agg_df = grouped.aggregate(self._get_context_agg_strategy())
         # Now that we aggregated contexts within the same iteration, aggregate over iterations
         grouped = self.ctx_agg_df.groupby(["__dataset_id"] + self.get_aggregate_index())
-        self.agg_df = grouped.agg(self._get_iteration_agg_strategy())
-        self.agg_df.columns = ["_".join(c) for c in self.agg_df.columns.to_flat_index()]
+        self.agg_df = self._compute_aggregations(grouped)
 
     def post_aggregate(self):
         super().post_aggregate()
@@ -231,28 +223,8 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
         # the symbols set for each file, repeated for each dataset_id.
         align_levels = self.get_aggregate_index()
         new_df = align_multi_index_levels(self.agg_df, align_levels, fill_value=0)
-        # Backfill after alignment
-        # new_df.loc[new_df["valid_symbol"] == 0, "valid_symbol"] = "missing"
-        # Now we can safely assign as there are no missing values.
-        # 1) Compute delta for each metric for each function w.r.t. the baseline.
-        # 2) Build the normalized delta for each metric, note that this will generate infinities where
-        #   the baseline benchmark count is 0 (e.g. extra functions called only in other samples)
-        baseline = new_df.xs(self.benchmark.uuid, level="__dataset_id")
-        datasets = new_df.index.get_level_values("__dataset_id").unique()
-        base_cols = self.agg_df.columns
-        delta_cols = [f"delta_{col}" for col in base_cols]
-        norm_cols = [f"norm_{col}" for col in delta_cols]
-        new_df[delta_cols] = 0
-        new_df[norm_cols] = 0
-        # XXX could avoid this loop by repeating N times the baseline values and vectorize the division?
-        for ds_id in datasets:
-            other = new_df.xs(ds_id, level="__dataset_id")
-            delta = other[base_cols].subtract(baseline[base_cols])
-            norm_delta = delta[base_cols].divide(baseline[base_cols])
-            new_df.loc[ds_id, delta_cols] = delta[base_cols].values
-            new_df.loc[ds_id, norm_cols] = norm_delta[base_cols].values
-        # assert not new_df["valid_symbol"].isna().any()
-        self.agg_df = new_df
+        agg_df = self._add_delta_columns(new_df)
+        self.agg_df = self._compute_delta_by_dataset(agg_df)
 
     def configure(self, opts: PlatformOptions) -> PlatformOptions:
         opts = super().configure(opts)
@@ -272,18 +244,7 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
 class QEMUStatsBBHistogramDataset(ContextStatsHistogramBase):
     """Basic-block hit count histogram"""
     dataset_config_name = DatasetName.QEMU_STATS_BB_HIST
-    fields = [
-        Field("start", dtype=np.uint),
-        Field("end", dtype=np.uint),
-        Field.data_field("icount", dtype=int),
-        Field.derived_field("delta_icount", dtype=int),
-        Field.derived_field("norm_delta_icount", dtype=float)
-    ]
-
-    def raw_fields(self, include_derived=False):
-        fields = super().raw_fields(include_derived)
-        fields += [f for f in QEMUStatsBBHistogramDataset.fields if include_derived or not f.isderived]
-        return fields
+    fields = [Field("start", dtype=np.uint), Field("end", dtype=np.uint), Field.data_field("icount", dtype=int)]
 
     def _get_slice_name(self):
         return "bb_hist"
@@ -304,11 +265,6 @@ class QEMUStatsBBHistogramDataset(ContextStatsHistogramBase):
         agg.update({"start": "min", "end": "max", "icount": "sum"})
         return agg
 
-    def _get_iteration_agg_strategy(self):
-        agg = super()._get_iteration_agg_strategy()
-        agg.update({"icount": ["mean", "std"]})
-        return agg
-
 
 class QEMUStatsBranchHistogramDataset(ContextStatsHistogramBase):
     """Branch instruction target hit count histogram"""
@@ -319,15 +275,8 @@ class QEMUStatsBranchHistogramDataset(ContextStatsHistogramBase):
         Field("source", dtype=np.uint),
         Field("target", dtype=np.uint),
         Field("branch_count", dtype=int),
-        Field.derived_field("call_count", dtype=int),
-        Field.derived_field("delta_call_count", dtype=int),
-        Field.derived_field("norm_delta_call_count", dtype=float)
+        Field.derived_field("call_count", dtype=int)
     ]
-
-    def raw_fields(self, include_derived=False):
-        fields = super().raw_fields(include_derived)
-        fields += [f for f in QEMUStatsBranchHistogramDataset.fields if include_derived or not f.isderived]
-        return fields
 
     def _get_slice_name(self):
         return "branch_hist"
@@ -346,11 +295,6 @@ class QEMUStatsBranchHistogramDataset(ContextStatsHistogramBase):
     def _get_context_agg_strategy(self):
         agg = super()._get_context_agg_strategy()
         agg.update({"source": "min", "target": "min", "call_count": "sum"})
-        return agg
-
-    def _get_iteration_agg_strategy(self):
-        agg = super()._get_iteration_agg_strategy()
-        agg.update({"call_count": ["mean", "std"]})
         return agg
 
     def get_aggregate_index(self):

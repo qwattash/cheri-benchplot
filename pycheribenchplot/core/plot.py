@@ -1,7 +1,6 @@
 import itertools as it
 import typing
 from abc import ABC, abstractmethod
-from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -67,37 +66,61 @@ class ColorMap:
         }
         return ColorMap(colors.keys(), colors.values(), colors.keys())
 
-    def __init__(self, keys: typing.Iterable[typing.Hashable], colors, labels: typing.Iterable[str]):
-        self.cmap = OrderedDict()
-        for k, c, l in zip(keys, colors, labels):
-            self.cmap[k] = (c, l)
+    def __init__(self, keys: typing.Iterable[typing.Hashable], colors: typing.Iterable, labels: typing.Iterable[str]):
+        self.cmap = pd.DataFrame({"labels": labels, "colors": list(colors)}, index=keys)
 
     @property
     def colors(self):
-        return map(lambda pair: pair[0], self.cmap.values())
+        return self.cmap["colors"]
 
     @property
     def labels(self):
-        return map(lambda pair: pair[1], self.cmap.values())
+        return self.cmap["labels"]
 
     def get_color(self, key: typing.Hashable):
-        if key is None:
-            return None
-        return self.cmap[key][0]
+        return self.cmap.loc[key, "colors"]
 
     def get_label(self, key: typing.Hashable):
-        if key is None:
-            return None
-        return self.cmap[key][1]
+        return self.cmap.loc[key, "labels"]
 
     def color_items(self):
-        return {k: pair[0] for k, pair in self.cmap.items()}
+        return self.cmap["colors"].items()
 
     def label_items(self):
-        return {k: pair[1] for k, pair in self.cmap.items()}
+        return self.cmap["labels"].items()
 
     def __iter__(self):
-        return zip(self.colors, self.labels)
+        return self.cmap.iterrows()
+
+    def map_labels_to_level(self, df: pd.DataFrame, level=0, axis=0) -> pd.DataFrame:
+        """
+        Given a dataframe with a multi-index on the given axis, map the
+        given level to the labels of the legend map, using the level values
+        as keys into the legend map
+        The axis may be 0 => index or 1 => columns, mirroring pandas.
+        Returns a copy of the original dataframe with the new index level
+        """
+        df = df.copy()
+        if axis == 0:
+            index = df.index.to_frame()
+        elif axis == 1:
+            index = df.columns.to_frame()
+        else:
+            raise ValueError("Axis must be 0 or 1")
+        _, mapped_level = index[level].align(self.cmap["labels"], level=level)
+        index[level] = mapped_level
+        new_index = pd.MultiIndex.from_frame(index)
+        if axis == 0:
+            df.index = new_index
+        else:
+            df.columns = new_index
+        return df
+
+    def with_label_index(self):
+        labels = self.cmap["labels"]
+        new_df = self.cmap.set_index("labels")
+        new_df["labels"] = labels.values
+        return new_df
 
 
 class DataView(ABC):
@@ -168,39 +191,43 @@ class CellData:
     """
     cell_id_gen = it.count()
 
-    def __init__(self,
-                 title="",
-                 yleft_text="",
-                 yright_text="",
-                 x_text="",
-                 legend_map=None,
-                 legend_level="__dataset_id"):
+    def __init__(self, title="", yleft_text="", yright_text="", x_text=""):
         """
         Arguments:
         title: Title for the cell of the plot
         yleft_text: Annotation on the left Y axis
         yright_text: Annotation on the right Y axis
         x_text: Annotation on the X axis
+
+        Properties:
         legend_map: ColorMap mapping index label values to human-readable names and colors
         Note that whether the legend is keyed by column names or index level currently
         depends on the view that renders the data.
         legend_level: Index label for the legend key of each set of data
+        legend_axis: Axis in which the legend level is found
+
+        TODO: honor legend_level and add legend_level_axis to map the values in the level to
+        legend labels in the view dataframe. Alternatively, remove the legend_level property.
         """
         self.title = title
         self.yleft_text = yleft_text
         self.yright_text = yright_text
         self.x_text = x_text
-        self.legend_map = legend_map
-        self.legend_level = legend_level
         self.views = []
         self.surface = None
         self.cell_id = next(CellData.cell_id_gen)
+        self.legend_map = None
+        self.legend_level = None
+        self.legend_axis = None
 
     def set_surface(self, surface):
         self.surface = surface
 
     def add_view(self, view: DataView):
         self.views.append(view)
+
+    def draw(self, ctx: "Surface.DrawContext"):
+        pass
 
 
 class GridLayout:
@@ -253,6 +280,11 @@ class Surface(ABC):
     Each view for the cell can hava a different plot type associated, so we can combine
     scatter and line plots (for example).
     """
+    @dataclass
+    class DrawContext:
+        title: str
+        dest: Path
+
     def __init__(self):
         self.logger = new_logger(str(self))
         self._layout = None
@@ -292,10 +324,22 @@ class Surface(ABC):
         """
         ...
 
-    @abstractmethod
+    def _make_draw_context(self, title, dest, **kwargs):
+        return self.DrawContext(title, dest, **kwargs)
+
+    def _finalize_draw_context(self, ctx):
+        pass
+
     def draw(self, title: str, dest: Path):
         """Draw all the registered views into the surface."""
-        ...
+        ctx = self._make_draw_context(title, dest)
+        try:
+            self.logger.debug("Drawing...")
+            for row in self._layout:
+                for cell in row:
+                    cell.draw(ctx)
+        finally:
+            self._finalize_draw_context(ctx)
 
     def __str__(self):
         return self.__class__.__name__

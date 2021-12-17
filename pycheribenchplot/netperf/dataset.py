@@ -200,9 +200,6 @@ class NetperfData(CSVDataSetContainer):
         self.netserver_task = None
         self._script = self.benchmark.get_script_builder()
 
-    def raw_fields(self, include_derived=False):
-        return NetperfData.fields
-
     def _load_csv(self, path: Path, **kwargs):
         kwargs["skiprows"] = 1
         return super()._load_csv(path, **kwargs)
