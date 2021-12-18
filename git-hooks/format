@@ -2,3 +2,6 @@
 
 isort pycheribenchplot --virtual-env venv --py 39 -p pycheribenchplot
 yapf -r pycheribenchplot -p -i
+
+isort cheri_trace_processor --virtual-env venv --py 39 -p cheri_trace_processor
+yapf -r cheri_trace_processor -p -i

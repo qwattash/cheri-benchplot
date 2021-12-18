@@ -71,3 +71,25 @@ The example runs a simple UDP_RR netperf benchmark and collects data from all su
  python benchplot.py demo/demo-netperf-multi-instance/benchplot_config.json analyse
  ```
 
+## CHERI Trace Processor
+This is currently a skeleton for more advanced parsing of qemu traces from both the protobuf and the perfetto backends.
+It contains an example to read a protobuf trace from the protobuf backend. Perfetto traces should be loaded using the
+`trace_processor_shell` from the cheri-perfetto repository.
+
+### Example setup to record and observe protobuf traces
+Required branches:
+ - cheribsd: statcounters-update (should also work on dev, with less data output)
+ - qemu: qemu-experimental-tracing
+ - cheri-benchplot: master
+ 
+ 1. Build qemu `cheribuild qemu --qemu/configure-options '--enable-protobuf-log-instr'`
+ 2. Run qemu (assuming you have built cheribsd and a disk image) `cheribuild run-riscv64-purecap --run-riscv64-purecap/extra-options '--cheri-trace-backend protobuf'`
+ 3. In the qemu guest, run a sample program:
+
+     ```sh
+     $ sysctl hw.qemu_trace_perthread=1
+     $ qtrace exec helloworld
+     $ poweroff
+     ```
+     This will generate the qemu-protobuf.pb file (currently hardcoded, sorry I am lazy...)
+ 4. Run `python cheri_trace_processor/cheri_trace_processor.py path/to/qemu-protobuf.pb`
