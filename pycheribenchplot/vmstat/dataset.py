@@ -193,6 +193,8 @@ class VMStatUMA(VMStatDataset):
         Field("fail", dtype=int),
         Field("sleep", dtype=int),
         Field("xdomain", dtype=int),
+        Field.data_field("bucket_alloc", dtype=int),
+        Field.data_field("bucket_free", dtype=int),
     ]
 
     def _get_align_levels(self):
