@@ -385,8 +385,7 @@ class CheribuildInstance(Instance):
                                                                  stdin=aio.subprocess.PIPE,
                                                                  stdout=aio.subprocess.PIPE,
                                                                  stderr=aio.subprocess.PIPE,
-                                                                 start_new_session=True,
-                                                                 loop=self.event_loop)
+                                                                 start_new_session=True)
         self.logger.debug("Spawned cheribuild pid=%d pgid=%d", self._cheribuild_task.pid,
                           os.getpgid(self._cheribuild_task.pid))
         self._io_tasks.append(self.event_loop.create_task(self._stdout_loop()))
