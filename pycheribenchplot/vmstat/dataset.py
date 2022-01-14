@@ -190,7 +190,7 @@ class VMStatUMA(VMStatDataset):
         Field("used", dtype=int),
         Field("free", dtype=int),
         Field.data_field("requests", dtype=int),
-        Field("fail", dtype=int),
+        Field.data_field("fail", dtype=int),
         Field("sleep", dtype=int),
         Field("xdomain", dtype=int),
         Field.data_field("bucket_alloc", dtype=int),
