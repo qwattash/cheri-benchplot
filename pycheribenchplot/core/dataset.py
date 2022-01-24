@@ -314,7 +314,9 @@ class DataSetContainer(metaclass=DatasetRegistry):
         - The index columns must be in the given dataframe and must agree with the container dataframe.
         - The columns must be a subset of all_columns().
         """
-        assert "__dataset_id" in df.columns, "Missing __dataset_id column"
+        if "__dataset_id" not in df.columns:
+            self.logger.debug("No dataset column, using default")
+            df["__dataset_id"] = self.benchmark.uuid
         if "__iteration" not in df.columns:
             self.logger.debug("No iteration column, using default (-1)")
             df["__iteration"] = -1

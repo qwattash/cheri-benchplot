@@ -8,7 +8,7 @@ from matplotlib import colors as mcolors
 from openpyxl.styles import Border, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from .plot import CellData, DataView, PlotError, PlotUnsupportedError, Surface
+from .plot import CellData, DataView, Surface, TableDataView, ViewRenderer
 
 
 class SpreadsheetSurface(Surface):
@@ -18,6 +18,10 @@ class SpreadsheetSurface(Surface):
     @dataclass
     class DrawContext(Surface.DrawContext):
         writer: pd.ExcelWriter
+
+    def __init__(self):
+        super().__init__()
+        self._renderers = {"table": SpreadsheetTableRenderer}
 
     def _make_draw_context(self, title, dest, **kwargs):
         writer = pd.ExcelWriter(dest.with_suffix(".xlsx"), mode="w", engine="openpyxl")
@@ -29,11 +33,6 @@ class SpreadsheetSurface(Surface):
     def make_cell(self, **kwargs):
         return SpreadsheetPlotCell(**kwargs)
 
-    def make_view(self, plot_type, **kwargs):
-        if plot_type == "table":
-            return SpreadsheetTable(**kwargs)
-        raise PlotUnsupportedError(f"Plot type {plot_type} is not supported by the spreadsheet surface")
-
 
 class SpreadsheetPlotCell(CellData):
     """
@@ -42,17 +41,18 @@ class SpreadsheetPlotCell(CellData):
     template if needed.
     """
     def draw(self, ctx: SpreadsheetSurface.DrawContext):
-        name = self.title
         if len(self.views) > 1:
             self.logger.warning("Only a single plot view is supported for each excel surface cell")
-        if len(self.views):
-            self.views[0].render(self, self.surface, ctx.writer)
+        if len(self.views) == 0:
+            return
+        view = self.views[0]
+        r = self.surface.get_renderer(view)
+        r.render(view, self, self.surface, excel_writer=ctx.writer)
 
 
-class SpreadsheetTable(DataView):
+class SpreadsheetTableRenderer(ViewRenderer):
     """
     Render table in a spreadsheet.
-    Note that this assumes that the sheet will only contain this table.
     """
     def _get_cell_color_styles(self, legend_map):
         fill_styles = {}
@@ -69,24 +69,21 @@ class SpreadsheetTable(DataView):
             fill_styles[key] = style
         return fill_styles
 
-    def render(self, cell, surface, excel_writer):
+    def render(self, view: TableDataView, cell, surface, excel_writer):
         """
         Render the dataframe as a table in an excel sheet.
         """
-        if self.yright:
-            surface.logger.warning("Excel table does not support right Y axis")
-        if self.colormap:
-            surface.logger.warning("Excel table does not support per-sample colormap")
+        assert isinstance(view, TableDataView), "Table renderer can only handle TableDataView"
 
         title = Path(cell.title).name
         sheet_name = re.sub("[:]", "", title)
-        self.df.to_excel(excel_writer, sheet_name=sheet_name, columns=self.yleft, index=True)
+        view.df.to_excel(excel_writer, sheet_name=sheet_name, columns=view.columns, index=True)
         book = excel_writer.book
         sheet = excel_writer.sheets[sheet_name]
 
         fill_styles = self._get_cell_color_styles(cell.legend_map)
-        nindex = len(self.df.index.names)
-        nheader = len(self.df.columns.names)
+        nindex = len(view.df.index.names)
+        nheader = len(view.df.columns.names)
 
         side_thin = Side(border_style="dashed", color="000000")
         side_medium = Side(border_style="thin", color="000000")
@@ -97,16 +94,16 @@ class SpreadsheetTable(DataView):
 
         # Set column colors and width
         # Note that this will also adjust the column headers width
-        for (idx, column), xcells in zip(enumerate(self.yleft), sheet.iter_cols(min_row=nheader + 1,
-                                                                                min_col=nindex + 1)):
+        for (idx, column), xcells in zip(enumerate(view.columns),
+                                         sheet.iter_cols(min_row=nheader + 1, min_col=nindex + 1)):
             col_idx = nindex + idx + 1
             col_width = max(map(len, column))
             # XXX This should be a column_groups argument
-            aggregate_level = self.df.columns.names.index("aggregate")
-            metric_level = self.df.columns.names.index("metric")
-            if idx > 0 and column[aggregate_level] != self.yleft[idx - 1][aggregate_level]:
+            aggregate_level = view.df.columns.names.index("aggregate")
+            metric_level = view.df.columns.names.index("metric")
+            if idx > 0 and column[aggregate_level] != view.columns[idx - 1][aggregate_level]:
                 cell_border = border_medium
-            elif idx > 0 and column[metric_level] != self.yleft[idx - 1][metric_level]:
+            elif idx > 0 and column[metric_level] != view.columns[idx - 1][metric_level]:
                 cell_border = border_thick
             else:
                 cell_border = border_thin
@@ -124,13 +121,13 @@ class SpreadsheetTable(DataView):
             sheet.column_dimensions[get_column_letter(col_idx)].width = col_width + 2
 
         # # Resize index columns to fit text
-        for idx, level in enumerate(self.df.index.names):
+        for idx, level in enumerate(view.df.index.names):
             col_idx = idx + 1
-            width = self.df.index.get_level_values(level).map(str).map(len).max()
+            width = view.df.index.get_level_values(level).map(str).map(len).max()
             if level is None:
                 level = ""
             width = max(width, len(level)) + 2  # some padding
             sheet.column_dimensions[get_column_letter(col_idx)].width = width
 
         # Freeze index and headers, +1 is required because sheet columns start from 1, not zero.
-        sheet.freeze_panes = sheet.cell(row=len(self.df.columns.names) + 1, column=len(self.df.index.names) + 1)
+        sheet.freeze_panes = sheet.cell(row=len(view.df.columns.names) + 1, column=len(view.df.index.names) + 1)

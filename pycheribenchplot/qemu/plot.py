@@ -4,7 +4,7 @@ import pandas as pd
 from ..core.dataset import (DatasetName, check_multi_index_aligned, pivot_multi_index_level, subset_xs)
 from ..core.excel import SpreadsheetSurface
 from ..core.html import HTMLSurface
-from ..core.plot import (BenchmarkPlot, BenchmarkSubPlot, CellData, ColorMap, DataView, Surface)
+from ..core.plot import (BenchmarkPlot, BenchmarkSubPlot, CellData, ColorMap, Surface, TableDataView)
 
 
 class QEMUHistSubPlot(BenchmarkSubPlot):
@@ -109,7 +109,7 @@ class QEMUHistTable(QEMUHistSubPlot):
         pivot_legend_map = self._get_pivot_legend_map(view_df, legend_map)
         assert cell.legend_map is None
         cell.legend_map = pivot_legend_map
-        view = surface.make_view("table", df=view_df, yleft=show_cols)
+        view = TableDataView("table", view_df, columns=show_cols)
         cell.add_view(view)
 
 

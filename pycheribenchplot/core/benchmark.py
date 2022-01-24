@@ -469,6 +469,7 @@ class BenchmarkBase(TemplateConfigContext):
             self.logger.debug("%s done: %s", command, result.stdout)
 
     async def run_nohup_ssh_cmd(self, command: str, args: list = [], env: dict = {}):
+        self.logger.debug("NOHUP ssh command not yet implemented")
         await self.run_ssh_cmd(command, args, env)
 
     async def extract_file(self, guest_src: Path, host_dst: Path, **kwargs):
@@ -527,7 +528,7 @@ class BenchmarkBase(TemplateConfigContext):
                 with timing("Benchmark completed", logger=self.logger):
                     await self.run_ssh_cmd("sh", [remote_script])
             else:
-                await self.run_nohup_ssh_cmd(remote_script)
+                await self.run_nohup_ssh_cmd("sh", [remote_script])
 
             await self._extract_results()
 

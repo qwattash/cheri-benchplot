@@ -123,65 +123,96 @@ class ColorMap:
         return new_df
 
 
-class DataView(ABC):
+@dataclass
+class DataView:
     """
     Base class for single plot types that are drawn onto a cell.
-    A data view encodes the rendering logic for a specific type of plot (e.g. a line plot) from a generic
-    dataframe using the given columns as axes (if relevant).
-    Individual plots can override concrete DataViews to customize the plot appearence.
+    A data view encodes the parameters needed for rendering a specific type of plot (e.g. a line plot)
+    from a generic dataframe using the given columns.
+    Each surface will then handle the DataView to render the plot.
+
     Arguments:
     df: View dataframe
+    plot: The renderer to use for the plot (e.g. table, hist, line...)
+    colormap: colormap to use for individual samples in the dataset. This can be used to map different samples
+    to different colors. If none is given, no coloring will be performed.
+    color_col: column to use as key for the color in the colormap. If a colormap is given but no color column, the
+    index will be used.
+
     fmt: Column data formatters map. Accept a dict of column-name => formatter.
     x: name of the column to pull X-axis values from (default 'x')
     yleft: name of the column(s) to pull left Y-axis values from, if any
     yright: name of the column(s) to pull right Y-axis values from, if any
-    colormap: colormap to use for individual samples in the dataset. This can be used to map different samples
-    to different colors. If none is given, no coloring will be performed
-    color_col: column to use as key for the color in the colormap. If a colormap is given but no color column, the
-    index will be used.
     """
-    def __init__(self,
-                 df: pd.DataFrame,
-                 fmt: dict = {},
-                 x: str = "x",
-                 yleft: typing.Union[str, list[str]] = [],
-                 yright: typing.Union[str, list[str]] = [],
-                 colormap: ColorMap = None,
-                 color_col: str = None):
-        self.df = df
-        self.fmt = fmt
-        self.x = x
-        self._yleft = yleft
-        self._yright = yright
-        self.colormap = colormap
-        self.color_col = color_col
+    plot: str
+    df: pd.DataFrame
+    colormap: ColorMap = None
+    color_col: str = None
 
-    @property
-    def yleft(self) -> list[str]:
-        """Return a normalized list of yleft column names"""
-        if isinstance(self._yleft, str):
-            return [self._yleft]
-        else:
-            # Any other iterable is fine
-            return self._yleft
 
-    @property
-    def yright(self) -> list[str]:
-        """Return a normalized list of yrigth column names"""
-        if isinstance(self._yright, str):
-            return [self._yright]
-        else:
-            # Any other iterable is fine
-            return self._yright
+@dataclass
+class TableDataView(DataView):
+    """
+    Data view for tabular visualization
 
-    @abstractmethod
-    def render(self, cell: "CellData", surface: "Surface"):
-        """
-        Render this data view. This function allows customization over specific plot methods.
-        The main surface used for rendering is given, but the implementation is specific to the
-        surface type.
-        """
-        ...
+    Arguments:
+    columns: a list of columns to display, the column identifiers
+    depend on the dataframe column index.
+    """
+    columns: list = field(default_factory=list)
+
+
+@dataclass
+class Scale:
+    """
+    Wrapper for scale information
+
+    Arguments:
+    name: the scale name (e.g. log)
+    base: log base for logarithmic scales
+    """
+    name: str
+    base: typing.Optional[int] = None
+
+
+@dataclass
+class XYPlotDataView(DataView):
+    """
+    Data view for X-Y plot visualization.
+
+    Arguments:
+    x: X dataframe column (or index level)
+    yleft: left Y axis column(s)
+    yright: right Y axis column(s)
+
+    For each axis (x, yleft, yright) the following arguments exist:
+    <ax>_scale: axis scale, if None use whatever default the surface provides
+    """
+    x: str = "x"
+    yleft: list[str] = field(default_factory=list)
+    yright: list[str] = field(default_factory=list)
+    x_scale: Scale = None
+    yleft_scale: Scale = None
+    yright_scale: Scale = None
+
+
+@dataclass
+class BarPlotDataView(XYPlotDataView):
+    pass
+
+
+@dataclass
+class HistPlotDataView(BarPlotDataView):
+    """
+    Parameters for histogram plots
+
+    Arguments:
+    buckets: histogram buckets
+    bucket_group: column or index level to use to generate histogram groups,
+    this will be used to plot multiple histogram columns for each bucket
+    """
+    buckets: list[float] = field(default_factory=list)
+    bucket_group: str = None
 
 
 class CellData:
@@ -191,13 +222,13 @@ class CellData:
     """
     cell_id_gen = it.count()
 
-    def __init__(self, title="", yleft_text="", yright_text="", x_text=""):
+    def __init__(self, title="", yleft_label=None, yright_label=None, x_label=""):
         """
         Arguments:
         title: Title for the cell of the plot
-        yleft_text: Annotation on the left Y axis
-        yright_text: Annotation on the right Y axis
-        x_text: Annotation on the X axis
+        yleft_label: Annotation on the left Y axis
+        yright_label: Annotation on the right Y axis
+        x_label: Annotation on the X axis
 
         Properties:
         legend_map: ColorMap mapping index label values to human-readable names and colors
@@ -210,9 +241,9 @@ class CellData:
         legend labels in the view dataframe. Alternatively, remove the legend_level property.
         """
         self.title = title
-        self.yleft_text = yleft_text
-        self.yright_text = yright_text
-        self.x_text = x_text
+        self.yleft_label = yleft_label
+        self.yright_label = yright_label
+        self.x_label = x_label
         self.views = []
         self.surface = None
         self.cell_id = next(CellData.cell_id_gen)
@@ -228,6 +259,16 @@ class CellData:
 
     def draw(self, ctx: "Surface.DrawContext"):
         pass
+
+
+class ViewRenderer(ABC):
+    """
+    Base class that renders plots.
+    This must be specialized for each supported plot type by each surface
+    """
+    @abstractmethod
+    def render(self, view: DataView, cell: CellData, surface: "Surface", **kwargs):
+        ...
 
 
 class GridLayout:
@@ -284,10 +325,13 @@ class Surface(ABC):
     class DrawContext:
         title: str
         dest: Path
+        row: int
+        col: int
 
     def __init__(self):
         self.logger = new_logger(str(self))
         self._layout = None
+        self._renderers = {}
 
     def set_layout(self, layout: GridLayout):
         """
@@ -316,27 +360,27 @@ class Surface(ABC):
         """Cell factory function"""
         ...
 
-    @abstractmethod
-    def make_view(self, plot_type: str, **kwargs) -> DataView:
-        """
-        Factory for data views for a given plot type.
-        If the plot type is not supported, may throw and exception
-        """
-        ...
-
     def _make_draw_context(self, title, dest, **kwargs):
-        return self.DrawContext(title, dest, **kwargs)
+        return self.DrawContext(title, dest, row=0, col=0, **kwargs)
 
     def _finalize_draw_context(self, ctx):
         pass
+
+    def get_renderer(self, data_view: DataView) -> ViewRenderer:
+        try:
+            return self._renderers[data_view.plot]()
+        except KeyError:
+            raise PlotUnsupportedError(f"Plot type {data_view.plot} not supported by {self}")
 
     def draw(self, title: str, dest: Path):
         """Draw all the registered views into the surface."""
         ctx = self._make_draw_context(title, dest)
         try:
             self.logger.debug("Drawing...")
-            for row in self._layout:
-                for cell in row:
+            for ri, row in enumerate(self._layout):
+                for ci, cell in enumerate(row):
+                    ctx.row = ri
+                    ctx.col = ci
                     cell.draw(ctx)
         finally:
             self._finalize_draw_context(ctx)

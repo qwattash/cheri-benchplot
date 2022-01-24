@@ -34,6 +34,7 @@ class BenchplotUserConfig(Config):
     This defines system paths for programs and source code we use
     """
     sdk_path: Path = path_field("~/cheri/cherisdk")
+    build_path: Path = path_field("~/cheri/build")
     perfetto_path: Path = path_field("~/cheri/cheri-perfetto/build")
     cheribuild_path: Path = path_field("~/cheri/cheribuild/cheribuild.py")
 
@@ -160,6 +161,8 @@ class BenchmarkManager(TemplateConfigContext):
         sessions = []
         for next_dir in self._iter_output_session_dirs():
             record_file = next_dir / self.records_filename
+            if not record_file.exists():
+                continue
             record = BenchmarkManagerRecord.load_json(record_file)
             if session is not None and session == record.session:
                 resolved = record
@@ -183,8 +186,8 @@ class BenchmarkManager(TemplateConfigContext):
         if not self.config.output_path.is_dir():
             self.logger.error("Output directory %s does not exist", self.config.output_path)
             raise OSError("Output directory not found")
-        for next_dir in self.config.output_path.iterdir():
-            if not next_dir.is_dir() or not (next_dir / self.records_filename).exists():
+        for next_dir in self.config.output_path.glob("benchplot-session-*"):
+            if not next_dir.is_dir():
                 continue
             yield next_dir
 
@@ -233,6 +236,8 @@ class BenchmarkManager(TemplateConfigContext):
         sessions = []
         for next_dir in self._iter_output_session_dirs():
             record_file = next_dir / self.records_filename
+            if not record_file.exists():
+                continue
             records = BenchmarkManagerRecord.load_json(record_file)
             fstat = record_file.stat()
             mtime = datetime.fromtimestamp(fstat.st_mtime, tz=timezone.utc)
