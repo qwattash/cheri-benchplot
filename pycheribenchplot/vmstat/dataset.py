@@ -43,7 +43,7 @@ class UMAZoneInfoDataset(DataSetContainer):
             vmstat_data = json.load(vmstat_out)
         # Create mapping between a convenient ID and the vmstat zone name
         vmstat_df = pd.DataFrame.from_records(vmstat_data["memory-zone-statistics"]["zone"])
-        vmstat_df["zone_tmp_id"] = vmstat_df["name"].str.replace("[ -]", "_", regex=True)
+        vmstat_df["zone_tmp_id"] = vmstat_df["name"].str.replace("[ .-]", "_", regex=True)
         vmstat_df = vmstat_df.set_index("zone_tmp_id")["name"]
         return vmstat_df
 
@@ -188,13 +188,14 @@ class VMStatUMA(VMStatDataset):
         Field.data_field("size", dtype=int),
         Field("limit", dtype=int),
         Field("used", dtype=int),
-        Field("free", dtype=int),
+        Field.data_field("free", dtype=int),
         Field.data_field("requests", dtype=int),
         Field.data_field("fail", dtype=int),
         Field("sleep", dtype=int),
         Field("xdomain", dtype=int),
         Field.data_field("bucket_alloc", dtype=int),
         Field.data_field("bucket_free", dtype=int),
+        Field.data_field("fail_import", dtype=int),
     ]
 
     def _get_align_levels(self):
