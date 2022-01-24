@@ -8,5 +8,7 @@ import pycheribenchplot.netstat.dataset
 import pycheribenchplot.pmc
 import pycheribenchplot.qemu.dataset
 import pycheribenchplot.qemu.plot
+import pycheribenchplot.subobject.dataset
+import pycheribenchplot.subobject.plot
 import pycheribenchplot.vmstat.dataset
 import pycheribenchplot.vmstat.plot

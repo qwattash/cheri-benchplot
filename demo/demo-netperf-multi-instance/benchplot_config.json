@@ -63,6 +63,9 @@
             },
             "netperf-netstat": {
                 "type": "netstat"
+            },
+            "subobject-stats": {
+                "type": "kernel-csetbounds-stats"
             }
         }
     }

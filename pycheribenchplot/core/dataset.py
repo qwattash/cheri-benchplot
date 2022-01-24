@@ -31,6 +31,7 @@ class DatasetName(Enum):
     VMSTAT_MALLOC = "vmstat-malloc"
     VMSTAT_UMA = "vmstat-uma"
     NETSTAT = "netstat"
+    KERNEL_CSETBOUNDS_STATS = "kernel-csetbounds-stats"
 
     def __str__(self):
         return self.value
@@ -51,6 +52,7 @@ class DatasetArtefact(Enum):
     PIDMAP = auto()
     QEMU_STATS = auto()
     NETSTAT = auto()
+    KERNEL_CSETBOUNDS_STATS = auto()
 
     def __str__(self):
         return self.name
