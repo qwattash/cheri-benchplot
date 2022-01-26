@@ -32,6 +32,7 @@ class DatasetName(Enum):
     VMSTAT_UMA = "vmstat-uma"
     NETSTAT = "netstat"
     KERNEL_CSETBOUNDS_STATS = "kernel-csetbounds-stats"
+    KERNEL_STRUCT_STATS = "kernel-struct-stats"
 
     def __str__(self):
         return self.value
@@ -53,6 +54,7 @@ class DatasetArtefact(Enum):
     QEMU_STATS = auto()
     NETSTAT = auto()
     KERNEL_CSETBOUNDS_STATS = auto()
+    KERNEL_STRUCT_STATS = auto()
 
     def __str__(self):
         return self.name

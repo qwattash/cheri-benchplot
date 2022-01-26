@@ -66,6 +66,9 @@
             },
             "subobject-stats": {
                 "type": "kernel-csetbounds-stats"
+            },
+            "struct-stats": {
+                "type": "kernel-struct-stats"
             }
         }
     }

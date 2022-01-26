@@ -15,7 +15,7 @@ from ..pmc import PMCStatData
 from .analysis import BenchmarkAnalysisRegistry
 from .config import TemplateConfig, TemplateConfigContext
 from .dataset import (DatasetArtefact, DataSetContainer, DatasetName, DatasetRegistry)
-from .elf import Symbolizer
+from .elf import DWARFHelper, Symbolizer
 from .instance import InstanceConfig, InstanceInfo, PlatformOptions
 from .pidmap import PidMapDataset
 from .plot import BenchmarkPlot
@@ -273,7 +273,11 @@ class BenchmarkBase(TemplateConfigContext):
     """
     Base class for all the benchmarks
     """
-    def __init__(self, manager, config, instance_config, run_id=None):
+    def __init__(self,
+                 manager: "BenchmarkManager",
+                 config: BenchmarkRunConfig,
+                 instance_config: InstanceConfig,
+                 run_id=None):
         super().__init__()
         if run_id:
             self.uuid = run_id
@@ -297,6 +301,8 @@ class BenchmarkBase(TemplateConfigContext):
         self.merged_benchmarks = {}
         # Symbol mapping handler for this benchmark instance
         self.sym_resolver = Symbolizer(self)
+        # Dwarf information extraction helper
+        self.dwarf_helper = DWARFHelper(self)
 
         self._bind_early_configs()
         self.datasets = {}
@@ -523,15 +529,17 @@ class BenchmarkBase(TemplateConfigContext):
         try:
             self._conn = await self._connect_instance(self._reserved_instance)
             await self.import_file(script_path, remote_script, preserve=True)
+            self.logger.info("Execute benchmark script")
             if self.manager_config.verbose:
                 # run inline
-                with timing("Benchmark completed", logger=self.logger):
+                with timing("Benchmark script completed", logger=self.logger):
                     await self.run_ssh_cmd("sh", [remote_script])
             else:
                 await self.run_nohup_ssh_cmd("sh", [remote_script])
 
             await self._extract_results()
 
+            self.logger.info("Generate extra datasets")
             for dset in self._dataset_generators_sorted():
                 await dset.after_extract_results()
 
@@ -541,6 +549,7 @@ class BenchmarkBase(TemplateConfigContext):
             self.logger.exception("Benchmark run failed: %s", ex)
             self.manager.failed_benchmarks.append(self)
         finally:
+            self.logger.info("Benchmark run completed")
             await self.instance_manager.release_instance(self.uuid)
 
     def _load_kernel_symbols(self):
@@ -549,6 +558,7 @@ class BenchmarkBase(TemplateConfigContext):
             self.logger.warning("Kernel name not found in kernel.<CONF> directories, using the default kernel")
             kernel = self.rootfs / "kernel" / "kernel.full"
         self.sym_resolver.register_sym_source(0, "kernel.full", kernel, shared=True)
+        self.dwarf_helper.register_object("kernel.full", kernel)
 
     def register_mapped_binary(self, map_addr: int, path: Path):
         """
@@ -558,6 +568,7 @@ class BenchmarkBase(TemplateConfigContext):
         bench_dset = self.get_dataset(self.config.benchmark_dataset.type)
         addrspace = bench_dset.get_addrspace_key()
         self.sym_resolver.register_sym_source(map_addr, addrspace, path)
+        self.dwarf_helper.register_object(path.name, path)
 
     def load(self):
         """

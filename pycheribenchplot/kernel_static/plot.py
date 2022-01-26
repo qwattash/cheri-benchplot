@@ -32,8 +32,8 @@ class KernelBoundsDistribution(BenchmarkSubPlot):
         df = self.bounds_stats.agg_df
         nviews = len(df.index.get_level_values("__dataset_id").unique())
         # Determine buckets we are going to use
-        min_size = df["size"].min()
-        max_size = df["size"].max()
+        min_size = max(df["size"].min(), 1)
+        max_size = max(df["size"].max(), 1)
         log_buckets = range(int(np.log2(min_size)), int(np.log2(max_size)) + 1)
         buckets = [2**i for i in log_buckets]
 
