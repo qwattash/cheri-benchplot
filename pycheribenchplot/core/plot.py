@@ -66,6 +66,13 @@ class ColorMap:
         }
         return ColorMap(colors.keys(), colors.values(), colors.keys())
 
+    @classmethod
+    def default(cls, keys):
+        # Use the default cycler colors C0-C9
+        cycler = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+        colors = [c for c, _ in zip(cycler, keys)]
+        return ColorMap(keys, colors, keys)
+
     def __init__(self, keys: typing.Iterable[typing.Hashable], colors: typing.Iterable, labels: typing.Iterable[str]):
         self.cmap = pd.DataFrame({"labels": labels, "colors": list(colors)}, index=keys)
 
@@ -77,10 +84,10 @@ class ColorMap:
     def labels(self):
         return self.cmap["labels"]
 
-    def get_color(self, key: typing.Hashable):
+    def get_color(self, key: typing.Hashable | list[typing.Hashable]):
         return self.cmap.loc[key, "colors"]
 
-    def get_label(self, key: typing.Hashable):
+    def get_label(self, key: typing.Hashable | list[typing.Hashable]):
         return self.cmap.loc[key, "labels"]
 
     def color_items(self):
@@ -134,10 +141,8 @@ class DataView:
     Arguments:
     df: View dataframe
     plot: The renderer to use for the plot (e.g. table, hist, line...)
-    colormap: colormap to use for individual samples in the dataset. This can be used to map different samples
-    to different colors. If none is given, no coloring will be performed.
-    color_col: column to use as key for the color in the colormap. If a colormap is given but no color column, the
-    index will be used.
+    legend_map: Override legend_map from the cell, the legends will then be merged.
+    legend_level: Same as CellData.legend_level but for the overridden legend_map
 
     fmt: Column data formatters map. Accept a dict of column-name => formatter.
     x: name of the column to pull X-axis values from (default 'x')
@@ -146,8 +151,18 @@ class DataView:
     """
     plot: str
     df: pd.DataFrame
-    colormap: ColorMap = None
-    color_col: str = None
+    legend_map: ColorMap = None
+    legend_level: str = None
+
+    def get_col(self, col):
+        """
+        Return a dataframe column, which might be a column or index level.
+        Note that index levels are normalized to dataframe.
+        """
+        if col in self.df.index.names:
+            return self.df.index.to_frame()[col]
+        else:
+            return self.df[col]
 
 
 @dataclass
@@ -176,6 +191,30 @@ class Scale:
 
 
 @dataclass
+class Style:
+    """
+    Wrapper for style information
+    """
+    line_style: str = "solid"
+    line_width: int = None
+
+
+@dataclass
+class AALineDataView(DataView):
+    """
+    Axis-aligned lines (vertical and horizontal) spanning the
+    whole axes.
+
+    Arguments:
+    horizontal: column names to use for the horizontal lines Y axis values
+    vertical: column names to use for the vertical lines X axis value
+    """
+    horizontal: list[str] = field(default_factory=list)
+    vertical: list[str] = field(default_factory=list)
+    style: Style = field(default_factory=Style)
+
+
+@dataclass
 class XYPlotDataView(DataView):
     """
     Data view for X-Y plot visualization.
@@ -194,6 +233,15 @@ class XYPlotDataView(DataView):
     x_scale: Scale = None
     yleft_scale: Scale = None
     yright_scale: Scale = None
+
+    def get_x(self):
+        return self.get_col(self.x)
+
+    def get_yleft(self):
+        return self.get_col(self.yleft)
+
+    def get_yright(self):
+        return self.get_col(self.yright)
 
 
 @dataclass
@@ -226,36 +274,68 @@ class CellData:
         """
         Arguments:
         title: Title for the cell of the plot
-        yleft_label: Annotation on the left Y axis
-        yright_label: Annotation on the right Y axis
-        x_label: Annotation on the X axis
+        Each of the axes (x, yleft and yright) has the following attributes:
+        <axis>_label: Annotation on the axis
+        <axis>_ticks: Ticks locations on the axis
+        <axis>_ticklables: Tick labels on the axis
+        <axis>_limits: 2-tuple or list of the min and max axis values to show
 
         Properties:
         legend_map: ColorMap mapping index label values to human-readable names and colors
         Note that whether the legend is keyed by column names or index level currently
         depends on the view that renders the data.
         legend_level: Index label for the legend key of each set of data
-        legend_axis: Axis in which the legend level is found
-
-        TODO: honor legend_level and add legend_level_axis to map the values in the level to
-        legend labels in the view dataframe. Alternatively, remove the legend_level property.
         """
         self.title = title
-        self.yleft_label = yleft_label
-        self.yright_label = yright_label
         self.x_label = x_label
+        self.x_limits = None
+        self.x_ticks = None
+        self.x_ticklabels = None
+        self.yleft_label = yleft_label
+        self.yleft_limits = None
+        self.yleft_ticks = None
+        self.yleft_ticklabels = None
+        self.yright_label = yright_label
+        self.yright_limits = None
+        self.yright_ticks = None
+        self.yright_ticklabels = None
+        self.legend_map = None
+        self.legend_level = None
+
         self.views = []
         self.surface = None
         self.cell_id = next(CellData.cell_id_gen)
-        self.legend_map = None
-        self.legend_level = None
-        self.legend_axis = None
 
     def set_surface(self, surface):
         self.surface = surface
 
     def add_view(self, view: DataView):
         self.views.append(view)
+
+    def validate(self):
+        assert self.legend_map or not self.legend_level, "CellData legend_level set without legend_map"
+
+    def default_legend_map(self, view):
+        return ColorMap.default(view.df.index.unique().values)
+
+    def get_legend_col(self, view):
+        if view.legend_level:
+            level = view.legend_level
+        else:
+            level = self.legend_level
+        if level:
+            return view.get_col(level)
+        else:
+            return view.df.index.to_flat_index()
+
+    def get_legend_map(self, view):
+        if view.legend_map:
+            legend_map = view.legend_map
+        elif self.legend_map:
+            legend_map = self.legend_map
+        else:
+            legend_map = self.default_legend_map(view)
+        return legend_map
 
     def draw(self, ctx: "Surface.DrawContext"):
         pass
@@ -381,6 +461,7 @@ class Surface(ABC):
                 for ci, cell in enumerate(row):
                     ctx.row = ri
                     ctx.col = ci
+                    cell.validate()
                     cell.draw(ctx)
         finally:
             self._finalize_draw_context(ctx)
