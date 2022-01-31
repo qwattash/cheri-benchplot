@@ -1,5 +1,6 @@
 import itertools as it
 import typing
+from collections import defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -184,16 +185,75 @@ class Symbolizer:
 class DWARFStructInfo:
     name: str
     size: int
-    from_path: Path = None
+    from_path: Path
+    src_file: str
+    src_line: int
     is_anon: bool = False
-    src_file: typing.Optional[str] = None
-    src_line: typing.Optional[int] = None
 
-    def __eq__(self, other):
-        return self.name == other.name and self.size == other.size and self.src_file == other.src_file and self.src_line == other.src_line
+    @property
+    def key(self):
+        if self.is_anon:
+            return ("anon", self.size, self.src_file, self.src_line)
+        else:
+            return (self.name, self.size, self.src_file, 0)
 
-    def __lt__(self, other):
-        return self.size < other.size
+
+class DWARFVisitor:
+    def __init__(self, dw):
+        self.dw = dw
+        self.current_unit = None
+        self.current_debug_line = None
+
+    def visit_structure_type(self, die):
+        pass
+
+    def visit_union_type(self, die):
+        pass
+
+    def visit_typedef(self, die):
+        pass
+
+
+class StructInfoVisitor(DWARFVisitor):
+    def __init__(self, dw):
+        super().__init__(dw)
+        self.struct_by_key = {}
+        self.struct_by_offset = {}
+
+    def visit_structure_type(self, die):
+        at_decl = die.attributes.get("DW_AT_declaration", None)
+        if at_decl:
+            # Skip non-defining entries
+            return
+
+        at_name = die.attributes.get("DW_AT_name", None)
+        at_B_size = die.attributes.get("DW_AT_byte_size", None)
+        at_b_size = die.attributes.get("DW_AT_bit_size", None)
+        at_file = die.attributes.get("DW_AT_decl_file", None)
+        at_line = die.attributes.get("DW_AT_decl_line", None)
+
+        name = at_name.value.decode("ascii") if at_name else None
+        if at_B_size:
+            size = at_B_size.value
+        elif at_b_size:
+            size = at_b_size.value / 8
+        else:
+            self.logger.warning("Unexpected DWARF struct size attributes")
+
+        if not at_file or not at_line:
+            self.logger.warning("Missing file and line attributes")
+            return
+        # at_file is 1-based
+        entry = self.current_debug_line["file_entry"][at_file.value - 1]
+        src_file = entry.name.decode("ascii")
+        src_line = at_line.value
+        si = DWARFStructInfo(name, size, self.current_unit_path, src_file, src_line)
+        if name is None:
+            si.is_anon = True
+        # Duplicate keys are not allowed, if the key is equal, the struct
+        # we are referring to must be the same.
+        self.struct_by_key[si.key] = si
+        self.struct_by_offset[die.offset] = si
 
 
 class DWARFInfoSource:
@@ -209,73 +269,39 @@ class DWARFInfoSource:
         self._ef = ELFFile(self._fd)
         self._dw = self._ef.get_dwarf_info()
 
-    def _dw_struct_info(self, die, debug_line) -> typing.Optional[DWARFStructInfo]:
-        at_name = die.attributes.get("DW_AT_name", None)
-        at_B_size = die.attributes.get("DW_AT_byte_size", None)
-        at_b_size = die.attributes.get("DW_AT_bit_size", None)
-        at_decl = die.attributes.get("DW_AT_declaration", None)
-        at_file = die.attributes.get("DW_AT_decl_file", None)
-        at_line = die.attributes.get("DW_AT_decl_line", None)
+    def _struct_typedef(self, die):
+        parent = die.get_parent()
+        get_DIE_from_attribute()
 
-        name = at_name.value.decode("ascii") if at_name else None
-        src_file = None
-        src_line = None
-        if at_B_size:
-            size = at_B_size.value
-        elif at_b_size:
-            size = at_b_size.value / 8
-        elif at_decl:
-            # Declaration, skip
-            return None
-        else:
-            self.logger.warning("Unexpected DWARF struct size attributes")
-            return None
-        si = DWARFStructInfo(name, size)
+    def _handle_die(self, die, visitor):
+        if die.tag == "DW_TAG_structure_type":
+            visitor.visit_structure_type(die)
+        elif die.tag == "DW_TAG_union_type":
+            visitor.visit_union_type(die)
+        elif die.tag == "DW_TAG_typedef":
+            visitor.visit_typedef(die)
 
-        if at_file and at_line and at_file.value > 0:
-            # at_file is 1-based
-            entry = debug_line["file_entry"][at_file.value - 1]
-            si.src_file = entry.name.decode("ascii")
-            si.src_line = at_line.value
-        if name is None:
-            si.is_anon = True
-        return si
+    def _handle_unit(self, unit, visitor):
+        unit_die = unit.get_top_DIE()
+        visitor.current_unit = unit
+        visitor.current_unit_path = Path(unit_die.get_full_path())
+        visitor.current_debug_line = self._dw.line_program_for_CU(unit)
+        for die in unit_die.iter_children():
+            self._handle_die(die, visitor)
 
-    def _extract_struct_info_cu(self, cu, struct_info):
-        debug_line = self._dw.line_program_for_CU(cu)
-        die_cu = cu.get_top_DIE()
-        cu_path = die_cu.get_full_path()
-        for die in die_cu.iter_children():
-            if die.tag == "DW_TAG_structure_type":
-                info = self._dw_struct_info(die, debug_line)
-                if info is None:
-                    continue
-                info.from_path = Path(cu_path)
-                if info.is_anon:
-                    # For anonymous structures, we need to generate an unique name
-                    # based on where they are defined
-                    if info.src_file:
-                        src_name = info.src_file
-                    else:
-                        src_name = cu_path
-                    info.name = f"<anon.{src_name}>"
-                if (info.name, info.size) not in struct_info:
-                    struct_info[(info.name, info.size)] = info
-            elif die.tag == "DW_TAG_union_type":
-                pass
+    def _visit(self, visitor):
+        for unit in self._dw.iter_CUs():
+            self._handle_unit(unit, visitor)
 
-    def extract_struct_info(self, as_dict=False) -> pd.DataFrame:
+    def extract_struct_info(self) -> pd.DataFrame:
         """
         Iterate all compilation units and extract information on structure
         size, alignment etc.
         """
-        struct_info = {}
-        for cu in self._dw.iter_CUs():
-            self._extract_struct_info_cu(cu, struct_info)
-        if as_dict:
-            return struct_info
-        df = pd.DataFrame.from_records(map(asdict, struct_info.values()))
-        return df.set_index(["name", "size"])
+        visitor = StructInfoVisitor(self._dw)
+        self._visit(visitor)
+        df = pd.DataFrame.from_records(map(asdict, visitor.struct_by_key.values()))
+        return df.set_index(["name", "src_file", "src_line"])
 
 
 class DWARFHelper:
