@@ -395,8 +395,10 @@ class DataSetContainer(metaclass=DatasetRegistry):
         # and perform the arithmetic operation, we want the right-join
         # result only
         _, aligned_baseline = df.align(baseline)
-        delta = df.subtract(aligned_baseline)
-        norm_delta = delta.divide(aligned_baseline)
+        data_cols = set(self.data_columns()).intersection(df.columns)
+        aligned_data_baseline = aligned_baseline.loc[:, data_cols]
+        delta = df.subtract(aligned_data_baseline)
+        norm_delta = delta.divide(aligned_data_baseline)
         result = pd.concat([
             df,
             self._set_delta_columns_name("delta_baseline", delta),
@@ -601,6 +603,8 @@ def align_multi_index_levels(df: pd.DataFrame, align_levels: list[str], fill_val
     This will generate the union of the sets of values in the align_levels parameter.
     The union set is then repeated for each other dataframe index level, so that every
     combination of the other levels, have the same set of aligned level combinations.
+    If the propagate_columns list is given, the nan values filled during alignment will
+    be replaced by the original value of the column for the existing index combination.
     """
     assert df.index.is_unique, "Need unique index"
     # Get an union of the sets of levels to align as the index of the grouped dataframe
