@@ -570,6 +570,16 @@ class BenchmarkBase(TemplateConfigContext):
         self.sym_resolver.register_sym_source(map_addr, addrspace, path)
         self.dwarf_helper.register_object(path.name, path)
 
+    def get_benchmark_group(self):
+        """
+        Return dictionary of the baseline and merged benchmarks in this group
+        Note: Only sensible after the merge step on the baseline instance.
+        """
+        assert self.instance_config.baseline
+        group = {self.uuid: self}
+        group.update(self.merged_benchmarks)
+        return group
+
     def load(self):
         """
         Setup benchmark metadata and load results into datasets from the currently assigned run configuration.
