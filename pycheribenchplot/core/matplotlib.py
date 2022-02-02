@@ -11,7 +11,7 @@ from matplotlib.figure import Figure
 from matplotlib.patches import Patch
 from pandas.api.types import is_numeric_dtype
 
-from .plot import BarPlotDataView, CellData, Style, Surface, ViewRenderer
+from .plot import (BarPlotDataView, CellData, Scale, Style, Surface, ViewRenderer)
 
 
 def build_style_args(style: Style) -> dict:
@@ -24,6 +24,20 @@ def build_style_args(style: Style) -> dict:
     if style.line_width:
         args["linewidth"] = style.line_width
     return args
+
+
+def build_scale_args(scale: Scale) -> tuple[list, dict]:
+    """
+    Convert a Scale wrapper into scale arguments
+    """
+    args = [scale.name]
+    kwargs = {}
+    if scale.name == "log" or scale.name == "symlog":
+        kwargs["base"] = scale.base
+    if scale.name == "symlog":
+        kwargs["linthresh"] = scale.lintresh
+        kwargs["linscale"] = scale.linscale
+    return (args, kwargs)
 
 
 class Legend:
@@ -71,23 +85,53 @@ class BarRenderer(ViewRenderer):
     Render a bar plot.
     """
     def render(self, view, cell, surface, ctx):
+
+        legend_map = cell.get_legend_map(view)
+        legend_col = cell.get_legend_col(view)
+        if view.bar_group:
+            groups = view.df.groupby(view.bar_group)
+            data_groups = [g for _, g in groups]
+            keys = [k for k, _ in groups]
+        else:
+            # single bar plot
+            assert len(legend_col.unique()) == 1
+            data_groups = [view.df]
+            keys = [legend_col.unique()]
+
+        # Generate x centers for the bars and the
+        # relative offsets for each group
+        if view.yleft is not None and view.yright is not None:
+            naxes = 2
+        else:
+            naxes = 1
+        ngroups = len(data_groups)
+        width = (ngroups * naxes) * view.bar_width + 2 * view.bar_pad
+        offsets = np.arange(0, width, naxes * view.bar_width)
+        assert len(offsets) == ngroups * naxes
+        # shift offsets to represent the bar centers
+        offsets = offsets - width / 2 + view.bar_width / 2 + view.bar_pad
         # Normalize X axis to be numeric and assign bar labels
         xcol = view.get_x()
-        if not is_numeric_dtype(xcol.dtype):
-            xcol_labels = xcol
-            xcol = range(len(xcol))
-        else:
-            xcol_labels = xcol
+        x_labels = xcol
+        x = np.arange(0, width * len(xcol), width) + width / 2
 
-        left_bar = view.get_yleft()
-        right_bar = view.get_yright()
-        if left_bar is not None:
-            ctx.ax.bar(xcol, height=left_bar)
-        # if right_bar is not None:
-        #     ctx.rax.bar(xcol, height=right_bar)
+        left_patches = []
+        right_patches = []
+        for off, grp in zip(offsets, data_groups):
+            if view.yleft is not None:
+                values = view.get_col(view.yleft, grp)
+                grp_x = x + off
+                patches = ctx.ax.bar(grp_x, height=values, color="b")
+                # ctx.legend.set_item("test", patches)
+                # next offset
+                off += view.bar_width
+            if view.yright is not None:
+                values = view.get_col(view.yright, grp)
+                grp_x = x + off
+                patches = ctx.rax.bar(grp_x, height=values, color="r")
 
-        if view.x_scale:
-            ctx.ax.set_xscale(view.x_scale.name, base=view.x_scale.base)
+            # ctx.legend.set_item("test", patches)
+        # Fixup cell parameters
 
 
 class HistRenderer(ViewRenderer):
@@ -121,8 +165,6 @@ class HistRenderer(ViewRenderer):
             xvec = xcol
             colors = None
 
-        if view.x_scale:
-            ctx.ax.set_xscale(view.x_scale.name, base=view.x_scale.base)
         n, bins, patches = ctx.ax.hist(xvec, bins=view.buckets, rwidth=0.5, color=colors)
         ctx.legend.set_group(labels, patches)
         ctx.ax.set_xticks(view.buckets)
@@ -157,7 +199,7 @@ class MatplotlibSurface(Surface):
 
     def _make_draw_context(self, title, dest, **kwargs):
         r, c = self._layout.shape
-        fig, axes = plt.subplots(r, c, tight_layout=True, figsize=(10 * c, 5 * r))
+        fig, axes = plt.subplots(r, c, constrained_layout=True, figsize=(10 * c, 5 * r))
         axes = np.array(axes)
         axes = axes.reshape((r, c))
         fig.suptitle(title)
@@ -181,17 +223,48 @@ class MatplotlibPlotCell(CellData):
         self.figure = None
         self.ax = None
 
+    def _config_x(self, cfg, ax):
+        ax.set_xlabel(cfg.label)
+        if cfg.scale:
+            args, kwargs = build_scale_args(cfg.scale)
+            ax.set_xscale(*args, **kwargs)
+        if cfg.limits:
+            ax.set_xlim(cfg.limits[0], cfg.limits[1])
+        if cfg.ticks is not None:
+            ax.set_xticks(cfg.ticks)
+
+    def _config_y(self, cfg, ax):
+        ax.set_ylabel(cfg.label)
+        if cfg.scale:
+            args, kwargs = build_scale_args(cfg.scale)
+            ax.set_yscale(*args, **kwargs)
+        if cfg.limits:
+            ax.set_ylim(cfg.limits[0], cfg.limits[1])
+        if cfg.ticks:
+            ax.set_yticks(cfg.ticks)
+
     def draw(self, ctx):
         ctx.ax = ctx.axes[ctx.row][ctx.col]
-        if ft.reduce(lambda a, v: hasattr(v, "yleft") and len(v.yleft) > 0, self.views, False):
-            # Some view uses the twin right axis, so create it
+        ctx.legend = Legend()
+        # Auto enable yright axis if it is used by any view
+        auto_yright = ft.reduce(lambda a, v: hasattr(v, "yright") and len(v.yright) > 0, self.views, False)
+        if auto_yright:
+            self.yright_config.enable = True
+        if self.yright_config:
             ctx.rax = ctx.ax.twinx()
         else:
             ctx.rax = None
+        # Render all the views in the cell
         for view in self.views:
             r = self.surface.get_renderer(view)
             r.render(view, self, self.surface, ctx)
         ctx.legend.build_legend(ctx)
+        # Set all remaining cell parameters
         ctx.ax.set_title(self.title)
-        ctx.ax.set_xlabel(self.x_label)
-        ctx.ax.set_ylabel(self.yleft_label)
+        if self.x_config:
+            self._config_x(self.x_config, ctx.ax)
+        if self.yleft_config:
+            self._config_y(self.yleft_config, ctx.ax)
+        if self.yright_config:
+            assert ctx.rax is not None, "Missing twin axis"
+            self._config_y(self.yright_config, ctx.rax)

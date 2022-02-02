@@ -69,8 +69,9 @@ class ColorMap:
     @classmethod
     def default(cls, keys):
         # Use the default cycler colors C0-C9
-        cycler = plt.rcParams["axes.prop_cycle"].by_key()["color"]
-        colors = [c for c, _ in zip(cycler, keys)]
+        cycler = plt.rcParams["axes.prop_cycle"]
+        color_cycle = map(lambda v: v["color"], cycler())
+        colors = [c for c, _ in zip(color_cycle, keys)]
         return ColorMap(keys, colors, keys)
 
     def __init__(self, keys: typing.Iterable[typing.Hashable], colors: typing.Iterable, labels: typing.Iterable[str]):
@@ -154,15 +155,17 @@ class DataView:
     legend_map: ColorMap = None
     legend_level: str = None
 
-    def get_col(self, col):
+    def get_col(self, col, df=None):
         """
         Return a dataframe column, which might be a column or index level.
         Note that index levels are normalized to dataframe.
         """
-        if col in self.df.index.names:
-            return self.df.index.to_frame()[col]
+        if df is None:
+            df = self.df
+        if col in df.index.names:
+            return df.index.to_frame()[col]
         else:
-            return self.df[col]
+            return df[col]
 
 
 @dataclass
@@ -185,9 +188,13 @@ class Scale:
     Arguments:
     name: the scale name (e.g. log)
     base: log base for logarithmic scales
+    lintresh: linear treshold for symlog scales
+    linscale: linear scale factor
     """
     name: str
     base: typing.Optional[int] = None
+    lintresh: typing.Optional[int] = None
+    linscale: typing.Optional[float] = None
 
 
 @dataclass
@@ -230,9 +237,6 @@ class XYPlotDataView(DataView):
     x: str = "x"
     yleft: list[str] = field(default_factory=list)
     yright: list[str] = field(default_factory=list)
-    x_scale: Scale = None
-    yleft_scale: Scale = None
-    yright_scale: Scale = None
 
     def get_x(self):
         return self.get_col(self.x)
@@ -246,11 +250,20 @@ class XYPlotDataView(DataView):
 
 @dataclass
 class BarPlotDataView(XYPlotDataView):
-    pass
+    """
+    Parameters for bar plots
+
+    Arguments:
+    bar_group: column or index level to use to generate bar groups,
+    each group is plotted along the given x axis
+    """
+    bar_group: str = None
+    bar_width: float = 0.8
+    bar_pad: float = 0.1
 
 
 @dataclass
-class HistPlotDataView(BarPlotDataView):
+class HistPlotDataView(XYPlotDataView):
     """
     Parameters for histogram plots
 
@@ -261,6 +274,22 @@ class HistPlotDataView(BarPlotDataView):
     """
     buckets: list[float] = field(default_factory=list)
     bucket_group: str = None
+
+
+@dataclass
+class AxisConfig:
+    """
+    Axis parameters wrapper
+    """
+    label: str
+    enable: bool = False
+    limits: tuple[float, float] = None
+    ticks: list[float] = None
+    tick_labels: list[str] = None
+    scale: Scale = None
+
+    def __bool__(self):
+        return self.enable
 
 
 class CellData:
@@ -274,11 +303,7 @@ class CellData:
         """
         Arguments:
         title: Title for the cell of the plot
-        Each of the axes (x, yleft and yright) has the following attributes:
-        <axis>_label: Annotation on the axis
-        <axis>_ticks: Ticks locations on the axis
-        <axis>_ticklables: Tick labels on the axis
-        <axis>_limits: 2-tuple or list of the min and max axis values to show
+        Each of the axes (x, yleft and yright) has a separate configuration object
 
         Properties:
         legend_map: ColorMap mapping index label values to human-readable names and colors
@@ -287,18 +312,9 @@ class CellData:
         legend_level: Index label for the legend key of each set of data
         """
         self.title = title
-        self.x_label = x_label
-        self.x_limits = None
-        self.x_ticks = None
-        self.x_ticklabels = None
-        self.yleft_label = yleft_label
-        self.yleft_limits = None
-        self.yleft_ticks = None
-        self.yleft_ticklabels = None
-        self.yright_label = yright_label
-        self.yright_limits = None
-        self.yright_ticks = None
-        self.yright_ticklabels = None
+        self.x_config = AxisConfig(x_label, enable=True)
+        self.yleft_config = AxisConfig(yleft_label, enable=True)
+        self.yright_config = AxisConfig(yright_label)
         self.legend_map = None
         self.legend_level = None
 
