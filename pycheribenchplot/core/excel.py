@@ -98,13 +98,16 @@ class SpreadsheetTableRenderer(ViewRenderer):
                                          sheet.iter_cols(min_row=nheader + 1, min_col=nindex + 1)):
             col_idx = nindex + idx + 1
             col_width = max(map(len, column))
-            # XXX This should be a column_groups argument
-            aggregate_level = view.df.columns.names.index("aggregate")
-            metric_level = view.df.columns.names.index("metric")
-            if idx > 0 and column[aggregate_level] != view.columns[idx - 1][aggregate_level]:
-                cell_border = border_medium
-            elif idx > 0 and column[metric_level] != view.columns[idx - 1][metric_level]:
-                cell_border = border_thick
+            # We introduce a thicker border for column groups at the first two column index levels
+            if len(view.columns.names) > 1 and idx > 0:
+                if len(view.columns.names) > 2 and column[1] != view.columns[idx - 1][1]:
+                    # generally the 'delta' or 'aggregate' levels
+                    cell_border = border_medium
+                elif column[0] != view.columns[idx - 1][0]:
+                    # generally the 'metric' level
+                    cell_border = border_thick
+                else:
+                    cell_border = border_thin
             else:
                 cell_border = border_thin
 
