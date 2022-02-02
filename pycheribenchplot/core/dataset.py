@@ -737,3 +737,14 @@ def reorder_columns(df: pd.DataFrame, ordered_cols: typing.Sequence[str]):
     extra_cols = list(set(df.columns) - set(ordered_cols))
     result_df = df.reindex(columns=np.append(ordered_cols, extra_cols))
     return result_df
+
+
+def index_where(df: pd.DataFrame, level: str, cond: pd.Series, alt: pd.Series):
+    """
+    Operation that mirrors dataframe.where but operates on an index level.
+    """
+    idx_df = df.index.to_frame()
+    idx_df[level] = idx_df[level].where(cond, alt)
+    df = df.copy()
+    df.index = pd.MultiIndex.from_frame(idx_df)
+    return df
