@@ -389,14 +389,19 @@ class DataSetContainer(metaclass=DatasetRegistry):
         this is the case if called from post_aggregate().
         """
         assert check_multi_index_aligned(df, "__dataset_id")
+        assert "metric" in df.columns.names, "Missing column metric level"
+        assert "delta" in df.columns.names, "Missing column delta level"
+
         datasets = df.index.get_level_values("__dataset_id").unique()
         baseline = df.xs(self.benchmark.uuid, level="__dataset_id")
         # broadcast the baseline cross-section across the __dataset_id
         # and perform the arithmetic operation, we want the right-join
         # result only
         _, aligned_baseline = df.align(baseline)
-        data_cols = set(self.data_columns()).intersection(df.columns)
-        aligned_data_baseline = aligned_baseline.loc[:, data_cols]
+        metric_cols = df.columns.get_level_values("metric")
+        data_cols = set(self.data_columns()).intersection(metric_cols)
+        column_idx = metric_cols.isin(data_cols)
+        aligned_data_baseline = aligned_baseline.loc[:, column_idx]
         delta = df.subtract(aligned_data_baseline)
         norm_delta = delta.divide(aligned_data_baseline)
         result = pd.concat([
