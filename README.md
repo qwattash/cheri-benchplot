@@ -71,6 +71,16 @@ The example runs a simple UDP_RR netperf benchmark and collects data from all su
  python benchplot.py demo/demo-netperf-multi-instance/benchplot_config.json analyse
  ```
 
+## Other tracing backends
+CHERI-QEMU supports two other tracing backends that may be useful
+ - protobuf backend:
+   + Build qemu with `--enable-protobuf-log-instr`, run with `--cheri-trace-backend protobuf`
+   + Emits a stream of protobufs that represent the trace entries. See `cheri-perfetto/protos/perfetto/trace/track_event/qemu_log_entry.proto` for the proto definitions.
+ - json backend:
+   + Build qemu with `--enable-json-log-instr`, run with `--cheri-trace-backend json`
+   + Emit a json file that contains the log entries. The format should be more stable and easier to parse than the text format, however protobufs or perfetto should
+   be used for any trace that is not a toy program.
+
 ## CHERI Trace Processor
 This is currently a skeleton for more advanced parsing of qemu traces from both the protobuf and the perfetto backends.
 It contains an example to read a protobuf trace from the protobuf backend. Perfetto traces should be loaded using the
