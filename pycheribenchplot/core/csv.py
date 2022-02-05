@@ -15,7 +15,10 @@ class CSVDataSetContainer(DataSetContainer):
         Load a raw CSV file into a dataframe compatible with the columns given in all_columns.
         """
         kwargs.setdefault("dtype", self._get_input_columns_dtype())
-        kwargs.setdefault("converters", self._get_input_columns_conv())
+        converters = self._get_input_columns_conv()
+        if "converters" in kwargs:
+            converters.update(kwargs["converters"])
+        kwargs["converters"] = converters
         for key in kwargs["converters"].keys():
             kwargs["dtype"].pop(key, None)
         csv_df = pd.read_csv(path, **kwargs)
