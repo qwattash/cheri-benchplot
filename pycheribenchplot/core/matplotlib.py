@@ -84,54 +84,180 @@ class BarRenderer(ViewRenderer):
     """
     Render a bar plot.
     """
-    def render(self, view, cell, surface, ctx):
+    def _resolve_groups(self, cell, view):
+        """
+        Compute the bar groups. The resulting group keys will
+        have either 1 or 2 index levels, depending on the bar_group and
+        stack_group settings
+        """
+        by = []
 
-        legend_map = cell.get_legend_map(view)
-        legend_col = cell.get_legend_col(view)
         if view.bar_group:
-            groups = view.df.groupby(view.bar_group)
-            data_groups = [g for _, g in groups]
-            keys = [k for k, _ in groups]
-        else:
-            # single bar plot
-            assert len(legend_col.unique()) == 1
-            data_groups = [view.df]
-            keys = [legend_col.unique()]
+            by.append(view.bar_group)
+        if view.stack_group:
+            by.append(view.stack_group)
 
-        # Generate x centers for the bars and the
-        # relative offsets for each group
-        if view.yleft is not None and view.yright is not None:
+        if len(by) == 0:
+            by = cell.get_legend_level(view)
+            if by is None:
+                by = view.df.index.names
+        return by
+
+    def _compute_bar_x(self, cell, view, ax, group_keys):
+        """
+        Compute the group center x for the X axis and then
+        the x for each bar group.
+        Returns the center x vector and the modified view dataframe.
+
+        Note: this assumes that the input dataframe is aligned on the
+        bar_group and stack_group levels
+        """
+        if view.has_yleft and view.has_yright:
             naxes = 2
         else:
             naxes = 1
-        ngroups = len(data_groups)
-        width = (ngroups * naxes) * view.bar_width + 2 * view.bar_pad
-        offsets = np.arange(0, width, naxes * view.bar_width)
-        assert len(offsets) == ngroups * naxes
-        # shift offsets to represent the bar centers
-        offsets = offsets - width / 2 + view.bar_width / 2 + view.bar_pad
-        # Normalize X axis to be numeric and assign bar labels
-        xcol = view.get_x()
-        x_labels = xcol
-        x = np.arange(0, width * len(xcol), width) + width / 2
+        if view.bar_group:
+            ngroups = len(view.get_col(view.bar_group).unique())
+        else:
+            ngroups = 1
+        if view.stack_group:
+            nstacks = len(view.get_col(view.stack_group).unique())
+        else:
+            nstacks = 1
+
+        def _transform_helper(xform, v):
+            tmp_points = np.column_stack([v, np.repeat(0, len(v))])
+            tmp_tx = xform.transform(tmp_points)
+            result = tmp_tx[:, 0]
+            return result.ravel()
+
+        x_trans = ax.get_xaxis_transform()
+        x_inv = x_trans.inverted()
+        transform_helper = ft.partial(_transform_helper, x_trans)
+        transform_inv_helper = ft.partial(_transform_helper, x_inv)
+
+        xcol = sorted(view.get_x().unique())
+        # Find the space between each x tick, we scale the bars to fit into the interval
+        # Assume that each x in xcol is the center of the bar group.
+        # Since the x axis may be subject to a transformation, we need to take that into
+        # account when computing widths so that the bars have uniform size.
+        # 1. find the distance between each x value
+        # 2. transform each width into axis coordinates
+        # 3. split the intervals to fit the bars
+        # 4. transform back the offsets
+        # transform() requires an Nx2 array, we ignore the Y axis here
+        tx_xcol = transform_helper(xcol)
+        tx_space = np.diff(tx_xcol)
+        assert len(tx_space) >= 1, "need to handle the special case of only 1 X coordinate"
+        tx_space = np.append(tx_space, tx_space[-1])
+        assert tx_space.shape == tx_xcol.shape
+
+        # allocate bar width
+        assert view.bar_width > 0 and view.bar_width <= 1
+        tx_width = (tx_space * view.bar_width) / (ngroups * naxes)
+        # relative offsets in width units, starting from the related x position
+        # if centering, this will need a translation
+        rel_offsets = np.arange(0, (ngroups * naxes))
+        # generate transformed offset matrix via column * row vector multiplication
+        # Note that half of the groups are for the yright axis if it exists
+        tx_width_vector = tx_width.reshape(len(tx_width), 1)
+        rel_offsets_vector = rel_offsets.reshape(1, len(rel_offsets))
+        # the row is indexed by x, the colum is indexed by group
+        tx_offset_matrix = tx_width_vector * rel_offsets_vector
+        assert tx_offset_matrix.shape == (len(tx_xcol), ngroups * naxes)
+
+        # apply the offsets to the transformed x column
+        # shift the positions to center the groups at the given x column
+        tx_position_matrix = tx_offset_matrix + tx_xcol[:, np.newaxis]  #- tx_space[:, np.newaxis] / 2
+        # compute bar widths, these are taken from the position matrix that gives the center of each bar
+        tx_bar_start = tx_position_matrix - tx_width[:, np.newaxis] / 2
+        tx_bar_end = tx_position_matrix + tx_width[:, np.newaxis] / 2
+        assert tx_bar_start.shape == tx_position_matrix.shape
+        assert tx_bar_end.shape == tx_position_matrix.shape
+
+        # transform back the offsets, as usual we need to add an extra useless dimension
+        # and drop it later
+        position_matrix = np.apply_along_axis(transform_inv_helper, 1, tx_position_matrix)
+        assert position_matrix.shape == tx_position_matrix.shape
+        bar_start = np.apply_along_axis(transform_inv_helper, 1, tx_bar_start)
+        assert bar_start.shape == tx_bar_start.shape
+        bar_end = np.apply_along_axis(transform_inv_helper, 1, tx_bar_end)
+        assert bar_end.shape == tx_bar_end.shape
+        bar_width = bar_end - bar_start
+        # set bar width so that the size stays constant regardless of the X scale
+        # for each x we have bar width differences, these are repeated for each stack.
+        # We need to flatten the bar_width matrix in column-major order.
+        # We do the same for the position matrix.
+        axis_split = position_matrix.shape[1] / naxes
+        assert axis_split == int(axis_split)
+        axis_split = int(axis_split)
+        bar_x_left = position_matrix[:, 0:axis_split]
+        bar_x_flat = bar_x_left.ravel(order="F")
+        view.df["__bar_x_left"] = np.tile(bar_x_flat, nstacks)
+        bar_width_left = bar_width[:, 0:axis_split]
+        print(bar_width)
+        print(bar_width_left)
+        bar_width_flat = bar_width_left.ravel(order="F")
+        view.df["__bar_width_left"] = np.tile(bar_width_flat, nstacks)
+        if view.has_yright:
+            bar_x_right = position_matrix[:, axis_split:-1]
+            bar_x_flat = bar_x_left.ravel(order="F")
+            view.df["__bar_x_right"] = np.tile(bar_x_flat, nstacks)
+            bar_width_right = bar_width[:, axis_split:-1]
+            bar_width_flat = bar_width_left.ravel(order="F")
+            view.df["__bar_width_right"] = np.tile(bar_width_flat, nstacks)
+
+        # And the stacking Y bases
+        view.df["__bar_y_left_base"] = 0
+        view.df["__bar_y_right_base"] = 0
+        if view.stack_group:
+            non_stack_idx = view.df.index.names.difference([view.stack_group])
+            grouped = view.df.groupby(non_stack_idx)
+            view.df["__bar_y_left_base"] = grouped[view.yleft].apply(
+                lambda stack_slice: stack_slice.cumsum().shift(fill_value=0))
+            if view.has_yright:
+                view.df["__bar_y_left_base"] = grouped[view.yright].apply(
+                    lambda stack_slice: stack_slice.cumsum().shift(fill_value=0))
+        return view.df
+
+    def render(self, view, cell, surface, ctx):
+        """
+        For the input dataframe we split the column groups
+        and stack groups. Each grouping have the associated
+        x, yleft and yright columns, which are used to plot
+        the data.
+        """
+
+        legend_map = cell.get_legend_map(view)
+        by = self._resolve_groups(cell, view)
+        df = self._compute_bar_x(cell, view, ctx.ax, by)
+        groups = df.groupby(by)
 
         left_patches = []
         right_patches = []
-        for off, grp in zip(offsets, data_groups):
-            if view.yleft is not None:
-                values = view.get_col(view.yleft, grp)
-                grp_x = x + off
-                patches = ctx.ax.bar(grp_x, height=values, color="b")
-                # ctx.legend.set_item("test", patches)
-                # next offset
-                off += view.bar_width
-            if view.yright is not None:
-                values = view.get_col(view.yright, grp)
-                grp_x = x + off
-                patches = ctx.rax.bar(grp_x, height=values, color="r")
+        for key, chunk in groups:
+            legend_key = cell.get_legend_col(view, chunk).unique()
+            # There can be only one color for each group/stack
+            # XXX TODO handle left/right legends
+            assert len(legend_key) == 1
+            legend_key = legend_key[0]
+            color = legend_map.get_color(legend_key)
+            label = legend_map.get_label(legend_key)
 
-            # ctx.legend.set_item("test", patches)
-        # Fixup cell parameters
+            if view.has_yleft:
+                values = view.get_col(view.yleft, chunk)
+                x = view.get_col("__bar_x_left", chunk)
+                base = view.get_col("__bar_y_left_base", chunk)
+                width = view.get_col("__bar_width_left", chunk)
+                patches = ctx.ax.bar(x, height=values, bottom=base, color=color, width=width)
+                ctx.legend.set_item(label, patches)
+            if view.has_yright:
+                values = view.get_col(view.yright, chunk)
+                x = view.get_col("__bar_x_right", chunk)
+                base = view.get_col("__bar_y_right_base", chunk)
+                width = view.get_col("__bar_width_right", chunk)
+                patches = ctx.rax.bar(x, height=values, bottom=base, color=color, width=width)
+                ctx.legend.set_item(label, patches)
 
 
 class HistRenderer(ViewRenderer):
@@ -254,13 +380,15 @@ class MatplotlibPlotCell(CellData):
             ctx.rax = ctx.ax.twinx()
         else:
             ctx.rax = None
-        # Render all the views in the cell
-        for view in self.views:
-            r = self.surface.get_renderer(view)
-            r.render(view, self, self.surface, ctx)
-        ctx.legend.build_legend(ctx)
-        # Set all remaining cell parameters
-        ctx.ax.set_title(self.title)
+
+        # Configure axes before rendering, this allows the renderers to grab
+        # any axis scale transform that may be set, so that any scaling is
+        # generic.
+        # The drawback is that we can not change the axis configuration safely
+        # after/during rendering (especially scaling factors). This was not
+        # intended to happen in the first place, so it should be ok.
+        # It may still be possible to perform some adjustment of the viewport
+        # if needed.
         if self.x_config:
             self._config_x(self.x_config, ctx.ax)
         if self.yleft_config:
@@ -268,3 +396,11 @@ class MatplotlibPlotCell(CellData):
         if self.yright_config:
             assert ctx.rax is not None, "Missing twin axis"
             self._config_y(self.yright_config, ctx.rax)
+
+        # Render all the views in the cell
+        for view in self.views:
+            r = self.surface.get_renderer(view)
+            r.render(view, self, self.surface, ctx)
+        ctx.legend.build_legend(ctx)
+        # Set all remaining cell parameters
+        ctx.ax.set_title(self.title)

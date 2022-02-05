@@ -238,6 +238,14 @@ class XYPlotDataView(DataView):
     yleft: list[str] = field(default_factory=list)
     yright: list[str] = field(default_factory=list)
 
+    @property
+    def has_yleft(self):
+        return len(self.yleft) != 0
+
+    @property
+    def has_yright(self):
+        return len(self.yright) != 0
+
     def get_x(self):
         return self.get_col(self.x)
 
@@ -256,8 +264,10 @@ class BarPlotDataView(XYPlotDataView):
     Arguments:
     bar_group: column or index level to use to generate bar groups,
     each group is plotted along the given x axis
+    stack_group: column or index level to use to group bars for stacking
     """
     bar_group: str = None
+    stack_group: str = None
     bar_width: float = 0.8
     bar_pad: float = 0.1
 
@@ -334,15 +344,23 @@ class CellData:
     def default_legend_map(self, view):
         return ColorMap.default(view.df.index.unique().values)
 
-    def get_legend_col(self, view):
+    def get_legend_level(self, view):
         if view.legend_level:
             level = view.legend_level
         else:
             level = self.legend_level
+        return level
+
+    def get_legend_col(self, view, df=None):
+        level = self.get_legend_level(view)
         if level:
-            return view.get_col(level)
+            return view.get_col(level, df)
         else:
-            return view.df.index.to_flat_index()
+            if df is None:
+                df = view.df
+            flat_index = df.index.to_flat_index()
+            flat_index.name = ",".join(df.index.names)
+            return flat_index
 
     def get_legend_map(self, view):
         if view.legend_map:
