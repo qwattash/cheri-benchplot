@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from ..core.dataset import (DatasetName, check_multi_index_aligned, pivot_multi_index_level, subset_xs)
+from ..core.dataset import (DatasetName, check_multi_index_aligned, pivot_multi_index_level)
 from ..core.excel import SpreadsheetSurface
 from ..core.html import HTMLSurface
 from ..core.plot import (BenchmarkPlot, BenchmarkSubPlot, CellData, ColorMap, Surface, TableDataView)
