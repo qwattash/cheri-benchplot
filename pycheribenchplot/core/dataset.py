@@ -591,7 +591,7 @@ def col2stat(prefix, colnames):
     return list(map(lambda c: "{}_{}".format(prefix, c), colnames))
 
 
-def check_multi_index_aligned(df: pd.DataFrame, level: str):
+def check_multi_index_aligned(df: pd.DataFrame, level: str | list[str]):
     """
     Check that the given index level(s) are aligned.
     """
@@ -668,6 +668,7 @@ def rotate_multi_index_level(df: pd.DataFrame,
     columns so that the index level is removed and the column values related to each dataset are concatenated
     and renamed with the given suffix map.
     We also emit a dataframe for the level/column mappings as follows.
+    XXX deprecate and remove in favor of pivot_multi_index_level
 
     Example:
     ID  name  |  value
@@ -748,3 +749,28 @@ def index_where(df: pd.DataFrame, level: str, cond: pd.Series, alt: pd.Series):
     df = df.copy()
     df.index = pd.MultiIndex.from_frame(idx_df)
     return df
+
+
+def stacked_histogram(df_in: pd.DataFrame, group: str, stack: str, data_col: str, bins: list):
+    """
+    Helper to compute a dataframe suitable for plotting stacked multi-group
+    histograms.
+    Currently this only supports a single 'group' and 'stack' levels.
+    """
+    df = df_in.reset_index()
+    g_uniq = df[group].unique()
+    s_uniq = df[stack].unique()
+    boundaries = np.array(bins)
+    b_start = boundaries[:-1]
+    b_end = boundaries[1:]
+    hidx = pd.MultiIndex.from_product([g_uniq, s_uniq, b_start], names=[group, stack, "bin_start"])
+    # preallocate dataframe
+    hdf = pd.DataFrame({"count": 0}, index=hidx)
+
+    groups = df.groupby([group, stack])
+    for (k_group, k_stack), chunk in groups:
+        count, out_bins = np.histogram(chunk[data_col], bins=bins)
+        hist_key = (k_group, k_stack, slice(None))
+        hdf.loc[hist_key, "bin_end"] = b_end
+        hdf.loc[hist_key, "count"] = count
+    return hdf.set_index("bin_end", append=True)
