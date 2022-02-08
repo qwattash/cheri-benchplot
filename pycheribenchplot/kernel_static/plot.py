@@ -371,7 +371,7 @@ class KernelStaticInfoPlot(BenchmarkPlot):
         return "Kernel compile-time stats"
 
     def get_plot_file(self):
-        return self.benchmark.manager.session_output_path / "kernel-static-stats"
+        return self.benchmark.manager.plot_output_path / "kernel-static-stats"
 
 
 class KernelStaticInfoTables(BenchmarkPlot):
@@ -391,4 +391,4 @@ class KernelStaticInfoTables(BenchmarkPlot):
         return "Kernel compile-time detailed stats"
 
     def get_plot_file(self):
-        return self.benchmark.manager.session_output_path / "kernel-static-tables"
+        return self.benchmark.manager.plot_output_path / "kernel-static-tables"

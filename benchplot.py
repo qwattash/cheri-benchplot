@@ -25,6 +25,8 @@ def main():
     sub_analyse.add_argument("--interactive",
                              choices=["load", "pre-merge", "merge", "aggregate"],
                              help="Interact with live datasets")
+    sub_analyse.add_argument("-a", "--analysis-config", type=Path, help="Analysis configuration file",
+                             default=None)
     sub_clean = sub.add_parser("clean", help="clean output directory")
     sub_list = sub.add_parser("list", help="list sessions in the output directory")
 

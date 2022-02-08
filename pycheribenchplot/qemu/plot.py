@@ -164,4 +164,4 @@ class QEMUTables(BenchmarkPlot):
         return "QEMU Stats Tables"
 
     def get_plot_file(self):
-        return self.benchmark.manager.session_output_path / "qemu_stats_tables"
+        return self.benchmark.manager.plot_output_path / "qemu_stats_tables"

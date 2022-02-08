@@ -17,7 +17,7 @@ import asyncssh
 import pandas
 import termcolor
 
-from .analysis import BenchmarkAnalysisRegistry
+from .analysis import AnalysisConfig, BenchmarkAnalysisRegistry
 from .benchmark import BenchmarkBase, BenchmarkRunConfig, BenchmarkRunRecord
 from .config import Config, TemplateConfig, TemplateConfigContext, path_field
 from .dataset import DatasetRegistry
@@ -144,6 +144,8 @@ class BenchmarkManager(TemplateConfigContext):
         self.session_output_path = self.config.output_path / f"benchplot-session-{str(self.session)}"
         self.benchmark_records = BenchmarkManagerRecord(session=self.session)
         self.benchmark_records_path = self.session_output_path / self.records_filename
+        self.analysis_config = AnalysisConfig()
+        self.plot_output_path = self.session_output_path / "plots"
 
     def _resolve_recorded_session(self, session: typing.Optional[uuid.UUID]):
         """
@@ -258,7 +260,7 @@ class BenchmarkManager(TemplateConfigContext):
         for next_dir in self._iter_output_session_dirs():
             shutil.rmtree(next_dir)
 
-    async def _analysis_task(self, interactive_step=None):
+    async def _analysis_task(self, interactive_step=None, config_path: Path = None):
         # Find all benchmark variants we were supposed to run
         # Note: this assumes that we aggregate to compare the same benchmark across OS configs,
         # it can be easily changed to also support comparison of different benchmark runs on
@@ -267,6 +269,12 @@ class BenchmarkManager(TemplateConfigContext):
         # each benchmark variant
         aggregate_baseline = {}
         aggregate_groups = defaultdict(list)
+
+        if config_path:
+            self.analysis_config = AnalysisConfig.load_json(config_path)
+
+        # Ensure that the plot subdir exists
+        self.plot_output_path.mkdir(exist_ok=True)
 
         for record in self.benchmark_records.records:
             bench = self.create_benchmark(record.run, record.instance, record.uuid)
@@ -338,7 +346,7 @@ class BenchmarkManager(TemplateConfigContext):
     def _handle_analysis_command(self, args: ap.Namespace):
         self._resolve_recorded_session(args.session)
         self.logger.info("Using recorded session %s", self.session)
-        task = self.loop.create_task(self._analysis_task(args.interactive))
+        task = self.loop.create_task(self._analysis_task(args.interactive, args.analysis_config))
         self.queued_tasks.append(task)
 
     def _handle_interactive_analysis_command(self, args: ap.Namespace):

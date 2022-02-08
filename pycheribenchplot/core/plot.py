@@ -8,7 +8,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from .analysis import BenchmarkAnalysis
+from .analysis import AnalysisConfig, BenchmarkAnalysis
+from .config import Config
 from .dataset import DatasetArtefact
 from .util import new_logger
 
@@ -433,11 +434,10 @@ class RowLayout(GridLayout):
 
 class Surface(ABC):
     """
-    The surface abstraction on which to plot.
-    We model a grid layout and we associate dataframes to plot to each grid cell.
-    Each dataframe must have a specific layout informing what to plot.
-    Each view for the cell can hava a different plot type associated, so we can combine
-    scatter and line plots (for example).
+    The surface manages the plot rendering.
+    Each surface has a configured layout to manage subplot axes.
+    Each plot rendering is wrapped by a Cell, which represents a set of subplot axes.
+    Each cell can display multiple views that wrap a plot rendering method.
     """
     @dataclass
     class DrawContext:
@@ -450,6 +450,7 @@ class Surface(ABC):
         self.logger = new_logger(str(self))
         self._layout = None
         self._renderers = {}
+        self.config = AnalysisConfig()
 
     def set_layout(self, layout: GridLayout):
         """
@@ -457,6 +458,9 @@ class Surface(ABC):
         Note: this must be called before any cell is added to the surface.
         """
         self._layout = layout
+
+    def set_config(self, config: AnalysisConfig):
+        self.config = config
 
     def next_cell(self, cell: CellData):
         """
@@ -490,11 +494,30 @@ class Surface(ABC):
         except KeyError:
             raise PlotUnsupportedError(f"Plot type {data_view.plot} not supported by {self}")
 
-    def draw(self, title: str, dest: Path):
-        """Draw all the registered views into the surface."""
+    def _draw_cell(cell, ctx):
+        cell.validate()
+        cell.draw(ctx)
+
+    def _draw_split(self, title, dest):
+        base = dest.parent / "split"
+        base.mkdir(exist_ok=True)
+        stem = dest.stem
+
+        for ri, row in enumerate(self._layout):
+            for ci, cell in enumerate(row):
+                cell_dest = base / dest.with_stem(f"{stem}-{ri}-{ci}").name
+                ctx = self._make_draw_context(title, cell_dest)
+                ctx.row = 0
+                ctx.col = 0
+                try:
+                    cell.validate()
+                    cell.draw(ctx)
+                finally:
+                    self._finalize_draw_context(ctx)
+
+    def _draw_combined(self, title, dest):
         ctx = self._make_draw_context(title, dest)
         try:
-            self.logger.debug("Drawing...")
             for ri, row in enumerate(self._layout):
                 for ci, cell in enumerate(row):
                     ctx.row = ri
@@ -503,6 +526,15 @@ class Surface(ABC):
                     cell.draw(ctx)
         finally:
             self._finalize_draw_context(ctx)
+
+    def draw(self, title: str, dest: Path):
+        """Draw all the registered views into the surface."""
+        self.logger.debug("Drawing...")
+
+        if self.config.split_subplots:
+            self._draw_split(title, dest)
+        else:
+            self._draw_combined(title, dest)
 
     def __str__(self):
         return self.__class__.__name__
@@ -551,7 +583,7 @@ class BenchmarkPlot(BenchmarkAnalysis):
         Note that the filename should not have an extension as the surface will
         append it later.
         """
-        return self.benchmark.manager.session_ouput_path / self.__class__.__name__
+        return self.benchmark.manager.plot_ouput_path / self.__class__.__name__
 
     def _make_subplots(self) -> list["BenchmarkSubPlot"]:
         """
@@ -570,6 +602,7 @@ class BenchmarkPlot(BenchmarkAnalysis):
         Setup drawing surface layout and other parameters.
         """
         surface.set_layout(ColumnLayout(len(self.active_subplots)))
+        surface.set_config(self.config)
 
     def _process_surface(self, surface: Surface):
         """

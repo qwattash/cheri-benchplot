@@ -377,7 +377,10 @@ class MatplotlibSurface(Surface):
         }
 
     def _make_draw_context(self, title, dest, **kwargs):
-        r, c = self._layout.shape
+        if self.config.split_subplots:
+            r = c = 1
+        else:
+            r, c = self._layout.shape
         fig, axes = plt.subplots(r, c, constrained_layout=True, figsize=(10 * c, 5 * r))
         axes = np.array(axes)
         axes = axes.reshape((r, c))
@@ -430,9 +433,10 @@ class MatplotlibPlotCell(CellData):
         ctx.ax = ctx.axes[ctx.row][ctx.col]
         ctx.legend = Legend()
         # Auto enable yright axis if it is used by any view
-        auto_yright = ft.reduce(lambda a, v: hasattr(v, "yright") and len(v.yright) > 0, self.views, False)
-        if auto_yright:
-            self.yright_config.enable = True
+        for view in self.views:
+            if hasattr(view, "yright") and len(view.yright) > 0:
+                self.yright_config.enable = True
+                break
         if self.yright_config:
             ctx.rax = ctx.ax.twinx()
         else:

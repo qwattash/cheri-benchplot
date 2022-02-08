@@ -5,7 +5,8 @@ from ..core.dataset import (DatasetName, check_multi_index_aligned, pivot_multi_
 from ..core.excel import SpreadsheetSurface
 from ..core.html import HTMLSurface
 from ..core.matplotlib import MatplotlibSurface
-from ..core.plot import (BarPlotDataView, BenchmarkPlot, BenchmarkSubPlot, CellData, LegendInfo, Surface, TableDataView)
+from ..core.plot import (AALineDataView, BarPlotDataView, BenchmarkPlot, BenchmarkSubPlot, CellData, LegendInfo,
+                         Surface, TableDataView)
 
 
 class VMStatTable(BenchmarkSubPlot):
@@ -155,7 +156,7 @@ class VMStatTables(BenchmarkPlot):
         return "VMStat Tables"
 
     def get_plot_file(self):
-        return self.benchmark.manager.session_output_path / "vmstat_tables"
+        return self.benchmark.manager.plot_output_path / "vmstat_tables"
 
 
 class VMStatUMAMetricHist(BenchmarkSubPlot):
@@ -218,7 +219,12 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
         df_sel["x"] = range(len(df_sel))
 
         view = BarPlotDataView("bar", df_sel, x="x", yleft=delta_col, yright=rel_col)
+        view.legend_info = self.get_legend_info()
+        view.legend_level = "__dataset_id"
         cell.add_view(view)
+
+        # Add a line for the y
+        # view = AALineDataView("axline")
 
         cell.x_config.label = "UMA Zone"
         cell.x_config.ticks = df_sel["x"]
@@ -226,8 +232,6 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
         cell.x_config.tick_rotation = 90
         cell.yleft_config.label = f"\u0394{self.metric}"
         cell.yright_config.label = f"% \u0394{self.metric}"
-        cell.legend_info = self.get_legend_info()
-        cell.legend_level = "__dataset_id"
 
 
 class VMStatDistribution(BenchmarkPlot):
@@ -259,4 +263,4 @@ class VMStatDistribution(BenchmarkPlot):
         return "VMStat metrics distribution"
 
     def get_plot_file(self):
-        return self.benchmark.manager.session_output_path / "vmstat-histograms"
+        return self.benchmark.manager.plot_output_path / "vmstat-histograms"

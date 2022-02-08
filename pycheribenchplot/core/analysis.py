@@ -1,3 +1,6 @@
+from dataclasses import dataclass
+
+from .config import Config
 from .dataset import DatasetName
 
 
@@ -7,6 +10,11 @@ class BenchmarkAnalysisRegistry(type):
     def __init__(self, name, bases, kdict):
         super().__init__(name, bases, kdict)
         BenchmarkAnalysisRegistry.analysis_steps.add(self)
+
+
+@dataclass
+class AnalysisConfig(Config):
+    split_subplots: bool = False
 
 
 class BenchmarkAnalysis(metaclass=BenchmarkAnalysisRegistry):
@@ -31,6 +39,7 @@ class BenchmarkAnalysis(metaclass=BenchmarkAnalysisRegistry):
     def __init__(self, benchmark: "BenchmarkBase", **kwargs):
         self.benchmark = benchmark
         self.logger = benchmark.logger
+        self.config = benchmark.manager.analysis_config
 
     def get_dataset(self, dset_id: DatasetName):
         """Helper to access datasets in the benchmark"""
