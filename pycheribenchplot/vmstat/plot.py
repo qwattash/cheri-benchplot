@@ -224,7 +224,16 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
         cell.add_view(view)
 
         # Add a line for the y
-        # view = AALineDataView("axline")
+        df_line = df[["abs_delta"]].abs().median()
+        view = AALineDataView("axline", df_line, horizontal=["abs_delta"])
+        view.style.line_style = "dashed"
+        view.style.line_width = 0.5
+        view.legend_info = LegendInfo(["abs_delta"],
+                                      labels=[f"median \u0394 abs({self.metric})"],
+                                      cmap_name="Greys",
+                                      color_range=(0.5, 1))
+        view.legend_level = "metric"
+        cell.add_view(view)
 
         cell.x_config.label = "UMA Zone"
         cell.x_config.ticks = df_sel["x"]
