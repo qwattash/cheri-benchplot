@@ -27,7 +27,9 @@ from pycheribenchplot.kernel_static.dataset import *
 
 @pytest.mark.asyncio
 async def test_kstruct_size_dataset_gen(mocker, tmp_path, fake_simple_benchmark):
-
+    """
+    Test kernel struct stats dataset generator
+    """
     asset_path = Path("tests/assets/test_dwarf_simple")
     config = BenchmarkDataSetConfig(type=DatasetName.KERNEL_STRUCT_STATS)
     # Setup mocks
@@ -58,8 +60,3 @@ async def test_kstruct_size_dataset_gen(mocker, tmp_path, fake_simple_benchmark)
     assert bar["is_anon"] == False
     assert Path(bar["src_file"]).name == "test_dwarf_simple.c"
     assert bar["src_line"] == 4
-
-
-@patch("pycheribenchplot.core.benchmark.BenchmarkBase")
-def test_kstruct_size_dataset_kernel_detect(fake_bench):
-    pass

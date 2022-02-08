@@ -16,13 +16,6 @@ def pytest_addoption(parser):
     parser.addoption("--benchplot-user-config", type=Path)
 
 
-class FakeBenchmark(BenchmarkBase):
-    """
-    Add extra methods for easy access to the dataset under test
-    """
-    pass
-
-
 @pytest.fixture
 def fake_simple_benchmark(pytestconfig, tmp_path, mocker):
     # name_items = dict(DatasetName.__members__.items())
