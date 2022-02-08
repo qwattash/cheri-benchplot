@@ -177,8 +177,8 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
     def get_legend_info(self):
         # Use base legend to separate by axis
         base = self.build_legend_by_dataset()
-        legend_left = base.map_label(lambda l: f"\u0394 {self.metric} {l}")
-        legend_right = base.map_label(lambda l: f"\u0394 {self.metric} {l}")
+        legend_left = base.map_label(lambda l: f"\u0394{self.metric} {l}")
+        legend_right = base.map_label(lambda l: f"% \u0394{self.metric} {l}")
         legend = LegendInfo.multi_axis(left=legend_left, right=legend_right)
         legend.remap_colors("Paired")
         return legend
@@ -197,7 +197,7 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
         We filter metric to show only the values for the top 90th percentile
         of the delta, this avoid cluttering the plots with meaningless data.
         """
-        df = self.ds.agg_df[self.ds.agg_df.index.get_level_values("__dataset_id") != self.benchmark.uuid]
+        df = self.ds.agg_df[self.ds.agg_df.index.get_level_values("__dataset_id") != self.benchmark.uuid].copy()
         delta_col = (self.metric, "median", "delta_baseline")
         rel_col = (self.metric, "median", "norm_delta_baseline")
         if delta_col not in df.columns:
@@ -205,11 +205,13 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
             rel_col = (self.metric, "-", "norm_delta_baseline")
         self.logger.debug("extract plot metric %s", self.metric)
 
-        df_sel = df[df[delta_col] >= df[delta_col].quantile(0.90)]
+        df["abs_delta"] = df[delta_col].abs()
+        abstop = df["abs_delta"] >= df["abs_delta"].quantile(0.90)
+        df_sel = df[abstop].sort_values("abs_delta", ascending=False)
         maxbar = self.get_bar_limit()
         if len(df_sel) > maxbar:
             # Just take the largest N values
-            df_sel = df_sel.sort_values(delta_col, ascending=False).iloc[:maxbar + 1]
+            df_sel = df_sel.iloc[:maxbar + 1]
         # Avoid assigning to a slice
         df_sel = df_sel.copy()
         df_sel[rel_col] *= 100
@@ -222,8 +224,8 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
         cell.x_config.ticks = df_sel["x"]
         cell.x_config.tick_labels = df_sel.index.get_level_values("name")
         cell.x_config.tick_rotation = 90
-        cell.yleft_config.label = f"\u0394 {self.metric}"
-        cell.yright_config.label = f"% \u0394 {self.metric}"
+        cell.yleft_config.label = f"\u0394{self.metric}"
+        cell.yright_config.label = f"% \u0394{self.metric}"
         cell.legend_info = self.get_legend_info()
         cell.legend_level = "__dataset_id"
 

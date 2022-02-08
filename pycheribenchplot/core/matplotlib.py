@@ -40,6 +40,45 @@ def build_scale_args(scale: Scale) -> tuple[list, dict]:
     return (args, kwargs)
 
 
+def align_y_at(ax1, p1, ax2, p2):
+    """
+    Align p1 on axis ax1 to p2 on axis ax2.
+    The aligment takes care to avoid clipping data.
+    Note: The ylim should have been set on the axes prior to
+    calling this function, otherwise the limits will not be
+    picked up correctly.
+    """
+    ymin_ax1, ymax_ax1 = ax1.get_ylim()
+    ymin_ax2, ymax_ax2 = ax2.get_ylim()
+    t_ax1 = ax1.get_yaxis_transform()
+    inv_ax1 = t_ax1.inverted()
+    t_ax2 = ax2.get_yaxis_transform()
+    inv_ax2 = t_ax2.inverted()
+
+    # First align the p1/p2 points
+    _, t_p1 = t_ax1.transform((0, p1))
+    _, t_p2 = t_ax2.transform((0, p2))
+    t_dy = t_p1 - t_p2
+    _, dy = inv_ax2.transform((0, 0)) - inv_ax2.transform((0, t_p1 - t_p2))
+    ymin_ax2, ymax_ax2 = ymin_ax2 + dy, ymax_ax2 + dy
+    ax2.set_ylim(ymin_ax2, ymax_ax2)
+
+    # Now we restore the initial range that we had on ax2 to avoid any
+    # clipping. ax1 is unchanged so we assume that there is no clipping there
+    _, ext_ax1 = inv_ax1.transform((0, 0)) - inv_ax1.transform((0, t_dy))
+    ext_ax2 = dy
+    if dy > 0:
+        # We moved up so we need to extend the low ylim
+        ymin_ax1 -= ext_ax1
+        ymin_ax2 -= ext_ax2
+    elif dy < 0:
+        # We moved down so we need to extend the high ylim
+        ymax_ax1 += ext_ax1
+        ymax_ax2 += ext_ax2
+    ax1.set_ylim(ymin_ax1, ymax_ax1)
+    ax2.set_ylim(ymin_ax2, ymax_ax2)
+
+
 class Legend:
     """
     Helper to build the legend
@@ -271,7 +310,7 @@ class BarRenderer(ViewRenderer):
 
         if view.has_yleft and view.has_yright:
             # Need to realign the Y axes 0 coordinates
-            pass
+            align_y_at(ctx.ax, 0, ctx.rax, 0)
 
 
 class HistRenderer(ViewRenderer):
@@ -399,6 +438,9 @@ class MatplotlibPlotCell(CellData):
         else:
             ctx.rax = None
 
+        # If ylimits are not defined, pick up the limits from the views here.
+        # TODO
+
         # Configure axes before rendering, this allows the renderers to grab
         # any axis scale transform that may be set, so that any scaling is
         # generic.
@@ -419,6 +461,8 @@ class MatplotlibPlotCell(CellData):
         for view in self.views:
             r = self.surface.get_renderer(view)
             r.render(view, self, self.surface, ctx)
+        # Always render an horizontal line at origin
+        ctx.ax.axhline(0, linestyle="--", linewidth=0.5, color="black")
+
         ctx.legend.build_legend(ctx)
-        # Set all remaining cell parameters
         ctx.ax.set_title(self.title)

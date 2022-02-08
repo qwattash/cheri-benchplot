@@ -61,7 +61,7 @@ class LegendInfo:
 
     def map_label(self, fn) -> "LegendInfo":
         new_labels = self.info_df["labels"].map(fn)
-        new_info = LegendInfo(self.info_df.index, labels=self.info_df["labels"], colors=self.info_df["colors"])
+        new_info = LegendInfo(self.info_df.index, labels=new_labels, colors=self.info_df["colors"])
         return new_info
 
     @property
