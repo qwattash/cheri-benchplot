@@ -1,6 +1,7 @@
 import logging
 import time
 from contextlib import contextmanager
+from enum import Enum
 from pathlib import Path
 
 import termcolor

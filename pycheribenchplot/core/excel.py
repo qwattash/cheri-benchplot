@@ -54,12 +54,12 @@ class SpreadsheetTableRenderer(ViewRenderer):
     """
     Render table in a spreadsheet.
     """
-    def _get_cell_color_styles(self, legend_map):
+    def _get_cell_color_styles(self, legend_info):
         fill_styles = {}
-        if legend_map is None:
+        if legend_info is None:
             return fill_styles
 
-        for key, color in legend_map.color_items():
+        for key, color in legend_info.color_items():
             # openpyxl uses aRGB colors while matplotlib uses RGBa
             # we need to swap the alpha here
             rgba_hex = [int(round(c * 255)) for c in color]
@@ -81,7 +81,7 @@ class SpreadsheetTableRenderer(ViewRenderer):
         book = excel_writer.book
         sheet = excel_writer.sheets[sheet_name]
 
-        fill_styles = self._get_cell_color_styles(cell.legend_map)
+        fill_styles = self._get_cell_color_styles(cell.legend_info)
         nindex = len(view.df.index.names)
         nheader = len(view.df.columns.names)
 
@@ -117,7 +117,7 @@ class SpreadsheetTableRenderer(ViewRenderer):
                     xcell.number_format = "0.00"
                 else:
                     cell_width = len(str(xcell.value))
-                if cell.legend_map:
+                if cell.legend_info:
                     xcell.fill = fill_styles[column]
                 col_width = max(col_width, cell_width)
                 xcell.border = cell_border

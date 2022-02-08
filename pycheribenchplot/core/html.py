@@ -68,8 +68,8 @@ class HTMLTableRenderer(ViewRenderer):
         hide_cols = set(view.df.columns) - set(view.columns)
         table_template = surface.get_template("table.html")
         styler = view.df[view.columns].reset_index().style
-        legend_map = view.legend_map
-        if legend_map:
+        legend_info = view.legend_info
+        if legend_info:
             if view.legend_level:
                 legend_col = view.legend_level
             elif cell.legend_level:
@@ -78,7 +78,7 @@ class HTMLTableRenderer(ViewRenderer):
                 legend_col = view.df.index.names
 
             def _apply_colormap(view_df):
-                color = view_df[legend_col].map(lambda color_key: view.colormap.get_color(color_key)).map(
+                color = view_df[legend_col].map(lambda color_key: view.colormap.color(color_key)).map(
                     lambda color: f"background-color: {color};" if color else "")
                 cp = view_df.copy()
                 cp.loc[:, :] = np.tile(color.to_numpy(), (len(view_df.columns), 1)).transpose()

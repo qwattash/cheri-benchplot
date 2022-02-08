@@ -65,19 +65,19 @@ class SimpleLineRenderer(ViewRenderer):
     """
     def render(self, view, cell, surface, ctx):
         legend_key = cell.get_legend_col(view)
-        legend_map = cell.get_legend_map(view)
+        legend_info = cell.get_legend_info(view)
         style_args = build_style_args(view.style)
 
         for c in view.horizontal:
             for k, y in zip(legend_key, view.df[c]):
-                color = legend_map.get_color(k) if legend_map else None
+                color = legend_info.color(k) if legend_info else None
                 line = ctx.ax.axhline(y, color=color, **style_args)
-                ctx.legend.set_item(legend_map.get_label(k), line)
+                ctx.legend.set_item(legend_info.label(k), line)
         for c in view.vertical:
             for k, x in zip(legend_key, view.df[c]):
-                color = legend_map.get_color(k) if legend_map else None
+                color = legend_info.color(k) if legend_info else None
                 line = ctx.ax.axvline(x, color=color, **style_args)
-                ctx.legend.set_item(legend_map.get_label(k), line)
+                ctx.legend.set_item(legend_info.label(k), line)
 
 
 class BarRenderer(ViewRenderer):
@@ -237,7 +237,7 @@ class BarRenderer(ViewRenderer):
         the data.
         """
 
-        legend_map = cell.get_legend_map(view)
+        legend_info = cell.get_legend_info(view)
         by = self._resolve_groups(cell, view)
         df = self._compute_bar_x(cell, view, ctx.ax, by)
         groups = df.groupby(by)
@@ -247,26 +247,31 @@ class BarRenderer(ViewRenderer):
         for key, chunk in groups:
             legend_key = cell.get_legend_col(view, chunk).unique()
             # There can be only one color for each group/stack
-            # XXX TODO handle left/right legends
             assert len(legend_key) == 1
             legend_key = legend_key[0]
-            color = legend_map.get_color(legend_key)
-            label = legend_map.get_label(legend_key)
+            l_color = legend_info.color(legend_key, axis="left")
+            r_color = legend_info.color(legend_key, axis="right")
+            l_label = legend_info.label(legend_key, axis="left")
+            r_label = legend_info.label(legend_key, axis="right")
 
             if view.has_yleft:
                 values = view.get_col(view.yleft, chunk)
                 x = view.get_col("__bar_x_left", chunk)
                 base = view.get_col("__bar_y_left_base", chunk)
                 width = view.get_col("__bar_width_left", chunk)
-                patches = ctx.ax.bar(x, height=values, bottom=base, color=color, width=width)
-                ctx.legend.set_item(label, patches)
+                patches = ctx.ax.bar(x, height=values, bottom=base, color=l_color, width=width)
+                ctx.legend.set_item(l_label, patches)
             if view.has_yright:
                 values = view.get_col(view.yright, chunk)
                 x = view.get_col("__bar_x_right", chunk)
                 base = view.get_col("__bar_y_right_base", chunk)
                 width = view.get_col("__bar_width_right", chunk)
-                patches = ctx.rax.bar(x, height=values, bottom=base, color=color, width=width)
-                ctx.legend.set_item(label, patches)
+                patches = ctx.rax.bar(x, height=values, bottom=base, color=r_color, width=width)
+                ctx.legend.set_item(r_label, patches)
+
+        if view.has_yleft and view.has_yright:
+            # Need to realign the Y axes 0 coordinates
+            pass
 
 
 class HistRenderer(ViewRenderer):
@@ -283,7 +288,7 @@ class HistRenderer(ViewRenderer):
         # the bucket group but for now this covers all use cases
         view.legend_level = view.bucket_group
 
-        legend_map = cell.get_legend_map(view)
+        legend_info = cell.get_legend_info(view)
         legend_col = cell.get_legend_col(view)
         idx_values = legend_col.unique()
 
@@ -292,8 +297,8 @@ class HistRenderer(ViewRenderer):
             groups = xcol.groupby(view.bucket_group)
             xvec = [chunk for _, chunk in groups]
             keys = [k for k, _ in groups]
-            colors = legend_map.get_color(keys)
-            labels = legend_map.get_label(keys)
+            colors = legend_info.color(keys)
+            labels = legend_info.label(keys)
             assert len(colors) == len(xvec), f"#colors({len(colors)}) does not match histogram #groups({len(xvec)})"
         else:
             assert len(xcol.shape) == 1 or xcol.shape[1] == 1
@@ -367,6 +372,8 @@ class MatplotlibPlotCell(CellData):
             ax.set_xlim(cfg.limits[0], cfg.limits[1])
         if cfg.ticks is not None:
             ax.set_xticks(cfg.ticks)
+        if cfg.tick_labels is not None:
+            ax.set_xticklabels(cfg.tick_labels, rotation=cfg.tick_rotation)
 
     def _config_y(self, cfg, ax):
         ax.set_ylabel(cfg.label)
@@ -377,6 +384,8 @@ class MatplotlibPlotCell(CellData):
             ax.set_ylim(cfg.limits[0], cfg.limits[1])
         if cfg.ticks:
             ax.set_yticks(cfg.ticks)
+        if cfg.tick_labels is not None:
+            ax.set_yticklabels(cfg.tick_labels, rotation=cfg.tick_rotation)
 
     def draw(self, ctx):
         ctx.ax = ctx.axes[ctx.row][ctx.col]

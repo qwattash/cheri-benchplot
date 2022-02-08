@@ -21,84 +21,78 @@ class PlotUnsupportedError(PlotError):
     pass
 
 
-class ColorMap:
+class LegendInfo:
+    """
+    Helper to build legends by associating descriptive labels to dataframe index levels.
+    """
     @classmethod
-    def from_keys(cls,
-                  keys: list,
-                  mapname: str = "Pastel1",
-                  labels: list = None,
-                  color_range: typing.Tuple[float, float] = (0, 1)):
-        nkeys = len(keys)
-        cmap = plt.get_cmap(mapname)
+    def multi_axis(cls, left: "LegendInfo", right: "LegendInfo", cmap_name: str = None):
+        """
+        Build a multi-axis legend for both the left and right axes. The extra "axis" index
+        level is added to keys and will be used internally when multiple axes are enabled,
+        if it exists.
+        """
+        if cmap_name is None:
+            cmap_name = left.cmap_name
+        left.info_df["axis"] = "left"
+        right.info_df["axis"] = "right"
+        combined = pd.concat((left.info_df, right.info_df)).set_index("axis", append=True).sort_index()
+        return LegendInfo(combined.index, labels=combined["labels"], cmap_name=cmap_name)
+
+    def __init__(self,
+                 keys: typing.Iterable[typing.Hashable] | pd.Index,
+                 labels: typing.Iterable[str] = None,
+                 cmap_name: str = "Pastel1",
+                 color_range: typing.Tuple[float, float] = (0, 1),
+                 colors: list = None):
+        """
+        Note that the constructor allows the use of keys as a list of values or a more comples
+        pandas index. The class factory helpers should be used in most cases.
+        If a list of colors is given, override automatic creation.
+        """
+        self.cmap_name = cmap_name
         if labels is None:
             labels = keys
-        cmap_range = np.linspace(color_range[0], color_range[1], nkeys)
-        return ColorMap(keys, cmap(cmap_range), labels)
+        if colors is None:
+            cmap = plt.get_cmap(cmap_name)
+            cmap_range = np.linspace(color_range[0], color_range[1], len(keys))
+            colors = cmap(cmap_range)
+        self.info_df = pd.DataFrame({"labels": labels, "colors": list(colors)}, index=keys)
 
-    @classmethod
-    def from_index(cls, df: pd.DataFrame, mapname: str = "Pastel1"):
-        values = df.index.unique()
-        nvalues = len(values)
-        cmap = plt.get_cmap(mapname)
-        return ColorMap(values, cmap(range(nvalues)), map(lambda val: str(val), values))
-
-    @classmethod
-    def from_column(cls, col: pd.Series, mapname: str = "Pastel1"):
-        values = col.unique()
-        nvalues = len(values)
-        cmap = plt.get_cmap(mapname)
-        return ColorMap(values, cmap(range(nvalues)), values)
-
-    @classmethod
-    def base8(cls):
-        """Hardcoded 8-color map with color names as keys (solarized-light theme)"""
-        colors = {
-            "black": "#002b36",
-            "red": "#dc322f",
-            "green": "#859900",
-            "orange": "#cb4b16",
-            "yellow": "#b58900",
-            "blue": "#268bd2",
-            "magenta": "#d33682",
-            "violet": "#6c71c4",
-            "cyan": "#2aa198",
-            "white": "#839496"
-        }
-        return ColorMap(colors.keys(), colors.values(), colors.keys())
-
-    @classmethod
-    def default(cls, keys):
-        # Use the default cycler colors C0-C9
-        cycler = plt.rcParams["axes.prop_cycle"]
-        color_cycle = map(lambda v: v["color"], cycler())
-        colors = [c for c, _ in zip(color_cycle, keys)]
-        return ColorMap(keys, colors, keys)
-
-    def __init__(self, keys: typing.Iterable[typing.Hashable], colors: typing.Iterable, labels: typing.Iterable[str]):
-        self.cmap = pd.DataFrame({"labels": labels, "colors": list(colors)}, index=keys)
+    def map_label(self, fn) -> "LegendInfo":
+        new_labels = self.info_df["labels"].map(fn)
+        new_info = LegendInfo(self.info_df.index, labels=self.info_df["labels"], colors=self.info_df["colors"])
+        return new_info
 
     @property
-    def colors(self):
-        return self.cmap["colors"]
+    def index(self):
+        return self.info_df.index
 
-    @property
-    def labels(self):
-        return self.cmap["labels"]
+    def color(self, key: typing.Hashable, axis="left"):
+        if "axis" in self.info_df.index.names:
+            lookup_df = self.info_df.xs(axis, level="axis")
+        else:
+            lookup_df = self.info_df
+        return lookup_df.loc[key, "colors"]
 
-    def get_color(self, key: typing.Hashable | list[typing.Hashable]):
-        return self.cmap.loc[key, "colors"]
-
-    def get_label(self, key: typing.Hashable | list[typing.Hashable]):
-        return self.cmap.loc[key, "labels"]
+    def label(self, key: typing.Hashable, axis="left"):
+        if "axis" in self.info_df.index.names:
+            lookup_df = self.info_df.xs(axis, level="axis")
+        else:
+            lookup_df = self.info_df
+        return lookup_df.loc[key, "labels"]
 
     def color_items(self):
-        return self.cmap["colors"].items()
+        return self.info_df["colors"].items()
 
     def label_items(self):
-        return self.cmap["labels"].items()
+        return self.info_df["labels"].items()
 
-    def __iter__(self):
-        return self.cmap.iterrows()
+    def remap_colors(self, mapname: str, color_range: typing.Tuple[float, float] = (0, 1)):
+        self.cmap_name = mapname
+        cmap = plt.get_cmap(mapname)
+        cmap_range = np.linspace(color_range[0], color_range[1], len(self.info_df))
+        self.info_df["colors"] = list(cmap(cmap_range))
 
     def map_labels_to_level(self, df: pd.DataFrame, level=0, axis=0) -> pd.DataFrame:
         """
@@ -115,7 +109,7 @@ class ColorMap:
             index = df.columns.to_frame()
         else:
             raise ValueError("Axis must be 0 or 1")
-        _, mapped_level = index[level].align(self.cmap["labels"], level=level)
+        _, mapped_level = index[level].align(self.info_df["labels"], level=level)
         index[level] = mapped_level
         new_index = pd.MultiIndex.from_frame(index)
         if axis == 0:
@@ -125,8 +119,8 @@ class ColorMap:
         return df
 
     def with_label_index(self):
-        labels = self.cmap["labels"]
-        new_df = self.cmap.set_index("labels")
+        labels = self.info_df["labels"]
+        new_df = self.info_df.set_index("labels")
         new_df["labels"] = labels.values
         return new_df
 
@@ -142,8 +136,8 @@ class DataView:
     Arguments:
     df: View dataframe
     plot: The renderer to use for the plot (e.g. table, hist, line...)
-    legend_map: Override legend_map from the cell, the legends will then be merged.
-    legend_level: Same as CellData.legend_level but for the overridden legend_map
+    legend_info: Override legend_info from the cell, the legends will then be merged.
+    legend_level: Same as CellData.legend_level but for the overridden legend_info
 
     fmt: Column data formatters map. Accept a dict of column-name => formatter.
     x: name of the column to pull X-axis values from (default 'x')
@@ -152,8 +146,13 @@ class DataView:
     """
     plot: str
     df: pd.DataFrame
-    legend_map: ColorMap = None
+    legend_info: LegendInfo = None
     legend_level: str = None
+
+    def __post_init__(self):
+        # Make sure that we operate on a fresh dataframe so that renderers can mess
+        # it up without risk of weird behaviours
+        self.df = self.df.copy()
 
     def get_col(self, col, df=None):
         """
@@ -300,6 +299,7 @@ class AxisConfig:
     limits: tuple[float, float] = None
     ticks: list[float] = None
     tick_labels: list[str] = None
+    tick_rotation: int = None
     scale: Scale = None
 
     def __bool__(self):
@@ -320,7 +320,7 @@ class CellData:
         Each of the axes (x, yleft and yright) has a separate configuration object
 
         Properties:
-        legend_map: ColorMap mapping index label values to human-readable names and colors
+        legend_info: LegendInfo mapping index label values to human-readable names and colors
         Note that whether the legend is keyed by column names or index level currently
         depends on the view that renders the data.
         legend_level: Index label for the legend key of each set of data
@@ -329,7 +329,7 @@ class CellData:
         self.x_config = AxisConfig(x_label, enable=True)
         self.yleft_config = AxisConfig(yleft_label, enable=True)
         self.yright_config = AxisConfig(yright_label)
-        self.legend_map = None
+        self.legend_info = None
         self.legend_level = None
 
         self.views = []
@@ -343,10 +343,10 @@ class CellData:
         self.views.append(view)
 
     def validate(self):
-        assert self.legend_map or not self.legend_level, "CellData legend_level set without legend_map"
+        assert self.legend_info or not self.legend_level, "CellData legend_level set without legend_info"
 
-    def default_legend_map(self, view):
-        return ColorMap.default(view.df.index.unique().values)
+    def default_legend_info(self, view):
+        return LegendInfo.default(view.df.index.unique().values)
 
     def get_legend_level(self, view):
         if view.legend_level:
@@ -366,14 +366,14 @@ class CellData:
             flat_index.name = ",".join(df.index.names)
             return flat_index
 
-    def get_legend_map(self, view):
-        if view.legend_map:
-            legend_map = view.legend_map
-        elif self.legend_map:
-            legend_map = self.legend_map
+    def get_legend_info(self, view):
+        if view.legend_info:
+            legend_info = view.legend_info
+        elif self.legend_info:
+            legend_info = self.legend_info
         else:
-            legend_map = self.default_legend_map(view)
-        return legend_map
+            legend_info = self.default_legend_info(view)
+        return legend_info
 
     def draw(self, ctx: "Surface.DrawContext"):
         pass
@@ -536,6 +536,7 @@ class BenchmarkPlot(BenchmarkAnalysis):
         super().__init__(benchmark)
         assert len(surfaces), "Empty plot surface list"
         self.surfaces = surfaces
+        self.logger = new_logger(self.get_plot_name(), benchmark.logger)
         self.active_subplots = self._make_subplots()
 
     def get_plot_name(self):
@@ -599,6 +600,7 @@ class BenchmarkSubPlot(ABC):
 
     def __init__(self, plot: BenchmarkPlot):
         self.plot = plot
+        self.logger = plot.logger
         self.benchmark = self.plot.benchmark
 
     def get_dataset(self, dset_id: DatasetArtefact):
@@ -606,6 +608,16 @@ class BenchmarkSubPlot(ABC):
         dset = self.plot.get_dataset(dset_id)
         assert dset is not None, "Subplot scheduled with missing dependency"
         return dset
+
+    def build_legend_by_dataset(self):
+        """
+        Build a legend map that allocates colors and labels to the datasets merged
+        in the current benchmark instance.
+        """
+        legend = {uuid: str(bench.instance_config.name) for uuid, bench in self.benchmark.merged_benchmarks.items()}
+        legend[self.benchmark.uuid] = f"{self.benchmark.instance_config.name}(*)"
+        legend_info = LegendInfo(legend.keys(), labels=legend.values())
+        return legend_info
 
     @abstractmethod
     def generate(self, surface: Surface, cell: CellData):

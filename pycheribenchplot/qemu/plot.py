@@ -4,7 +4,7 @@ import pandas as pd
 from ..core.dataset import (DatasetName, check_multi_index_aligned, pivot_multi_index_level)
 from ..core.excel import SpreadsheetSurface
 from ..core.html import HTMLSurface
-from ..core.plot import (BenchmarkPlot, BenchmarkSubPlot, CellData, ColorMap, Surface, TableDataView)
+from ..core.plot import (BenchmarkPlot, BenchmarkSubPlot, CellData, LegendInfo, Surface, TableDataView)
 
 
 class QEMUHistSubPlot(BenchmarkSubPlot):
@@ -12,11 +12,10 @@ class QEMUHistSubPlot(BenchmarkSubPlot):
     Helpers for plots using the QEMU stat histogram dataset.
     The mixin attaches to BenchmarkSubplots.
     """
-    def get_legend_map(self) -> ColorMap:
-        legend = {uuid: str(bench.instance_config.name) for uuid, bench in self.benchmark.merged_benchmarks.items()}
-        legend[self.benchmark.uuid] = f"{self.benchmark.instance_config.name}(*)"
-        lmap = ColorMap.from_keys(legend.keys(), mapname="Greys", labels=legend.values(), color_range=(0, 0.5))
-        return lmap
+    def get_legend_info(self) -> LegendInfo:
+        legend = self.build_legend_by_dataset()
+        legend.remap_colors("Greys", color_range=(0, 0.5))
+        return legend
 
     def get_all_stats_df(self) -> pd.DataFrame:
         """
@@ -54,11 +53,11 @@ class QEMUHistTable(QEMUHistSubPlot):
         relevance = (df[sort_col] / total_delta_calls).abs()
         return relevance
 
-    def _get_show_columns(self, view_df, legend_map):
+    def _get_show_columns(self, view_df, legend_info):
         # For each data column, we show all the aggregation metrics for the
         # "sample" delta level key.
         # The remaining delta level keys are shown only for non-baseline columns.
-        baseline = legend_map.get_label(self.benchmark.uuid)
+        baseline = legend_info.label(self.benchmark.uuid)
         data = (view_df.columns.get_level_values("metric") != "sort_metric")
         sample = data & (view_df.columns.get_level_values("delta") == "sample")
         delta = data & (~sample) & (view_df.columns.get_level_values("__dataset_id") != baseline)
@@ -72,16 +71,16 @@ class QEMUHistTable(QEMUHistSubPlot):
         indexes = view_df.columns.get_locs((sort_col, ) + sel)
         return view_df.columns[indexes].to_list()
 
-    def _get_pivot_legend_map(self, df, legend_map):
+    def _get_pivot_legend_info(self, df, legend_info):
         """
         Generate a legend map for the pivoted view_df.
         This will map <column index tuple> => (<__dataset_id label>, <color>)
         """
         col_df = df.columns.to_frame()
-        by_label = legend_map.with_label_index()
+        by_label = legend_info.with_label_index()
         _, pivot_colors = col_df.align(by_label["colors"], axis=0, level="__dataset_id")
         _, pivot_labels = col_df.align(by_label["labels"], axis=0, level="__dataset_id")
-        new_map = ColorMap(df.columns, pivot_colors, pivot_labels)
+        new_map = LegendInfo(df.columns, colors=pivot_colors, labels=pivot_labels)
         return new_map
 
     def generate(self, surface: Surface, cell: CellData):
@@ -97,18 +96,18 @@ class QEMUHistTable(QEMUHistSubPlot):
 
         # Remap the __dataset_id according to the legend to make it
         # more meaningful for visualization
-        legend_map = self.get_legend_map()
-        view_df = legend_map.map_labels_to_level(df, "__dataset_id", axis=0)
+        legend_info = self.get_legend_info()
+        view_df = legend_info.map_labels_to_level(df, "__dataset_id", axis=0)
         # Pivot the __dataset_id level into the columns
         view_df = pivot_multi_index_level(view_df, "__dataset_id")
 
-        show_cols = self._get_show_columns(view_df, legend_map)
+        show_cols = self._get_show_columns(view_df, legend_info)
         sort_cols = self._get_sort_columns(view_df, "sort_metric")
         view_df = view_df.sort_values(by=sort_cols, ascending=False)
 
-        pivot_legend_map = self._get_pivot_legend_map(view_df, legend_map)
-        assert cell.legend_map is None
-        cell.legend_map = pivot_legend_map
+        pivot_legend_info = self._get_pivot_legend_info(view_df, legend_info)
+        assert cell.legend_info is None
+        cell.legend_info = pivot_legend_info
         view = TableDataView("table", view_df, columns=show_cols)
         cell.add_view(view)
 

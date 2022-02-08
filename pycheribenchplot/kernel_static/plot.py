@@ -4,7 +4,7 @@ import pandas as pd
 from ..core.dataset import (DatasetName, index_where, pivot_multi_index_level, stacked_histogram)
 from ..core.excel import SpreadsheetSurface
 from ..core.matplotlib import MatplotlibSurface
-from ..core.plot import (AALineDataView, BarPlotDataView, BenchmarkPlot, BenchmarkSubPlot, ColorMap, HistPlotDataView,
+from ..core.plot import (AALineDataView, BarPlotDataView, BenchmarkPlot, BenchmarkSubPlot, HistPlotDataView, LegendInfo,
                          Scale, TableDataView)
 
 
@@ -26,7 +26,7 @@ class SetBoundsDistribution(BenchmarkSubPlot):
     def get_stats_df(self):
         raise NotImplementedError("Must override")
 
-    def get_legend_map(self):
+    def get_legend_info(self):
         df = self.get_stats_df()
         datasets = df.index.get_level_values("__dataset_id").unique()
         group = self.benchmark.get_benchmark_group()
@@ -34,7 +34,7 @@ class SetBoundsDistribution(BenchmarkSubPlot):
         labels = {uuid: str(b.instance_config.name) for uuid, b in group.items() if uuid in datasets}
         if self.benchmark.uuid in labels:
             labels[self.benchmark.uuid] += "(*)"
-        return ColorMap.from_keys(labels.keys(), mapname="Paired", labels=labels.values())
+        return LegendInfo(labels.keys(), cmap_name="Paired", labels=labels.values())
 
 
 class SetBoundsSimpleDistribution(SetBoundsDistribution):
@@ -53,7 +53,7 @@ class SetBoundsSimpleDistribution(SetBoundsDistribution):
 
         # Build histograms for each dataset
         view = HistPlotDataView("hist", df, x="size", buckets=buckets, bucket_group="__dataset_id")
-        cell.legend_map = self.get_legend_map()
+        cell.legend_info = self.get_legend_info()
         cell.x_ticks = buckets
         cell.x_config.label = "Bounds size (bytes)"
         cell.x_config.scale = Scale("log", base=2)
@@ -87,11 +87,11 @@ class KernelBoundsDistributionByKind(SetBoundsDistribution):
         df = self.bounds_stats.merged_df
         return df[df["src_module"] == "kernel"]
 
-    def get_kind_legend_map(self):
+    def get_kind_legend_info(self):
         df = self.get_stats_df()
         kinds = df["kind"].unique()
         labels = {k: k.name for k in kinds}
-        return ColorMap.from_keys(labels.keys(), mapname="Paired", labels=labels.values())
+        return LegendInfo(labels.keys(), cmap_name="Paired", labels=labels.values())
 
     def generate(self, surface, cell):
         """
@@ -118,7 +118,7 @@ class KernelBoundsDistributionByKind(SetBoundsDistribution):
                                stack_group="kind")
 
         # Build histograms for each dataset
-        cell.legend_map = self.get_kind_legend_map()
+        cell.legend_info = self.get_kind_legend_info()
         cell.legend_level = "kind"
         cell.x_config.ticks = buckets
         cell.x_config.label = "Bounds size (bytes)"
@@ -142,11 +142,10 @@ class KernelStructStatsPlot(BenchmarkSubPlot):
         self.struct_stat = self.get_dataset(DatasetName.KERNEL_STRUCT_STATS)
         assert self.struct_stat is not None, "Can not find required dataset"
 
-    def get_legend_map(self):
-        legend = {uuid: str(bench.instance_config.name) for uuid, bench in self.benchmark.merged_benchmarks.items()}
-        legend[self.benchmark.uuid] = f"{self.benchmark.instance_config.name}(*)"
-        legend_map = ColorMap.from_keys(legend.keys(), mapname="Paired", labels=legend.values())
-        return legend_map
+    def get_legend_info(self):
+        legend = self.build_legend_by_dataset()
+        legend.remap_colors("Paired")
+        return legend
 
 
 class KernelStructSizeHist(KernelStructStatsPlot):
@@ -156,8 +155,7 @@ class KernelStructSizeHist(KernelStructStatsPlot):
             for uuid, bench in self.benchmark.merged_benchmarks.items()
         }
         legend[self.benchmark.uuid] = f"median {self.benchmark.instance_config.name}(*)"
-        legend_map = ColorMap.from_keys(legend.keys(), mapname="Greys", labels=legend.values(), color_range=(0.5, 1))
-        return legend_map
+        return LegendInfo(legend.keys(), cmap_name="Greys", labels=legend.values(), color_range=(0.5, 1))
 
     def get_hist_column(self):
         raise NotImplementedError("Must override")
@@ -205,7 +203,7 @@ class KernelStructSizeHist(KernelStructStatsPlot):
         line_cols = [hcol + ("median", )]
         view = AALineDataView("axline", agg_df, vertical=line_cols)
         view.style.line_style = "dashed"
-        view.legend_map = self.get_median_line_legend()
+        view.legend_info = self.get_median_line_legend()
         view.legend_level = "__dataset_id"
         cell.add_view(view)
 
@@ -214,7 +212,7 @@ class KernelStructSizeHist(KernelStructStatsPlot):
         cell.x_config.ticks = buckets
         cell.x_config.limits = (min(buckets), max(buckets))
         cell.yleft_config.label = "# structs"
-        cell.legend_map = self.get_legend_map()
+        cell.legend_info = self.get_legend_info()
         cell.legend_level = "__dataset_id"
 
 
@@ -315,9 +313,9 @@ class KernelStructSizeLargeOverhead(KernelStructStatsPlot):
         high_df = index_where(high_df, "name", ~anon, desc)
         assert not high_df.index.get_level_values("name").isna().any(), "NaN names"
 
-        legend_map = self.get_legend_map()
-        # Currently only use the legend_map to map labels to __dataset_id
-        show_df = legend_map.map_labels_to_level(high_df, "__dataset_id", axis=0)
+        legend_info = self.get_legend_info()
+        # Currently only use the legend_info to map labels to __dataset_id
+        show_df = legend_info.map_labels_to_level(high_df, "__dataset_id", axis=0)
         show_df = pivot_multi_index_level(show_df, "__dataset_id")
         # sort by highest delta
         sort_cols_sel = None
