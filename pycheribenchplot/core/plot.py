@@ -265,11 +265,15 @@ class BarPlotDataView(XYPlotDataView):
     bar_group: column or index level to use to generate bar groups,
     each group is plotted along the given x axis
     stack_group: column or index level to use to group bars for stacking
+    bar_width: relative size of bar with respect to the bar maximum size
+    can vary in the interval (0, 1)
+    bar_group_location: how to align the bar groups with respect to the
+    X values. Allowed values are "center", "left".
     """
     bar_group: str = None
     stack_group: str = None
+    bar_group_location: str = "center"
     bar_width: float = 0.8
-    bar_pad: float = 0.1
 
 
 @dataclass

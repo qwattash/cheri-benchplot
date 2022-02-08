@@ -168,7 +168,15 @@ class BarRenderer(ViewRenderer):
 
         # apply the offsets to the transformed x column
         # shift the positions to center the groups at the given x column
-        tx_position_matrix = tx_offset_matrix + tx_xcol[:, np.newaxis]  #- tx_space[:, np.newaxis] / 2
+        tx_position_matrix = tx_offset_matrix + tx_xcol[:, np.newaxis]
+        if view.bar_group_location == "center":
+            align_offset = tx_width / 2 - (tx_space * view.bar_width) / 2
+            tx_position_matrix += align_offset[:, np.newaxis]
+        elif view.bar_group_location == "left":
+            # XXX TODO
+            pass
+        else:
+            assert False, "Not Reached"
         # compute bar widths, these are taken from the position matrix that gives the center of each bar
         tx_bar_start = tx_position_matrix - tx_width[:, np.newaxis] / 2
         tx_bar_end = tx_position_matrix + tx_width[:, np.newaxis] / 2
@@ -184,6 +192,7 @@ class BarRenderer(ViewRenderer):
         bar_end = np.apply_along_axis(transform_inv_helper, 1, tx_bar_end)
         assert bar_end.shape == tx_bar_end.shape
         bar_width = bar_end - bar_start
+
         # set bar width so that the size stays constant regardless of the X scale
         # for each x we have bar width differences, these are repeated for each stack.
         # We need to flatten the bar_width matrix in column-major order.
@@ -191,20 +200,20 @@ class BarRenderer(ViewRenderer):
         axis_split = position_matrix.shape[1] / naxes
         assert axis_split == int(axis_split)
         axis_split = int(axis_split)
+
         bar_x_left = position_matrix[:, 0:axis_split]
         bar_x_flat = bar_x_left.ravel(order="F")
         view.df["__bar_x_left"] = np.tile(bar_x_flat, nstacks)
         bar_width_left = bar_width[:, 0:axis_split]
-        print(bar_width)
-        print(bar_width_left)
         bar_width_flat = bar_width_left.ravel(order="F")
         view.df["__bar_width_left"] = np.tile(bar_width_flat, nstacks)
+
         if view.has_yright:
-            bar_x_right = position_matrix[:, axis_split:-1]
-            bar_x_flat = bar_x_left.ravel(order="F")
+            bar_x_right = position_matrix[:, axis_split:]
+            bar_x_flat = bar_x_right.ravel(order="F")
             view.df["__bar_x_right"] = np.tile(bar_x_flat, nstacks)
-            bar_width_right = bar_width[:, axis_split:-1]
-            bar_width_flat = bar_width_left.ravel(order="F")
+            bar_width_right = bar_width[:, axis_split:]
+            bar_width_flat = bar_width_right.ravel(order="F")
             view.df["__bar_width_right"] = np.tile(bar_width_flat, nstacks)
 
         # And the stacking Y bases
@@ -216,7 +225,7 @@ class BarRenderer(ViewRenderer):
             view.df["__bar_y_left_base"] = grouped[view.yleft].apply(
                 lambda stack_slice: stack_slice.cumsum().shift(fill_value=0))
             if view.has_yright:
-                view.df["__bar_y_left_base"] = grouped[view.yright].apply(
+                view.df["__bar_y_right_base"] = grouped[view.yright].apply(
                     lambda stack_slice: stack_slice.cumsum().shift(fill_value=0))
         return view.df
 
