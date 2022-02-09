@@ -1,11 +1,11 @@
 from pathlib import Path
-from unittest.mock import patch, mock_open
+from unittest.mock import mock_open, patch
 
-import pytest
 import pandas as pd
+import pytest
 
-from pycheribenchplot.core.dataset import DatasetName
 from pycheribenchplot.core.benchmark import BenchmarkDataSetConfig
+from pycheribenchplot.core.dataset import DatasetName
 from pycheribenchplot.kernel_static.dataset import *
 
 # @patch("builtins.open", new_callable=mock_open)
@@ -24,6 +24,13 @@ from pycheribenchplot.kernel_static.dataset import *
 
 #     fake_bench.get_output_path.assert_called()
 #     fake_open.assert_called_once_with(fake_path, "r")
+
+EXPECT_KSTRUCT_SIZE_COLUMNS = {
+    "name", "size", "from_path", "src_file", "src_line", "member_name", "member_size", "member_offset", "member_pad",
+    "member_type_name", "member_type_kind", "member_type_size", "member_type_pad", "member_type_ref_offset",
+    "member_type_src_file", "member_type_src_line"
+}
+
 
 @pytest.mark.asyncio
 async def test_kstruct_size_dataset_gen(mocker, tmp_path, fake_simple_benchmark):
@@ -46,17 +53,15 @@ async def test_kstruct_size_dataset_gen(mocker, tmp_path, fake_simple_benchmark)
     out_path = tmp_path / f"__fake__-{fake_simple_benchmark.uuid}.csv"
     assert out_path.exists()
     df = pd.read_csv(out_path)
-    assert set(df.columns) == {"name", "size", "from_path", "is_anon", "src_file", "src_line"}
-    assert len(df[df["name"] == "foo"]) == 1
-    foo = df[df["name"] == "foo"].iloc[0]
-    assert foo["size"] == 24
-    assert foo["is_anon"] == False
-    assert Path(foo["src_file"]).name == "test_dwarf_simple.c"
-    assert foo["src_line"] == 9
+    assert set(df.columns) == EXPECT_KSTRUCT_SIZE_COLUMNS
+    foo = df[df["name"] == "foo"]
+    assert len(foo) == 3
+    assert (foo["size"] == 24).all()
+    assert (foo["src_line"] == 9).all()
+    assert (foo["src_file"].map(lambda p: Path(p).name) == "test_dwarf_simple.c").all()
 
-    assert len(df[df["name"] == "bar"]) == 1
-    bar = df[df["name"] == "bar"].iloc[0]
-    assert bar["size"] == 8
-    assert bar["is_anon"] == False
-    assert Path(bar["src_file"]).name == "test_dwarf_simple.c"
-    assert bar["src_line"] == 4
+    bar = df[df["name"] == "bar"]
+    assert len(bar) == 2
+    assert (bar["size"] == 8).all()
+    assert (bar["src_line"] == 4).all()
+    assert (bar["src_file"].map(lambda p: Path(p).name) == "test_dwarf_simple.c").all()

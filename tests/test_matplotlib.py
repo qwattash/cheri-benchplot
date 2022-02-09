@@ -1,10 +1,10 @@
-
-import pytest
 import matplotlib.pyplot as plt
 import pandas as pd
+import pytest
 
+from pycheribenchplot.core.matplotlib import (BarRenderer, MatplotlibPlotCell, MatplotlibSurface, align_y_at)
 from pycheribenchplot.core.plot import BarPlotDataView, GridLayout
-from pycheribenchplot.core.matplotlib import MatplotlibPlotCell, MatplotlibSurface, BarRenderer, align_y_at
+
 
 @pytest.fixture
 def fake_ctx(tmp_path):
@@ -15,14 +15,22 @@ def fake_ctx(tmp_path):
     ctx.rax = ctx.ax.twinx()
     return ctx
 
+
 @pytest.fixture
 def fake_cell():
     cell = MatplotlibPlotCell()
     return cell
 
+
 @pytest.fixture(params=[
-    {"yleft": [10, 20], "yright": [30, -30]},
-    {"yleft": [10, -10], "yright": [30, -30]},
+    {
+        "yleft": [10, 20],
+        "yright": [30, -30]
+    },
+    {
+        "yleft": [10, -10],
+        "yright": [30, -30]
+    },
 ])
 def yaxis_align_df(request):
     df = pd.DataFrame()
@@ -33,10 +41,11 @@ def yaxis_align_df(request):
     df["yright"] = request.param["yright"]
     return df
 
+
 def test_yaxis_aligment(yaxis_align_df):
     test_df = yaxis_align_df
     # plot on a pair of axes
-    f, ax = plt.subplots(1,1)
+    f, ax = plt.subplots(1, 1)
     rax = ax.twinx()
 
     ax.bar(test_df["x"], test_df["yleft"], width=0.8, color="g")
@@ -63,4 +72,3 @@ def test_yaxis_aligment(yaxis_align_df):
     out_ylim = rax.get_ylim()
     assert out_ylim[0] <= r_ymin, "Right axis ymin clipped"
     assert out_ylim[1] >= r_ymax, "Right axis ymax clipped"
-

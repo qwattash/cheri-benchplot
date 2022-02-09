@@ -108,10 +108,24 @@ class KernelStructSizeDataset(CSVDataSetContainer):
         Field.index_field("name", dtype=str),
         Field.index_field("src_file", dtype=str),
         Field.index_field("src_line", dtype=int),
-        Field.index_field("is_anon", dtype=np.bool),
+        Field.index_field("member_name", dtype=str),
         Field.data_field("size", dtype=int),
         Field.str_field("from_path"),
         Field.str_field("desc", isderived=True),
+        Field.data_field("member_size", dtype=int),
+        Field("member_offset", dtype=int),
+        Field.data_field("member_pad", dtype=int),
+        Field.str_field("member_type_name"),
+        Field("member_type_kind", dtype=object),
+        # This should probably be dropped as duplicates member_size
+        Field("member_type_size", dtype=int),
+        # Not a data field as this is already accounted for in member_pad
+        Field("member_type_pad", dtype=int),
+        # This is a DIE offset, unintresting ouside the DWARF interface
+        Field("member_type_ref_offset", dtype=int),
+        Field.str_field("member_type_src_file"),
+        Field("member_type_src_line", dtype=int),
+        Field("member_type_fn_params", dtype=object)
     ]
 
     def full_kernel_path(self):
@@ -148,7 +162,9 @@ class KernelStructSizeDataset(CSVDataSetContainer):
         self.benchmark.dwarf_helper.register_object("kernel.full", kern_path)
         dw = self.benchmark.dwarf_helper.get_object("kernel.full")
         # This will take a while, so keep async things moving forward
-        df = await aio.to_thread(dw.extract_struct_info)
+        await aio.to_thread(dw.parse_dwarf)
+        dwarf_data = dw.get_dwarf_data()
+        df = dwarf_data.get_struct_info()
         df.to_csv(self.output_file())
 
     def load(self):

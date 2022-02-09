@@ -1,15 +1,16 @@
 import uuid
-from enum import Enum
 from contextlib import contextmanager
+from enum import Enum
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pycheribenchplot.core.dataset import DatasetRegistry, DatasetName, DataSetContainer
-from pycheribenchplot.core.manager import BenchmarkManager, BenchmarkSessionConfig, BenchplotUserConfig
-from pycheribenchplot.core.benchmark import BenchmarkBase, BenchmarkRunConfig, BenchmarkDataSetConfig
-from pycheribenchplot.core.instance import InstanceConfig, InstancePlatform, InstanceCheriBSD, InstanceKernelABI
+from pycheribenchplot.core.benchmark import (BenchmarkBase, BenchmarkDataSetConfig, BenchmarkRunConfig)
+from pycheribenchplot.core.dataset import (DataSetContainer, DatasetName, DatasetRegistry)
+from pycheribenchplot.core.instance import (InstanceCheriBSD, InstanceConfig, InstanceKernelABI, InstancePlatform)
+from pycheribenchplot.core.manager import (BenchmarkManager, BenchmarkSessionConfig, BenchplotUserConfig)
+
 
 @pytest.fixture
 def fake_simple_benchmark(pytestconfig, tmp_path, mocker):
@@ -20,15 +21,12 @@ def fake_simple_benchmark(pytestconfig, tmp_path, mocker):
     # fake_enum = mocker.patch("pycheribenchplot.core.dataset.DatasetName")
 
     ds_config = BenchmarkDataSetConfig(type="__fake__")
-    b_config = BenchmarkRunConfig(name="fake-test", iterations=1,
-                                  benchmark_dataset=ds_config,
-                                  datasets={})
-    i_config = InstanceConfig(
-        kernel="CHERI-QEMU",
-        baseline=True,
-        platform=InstancePlatform.QEMU,
-        cheri_target=InstanceCheriBSD.RISCV64_PURECAP,
-        kernelabi=InstanceKernelABI.HYBRID)
+    b_config = BenchmarkRunConfig(name="fake-test", iterations=1, benchmark_dataset=ds_config, datasets={})
+    i_config = InstanceConfig(kernel="CHERI-QEMU",
+                              baseline=True,
+                              platform=InstancePlatform.QEMU,
+                              cheri_target=InstanceCheriBSD.RISCV64_PURECAP,
+                              kernelabi=InstanceKernelABI.HYBRID)
     s_config = BenchmarkSessionConfig(benchmarks=[b_config], instances=[i_config])
     s_config.output_path = tmp_path
 
@@ -53,5 +51,3 @@ def fake_existing_path():
     mock_path.is_file.return_value = True
     mock_path.is_dir.return_value = False
     return mock_path
-
-
