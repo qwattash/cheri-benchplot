@@ -40,14 +40,6 @@ class BenchplotUserConfig(Config):
 
 
 @dataclass
-class BenchmarkManagerPlotConfig(TemplateConfig):
-    """
-    Plot analysis configuration.
-    """
-    backends: list[str] = field(default_factory=lambda: ["html"])
-
-
-@dataclass
 class BenchmarkSessionConfig(TemplateConfig):
     """
     Describe the benchmarks to run in the current benchplot session.
@@ -57,7 +49,6 @@ class BenchmarkSessionConfig(TemplateConfig):
     output_path: Path = field(default_factory=Path.cwd)
     instances: list[InstanceConfig] = field(default_factory=list)
     benchmarks: list[BenchmarkRunConfig] = field(default_factory=list)
-    plot_options: BenchmarkManagerPlotConfig = field(default_factory=BenchmarkManagerPlotConfig)
 
 
 #class BenchmarkManagerConfig(TemplateConfig):
