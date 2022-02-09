@@ -11,11 +11,6 @@ from pycheribenchplot.core.manager import BenchmarkManager, BenchmarkSessionConf
 from pycheribenchplot.core.benchmark import BenchmarkBase, BenchmarkRunConfig, BenchmarkDataSetConfig
 from pycheribenchplot.core.instance import InstanceConfig, InstancePlatform, InstanceCheriBSD, InstanceKernelABI
 
-
-def pytest_addoption(parser):
-    parser.addoption("--benchplot-user-config", type=Path)
-
-
 @pytest.fixture
 def fake_simple_benchmark(pytestconfig, tmp_path, mocker):
     # name_items = dict(DatasetName.__members__.items())
