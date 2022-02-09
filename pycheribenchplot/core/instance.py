@@ -112,14 +112,60 @@ class InstanceStatus(Enum):
     DEAD = "dead"
 
 
-@dataclass
 class InstanceInfo:
-    # ID of the instance
-    uuid: "typing.Optional[uuid.UUID]" = None
-    # SSH host to reach the instance
-    ssh_host: typing.Optional[str] = None
-    # SSH port to reach the instance
-    ssh_port: typing.Optional[int] = None
+    def __init__(self, logger, uuid, ssh_host, ssh_port, ssh_key):
+        self.logger = logger
+        # ID of the instance
+        self.uuid = uuid
+        # SSH host to reach the instance
+        self.ssh_host = ssh_host
+        # SSH port to reach the instance
+        self.ssh_port = ssh_port
+        # SSH key for the instance
+        self.ssh_key = ssh_key
+        self.conn = None
+
+    async def connect(self):
+        """
+        Create new connection to the instance.
+        Only one connection can exist at a time in the current implementation.
+        """
+        if self.conn is not None:
+            await self.disconnect()
+            self.conn = None
+        self.conn = await asyncssh.connect(self.ssh_host,
+                                           port=self.ssh_port,
+                                           known_hosts=None,
+                                           client_keys=[self.ssh_key],
+                                           username="root",
+                                           passphrase="")
+        self.logger.debug("Connected to instance")
+
+    async def disconnect(self):
+        if self.conn is not None:
+            self.conn.close()
+            await self.conn.wait_closed()
+
+    async def extract_file(self, guest_src: Path, host_dst: Path, **kwargs):
+        """Extract file from instance"""
+        src = (self.conn, guest_src)
+        await asyncssh.scp(src, host_dst, **kwargs)
+
+    async def import_file(self, host_src: Path, guest_dst: Path, **kwargs):
+        """Import file into instance"""
+        dst = (self.conn, guest_dst)
+        await asyncssh.scp(host_src, dst, **kwargs)
+
+    async def run_cmd(self, command: str, args: list = [], env: dict = {}):
+        """Run command on the remote instance"""
+        self.logger.debug("SH exec: %s %s", command, args)
+        cmdline = f"{command} " + " ".join(map(str, args))
+        result = await self.conn.run(cmdline)
+        if result.returncode != 0:
+            self.logger.error("Failed to run %s: %s", command, result.stderr)
+        else:
+            self.logger.debug("%s done: %s", command, result.stdout)
+        return result
 
 
 class Instance(ABC):
@@ -157,7 +203,7 @@ class Instance(ABC):
         """
         Get instance information needed by benchmarks to connect and run on the instance
         """
-        info = InstanceInfo(uuid=self.uuid, ssh_host="localhost", ssh_port=self.ssh_port)
+        info = InstanceInfo(self.logger, self.uuid, "localhost", self.ssh_port, self.manager_config.ssh_key)
         return info
 
     def start(self):
@@ -320,7 +366,7 @@ class CheribuildInstance(Instance):
             for evt, matcher in self._io_loop_observers:
                 if matcher(out, False):
                     evt.set()
-        raise InstanceManagerError("Cheribuild died")
+        raise InstanceManagerError("cheribuild died")
 
     async def _stderr_loop(self):
         while not self._cheribuild_task.stderr.at_eof():
@@ -333,7 +379,7 @@ class CheribuildInstance(Instance):
             for evt, matcher in self._io_loop_observers:
                 if matcher(out, True):
                     evt.set()
-        raise InstanceManagerError("Cheribuild died")
+        raise InstanceManagerError("cheribuild died")
 
     async def _wait_io(self, matcher: typing.Callable[[str, bool], bool]):
         """Wait for matching I/O from cheribuild on stdout or stderr"""
