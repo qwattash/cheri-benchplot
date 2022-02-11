@@ -1,7 +1,10 @@
 #!/bin/sh
 
-isort pycheribenchplot --virtual-env venv --py 39 -p pycheribenchplot
+isort pycheribenchplot --virtual-env venv -p pycheribenchplot
 yapf -r pycheribenchplot -p -i
 
-isort cheri_trace_processor --virtual-env venv --py 39 -p cheri_trace_processor
+isort tests --virtual-env venv -p tests
+yapf -r tests -p -i
+
+isort cheri_trace_processor --virtual-env venv -p cheri_trace_processor
 yapf -r cheri_trace_processor -p -i
