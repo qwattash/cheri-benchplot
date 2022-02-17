@@ -1,3 +1,4 @@
+import asyncio as aio
 import uuid
 from contextlib import contextmanager
 from enum import Enum
@@ -10,6 +11,12 @@ from pycheribenchplot.core.benchmark import (BenchmarkBase, BenchmarkDataSetConf
 from pycheribenchplot.core.dataset import (DataSetContainer, DatasetName, DatasetRegistry)
 from pycheribenchplot.core.instance import (InstanceCheriBSD, InstanceConfig, InstanceKernelABI, InstancePlatform)
 from pycheribenchplot.core.manager import (BenchmarkManager, BenchmarkSessionConfig, BenchplotUserConfig)
+
+
+@pytest.fixture
+def benchplot_user_config(pytestconfig):
+    user_config = BenchplotUserConfig.load_json(pytestconfig.getoption("--benchplot-user-config"))
+    return user_config
 
 
 @pytest.fixture

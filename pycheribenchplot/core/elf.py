@@ -6,6 +6,7 @@ from enum import Flag, IntFlag, auto
 from functools import cached_property, reduce
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from elftools.elf.elffile import ELFFile
 from sortedcontainers import SortedDict
@@ -237,25 +238,34 @@ class DWARFDataRegistry:
     and cross-reference the data.
     This is part of the main interface exposed to clients of this module.
     """
-    def __init__(self, dw, logger):
+    def __init__(self, dw, logger, arch_pointer_size):
         self.dw = dw
         self.logger = logger
+        self.arch_ptr_size = arch_pointer_size
         # map structure info by DIE offset
         self.struct_by_offset = {}
         # map structure info by unique key
         self.struct_by_key = {}
         # map typedef targets by DIE offset
         self.typedef_by_offset = {}
+        # map struct offsets to callbacks for delayed fixup of fields that
+        # would require recursively traversing structures.
+        self.struct_ref_fixup = defaultdict(list)
 
-    def get_struct_info(self) -> pd.DataFrame:
+    def get_struct_info(self, dedup=True) -> pd.DataFrame:
         """
         Export structure descriptors as pandas dataframe.
+        If dedup is true, duplicate structs are removed.
         """
         valid_si = filter(lambda si: not si.is_anon, self.struct_by_key.values())
         si_frames = map(lambda si: si.to_frame(), valid_si)
         self.logger.debug("Build structure info dataframe")
         df = pd.concat(si_frames)
-        return df.set_index(["name", "src_file", "src_line", "member_name"])
+        df = df.set_index(["name", "src_file", "src_line", "member_name"])
+        if dedup and not df.index.is_unique:
+            dup = df.index.duplicated(keep="first")
+            df = df[~dup]
+        return df.sort_index()
 
 
 @dataclass
@@ -277,7 +287,12 @@ class DWARFStructInfo:
 
     def to_frame(self):
         records = [m.to_frame_record() for m in self.members]
-        df = pd.DataFrame.from_records(records)
+        if records:
+            df = pd.DataFrame.from_records(records)
+        else:
+            # Add a single dummy column with no member name
+            df = pd.DataFrame({"name": np.nan, "offset": np.nan, "size": 0, "pad": 0}, index=[0])
+        df = df.add_prefix("member_")
         df["name"] = self.name
         df["size"] = self.size
         df["from_path"] = self.from_path
@@ -300,6 +315,9 @@ class DWARFStructInfo:
         else:
             return (self.name, self.size, self.src_file, 0)
 
+    def __str__(self):
+        return f"{self.name} {self.src_file}:{self.src_line} @ {self.from_path}"
+
 
 @dataclass
 class DWARFMemberInfo:
@@ -318,16 +336,12 @@ class DWARFMemberInfo:
     pad: int = 0
 
     def __post_init__(self):
+        assert self.type_info.size is not None
         self.size = self.type_info.size
 
     def to_frame_record(self) -> dict:
-        record = {
-            "member_name": self.name,
-            "member_offset": self.offset,
-            "member_size": self.size,
-            "member_pad": self.pad
-        }
-        type_record = {f"member_{k}": v for k, v in self.type_info.to_frame_record().items()}
+        record = {"name": self.name, "offset": self.offset, "size": self.size, "pad": self.pad}
+        type_record = {f"{k}": v for k, v in self.type_info.to_frame_record().items()}
         record.update(type_record)
         return record
 
@@ -365,9 +379,9 @@ class DWARFTypeInfo:
         UNION = auto()
         ENUM = auto()
 
-        @classmethod
-        def holds_ref_info(cls):
-            return cls.STRUCT | cls.UNION | cls.ENUM
+        @property
+        def holds_ref_info(self):
+            return bool(self & (self.STRUCT | self.UNION | self.ENUM))
 
         @property
         def is_ptr(self):
@@ -382,8 +396,20 @@ class DWARFTypeInfo:
             return bool(self & self.FN)
 
         @property
+        def is_enum(self):
+            return bool(self & self.ENUM)
+
+        @property
+        def is_union(self):
+            return bool(self & self.UNION)
+
+        @property
         def is_struct(self):
             return bool(self & self.STRUCT)
+
+        @property
+        def is_typedef(self):
+            return bool(self & self.TYPEDEF)
 
     name: str
     kind: "DWARFTypeInfo.Kind"
@@ -404,7 +430,7 @@ class DWARFTypeInfo:
             "type_size": self.size,
             "type_pad": self.pad,
         }
-        if self.kind & self.Kind.holds_ref_info():
+        if self.kind.holds_ref_info:
             record["type_ref_offset"] = self.offset
             record["type_src_file"] = self.src_file
             record["type_src_line"] = self.src_line
@@ -424,12 +450,13 @@ class DWARFTypeInfo:
         if ti.kind.is_array:
             # combine array kind with whatever was before (e.g. array of BASE)
             new_ti.kind |= ti.kind
-            new_ti.size = self.size * ti.size
+            if ti.size:
+                new_ti.size = self.size * ti.size
         elif ti.kind.is_ptr:
             # reset kind and size as this is now a pointer object
             new_ti.kind = ti.kind
             new_ti.size = ti.size
-        elif ti.kind & self.Kind.holds_ref_info():
+        elif ti.kind.holds_ref_info:
             # this should not really occur as this is a leaf type of any chain
             raise ValueError("Unexpected join of leaf element")
         elif ti.kind.is_fn:
@@ -462,7 +489,28 @@ class DWARFTypeResolver:
         ti = chain[-1]
         for sub_ti in reversed(chain[0:-1]):
             ti = ti.join(sub_ti)
+        if ti.kind.is_struct:
+            self._try_resolve_struct_pad(ti)
         return ti
+
+    def _try_resolve_struct_pad(self, ti):
+        """
+        Attempt to resolve the trailing padding for a structure.
+        If this is not possible, queue the TypeInfo for late resolution.
+        """
+        try:
+            sinfo = self.ctx.struct_by_offset[ti.offset]
+            if sinfo.members:
+                ti.pad = sinfo.members[-1].pad
+        except KeyError:
+            # We can not recurse and visit again, so we keep a record of the
+            # entries that need padding adjustment
+            def callback(sinfo):
+                if not sinfo.members:
+                    return
+                ti.pad = sinfo.members[-1].pad
+
+            self.ctx.struct_ref_fixup[ti.offset].append(callback)
 
     def _do_resolve_die(self, die, chain):
         try:
@@ -487,8 +535,12 @@ class DWARFTypeResolver:
         elif t_die.tag == "DW_TAG_subroutine_type":
             ti = self._resolve_fn_type(t_die)
             stop = True
+        elif t_die.tag == "DW_TAG_typedef":
+            subchain = self._resolve_typedef(t_die)
+            chain.extend(subchain)
+            return
         elif (t_die.tag == "DW_TAG_structure_type" or t_die.tag == "DW_TAG_union_type"
-              or t_die.tag == "DW_TAG_enumeration_type" or t_die.tag == "DW_TAG_typedef"):
+              or t_die.tag == "DW_TAG_enumeration_type"):
             ti = self._resolve_complex_type(t_die)
             stop = True
         else:
@@ -503,7 +555,7 @@ class DWARFTypeResolver:
         return DWARFTypeInfo(name, DWARFTypeInfo.Kind.BASE, size)
 
     def _resolve_ptr_type(self, die):
-        size = extract_at_size(die, None)
+        size = extract_at_size(die, self.ctx.arch_ptr_size)
         return DWARFTypeInfo("*", DWARFTypeInfo.Kind.PTR, size)
 
     def _resolve_qualifier(self, qual, die):
@@ -543,51 +595,54 @@ class DWARFTypeResolver:
         name = f"{ret_type.name}({param_str})"
         return DWARFTypeInfo(name, DWARFTypeInfo.Kind.FN, 0, params=params)
 
+    def _get_type_prefix(self, kind):
+        if kind.is_struct:
+            return ["struct"]
+        elif kind.is_union:
+            return ["union"]
+        elif kind.is_enum:
+            return ["enum"]
+        return []
+
+    def _resolve_typedef(self, die):
+        name = extract_at_name(die)
+        # walk typedefs until we find something
+        tdef_die = die
+        t_die = die.get_DIE_from_attribute("DW_AT_type")
+        while t_die.tag == "DW_TAG_typedef":
+            tdef_die = t_die
+            t_die = t_die.get_DIE_from_attribute("DW_AT_type")
+        # now resolve the block normally
+        chain = []
+        self._do_resolve_die(tdef_die, chain)
+        # TODO should find a better way to handle typedefs so that we can map
+        # the typedef to the DIE subchain
+        chain[0].kind |= DWARFTypeInfo.Kind.TYPEDEF
+        # fixup the name
+        last = chain[-1]
+        if last.kind.holds_ref_info:
+            last.name = name
+        return chain
+
     def _resolve_complex_type(self, die):
         name = extract_at_name(die, "<anon>")
         size = extract_at_size(die)
-        pad = 0
-        if die.tag == "DW_TAG_typedef":
-            target_die = die.get_DIE_from_attribute("DW_AT_type")
-            is_typedef = True
-        else:
-            target_die = die
-            is_typedef = False
 
-        if target_die.tag == "DW_TAG_structure_type":
+        if die.tag == "DW_TAG_structure_type":
             kind = DWARFTypeInfo.Kind.STRUCT
-            pad = self._try_resolve_struct_pad(target_die)
-            name_prefix = "struct"
-        elif target_die.tag == "DW_TAG_union_type":
+        elif die.tag == "DW_TAG_union_type":
             kind = DWARFTypeInfo.Kind.UNION
-            name_prefix = "union"
-        elif target_die.tag == "DW_TAG_enumeration_type":
+        elif die.tag == "DW_TAG_enumeration_type":
             kind = DWARFTypeInfo.Kind.ENUM
-            name_prefix = "enum"
         else:
             assert False, "Not reached"
-        if is_typedef:
-            kind |= DWARFTypeInfo.Kind.TYPEDEF
-        else:
-            name = f"{name_prefix} {name}"
+        name_prefix = self._get_type_prefix(kind)
+        name = " ".join(name_prefix + [name])
 
         ti = DWARFTypeInfo(name, kind, size)
-        ti.pad = pad
         ti.src_file, ti.src_line = extract_at_fileline(die, self.debug_line)
         ti.offset = die.offset
         return ti
-
-    def _try_resolve_struct_pad(self, die):
-        try:
-            sinfo = self.ctx.struct_by_offset[die.offset]
-            return sinfo.members[-1].pad
-        except KeyError:
-            tmp_visitor = StructInfoVisitor(self.visitor, self.ctx)
-            tmp_visitor.visit_unit(self.visitor.current_unit, self.visitor.current_unit.get_top_DIE())
-            tmp_visitor.visit_structure_type(die)
-            # and try again
-            sinfo = self.ctx.struct_by_offset[die.offset]
-            return sinfo.members[-1].pad
 
 
 class DWARFVisitor:
@@ -643,7 +698,6 @@ class StructInfoVisitor(DWARFVisitor):
         members = []
         for child in die.iter_children():
             if child.tag != "DW_TAG_member":
-                self.ctx.logger.debug("traverse struct child %s unhandled", child.tag)
                 continue
             offset = extract_at_int(child, "data_member_location", 0)
             name = extract_at_name(child, f"<anon>.{offset}")
@@ -661,6 +715,7 @@ class StructInfoVisitor(DWARFVisitor):
         members = sorted(members, key=lambda m: m.offset)
         prev_off = extract_at_size(die)
         for m in reversed(members):
+            # XXX this is not reliable, compute padding later?
             m.pad = prev_off - (m.offset + m.size) + m.type_info.pad
             prev_off = m.offset
         return members
@@ -687,6 +742,9 @@ class StructInfoVisitor(DWARFVisitor):
                                   src_line)
             raise
 
+        if len(members) == 0:
+            self.ctx.logger.debug("Struct with no members %s %s:%d", name, src_file, src_line)
+
         is_anon = False
         if name is None:
             # Try to see whether the struct has been typedef'ed
@@ -707,6 +765,10 @@ class StructInfoVisitor(DWARFVisitor):
                              is_anon=is_anon)
         self.ctx.struct_by_key[si.key] = si
         self.ctx.struct_by_offset[die.offset] = si
+        if die.offset in self.ctx.struct_ref_fixup:
+            for cbk in self.ctx.struct_ref_fixup[die.offset]:
+                cbk(si)
+            del self.ctx.struct_ref_fixup[die.offset]
 
     def visit_typedef(self, die):
         """
@@ -740,13 +802,13 @@ class DWARFInfoSource:
     does not support DWARF-5.
     This is part of the main interface exposed to clients of this module.
     """
-    def __init__(self, logger, path: Path):
+    def __init__(self, logger, path: Path, arch_pointer_size: int):
         self.logger = logger
         self.path = path
         self._fd = open(path, "rb")
         self._ef = ELFFile(self._fd)
         self._dw = self._ef.get_dwarf_info()
-        self._ctx = DWARFDataRegistry(self._dw, logger)
+        self._ctx = DWARFDataRegistry(self._dw, logger, arch_pointer_size)
 
     def _handle_die(self, die, visitor):
         if die.tag == "DW_TAG_structure_type":
@@ -787,9 +849,9 @@ class DWARFHelper:
         self.logger = new_logger(f"{benchmark.uuid}.DWARFHelper")
         self.objects = {}
 
-    def register_object(self, obj_key: str, path: Path):
+    def register_object(self, obj_key: str, path: Path, arch_pointer_size=8):
         assert obj_key not in self.objects, "Duplicate DWARF object source"
-        self.objects[obj_key] = DWARFInfoSource(self.logger, path)
+        self.objects[obj_key] = DWARFInfoSource(self.logger, path, arch_pointer_size=arch_pointer_size)
 
     def get_object(self, obj_key: str) -> typing.Optional[DWARFInfoSource]:
         return self.objects.get(obj_key, None)

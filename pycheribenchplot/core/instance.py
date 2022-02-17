@@ -90,6 +90,32 @@ class InstanceConfig(TemplateConfig):
     # Internal fields, should not appear in the config file and are missing by default
     platform_options: typing.Optional[PlatformOptions] = field(default=None, init=False)
 
+    @property
+    def user_pointer_size(self):
+        if (self.cheri_target == InstanceCheriBSD.RISCV64_PURECAP
+                or self.cheri_target == InstanceCheriBSD.MORELLO_PURECAP):
+            return 16
+        elif (self.cheri_target == InstanceCheriBSD.RISCV64_HYBRID
+              or self.cheri_target == InstanceCheriBSD.MORELLO_HYBRID):
+            return 8
+        assert False, "Not reached"
+
+    @property
+    def kernel_pointer_size(self):
+        if (self.cheri_target == InstanceCheriBSD.RISCV64_PURECAP
+                or self.cheri_target == InstanceCheriBSD.MORELLO_PURECAP):
+            if self.kernelabi == InstanceKernelABI.PURECAP:
+                return self.user_pointer_size
+            else:
+                return 8
+        elif (self.cheri_target == InstanceCheriBSD.RISCV64_HYBRID
+              or self.cheri_target == InstanceCheriBSD.MORELLO_HYBRID):
+            if self.kernelabi == InstanceKernelABI.PURECAP:
+                return 16
+            else:
+                return self.user_pointer_size
+        assert False, "Not reached"
+
     def __post_init__(self):
         super().__post_init__()
         if self.name is None:

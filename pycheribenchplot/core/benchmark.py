@@ -558,7 +558,8 @@ class BenchmarkBase(TemplateConfigContext):
             self.logger.warning("Kernel name not found in kernel.<CONF> directories, using the default kernel")
             kernel = self.rootfs / "kernel" / "kernel.full"
         self.sym_resolver.register_sym_source(0, "kernel.full", kernel, shared=True)
-        self.dwarf_helper.register_object("kernel.full", kernel)
+        arch_pointer_size = self.instance_config.kernel_pointer_size
+        self.dwarf_helper.register_object("kernel.full", kernel, arch_pointer_size)
 
     def register_mapped_binary(self, map_addr: int, path: Path):
         """

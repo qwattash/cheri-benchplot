@@ -192,3 +192,64 @@ def test_extract_struct_padding(dwhelper):
     assert x["member_pad"] == 0
     y = bar.xs("y", level="member_name").iloc[0]
     assert y["member_pad"] == 4
+
+
+def test_extract_struct_multi_typedef(dwhelper):
+    dwhelper.register_object("k", "tests/assets/test_dwarf_struct_multi_typedef")
+    dw = dwhelper.get_object("k")
+
+    dw.parse_dwarf()
+    data = dw.get_dwarf_data()
+    df = data.get_struct_info()
+    assert df.index.is_unique
+    assert len(df) == 1
+
+    foo = df.xs("foo", level="name")
+    assert len(foo) == 1
+    x = foo.xs("x", level="member_name").iloc[0]
+    assert x["member_type_name"] == "int"
+    assert x["member_type_kind"].is_ptr == False
+    assert x["member_type_kind"].is_struct == False
+    assert x["member_type_kind"].is_union == False
+    assert x["member_type_kind"].is_typedef == True
+
+
+def test_extract_empty_struct(dwhelper):
+    dwhelper.register_object("k", "tests/assets/test_dwarf_empty_struct")
+    dw = dwhelper.get_object("k")
+
+    dw.parse_dwarf()
+    data = dw.get_dwarf_data()
+    df = data.get_struct_info()
+    assert df.index.is_unique
+    assert len(df) == 3
+
+    bar = df.xs("bar", level="name")
+    assert len(bar) == 1
+    assert bar.index.get_level_values("member_name").isna().all()
+
+
+@pytest.mark.user_config
+@pytest.mark.slow
+def test_extract_kernel_struct(dwhelper, benchplot_user_config):
+    kernel_path = benchplot_user_config.sdk_path / "rootfs-riscv64-purecap/boot/kernel/kernel.full"
+    dwhelper.register_object("k", kernel_path)
+    dw = dwhelper.get_object("k")
+
+    dw.parse_dwarf()
+    data = dw.get_dwarf_data()
+    df = data.get_struct_info(dedup=True)
+    assert df.index.is_unique, df[df.index.duplicated(keep=False)]
+
+
+@pytest.mark.user_config
+@pytest.mark.slow
+def test_extract_nodebug_kernel_struct(dwhelper, benchplot_user_config):
+    kernel_path = benchplot_user_config.sdk_path / "rootfs-riscv64-purecap/boot/kernel.CHERI-QEMU-NODEBUG/kernel.full"
+    dwhelper.register_object("k", kernel_path)
+    dw = dwhelper.get_object("k")
+
+    dw.parse_dwarf()
+    data = dw.get_dwarf_data()
+    df = data.get_struct_info(dedup=True)
+    assert df.index.is_unique, df[df.index.duplicated(keep=False)]
