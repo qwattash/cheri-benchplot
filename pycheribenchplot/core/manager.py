@@ -21,8 +21,6 @@ from .analysis import AnalysisConfig, BenchmarkAnalysisRegistry
 from .benchmark import BenchmarkBase, BenchmarkRunConfig, BenchmarkRunRecord
 from .config import Config, TemplateConfig, TemplateConfigContext, path_field
 from .dataset import DatasetRegistry
-from .excel import SpreadsheetSurface
-from .html import HTMLSurface
 from .instance import InstanceConfig, InstanceManager
 from .util import new_logger
 
@@ -112,19 +110,6 @@ class BenchmarkManager(TemplateConfigContext):
 
     def record_benchmark(self, record: BenchmarkRunRecord):
         self.benchmark_records.records.append(record)
-
-    def get_requested_plot_backends(self):
-        """Return a list of plot surface classes to use for plots"""
-        backends = []
-        for name in self.config.plot_options.backends:
-            if name == "html":
-                backends.append(HTMLSurface)
-            elif name == "excel":
-                backends.append(SpreadsheetSurface)
-            elif name == "matplotlib":
-                raise NotImplementedError("Not yet implemented")
-                # backends.append(MatplotlibSurface)
-        return backends
 
     def _init_session(self):
         """Session-ID dependant initialization"""

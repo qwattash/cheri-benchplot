@@ -8,7 +8,8 @@ from matplotlib import colors as mcolors
 from openpyxl.styles import Border, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from .plot import CellData, DataView, Surface, TableDataView, ViewRenderer
+from .backend import Surface, ViewRenderer
+from .data_view import CellData, DataView, TableDataView
 
 
 class SpreadsheetSurface(Surface):
@@ -28,7 +29,10 @@ class SpreadsheetSurface(Surface):
         return super()._make_draw_context(title, dest, writer=writer, **kwargs)
 
     def _finalize_draw_context(self, ctx):
-        ctx.writer.close()
+        if len(ctx.writer.sheets):
+            ctx.writer.close()
+        else:
+            del ctx.writer
 
     def make_cell(self, **kwargs):
         return SpreadsheetPlotCell(**kwargs)
@@ -41,13 +45,14 @@ class SpreadsheetPlotCell(CellData):
     template if needed.
     """
     def draw(self, ctx: SpreadsheetSurface.DrawContext):
-        if len(self.views) > 1:
-            self.logger.warning("Only a single plot view is supported for each excel surface cell")
-        if len(self.views) == 0:
-            return
-        view = self.views[0]
-        r = self.surface.get_renderer(view)
-        r.render(view, self, self.surface, excel_writer=ctx.writer)
+        for view in self.views:
+            r = self.surface.get_renderer(view)
+            if not r:
+                continue
+            if len(self.views) > 1:
+                self.surface.logger.warning("Only a single plot view is supported for each excel surface cell")
+            r.render(view, self, self.surface, excel_writer=ctx.writer)
+            break
 
 
 class SpreadsheetTableRenderer(ViewRenderer):

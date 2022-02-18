@@ -11,7 +11,8 @@ from matplotlib.figure import Figure
 from matplotlib.patches import Patch
 from pandas.api.types import is_numeric_dtype
 
-from .plot import (BarPlotDataView, CellData, Scale, Style, Surface, ViewRenderer)
+from .backend import Surface, ViewRenderer
+from .data_view import BarPlotDataView, CellData, Scale, Style
 
 
 def build_style_args(style: Style) -> dict:
@@ -464,6 +465,8 @@ class MatplotlibPlotCell(CellData):
         # Render all the views in the cell
         for view in self.views:
             r = self.surface.get_renderer(view)
+            if not r:
+                continue
             r.render(view, self, self.surface, ctx)
         # Always render an horizontal line at origin
         ctx.ax.axhline(0, linestyle="--", linewidth=0.5, color="black")

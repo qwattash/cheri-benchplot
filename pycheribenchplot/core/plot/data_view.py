@@ -2,24 +2,10 @@ import itertools as it
 import typing
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-
-from .analysis import AnalysisConfig, BenchmarkAnalysis
-from .config import Config
-from .dataset import DatasetArtefact
-from .util import new_logger
-
-
-class PlotError(Exception):
-    pass
-
-
-class PlotUnsupportedError(PlotError):
-    pass
 
 
 class LegendInfo:
@@ -145,10 +131,10 @@ class DataView:
     yleft: name of the column(s) to pull left Y-axis values from, if any
     yright: name of the column(s) to pull right Y-axis values from, if any
     """
-    plot: str
     df: pd.DataFrame
     legend_info: LegendInfo = None
     legend_level: str = None
+    key: str = field(init=False)
 
     def __post_init__(self):
         # Make sure that we operate on a fresh dataframe so that renderers can mess
@@ -178,6 +164,9 @@ class TableDataView(DataView):
     depend on the dataframe column index.
     """
     columns: list = field(default_factory=list)
+
+    def __post_init__(self):
+        self.key = "table"
 
 
 @dataclass
@@ -219,6 +208,9 @@ class AALineDataView(DataView):
     horizontal: list[str] = field(default_factory=list)
     vertical: list[str] = field(default_factory=list)
     style: Style = field(default_factory=Style)
+
+    def __post_init__(self):
+        self.key = "axline"
 
 
 @dataclass
@@ -275,6 +267,9 @@ class BarPlotDataView(XYPlotDataView):
     bar_group_location: str = "center"
     bar_width: float = 0.8
 
+    def __post_init__(self):
+        self.key = "bar"
+
 
 @dataclass
 class HistPlotDataView(XYPlotDataView):
@@ -288,6 +283,9 @@ class HistPlotDataView(XYPlotDataView):
     """
     buckets: list[float] = field(default_factory=list)
     bucket_group: str = None
+
+    def __post_init__(self):
+        self.key = "hist"
 
 
 @dataclass
@@ -378,281 +376,3 @@ class CellData:
 
     def draw(self, ctx: "Surface.DrawContext"):
         pass
-
-
-class ViewRenderer(ABC):
-    """
-    Base class that renders plots.
-    This must be specialized for each supported plot type by each surface
-    """
-    @abstractmethod
-    def render(self, view: DataView, cell: CellData, surface: "Surface", **kwargs):
-        ...
-
-
-class GridLayout:
-    """
-    Base class abstracting the layout of a plot surface.
-    This manages the indexing of the plot cells and holds the
-    data that is to be rendered at a given position.
-    Some surfaces may not support some layouts and instead flatten the layout.
-    """
-    def __init__(self, nrows, ncols):
-        self._layout = np.full([nrows, ncols], None)
-
-    @property
-    def shape(self):
-        return self._layout.shape
-
-    def __iter__(self):
-        # r, c = np.meshgrid(self._layout.shape)
-        # rc = np.dstack([r.ravel(), c.ravel()])
-        for row in self._layout:
-            yield row
-
-    def next_cell(self) -> typing.Optional[np.ndarray]:
-        """Find next empty position"""
-        for i, stride in enumerate(self._layout):
-            for j, cell in enumerate(stride):
-                if cell is None:
-                    return np.array((i, j))
-        return None
-
-    def set_cell(self, row: int, col: int, cell: CellData):
-        self._layout[(row, col)] = cell
-
-
-class ColumnLayout(GridLayout):
-    def __init__(self, nrows):
-        super().__init__(nrows, 1)
-
-
-class RowLayout(GridLayout):
-    def __init__(self, ncols):
-        super().__init__(1, ncols)
-
-
-class Surface(ABC):
-    """
-    The surface manages the plot rendering.
-    Each surface has a configured layout to manage subplot axes.
-    Each plot rendering is wrapped by a Cell, which represents a set of subplot axes.
-    Each cell can display multiple views that wrap a plot rendering method.
-    """
-    @dataclass
-    class DrawContext:
-        title: str
-        dest: Path
-        row: int
-        col: int
-
-    def __init__(self):
-        self.logger = new_logger(str(self))
-        self._layout = None
-        self._renderers = {}
-        self.config = AnalysisConfig()
-
-    def set_layout(self, layout: GridLayout):
-        """
-        Set the layout to use for the surface.
-        Note: this must be called before any cell is added to the surface.
-        """
-        self._layout = layout
-
-    def set_config(self, config: AnalysisConfig):
-        self.config = config
-
-    def next_cell(self, cell: CellData):
-        """
-        Add the given cell to the next position available in the layout.
-        """
-        i, j = self._layout.next_cell()
-        cell.set_surface(self)
-        self._layout.set_cell(i, j, cell)
-
-    def set_cell(self, row: int, col: int, cell: CellData):
-        """
-        Set the given data to plot on a cell
-        """
-        cell.set_surface(self)
-        self._layout.set_cell(row, col, cell)
-
-    @abstractmethod
-    def make_cell(self, **kwargs) -> CellData:
-        """Cell factory function"""
-        ...
-
-    def _make_draw_context(self, title, dest, **kwargs):
-        return self.DrawContext(title, dest, row=0, col=0, **kwargs)
-
-    def _finalize_draw_context(self, ctx):
-        pass
-
-    def get_renderer(self, data_view: DataView) -> ViewRenderer:
-        try:
-            return self._renderers[data_view.plot]()
-        except KeyError:
-            raise PlotUnsupportedError(f"Plot type {data_view.plot} not supported by {self}")
-
-    def _draw_cell(cell, ctx):
-        cell.validate()
-        cell.draw(ctx)
-
-    def _draw_split(self, title, dest):
-        base = dest.parent / "split"
-        base.mkdir(exist_ok=True)
-        stem = dest.stem
-
-        for ri, row in enumerate(self._layout):
-            for ci, cell in enumerate(row):
-                cell_dest = base / dest.with_stem(f"{stem}-{ri}-{ci}").name
-                ctx = self._make_draw_context(title, cell_dest)
-                ctx.row = 0
-                ctx.col = 0
-                try:
-                    cell.validate()
-                    cell.draw(ctx)
-                finally:
-                    self._finalize_draw_context(ctx)
-
-    def _draw_combined(self, title, dest):
-        ctx = self._make_draw_context(title, dest)
-        try:
-            for ri, row in enumerate(self._layout):
-                for ci, cell in enumerate(row):
-                    ctx.row = ri
-                    ctx.col = ci
-                    cell.validate()
-                    cell.draw(ctx)
-        finally:
-            self._finalize_draw_context(ctx)
-
-    def draw(self, title: str, dest: Path):
-        """Draw all the registered views into the surface."""
-        self.logger.debug("Drawing...")
-
-        if self.config.split_subplots:
-            self._draw_split(title, dest)
-        else:
-            self._draw_combined(title, dest)
-
-    def __str__(self):
-        return self.__class__.__name__
-
-
-class BenchmarkPlot(BenchmarkAnalysis):
-    """
-    Base class for handling all plots.
-    This class is associated to a plot surface that is responsible for organising
-    the layout of subplots.
-    Subplots are then added to the layout if the benchmark supports the required
-    datasets for the subplot.
-    """
-
-    # List of subplot classes that we attempt to draw
-    subplots = []
-
-    @classmethod
-    def check_required_datasets(cls, dsets: list[DatasetArtefact]):
-        """
-        Check if any of the subplots we have can be generated
-        """
-        dset_avail = set(dsets)
-        for plot_klass in cls.subplots:
-            dset_req = set(plot_klass.get_required_datasets())
-            if dset_req.issubset(dset_avail):
-                return True
-        return False
-
-    def __init__(self, benchmark: "BenchmarkBase", surfaces: list[Surface]):
-        super().__init__(benchmark)
-        assert len(surfaces), "Empty plot surface list"
-        self.surfaces = surfaces
-        self.logger = new_logger(self.get_plot_name(), benchmark.logger)
-        self.active_subplots = self._make_subplots()
-
-    def get_plot_name(self):
-        """
-        Main title for the plot.
-        """
-        return self.__class__.__name__
-
-    def get_plot_file(self):
-        """
-        Generate output file for the plot.
-        Note that the filename should not have an extension as the surface will
-        append it later.
-        """
-        return self.benchmark.manager.plot_ouput_path / self.__class__.__name__
-
-    def _make_subplots(self) -> list["BenchmarkSubPlot"]:
-        """
-        By default, we create one instance for each subplot class listed in the class
-        """
-        dset_avail = set(self.benchmark.datasets.keys())
-        active_subplots = []
-        for plot_klass in self.subplots:
-            dset_req = set(plot_klass.get_required_datasets())
-            if dset_req.issubset(dset_avail):
-                active_subplots.append(plot_klass(self))
-        return active_subplots
-
-    def _setup_surface(self, surface: Surface):
-        """
-        Setup drawing surface layout and other parameters.
-        """
-        surface.set_layout(ColumnLayout(len(self.active_subplots)))
-        surface.set_config(self.config)
-
-    def _process_surface(self, surface: Surface):
-        """
-        Add data views to the given surface and draw it.
-        """
-        self.logger.info("Setup plot on %s", surface)
-        self._setup_surface(surface)
-        for plot in self.active_subplots:
-            cell = surface.make_cell(title=plot.get_cell_title())
-            plot.generate(surface, cell)
-            surface.next_cell(cell)
-        self.logger.debug("Drawing plot '%s'", self.get_plot_name())
-        surface.draw(self.get_plot_name(), self.get_plot_file())
-
-    def process_datasets(self):
-        for surface in self.surfaces:
-            self._process_surface(surface)
-
-
-class BenchmarkSubPlot(ABC):
-    """
-    A subplot is responsible for generating the data view for a cell of
-    the plot surface layout.
-    """
-    @classmethod
-    def get_required_datasets(cls):
-        return []
-
-    def __init__(self, plot: BenchmarkPlot):
-        self.plot = plot
-        self.logger = plot.logger
-        self.benchmark = self.plot.benchmark
-
-    def get_dataset(self, dset_id: DatasetArtefact):
-        """Helper to access datasets in the benchmark"""
-        dset = self.plot.get_dataset(dset_id)
-        assert dset is not None, "Subplot scheduled with missing dependency"
-        return dset
-
-    def build_legend_by_dataset(self):
-        """
-        Build a legend map that allocates colors and labels to the datasets merged
-        in the current benchmark instance.
-        """
-        legend = {uuid: str(bench.instance_config.name) for uuid, bench in self.benchmark.merged_benchmarks.items()}
-        legend[self.benchmark.uuid] = f"{self.benchmark.instance_config.name}(*)"
-        legend_info = LegendInfo(legend.keys(), labels=legend.values())
-        return legend_info
-
-    @abstractmethod
-    def generate(self, surface: Surface, cell: CellData):
-        """Generate data views to plot for a given cell"""
-        ...

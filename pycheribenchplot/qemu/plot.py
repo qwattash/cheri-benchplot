@@ -2,9 +2,7 @@ import numpy as np
 import pandas as pd
 
 from ..core.dataset import (DatasetName, check_multi_index_aligned, pivot_multi_index_level)
-from ..core.excel import SpreadsheetSurface
-from ..core.html import HTMLSurface
-from ..core.plot import (BenchmarkPlot, BenchmarkSubPlot, CellData, LegendInfo, Surface, TableDataView)
+from ..core.plot import (BenchmarkPlot, BenchmarkSubPlot, CellData, LegendInfo, TableDataView)
 
 
 class QEMUHistSubPlot(BenchmarkSubPlot):
@@ -83,7 +81,7 @@ class QEMUHistTable(QEMUHistSubPlot):
         new_map = LegendInfo(df.columns, colors=pivot_colors, labels=pivot_labels)
         return new_map
 
-    def generate(self, surface: Surface, cell: CellData):
+    def generate(self, surface, cell):
         df = self._get_filtered_df()
         if not check_multi_index_aligned(df, "__dataset_id"):
             self.logger.error("Unaligned index, skipping plot")
@@ -108,7 +106,7 @@ class QEMUHistTable(QEMUHistSubPlot):
         pivot_legend_info = self._get_pivot_legend_info(view_df, legend_info)
         assert cell.legend_info is None
         cell.legend_info = pivot_legend_info
-        view = TableDataView("table", view_df, columns=show_cols)
+        view = TableDataView(view_df, columns=show_cols)
         cell.add_view(view)
 
 
@@ -142,9 +140,6 @@ class QEMUTables(BenchmarkPlot):
         """
         required = set([DatasetName.QEMU_STATS_BB_HIST, DatasetName.QEMU_STATS_CALL_HIST])
         return required.issubset(set(dsets))
-
-    def __init__(self, benchmark):
-        super().__init__(benchmark, [HTMLSurface(), SpreadsheetSurface()])
 
     def _make_subplots(self):
         """

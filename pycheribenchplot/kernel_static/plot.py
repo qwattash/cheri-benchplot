@@ -2,8 +2,6 @@ import numpy as np
 import pandas as pd
 
 from ..core.dataset import (DatasetName, index_where, pivot_multi_index_level, stacked_histogram)
-from ..core.excel import SpreadsheetSurface
-from ..core.matplotlib import MatplotlibSurface
 from ..core.plot import (AALineDataView, BarPlotDataView, BenchmarkPlot, BenchmarkSubPlot, HistPlotDataView, LegendInfo,
                          Scale, TableDataView)
 
@@ -52,7 +50,7 @@ class SetBoundsSimpleDistribution(SetBoundsDistribution):
         buckets = [2**i for i in log_buckets]
 
         # Build histograms for each dataset
-        view = HistPlotDataView("hist", df, x="size", buckets=buckets, bucket_group="__dataset_id")
+        view = HistPlotDataView(df, x="size", buckets=buckets, bucket_group="__dataset_id")
         cell.legend_info = self.get_legend_info()
         cell.x_ticks = buckets
         cell.x_config.label = "Bounds size (bytes)"
@@ -110,12 +108,7 @@ class KernelBoundsDistributionByKind(SetBoundsDistribution):
         # Build the stacked histogram dataframe
         hist_df = stacked_histogram(df, group="__dataset_id", stack="kind", data_col="size", bins=buckets)
 
-        view = BarPlotDataView("bar",
-                               hist_df,
-                               x="bin_start",
-                               yleft="count",
-                               bar_group="__dataset_id",
-                               stack_group="kind")
+        view = BarPlotDataView(hist_df, x="bin_start", yleft="count", bar_group="__dataset_id", stack_group="kind")
 
         # Build histograms for each dataset
         cell.legend_info = self.get_kind_legend_info()
@@ -196,12 +189,12 @@ class KernelStructSizeHist(KernelStructStatsPlot):
         buckets = self.build_buckets(df)
 
         # Build histogram
-        view = HistPlotDataView("hist", df, x=hcol, buckets=buckets, bucket_group="__dataset_id")
+        view = HistPlotDataView(df, x=hcol, buckets=buckets, bucket_group="__dataset_id")
         cell.add_view(view)
 
         # Add help lines for the median struct size
         line_cols = [hcol + ("median", )]
-        view = AALineDataView("axline", agg_df, vertical=line_cols)
+        view = AALineDataView(agg_df, vertical=line_cols)
         view.style.line_style = "dashed"
         view.legend_info = self.get_median_line_legend()
         view.legend_level = "__dataset_id"
@@ -303,15 +296,10 @@ class KernelStructSizeLargeOverhead(KernelStructStatsPlot):
         # Get range high 10%
         high_thresh = df[col].quantile(0.9)
         cond = (df[col] >= high_thresh)
-        high_df = df[cond].droplevel("__iteration")
+        high_df = df[cond]
+        if "__iteration" in df.index.names:
+            high_df = high_df.droplevel("__iteration")
         assert high_df.index.is_unique, "Non unique index?"
-
-        # Fixup the name index for the table for anon structures
-        desc = high_df[("desc", "sample")]
-        # For some reason boolean index levels end up being obj instead of bool...
-        anon = high_df.index.get_level_values("is_anon").values.astype(bool)
-        high_df = index_where(high_df, "name", ~anon, desc)
-        assert not high_df.index.get_level_values("name").isna().any(), "NaN names"
 
         legend_info = self.get_legend_info()
         # Currently only use the legend_info to map labels to __dataset_id
@@ -330,7 +318,7 @@ class KernelStructSizeLargeOverhead(KernelStructStatsPlot):
 
         show_cols = show_df.columns.get_level_values("metric").isin(self.struct_stat.data_columns())
         col_idx = show_df.columns[show_cols]
-        view = TableDataView("table", show_df, columns=col_idx)
+        view = TableDataView(show_df, columns=col_idx)
         cell.add_view(view)
 
 
@@ -383,9 +371,6 @@ class KernelStaticInfoTables(BenchmarkPlot):
         KernelStructSizeLargeRelOverhead,
         KernelStructSizeLargeAbsOverhead,
     ]
-
-    def __init__(self, benchmark):
-        super().__init__(benchmark, [SpreadsheetSurface()])
 
     def get_plot_name(self):
         return "Kernel compile-time detailed stats"

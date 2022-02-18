@@ -2,11 +2,8 @@ import numpy as np
 import pandas as pd
 
 from ..core.dataset import (DatasetName, check_multi_index_aligned, pivot_multi_index_level)
-from ..core.excel import SpreadsheetSurface
-from ..core.html import HTMLSurface
-from ..core.matplotlib import MatplotlibSurface
 from ..core.plot import (AALineDataView, BarPlotDataView, BenchmarkPlot, BenchmarkSubPlot, CellData, LegendInfo,
-                         Surface, TableDataView)
+                         TableDataView)
 
 
 class VMStatTable(BenchmarkSubPlot):
@@ -47,7 +44,7 @@ class VMStatTable(BenchmarkSubPlot):
         new_map = LegendInfo(df.columns, colors=pivot_colors, labels=pivot_labels)
         return new_map
 
-    def generate(self, surface: Surface, cell: CellData):
+    def generate(self, surface: "Surface", cell: CellData):
         df = self._get_vmstat_dataset()
         if not check_multi_index_aligned(df, "__dataset_id"):
             self.logger.error("Unaligned index, skipping plot")
@@ -65,7 +62,7 @@ class VMStatTable(BenchmarkSubPlot):
         pivot_legend_info = self._get_pivot_legend_info(view_df, legend_info)
         assert cell.legend_info is None
         cell.legend_info = pivot_legend_info
-        view = TableDataView("table", view_df, columns=show_cols)
+        view = TableDataView(view_df, columns=show_cols)
         cell.add_view(view)
 
 
@@ -149,9 +146,6 @@ class VMStatTables(BenchmarkPlot):
         VMStatUMATable,
     ]
 
-    def __init__(self, benchmark):
-        super().__init__(benchmark, [HTMLSurface(), SpreadsheetSurface()])
-
     def get_plot_name(self):
         return "VMStat Tables"
 
@@ -218,14 +212,14 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
         df_sel[rel_col] *= 100
         df_sel["x"] = range(len(df_sel))
 
-        view = BarPlotDataView("bar", df_sel, x="x", yleft=delta_col, yright=rel_col)
+        view = BarPlotDataView(df_sel, x="x", yleft=delta_col, yright=rel_col)
         view.legend_info = self.get_legend_info()
         view.legend_level = "__dataset_id"
         cell.add_view(view)
 
         # Add a line for the y
         df_line = df[["abs_delta"]].abs().median()
-        view = AALineDataView("axline", df_line, horizontal=["abs_delta"])
+        view = AALineDataView(df_line, horizontal=["abs_delta"])
         view.style.line_style = "dashed"
         view.style.line_width = 0.5
         view.legend_info = LegendInfo(["abs_delta"],
@@ -254,9 +248,6 @@ class VMStatDistribution(BenchmarkPlot):
         """
         required = set([DatasetName.VMSTAT_UMA, DatasetName.VMSTAT_UMA_INFO])
         return required.issubset(set(dsets))
-
-    def __init__(self, benchmark):
-        super().__init__(benchmark, [MatplotlibSurface()])
 
     def _make_subplots(self):
         subplots = []

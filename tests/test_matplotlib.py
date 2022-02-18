@@ -2,8 +2,9 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import pytest
 
-from pycheribenchplot.core.matplotlib import (BarRenderer, MatplotlibPlotCell, MatplotlibSurface, align_y_at)
-from pycheribenchplot.core.plot import BarPlotDataView, GridLayout
+from pycheribenchplot.core.plot.matplotlib import (BarRenderer, MatplotlibPlotCell, MatplotlibSurface, align_y_at)
+from pycheribenchplot.core.plot.backend import GridLayout
+from pycheribenchplot.core.plot import BarPlotDataView
 
 
 @pytest.fixture
