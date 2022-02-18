@@ -287,11 +287,12 @@ class DWARFStructInfo:
 
     def to_frame(self):
         records = [m.to_frame_record() for m in self.members]
-        if records:
-            df = pd.DataFrame.from_records(records)
-        else:
-            # Add a single dummy column with no member name
-            df = pd.DataFrame({"name": np.nan, "offset": np.nan, "size": 0, "pad": 0}, index=[0])
+        if not records:
+            # Add a single dummy row with no member name
+            empty_record = {"name": np.nan, "offset": np.nan, "size": 0, "pad": 0}
+            empty_record.update(DWARFTypeInfo().to_frame_record())
+            records = [empty_record]
+        df = pd.DataFrame.from_records(records)
         df = df.add_prefix("member_")
         df["name"] = self.name
         df["size"] = self.size
@@ -364,108 +365,34 @@ class DWARFTypeDef:
 @dataclass
 class DWARFTypeInfo:
     """
-    Helper to hold information about a type.
-    Note that this is used both to represent type components in the resolver chain
-    and the resolved type.
+    New class for holding type information
     """
-    class Kind(Flag):
-        BASE = auto()
-        QUAL = auto()
-        PTR = auto()
-        ARRAY = auto()
-        FN = auto()
-        TYPEDEF = auto()
-        STRUCT = auto()
-        UNION = auto()
-        ENUM = auto()
-
-        @property
-        def holds_ref_info(self):
-            return bool(self & (self.STRUCT | self.UNION | self.ENUM))
-
-        @property
-        def is_ptr(self):
-            return bool(self & self.PTR)
-
-        @property
-        def is_array(self):
-            return bool(self & self.ARRAY)
-
-        @property
-        def is_fn(self):
-            return bool(self & self.FN)
-
-        @property
-        def is_enum(self):
-            return bool(self & self.ENUM)
-
-        @property
-        def is_union(self):
-            return bool(self & self.UNION)
-
-        @property
-        def is_struct(self):
-            return bool(self & self.STRUCT)
-
-        @property
-        def is_typedef(self):
-            return bool(self & self.TYPEDEF)
-
-    name: str
-    kind: "DWARFTypeInfo.Kind"
-    # Note: size is reused for array count
-    size: int
-    # Note: may avoid this waste of space if we used an union type or
-    # subclasses but it makes the code harder to read.
-    offset: int = None
+    base_name: str = "<invalid>"
+    name: str = ""
+    size: int = 0
+    # typedef name
+    alias_name: str = None
+    # Where it is defined
     src_file: Path = None
     src_line: int = None
+    # Trailing internal padding, if applicable
     pad: int = 0
+    # DIE offset for reference XXX may omit
+    offset: int = None
+    # Function parameters may be useless to keep
     params: list = None
+    # Flags
+    is_typedef: bool = False
+    is_ptr: bool = False
+    is_struct: bool = False
+    is_union: bool = False
+    is_enum: bool = False
+    is_const: bool = False
+    is_volatile: bool = False
 
     def to_frame_record(self):
-        record = {
-            "type_name": self.name,
-            "type_kind": self.kind,
-            "type_size": self.size,
-            "type_pad": self.pad,
-        }
-        if self.kind.holds_ref_info:
-            record["type_ref_offset"] = self.offset
-            record["type_src_file"] = self.src_file
-            record["type_src_line"] = self.src_line
-        if self.kind.is_fn:
-            record["type_fn_params"] = self.params
+        record = {f"type_{k}": v for k, v in self.__dict__.items()}
         return record
-
-    def join(self, ti):
-        """
-        Combine two type information. This is expected to be called in
-        reverse order in the type chain.
-        E.g. [<ptr>, <char>] should call <char> + <ptr> and accumulate on
-        the lhs.
-        """
-        new_ti = replace(self)
-        new_ti.name = f"{self.name} {ti.name}"
-        if ti.kind.is_array:
-            # combine array kind with whatever was before (e.g. array of BASE)
-            new_ti.kind |= ti.kind
-            if ti.size:
-                new_ti.size = self.size * ti.size
-        elif ti.kind.is_ptr:
-            # reset kind and size as this is now a pointer object
-            new_ti.kind = ti.kind
-            new_ti.size = ti.size
-        elif ti.kind.holds_ref_info:
-            # this should not really occur as this is a leaf type of any chain
-            raise ValueError("Unexpected join of leaf element")
-        elif ti.kind.is_fn:
-            # this should not really occur as this is a leaf type of any chain
-            raise ValueError("Unexpected join of leaf element")
-        elif ti.name is not None:
-            # combine qualifier and other kinds kinds
-            new_ti.kind |= ti.kind
-        return new_ti
 
 
 class DWARFTypeResolver:
@@ -483,15 +410,35 @@ class DWARFTypeResolver:
 
     def resolve_die(self, die) -> DWARFTypeInfo:
         chain = []
-        self._do_resolve_die(die, chain)
-        # Now produce a type info descriptor
+        self._follow_die_chain(die, chain)
         assert len(chain) > 0, "DIE resolved to nothing"
-        ti = chain[-1]
-        for sub_ti in reversed(chain[0:-1]):
-            ti = ti.join(sub_ti)
-        if ti.kind.is_struct:
+        # Now traverse the chain in reverse and fill the type info
+        ti = DWARFTypeInfo()
+        for die in reversed(chain):
+            self._do_resolve_die(ti, die)
+        if ti.is_struct:
             self._try_resolve_struct_pad(ti)
         return ti
+
+    def _follow_die_chain(self, die, chain):
+        try:
+            t_die = die.get_DIE_from_attribute("DW_AT_type")
+        except KeyError:
+            # signal void
+            chain.append(None)
+            return
+
+        chain.append(t_die)
+        if (t_die.tag == "DW_TAG_base_type" or t_die.tag == "DW_TAG_subroutine_type"
+                or t_die.tag == "DW_TAG_structure_type" or t_die.tag == "DW_TAG_union_type"
+                or t_die.tag == "DW_TAG_enumeration_type"):
+            return
+        elif (t_die.tag == "DW_TAG_pointer_type" or t_die.tag == "DW_TAG_const_type"
+              or t_die.tag == "DW_TAG_volatile_type" or t_die.tag == "DW_TAG_array_type"
+              or t_die.tag == "DW_TAG_typedef"):
+            self._follow_die_chain(t_die, chain)
+        else:
+            raise ValueError("Type resolver did not handle %s", t_die.tag)
 
     def _try_resolve_struct_pad(self, ti):
         """
@@ -512,56 +459,53 @@ class DWARFTypeResolver:
 
             self.ctx.struct_ref_fixup[ti.offset].append(callback)
 
-    def _do_resolve_die(self, die, chain):
-        try:
-            t_die = die.get_DIE_from_attribute("DW_AT_type")
-        except KeyError:
-            ti = DWARFTypeInfo("void", DWARFTypeInfo.Kind.BASE, 0)
-            chain.append(ti)
+    def _do_resolve_die(self, ti, die):
+        if die is None:
+            ti.base_name = "void"
+            ti.name = "void"
             return
-
-        stop = False
-        if t_die.tag == "DW_TAG_base_type":
-            ti = self._resolve_base_type(t_die)
-            stop = True
-        elif t_die.tag == "DW_TAG_pointer_type":
-            ti = self._resolve_ptr_type(t_die)
-        elif t_die.tag == "DW_TAG_const_type":
-            ti = self._resolve_qualifier("const", t_die)
-        elif t_die.tag == "DW_TAG_volatile_type":
-            ti = self._resolve_qualifier("volatile", t_die)
-        elif t_die.tag == "DW_TAG_array_type":
-            ti = self._resolve_array_type(t_die)
-        elif t_die.tag == "DW_TAG_subroutine_type":
-            ti = self._resolve_fn_type(t_die)
-            stop = True
-        elif t_die.tag == "DW_TAG_typedef":
-            subchain = self._resolve_typedef(t_die)
-            chain.extend(subchain)
-            return
-        elif (t_die.tag == "DW_TAG_structure_type" or t_die.tag == "DW_TAG_union_type"
-              or t_die.tag == "DW_TAG_enumeration_type"):
-            ti = self._resolve_complex_type(t_die)
-            stop = True
+        if die.tag == "DW_TAG_base_type":
+            self._resolve_base_type(ti, die)
+        elif die.tag == "DW_TAG_pointer_type":
+            self._resolve_ptr_type(ti, die)
+        elif die.tag == "DW_TAG_const_type":
+            self._resolve_qualifier("const", ti, die)
+        elif die.tag == "DW_TAG_volatile_type":
+            self._resolve_qualifier("volatile", ti, die)
+        elif die.tag == "DW_TAG_array_type":
+            self._resolve_array_type(ti, die)
+        elif die.tag == "DW_TAG_subroutine_type":
+            self._resolve_fn_type(ti, die)
+        elif die.tag == "DW_TAG_typedef":
+            self._resolve_typedef(ti, die)
+        elif (die.tag == "DW_TAG_structure_type" or die.tag == "DW_TAG_union_type"
+              or die.tag == "DW_TAG_enumeration_type"):
+            self._resolve_complex_type(ti, die)
         else:
-            raise ValueError("Type resolver did not handle %s", t_die.tag)
-        chain.append(ti)
-        if not stop:
-            self._do_resolve_die(t_die, chain)
+            raise ValueError("Type resolver did not handle %s", die.tag)
 
-    def _resolve_base_type(self, die):
+    def _resolve_base_type(self, ti, die):
         name = extract_at_name(die)
         size = extract_at_size(die, None)
-        return DWARFTypeInfo(name, DWARFTypeInfo.Kind.BASE, size)
+        assert size is not None, "No size for base type"
+        ti.base_name = name
+        ti.name = name
+        ti.size = size
 
-    def _resolve_ptr_type(self, die):
+    def _resolve_ptr_type(self, ti, die):
         size = extract_at_size(die, self.ctx.arch_ptr_size)
-        return DWARFTypeInfo("*", DWARFTypeInfo.Kind.PTR, size)
+        ti.name = ti.name + " *"
+        ti.is_ptr = True
+        ti.size = size
 
-    def _resolve_qualifier(self, qual, die):
-        return DWARFTypeInfo(qual, DWARFTypeInfo.Kind.QUAL, 0)
+    def _resolve_qualifier(self, qual, ti, die):
+        ti.name = ti.name + f" {qual}"
+        if qual == "volatile":
+            ti.is_volatile = True
+        elif qual == "const":
+            ti.is_const = True
 
-    def _resolve_array_type(self, die):
+    def _resolve_array_type(self, ti, die):
         s_die = None
         for child in die.iter_children():
             if child.tag == "DW_TAG_subrange_type":
@@ -581,10 +525,12 @@ class DWARFTypeResolver:
         else:
             nitems = None
         size_str = nitems or ""
-        name = f"[{size_str}]"
-        return DWARFTypeInfo(name, DWARFTypeInfo.Kind.ARRAY, nitems)
 
-    def _resolve_fn_type(self, die):
+        ti.name = ti.name + f" [{size_str}]"
+        if nitems:
+            ti.size = ti.size * nitems
+
+    def _resolve_fn_type(self, ti, die):
         ret_type = self.resolve_die(die)
         params = [ret_type]
         for child in die.iter_children():
@@ -592,57 +538,39 @@ class DWARFTypeResolver:
                 param_type = self.resolve_die(child)
                 params.append(param_type)
         param_str = ",".join(map(lambda p: p.name, params[1:]))
-        name = f"{ret_type.name}({param_str})"
-        return DWARFTypeInfo(name, DWARFTypeInfo.Kind.FN, 0, params=params)
 
-    def _get_type_prefix(self, kind):
-        if kind.is_struct:
-            return ["struct"]
-        elif kind.is_union:
-            return ["union"]
-        elif kind.is_enum:
-            return ["enum"]
-        return []
+        ti.name = f"{ret_type.name}({param_str})" + ti.name
+        ti.size = 0
 
-    def _resolve_typedef(self, die):
+    def _resolve_typedef(self, ti, die):
         name = extract_at_name(die)
-        # walk typedefs until we find something
-        tdef_die = die
-        t_die = die.get_DIE_from_attribute("DW_AT_type")
-        while t_die.tag == "DW_TAG_typedef":
-            tdef_die = t_die
-            t_die = t_die.get_DIE_from_attribute("DW_AT_type")
-        # now resolve the block normally
-        chain = []
-        self._do_resolve_die(tdef_die, chain)
-        # TODO should find a better way to handle typedefs so that we can map
-        # the typedef to the DIE subchain
-        chain[0].kind |= DWARFTypeInfo.Kind.TYPEDEF
-        # fixup the name
-        last = chain[-1]
-        if last.kind.holds_ref_info:
-            last.name = name
-        return chain
+        if not ti.is_typedef:
+            # update alias name
+            ti.alias_name = ti.name + (ti.alias_name or "")
+        ti.is_typedef = True
+        ti.name = name
 
-    def _resolve_complex_type(self, die):
+    def _resolve_complex_type(self, ti, die):
         name = extract_at_name(die, "<anon>")
         size = extract_at_size(die)
 
         if die.tag == "DW_TAG_structure_type":
-            kind = DWARFTypeInfo.Kind.STRUCT
+            ti.is_struct = True
+            name_prefix = "struct"
         elif die.tag == "DW_TAG_union_type":
-            kind = DWARFTypeInfo.Kind.UNION
+            ti.is_union = True
+            name_prefix = "union"
         elif die.tag == "DW_TAG_enumeration_type":
-            kind = DWARFTypeInfo.Kind.ENUM
+            ti.is_enum = True
+            name_prefix = "enum"
         else:
             assert False, "Not reached"
-        name_prefix = self._get_type_prefix(kind)
-        name = " ".join(name_prefix + [name])
-
-        ti = DWARFTypeInfo(name, kind, size)
+        name = f"{name_prefix} {name}"
+        ti.size = size
+        ti.base_name = name
+        ti.name = name
         ti.src_file, ti.src_line = extract_at_fileline(die, self.debug_line)
         ti.offset = die.offset
-        return ti
 
 
 class DWARFVisitor:
@@ -808,6 +736,7 @@ class DWARFInfoSource:
         self._fd = open(path, "rb")
         self._ef = ELFFile(self._fd)
         self._dw = self._ef.get_dwarf_info()
+        self._arch_pointer_size = arch_pointer_size
         self._ctx = DWARFDataRegistry(self._dw, logger, arch_pointer_size)
 
     def _handle_die(self, die, visitor):
