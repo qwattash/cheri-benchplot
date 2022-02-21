@@ -2,8 +2,8 @@ import numpy as np
 import pandas as pd
 
 from ..core.dataset import (DatasetName, check_multi_index_aligned, pivot_multi_index_level)
-from ..core.plot import (AALineDataView, BarPlotDataView, BenchmarkPlot, BenchmarkSubPlot, CellData, LegendInfo,
-                         TableDataView)
+from ..core.plot import (AALineDataView, BarPlotDataView, BenchmarkPlot, BenchmarkSubPlot, BenchmarkTable, CellData,
+                         LegendInfo, TableDataView)
 
 
 class VMStatTable(BenchmarkSubPlot):
@@ -137,7 +137,7 @@ class VMStatUMATable(VMStatTable):
             return self.uma_stats.agg_df.copy()
 
 
-class VMStatTables(BenchmarkPlot):
+class VMStatTables(BenchmarkTable):
     """
     Show vmstat datasets as tabular output for inspection.
     """

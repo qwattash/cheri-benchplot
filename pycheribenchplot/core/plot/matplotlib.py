@@ -225,6 +225,7 @@ class BarRenderer(ViewRenderer):
 
         # transform back the offsets, as usual we need to add an extra useless dimension
         # and drop it later
+        # XXX we have to take into account the axis (0, 0) for the position matrix, maybe?
         position_matrix = np.apply_along_axis(transform_inv_helper, 1, tx_position_matrix)
         assert position_matrix.shape == tx_position_matrix.shape
         bar_start = np.apply_along_axis(transform_inv_helper, 1, tx_bar_start)
@@ -295,14 +296,14 @@ class BarRenderer(ViewRenderer):
             r_label = legend_info.label(legend_key, axis="right")
 
             if view.has_yleft:
-                values = view.get_col(view.yleft, chunk)
+                values = view.get_col(view.yleft, chunk).squeeze()
                 x = view.get_col("__bar_x_left", chunk)
                 base = view.get_col("__bar_y_left_base", chunk)
                 width = view.get_col("__bar_width_left", chunk)
                 patches = ctx.ax.bar(x, height=values, bottom=base, color=l_color, width=width)
                 ctx.legend.set_item(l_label, patches)
             if view.has_yright:
-                values = view.get_col(view.yright, chunk)
+                values = view.get_col(view.yright, chunk).squeeze()
                 x = view.get_col("__bar_x_right", chunk)
                 base = view.get_col("__bar_y_right_base", chunk)
                 width = view.get_col("__bar_width_right", chunk)

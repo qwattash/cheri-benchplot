@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 from ..core.dataset import (DatasetName, check_multi_index_aligned, pivot_multi_index_level)
-from ..core.plot import (BenchmarkPlot, BenchmarkSubPlot, CellData, LegendInfo, TableDataView)
+from ..core.plot import (BenchmarkSubPlot, BenchmarkTable, CellData, LegendInfo, TableDataView)
 
 
 class QEMUHistSubPlot(BenchmarkSubPlot):
@@ -111,7 +111,7 @@ class QEMUHistTable(QEMUHistSubPlot):
 
 
 class QEMUContextHistTable(QEMUHistTable):
-    def __init__(self, plot: BenchmarkPlot, context_procname: str):
+    def __init__(self, plot, context_procname: str):
         super().__init__(plot)
         self.process = context_procname
 
@@ -125,7 +125,7 @@ class QEMUContextHistTable(QEMUHistTable):
         return df
 
 
-class QEMUTables(BenchmarkPlot):
+class QEMUTables(BenchmarkTable):
     """
     Show QEMU datasets as tabular output for inspection.
     """

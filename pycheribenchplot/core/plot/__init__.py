@@ -1,2 +1,2 @@
 from .data_view import *
-from .plot_base import BenchmarkPlot, BenchmarkSubPlot
+from .plot_base import BenchmarkPlot, BenchmarkSubPlot, BenchmarkTable

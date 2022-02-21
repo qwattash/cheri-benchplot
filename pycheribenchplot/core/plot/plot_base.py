@@ -9,7 +9,7 @@ from .excel import SpreadsheetSurface
 from .matplotlib import MatplotlibSurface
 
 
-class BenchmarkPlot(BenchmarkAnalysis):
+class BenchmarkPlotBase(BenchmarkAnalysis):
     """
     Base class for handling all plots.
     This class is associated to a plot surface that is responsible for organising
@@ -88,6 +88,18 @@ class BenchmarkPlot(BenchmarkAnalysis):
     def process_datasets(self):
         for surface in self.surfaces:
             self._process_surface(surface)
+
+
+class BenchmarkTable(BenchmarkPlotBase):
+    def __init__(self, benchmark):
+        super().__init__(benchmark)
+        self.surfaces = [SpreadsheetSurface()]
+
+
+class BenchmarkPlot(BenchmarkPlotBase):
+    def __init__(self, benchmark):
+        super().__init__(benchmark)
+        self.surfaces = [MatplotlibSurface()]
 
 
 class BenchmarkSubPlot(ABC):
