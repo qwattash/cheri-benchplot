@@ -1,7 +1,7 @@
 import itertools as it
 import typing
 from collections import defaultdict
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from enum import Flag, IntFlag, auto
 from functools import cached_property, reduce
 from pathlib import Path
@@ -207,17 +207,9 @@ def extract_at_name(die, default=None):
     return extract_at_str(die, "name", default)
 
 
-def extract_at_size(die, default=-1):
+def extract_at_size(die, default=0):
     """Helper to extract the size attributes from a DIE"""
-    B_size = extract_at_int(die, "byte_size", None)
-    b_size = extract_at_int(die, "bit_size", None)
-    if B_size is not None:
-        size = B_size
-    elif b_size is not None:
-        size = b_size / 8
-    else:
-        size = default
-    return size
+    return extract_at_int(die, "byte_size", default)
 
 
 def extract_at_fileline(die, debug_line):
@@ -238,10 +230,12 @@ class DWARFDataRegistry:
     and cross-reference the data.
     This is part of the main interface exposed to clients of this module.
     """
-    def __init__(self, dw, logger, arch_pointer_size):
+    def __init__(self, ef, dw, logger, arch_pointer_size):
+        self.ef = ef
         self.dw = dw
         self.logger = logger
         self.arch_ptr_size = arch_pointer_size
+        self.is_little_endian = self.ef.little_endian
         # map structure info by DIE offset
         self.struct_by_offset = {}
         # map structure info by unique key
@@ -331,23 +325,31 @@ class DWARFMemberInfo:
     type_info: "DWARFType"
     # byte offset in the structure
     offset: int
+    # bit offset from byte offset for bitfields
+    bit_offset: int = 0
     # byte size of the member
-    size: int = 0
-    # padding to the next member
+    size: int = None
+    # bit size for bitfields
+    bit_size: int = 0
+    # byte padding to the next member
     pad: int = 0
+    # bit padding to the next member for bitfields
+    bit_pad: int = 0
 
     def __post_init__(self):
         assert self.type_info.size is not None
-        self.size = self.type_info.size
+        if self.size is None:
+            self.size = self.type_info.size
 
     def to_frame_record(self) -> dict:
-        record = {"name": self.name, "offset": self.offset, "size": self.size, "pad": self.pad}
+        omit_fields = ["type_info"]
+        record = {f.name: getattr(self, f.name) for f in fields(self) if f.name not in omit_fields}
         type_record = {f"{k}": v for k, v in self.type_info.to_frame_record().items()}
         record.update(type_record)
         return record
 
     def __str__(self):
-        value = f"{self.type_info} {self.name}"
+        value = f"{self.name} ({self.offset}:{self.bit_offset}) {self.type_info}"
         return value
 
 
@@ -372,15 +374,17 @@ class DWARFTypeInfo:
     size: int = 0
     # typedef name
     alias_name: str = None
-    # Where it is defined
+    # Where it is defined, for typedefs and struct/union/enum
     src_file: Path = None
     src_line: int = None
     # Trailing internal padding, if applicable
     pad: int = 0
-    # DIE offset for reference XXX may omit
+    # DIE offset for reference
     offset: int = None
-    # Function parameters may be useless to keep
+    # Function parameters
     params: list = None
+    # Array size if type is_array
+    array_items: int = None
     # Flags
     is_typedef: bool = False
     is_ptr: bool = False
@@ -389,6 +393,18 @@ class DWARFTypeInfo:
     is_enum: bool = False
     is_const: bool = False
     is_volatile: bool = False
+    is_array: bool = False
+
+    def set_flag(self, name, value=True):
+        if hasattr(self, name) and name.startswith("is_"):
+            setattr(self, name, value)
+        else:
+            raise AttributeError(f"No DWARFTypeInfo flag {name}")
+
+    def clear_flags(self):
+        for f in fields(self):
+            if f.name.startswith("is_"):
+                setattr(self, f.name, False)
 
     def to_frame_record(self):
         record = {f"type_{k}": v for k, v in self.__dict__.items()}
@@ -495,15 +511,16 @@ class DWARFTypeResolver:
     def _resolve_ptr_type(self, ti, die):
         size = extract_at_size(die, self.ctx.arch_ptr_size)
         ti.name = ti.name + " *"
-        ti.is_ptr = True
+        ti.clear_flags()
+        ti.set_flag("is_ptr")
         ti.size = size
 
     def _resolve_qualifier(self, qual, ti, die):
         ti.name = ti.name + f" {qual}"
         if qual == "volatile":
-            ti.is_volatile = True
+            ti.set_flag("is_volatile")
         elif qual == "const":
-            ti.is_const = True
+            ti.set_flag("is_const")
 
     def _resolve_array_type(self, ti, die):
         s_die = None
@@ -523,12 +540,13 @@ class DWARFTypeResolver:
         elif ub is not None:
             nitems = ub + 1
         else:
-            nitems = None
+            nitems = 0
         size_str = nitems or ""
 
         ti.name = ti.name + f" [{size_str}]"
-        if nitems:
-            ti.size = ti.size * nitems
+        ti.set_flag("is_array")
+        ti.array_items = nitems
+        ti.size = ti.size * nitems
 
     def _resolve_fn_type(self, ti, die):
         ret_type = self.resolve_die(die)
@@ -547,7 +565,7 @@ class DWARFTypeResolver:
         if not ti.is_typedef:
             # update alias name
             ti.alias_name = ti.name + (ti.alias_name or "")
-        ti.is_typedef = True
+        ti.set_flag("is_typedef")
         ti.name = name
 
     def _resolve_complex_type(self, ti, die):
@@ -555,13 +573,13 @@ class DWARFTypeResolver:
         size = extract_at_size(die)
 
         if die.tag == "DW_TAG_structure_type":
-            ti.is_struct = True
+            ti.set_flag("is_struct")
             name_prefix = "struct"
         elif die.tag == "DW_TAG_union_type":
-            ti.is_union = True
+            ti.set_flag("is_union")
             name_prefix = "union"
         elif die.tag == "DW_TAG_enumeration_type":
-            ti.is_enum = True
+            ti.set_flag("is_enum")
             name_prefix = "enum"
         else:
             assert False, "Not reached"
@@ -637,15 +655,42 @@ class StructInfoVisitor(DWARFVisitor):
                 members.extend(self._resolve_nested_anon(name, offset, member_die))
             else:
                 type_info = self._resolve_type(name, child)
-                members.append(DWARFMemberInfo(name, type_info, offset))
+                member = DWARFMemberInfo(name, type_info, offset)
+                self._resolve_bitfield(child, member)
+                members.append(member)
+        self._resolve_members_padding(die, members)
+        return members
+
+    def _resolve_bitfield(self, die, member):
+        """
+        Check if a member die contains a bitfield and resolve the bitfield size/offset
+        """
+        bit_offset = extract_at_int(die, "bit_offset", 0)
+        bit_size = extract_at_int(die, "bit_size", None)
+        if bit_size is None:
+            return
+        if self.ctx.is_little_endian:
+            bit_offset = member.type_info.size * 8 - (bit_offset + bit_size)
+        assert bit_offset >= 0
+        member.bit_offset = bit_offset
+        member.size = int(np.floor(bit_size / 8))
+        member.bit_size = bit_size % 8
+
+    def _resolve_members_padding(self, die, members):
         # compute member paddings, assume there is never leading padding in a struct
-        # sort just in case
-        members = sorted(members, key=lambda m: m.offset)
-        prev_off = extract_at_size(die)
+        # sort to make sure ordering is reliable
+        members = sorted(members, key=lambda m: m.offset * 8 + m.bit_offset)
+        prev_off = extract_at_size(die) * 8
         for m in reversed(members):
-            # XXX this is not reliable, compute padding later?
-            m.pad = prev_off - (m.offset + m.size) + m.type_info.pad
-            prev_off = m.offset
+            curr_off = m.offset * 8 + m.bit_offset
+            if m.bit_size != 0:
+                # XXX maybe test for None to distinguish non-bitfields for sure
+                total_pad = prev_off - (curr_off + m.bit_size)
+            else:
+                total_pad = prev_off - (curr_off + m.size * 8)
+            assert total_pad >= 0
+            m.pad, m.bit_pad = int(total_pad / 8), total_pad % 8
+            prev_off = curr_off
         return members
 
     def visit_structure_type(self, die):
@@ -737,7 +782,7 @@ class DWARFInfoSource:
         self._ef = ELFFile(self._fd)
         self._dw = self._ef.get_dwarf_info()
         self._arch_pointer_size = arch_pointer_size
-        self._ctx = DWARFDataRegistry(self._dw, logger, arch_pointer_size)
+        self._ctx = DWARFDataRegistry(self._ef, self._dw, logger, arch_pointer_size)
 
     def _handle_die(self, die, visitor):
         if die.tag == "DW_TAG_structure_type":

@@ -4,6 +4,7 @@
 struct bar {
   char *x;
   int y;
+  /* expect 4 bytes pad */
 };
 
 struct foo {
@@ -13,7 +14,7 @@ struct foo {
   char c;
   /* expect 7 bytes pad */
   struct bar d;
-  /* expect 4 bytes pad */
+  /* expect 0 bytes pad */
   long e;
 };
 

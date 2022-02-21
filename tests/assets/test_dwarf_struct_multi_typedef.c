@@ -11,7 +11,7 @@ typedef foo_t bar_t;
 
 void show(bar_t *fp)
 {
-  printf("Foo %d %s\n", fp->x);
+  printf("Foo %d\n", fp->x);
 }
 
 int main(int argc, char *argv[])
