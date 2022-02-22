@@ -583,10 +583,9 @@ class DWARFTypeResolver:
             name_prefix = "enum"
         else:
             assert False, "Not reached"
-        name = f"{name_prefix} {name}"
         ti.size = size
         ti.base_name = name
-        ti.name = name
+        ti.name = f"{name_prefix} {name}"
         ti.src_file, ti.src_line = extract_at_fileline(die, self.debug_line)
         ti.offset = die.offset
 

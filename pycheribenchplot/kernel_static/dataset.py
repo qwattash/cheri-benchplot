@@ -98,34 +98,37 @@ class KernelSubobjectBoundsDataset(CSVDataSetContainer):
         self._append_df(df)
 
 
-class KernelStructSizeDataset(CSVDataSetContainer):
+class KernelStructDWARFInfo(CSVDataSetContainer):
     """
-    Extract kernel struct sizes from the kernel DWARF info.
+    Extract kernel struct information from kernel DWARF info.
+    This is a base dataset that is used to build different tables.
     """
-    dataset_config_name = DatasetName.KERNEL_STRUCT_STATS
     dataset_source_id = DatasetArtefact.KERNEL_STRUCT_STATS
     fields = [
         Field.index_field("name", dtype=str),
         Field.index_field("src_file", dtype=str),
         Field.index_field("src_line", dtype=int),
         Field.index_field("member_name", dtype=str),
-        Field.data_field("size", dtype=int),
+        Field.data_field("size", dtype=float),
         Field.str_field("from_path"),
-        Field.str_field("desc", isderived=True),
-        Field.data_field("member_size", dtype=int),
-        Field("member_offset", dtype=int),
-        Field.data_field("member_pad", dtype=int),
+        Field("member_offset", dtype=float),
+        Field("member_bit_offset", dtype=float),
+        Field.data_field("member_size", dtype=float),
+        Field("member_bit_size", dtype=float),
+        Field.data_field("member_pad", dtype=float),
+        Field("member_bit_pad", dtype=float),
         Field.str_field("member_type_name"),
-        Field("member_type_kind", dtype=object),
-        # This should probably be dropped as duplicates member_size
-        Field("member_type_size", dtype=int),
-        # Not a data field as this is already accounted for in member_pad
-        Field("member_type_pad", dtype=int),
-        # This is a DIE offset, unintresting ouside the DWARF interface
-        Field("member_type_ref_offset", dtype=int),
+        Field.str_field("member_type_base_name"),
+        Field("member_type_is_ptr", dtype=bool),
+        Field("member_type_is_struct", dtype=bool),
+        Field("member_type_is_typedef", dtype=bool),
+        Field("member_type_is_array", dtype=bool),
+        Field("member_type_array_items", dtype=float),
+        Field("member_type_size", dtype=float),
+        Field("member_type_pad", dtype=float),
         Field.str_field("member_type_src_file"),
-        Field("member_type_src_line", dtype=int),
-        Field("member_type_fn_params", dtype=object)
+        Field("member_type_src_line", dtype=float),
+        Field("member_type_params", dtype=object)
     ]
 
     def full_kernel_path(self):
@@ -171,21 +174,94 @@ class KernelStructSizeDataset(CSVDataSetContainer):
         df = self._load_csv(self.output_file())
         self._append_df(df)
 
+
+class KernelStructSizeDataset(KernelStructDWARFInfo):
+    """
+    Extract kernel struct sizes from the kernel DWARF info.
+    """
+    dataset_config_name = DatasetName.KERNEL_STRUCT_STATS
+    fields = [
+        Field.data_field("total_pad", dtype=int, isderived=True),
+        Field.data_field("ptr_count", dtype=int, isderived=True),
+        Field.data_field("member_count", dtype=int, isderived=True),
+        Field.data_field("nested_ptr_count", dtype=int, isderived=True),
+        Field.data_field("nested_member_count", dtype=int, isderived=True),
+        Field.data_field("nested_packed_size", dtype=int, isderived=True),
+    ]
+
+    def _check_has_nested(self, group):
+        is_flex_array = group["member_type_is_array"] & (group["member_type_array_items"] == 0)
+        return group["member_type_is_struct"] & ~is_flex_array
+
     def post_merge(self):
         super().post_merge()
-        # compute patched anon names in the "desc" column
-        df_index = self.merged_df.index.to_frame()
-        name = df_index["name"]
-        # bool becomes object when moved to the index for some reason...
-        anon = df_index["is_anon"].astype(np.bool)
-        tmp = name.mask(anon, "anon")
-        suffix_file = df_index["src_file"].where(anon, "")
-        suffix_line = df_index["src_line"].astype(str).where(anon, "")
-        self.merged_df["desc"] = tmp.str.cat([suffix_file, suffix_line], sep=":").where(anon, name)
+        # We do not care about per-member information so we collapse by grouping and produce extra columns
+        # Do not do this in the aggregation step as it is meant for median/quartile calculations so keep it
+        # separate for consistency
+        group_key = ["__dataset_id", "name", "src_file", "src_line"]
+        grouped = self.merged_df.reset_index("member_name").groupby(group_key)
+
+        new_df = grouped[["size"]].first()
+        new_df["total_pad"] = grouped["member_pad"].sum()
+        new_df["total_pad"] += grouped["member_bit_pad"].sum() / 8
+
+        new_df["ptr_count"] = grouped["member_type_is_ptr"].sum()
+        # The member_name column is NaN if the member is a dummy member added for empty structures,
+        # count() will ignore NaN.
+        new_df["member_count"] = grouped["member_name"].count()
+
+        # Compute nested counts
+        new_df["nested_ptr_count"] = np.nan
+        new_df["nested_member_count"] = np.nan
+        new_df["nested_total_pad"] = np.nan
+        new_df["nested_packed_size"] = np.nan
+        new_df["_visited"] = False
+        has_nested = grouped.apply(lambda g: self._check_has_nested(g).any())
+        new_df.loc[~has_nested, "nested_ptr_count"] = new_df.loc[~has_nested, "ptr_count"]
+        new_df.loc[~has_nested, "nested_member_count"] = new_df.loc[~has_nested, "member_count"]
+        new_df.loc[~has_nested, "nested_total_pad"] = new_df.loc[~has_nested, "total_pad"]
+        new_df.loc[~has_nested, "_visited"] = True
+        nested_key_fields = ["__dataset_id", "member_type_base_name", "member_type_src_file", "member_type_src_line"]
+        visit_queue = list(new_df[has_nested].index)
+        while len(visit_queue):
+            struct_key = visit_queue.pop(0)
+            if new_df.loc[struct_key, "_visited"].all():
+                continue
+            group_df = grouped.get_group(struct_key)
+            nested_members = group_df[self._check_has_nested(group_df)]
+            if len(nested_members) == 0:
+                continue
+            # Join to find nested struct records, now we can check if we have data for all of them
+            nested_structs = nested_members.merge(new_df,
+                                                  left_on=nested_key_fields,
+                                                  right_on=group_key,
+                                                  suffixes=("", "_nested"))
+            # Check if we have visited all of the nested structs
+            if nested_structs["_visited"].all():
+                # Actually compute the count
+                nested_structs["array_mul"] = 1
+                array_mul = nested_structs["array_mul"].mask(nested_structs["member_type_is_array"],
+                                                             nested_structs["member_type_array_items"])
+                nested_ptr_count = (nested_structs["nested_ptr_count"] * array_mul).sum()
+                nested_m_count = (nested_structs["nested_member_count"] * array_mul).sum()
+                nested_pad = (nested_structs["nested_total_pad"] * array_mul).sum()
+                new_df.loc[struct_key, "nested_ptr_count"] = (new_df.loc[struct_key, "ptr_count"] + nested_ptr_count)
+                new_df.loc[struct_key,
+                           "nested_member_count"] = (new_df.loc[struct_key, "member_count"] + nested_m_count)
+                new_df.loc[struct_key, "nested_total_pad"] = (new_df.loc[struct_key, "total_pad"] + nested_pad)
+                new_df.loc[struct_key, "_visited"] = True
+            else:
+                # enqueue back after all the missing members have a chance to be resolved
+                visit_queue.append(struct_key)
+        new_df.drop(columns=["_visited"], inplace=True)
+        new_df["nested_packed_size"] = new_df["size"] - new_df["nested_total_pad"]
+
+        # integrity checks
+        assert (new_df["member_count"] >= new_df["ptr_count"]).all()
+        assert (new_df["nested_packed_size"] >= 0).all()
 
         # Align and compute deltas
-        new_df = align_multi_index_levels(self.merged_df, ["name", "src_file", "src_line", "is_anon"],
-                                          fill_value=np.nan)
+        new_df = align_multi_index_levels(new_df, ["name", "src_file", "src_line"], fill_value=np.nan)
         new_df = self._add_delta_columns(new_df)
         self.merged_df = self._compute_delta_by_dataset(new_df)
 
@@ -195,7 +271,6 @@ class KernelStructSizeDataset(CSVDataSetContainer):
         metric_level_idx = self.merged_df.columns.names.index("metric")
         match = metric_cols.isin(agg.keys())
         mapped_agg = {c: agg[c[metric_level_idx]] for c in self.merged_df.columns[match]}
-        # agg = {(c, "sample"): v for c, v in agg.items()}
         return mapped_agg
 
     def aggregate(self):

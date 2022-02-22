@@ -8,28 +8,58 @@ from pycheribenchplot.core.benchmark import BenchmarkDataSetConfig
 from pycheribenchplot.core.dataset import DatasetName
 from pycheribenchplot.kernel_static.dataset import *
 
-# @patch("builtins.open", new_callable=mock_open)
-# @patch("pycheribenchplot.core.benchmark.BenchmarkBase")
-# @pytest.mark.skip
-# def test_kstruct_size_dataset_load(fake_bench, fake_open, kstruct_size_data, fake_dataset_config):
-#     # Make this realistic
-#     fake_dataset_config.type = DatasetName.KERNEL_CSETBOUNDS_STATS
-#     # Setup mocks
-#     fake_path = Path("fake/bench/output")
-#     fake_bench.get_output_path.return_value = fake_path
-#     fake_open.read.return_value = kstruct_size_data
 
-#     ds = KernelStructSizeDataset(fake_bench, "__fake__", fake_dataset_config)
-#     ds.load()
+def test_kstruct_size_dataset_derived(mocker, fake_simple_benchmark):
+    """
+    Test post-merge derived columns
+    """
+    asset_path = Path("tests/assets/test_dwarf_nested_structs.csv")
+    config = BenchmarkDataSetConfig(type=DatasetName.KERNEL_STRUCT_STATS)
+    # Setup mocks
+    fake_get_output_path = mocker.patch.object(KernelStructSizeDataset, "output_file")
+    fake_get_output_path.return_value = asset_path
 
-#     fake_bench.get_output_path.assert_called()
-#     fake_open.assert_called_once_with(fake_path, "r")
+    ds = KernelStructSizeDataset(fake_simple_benchmark, "__test__", config)
+    ds.load()
+    ds.pre_merge()
+    ds.init_merge()
+    ds.post_merge()
 
-EXPECT_KSTRUCT_SIZE_COLUMNS = {
-    "name", "size", "from_path", "src_file", "src_line", "member_name", "member_size", "member_offset", "member_pad",
-    "member_type_name", "member_type_kind", "member_type_size", "member_type_pad", "member_type_ref_offset",
-    "member_type_src_file", "member_type_src_line"
-}
+    def s(name):
+        # helper for column naming
+        return (name, "sample")
+
+    df = ds.merged_df
+
+    baz = df.xs("baz", level="name").iloc[0]
+    assert baz[s("member_count")] == 3
+    assert baz[s("nested_member_count")] == 3
+    assert baz[s("ptr_count")] == 1
+    assert baz[s("nested_ptr_count")] == 1
+    assert baz[s("total_pad")] == 3
+    assert baz[s("nested_total_pad")] == 3
+    assert baz[s("size")] == 16
+    assert baz[s("nested_packed_size")] == 13
+
+    bar = df.xs("bar", level="name").iloc[0]
+    assert bar[s("member_count")] == 3
+    assert bar[s("nested_member_count")] == 6
+    assert bar[s("ptr_count")] == 1
+    assert bar[s("nested_ptr_count")] == 2
+    assert bar[s("total_pad")] == 7
+    assert bar[s("nested_total_pad")] == 10  # baz + 7
+    assert bar[s("size")] == 16 + 16  # baz + 16
+    assert bar[s("nested_packed_size")] == 22  # baz + 9
+
+    foo = df.xs("foo", level="name").iloc[0]
+    assert foo[s("member_count")] == 4
+    assert foo[s("nested_member_count")] == 10
+    assert foo[s("ptr_count")] == 1
+    assert foo[s("nested_ptr_count")] == 3
+    assert foo[s("total_pad")] == 4
+    assert foo[s("nested_total_pad")] == 14  # bar + 4
+    assert foo[s("size")] == 32 + 16  # bar + 16
+    assert foo[s("nested_packed_size")] == 34  # bar + 12
 
 
 @pytest.mark.asyncio
@@ -45,15 +75,17 @@ async def test_kstruct_size_dataset_gen(mocker, tmp_path, fake_simple_benchmark)
     fake_kernel_path = mocker.patch.object(KernelStructSizeDataset, "full_kernel_path")
     fake_kernel_path.return_value = asset_path
 
-    ds = KernelStructSizeDataset(fake_simple_benchmark, "__fake__", config)
+    ds = KernelStructSizeDataset(fake_simple_benchmark, "__test__", config)
     await ds.after_extract_results()
+
+    expected_least_columns = set(ds.input_all_columns())
 
     fake_get_output_path.assert_called()
     # Check that the output file was generated as expected
-    out_path = tmp_path / f"__fake__-{fake_simple_benchmark.uuid}.csv"
+    out_path = tmp_path / f"__test__-{fake_simple_benchmark.uuid}.csv"
     assert out_path.exists()
     df = pd.read_csv(out_path)
-    assert set(df.columns) == EXPECT_KSTRUCT_SIZE_COLUMNS
+    assert expected_least_columns.issubset(set(df.columns))
     foo = df[df["name"] == "foo"]
     assert len(foo) == 3
     assert (foo["size"] == 24).all()
