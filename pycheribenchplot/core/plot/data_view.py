@@ -210,6 +210,7 @@ class AALineDataView(DataView):
     style: Style = field(default_factory=Style)
 
     def __post_init__(self):
+        super().__post_init__()
         self.key = "axline"
 
 
@@ -230,6 +231,14 @@ class XYPlotDataView(DataView):
     yleft: list[str] = field(default_factory=list)
     yright: list[str] = field(default_factory=list)
 
+    def __post_init__(self):
+        super().__post_init__()
+        # Ensure yleft and yright are lists
+        if not isinstance(self.yleft, list):
+            self.yleft = [self.yleft]
+        if not isinstance(self.yright, list):
+            self.yright = [self.yright]
+
     @property
     def has_yleft(self):
         return len(self.yleft) != 0
@@ -246,6 +255,20 @@ class XYPlotDataView(DataView):
 
     def get_yright(self):
         return self.get_col(self.yright)
+
+    def iter_yleft(self):
+        if isinstance(self.yleft, list):
+            for c in self.yleft:
+                yield c
+        else:
+            yield self.yleft
+
+    def iter_yright(self):
+        if isinstance(self.yright, list):
+            for c in self.yright:
+                yield c
+        else:
+            yield self.yright
 
 
 @dataclass
@@ -268,6 +291,7 @@ class BarPlotDataView(XYPlotDataView):
     bar_width: float = 0.8
 
     def __post_init__(self):
+        super().__post_init__()
         self.key = "bar"
 
 
@@ -285,6 +309,7 @@ class HistPlotDataView(XYPlotDataView):
     bucket_group: str = None
 
     def __post_init__(self):
+        super().__post_init__()
         self.key = "hist"
 
 

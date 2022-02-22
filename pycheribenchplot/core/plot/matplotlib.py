@@ -143,7 +143,7 @@ class BarRenderer(ViewRenderer):
                 by = view.df.index.names
         return by
 
-    def _compute_bar_x(self, cell, view, ax, group_keys):
+    def _compute_bar_x(self, cell, view, ax):
         """
         Compute the group center x for the X axis and then
         the x for each bar group.
@@ -152,10 +152,16 @@ class BarRenderer(ViewRenderer):
         Note: this assumes that the input dataframe is aligned on the
         bar_group and stack_group levels
         """
+        naxes = 0
         if view.has_yleft and view.has_yright:
-            naxes = 2
+            # naxes = 2
+            nleft_cols = len(view.yleft) if isinstance(view.yleft, list) else 1
+            nright_cols = len(view.yright) if isinstance(view.yright, list) else 1
+            naxes = nleft_cols + nright_cols
         else:
-            naxes = 1
+            # naxes = 1
+            nleft_cols = len(view.yleft) if isinstance(view.yleft, list) else 1
+            naxes = nleft_cols
         if view.bar_group:
             ngroups = len(view.get_col(view.bar_group).unique())
         else:
@@ -164,6 +170,7 @@ class BarRenderer(ViewRenderer):
             nstacks = len(view.get_col(view.stack_group).unique())
         else:
             nstacks = 1
+        assert naxes > 0 and ngroups >= 1 and nstacks >= 1
 
         def _transform_helper(xform, v):
             tmp_points = np.column_stack([v, np.repeat(0, len(v))])
@@ -238,36 +245,50 @@ class BarRenderer(ViewRenderer):
         # for each x we have bar width differences, these are repeated for each stack.
         # We need to flatten the bar_width matrix in column-major order.
         # We do the same for the position matrix.
-        axis_split = position_matrix.shape[1] / naxes
-        assert axis_split == int(axis_split)
-        axis_split = int(axis_split)
+        # col_group_split represents the split point between each bar group.
+        # We assign a bar group to each column on the left/right axes.
 
-        bar_x_left = position_matrix[:, 0:axis_split]
-        bar_x_flat = bar_x_left.ravel(order="F")
-        view.df["__bar_x_left"] = np.tile(bar_x_flat, nstacks)
-        bar_width_left = bar_width[:, 0:axis_split]
-        bar_width_flat = bar_width_left.ravel(order="F")
-        view.df["__bar_width_left"] = np.tile(bar_width_flat, nstacks)
+        # axis_split = position_matrix.shape[1] / naxes
+        # assert axis_split == int(axis_split)
+        # axis_split = int(axis_split)
+        col_group_split = ngroups
+        assert col_group_split * naxes == position_matrix.shape[1]
 
-        if view.has_yright:
-            bar_x_right = position_matrix[:, axis_split:]
-            bar_x_flat = bar_x_right.ravel(order="F")
-            view.df["__bar_x_right"] = np.tile(bar_x_flat, nstacks)
-            bar_width_right = bar_width[:, axis_split:]
-            bar_width_flat = bar_width_right.ravel(order="F")
-            view.df["__bar_width_right"] = np.tile(bar_width_flat, nstacks)
-
-        # And the stacking Y bases
-        view.df["__bar_y_left_base"] = 0
-        view.df["__bar_y_right_base"] = 0
+        # Now for each group we broadcast the positions from the matrix
+        # and compute stack Y bases
         if view.stack_group:
             non_stack_idx = view.df.index.names.difference([view.stack_group])
-            grouped = view.df.groupby(non_stack_idx)
-            view.df["__bar_y_left_base"] = grouped[view.yleft].apply(
-                lambda stack_slice: stack_slice.cumsum().shift(fill_value=0))
-            if view.has_yright:
-                view.df["__bar_y_right_base"] = grouped[view.yright].apply(
+            stack_groups = view.df.groupby(non_stack_idx)
+
+        for col in range(nleft_cols):
+            group_slice = slice(col * col_group_split, (col + 1) * col_group_split)
+            bar_x_group = position_matrix[:, group_slice]
+            bar_x_group_flat = bar_x_group.ravel(order="F")
+            view.df[f"__bar_x_l{col}"] = np.tile(bar_x_group_flat, nstacks)
+            bar_width_group = bar_width[:, group_slice]
+            bar_width_flat = bar_width_group.ravel(order="F")
+            view.df[f"__bar_width_l{col}"] = np.tile(bar_width_flat, nstacks)
+            if view.stack_group:
+                view.df[f"__bar_y_base_l{col}"] = stack_groups[view.yleft[col]].apply(
                     lambda stack_slice: stack_slice.cumsum().shift(fill_value=0))
+            else:
+                view.df[f"__bar_y_base_l{col}"] = 0
+
+        if view.has_yright:
+            base = nleft_cols * col_group_split
+            for col in range(nright_cols):
+                group_slice = slice(base + col * col_group_split, base + (col + 1) * col_group_split)
+                bar_x_group = position_matrix[:, group_slice]
+                bar_x_group_flat = bar_x_group.ravel(order="F")
+                view.df[f"__bar_x_r{col}"] = np.tile(bar_x_group_flat, nstacks)
+                bar_width_group = bar_width[:, group_slice]
+                bar_width_flat = bar_width_group.ravel(order="F")
+                view.df[f"__bar_width_r{col}"] = np.tile(bar_width_flat, nstacks)
+                if view.stack_group:
+                    view.df[f"__bar_y_base_r{col}"] = stack_groups[view.yright[col]].apply(
+                        lambda stack_slice: stack_slice.cumsum().shift(fill_value=0))
+                else:
+                    view.df[f"__bar_y_base_r{col}"] = 0
         return view.df
 
     def render(self, view, cell, surface, ctx):
@@ -280,7 +301,7 @@ class BarRenderer(ViewRenderer):
 
         legend_info = cell.get_legend_info(view)
         by = self._resolve_groups(cell, view)
-        df = self._compute_bar_x(cell, view, ctx.ax, by)
+        df = self._compute_bar_x(cell, view, ctx.ax)
         groups = df.groupby(by)
 
         left_patches = []
@@ -296,19 +317,21 @@ class BarRenderer(ViewRenderer):
             r_label = legend_info.label(legend_key, axis="right")
 
             if view.has_yleft:
-                values = view.get_col(view.yleft, chunk).squeeze()
-                x = view.get_col("__bar_x_left", chunk)
-                base = view.get_col("__bar_y_left_base", chunk)
-                width = view.get_col("__bar_width_left", chunk)
-                patches = ctx.ax.bar(x, height=values, bottom=base, color=l_color, width=width)
-                ctx.legend.set_item(l_label, patches)
+                for col_idx, col_name in enumerate(view.iter_yleft()):
+                    values = view.get_col(col_name, chunk).squeeze()
+                    x = view.get_col(f"__bar_x_l{col_idx}", chunk)
+                    base = view.get_col(f"__bar_y_base_l{col_idx}", chunk)
+                    width = view.get_col(f"__bar_width_l{col_idx}", chunk)
+                    patches = ctx.ax.bar(x, height=values, bottom=base, color=l_color, width=width)
+                    ctx.legend.set_item(l_label, patches)
             if view.has_yright:
-                values = view.get_col(view.yright, chunk).squeeze()
-                x = view.get_col("__bar_x_right", chunk)
-                base = view.get_col("__bar_y_right_base", chunk)
-                width = view.get_col("__bar_width_right", chunk)
-                patches = ctx.rax.bar(x, height=values, bottom=base, color=r_color, width=width)
-                ctx.legend.set_item(r_label, patches)
+                for col_idx, col_name in enumerate(view.iter_yright()):
+                    values = view.get_col(col_name, chunk).squeeze()
+                    x = view.get_col(f"__bar_x_r{col_idx}", chunk)
+                    base = view.get_col(f"__bar_y_base_r{col_idx}", chunk)
+                    width = view.get_col(f"__bar_width_r{col_idx}", chunk)
+                    patches = ctx.rax.bar(x, height=values, bottom=base, color=r_color, width=width)
+                    ctx.legend.set_item(r_label, patches)
 
         if view.has_yleft and view.has_yright:
             # Need to realign the Y axes 0 coordinates
