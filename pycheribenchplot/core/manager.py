@@ -4,6 +4,7 @@ import code
 import itertools as it
 import json
 import logging
+import multiprocessing
 import shutil
 import typing
 import uuid
@@ -45,6 +46,7 @@ class BenchmarkSessionConfig(TemplateConfig):
     verbose: bool = False
     ssh_key: Path = Path("~/.ssh/id_rsa")
     output_path: Path = field(default_factory=Path.cwd)
+    concurrent_instances: int = 0
     instances: list[InstanceConfig] = field(default_factory=list)
     benchmarks: list[BenchmarkRunConfig] = field(default_factory=list)
 
@@ -67,6 +69,10 @@ class BenchmarkManagerConfig(BenchplotUserConfig, BenchmarkSessionConfig):
             raise ValueError("No benchmarks specified in configuration")
         if len(self.instances) == 0:
             raise ValueError("No instances specified in configuration")
+        if self.concurrent_instances == 0:
+            self.concurrent_instances = multiprocessing.cpu_count()
+        if self.concurrent_instances <= 0:
+            raise ValueError("Negative max concurrent instances in configuration")
 
 
 @dataclass

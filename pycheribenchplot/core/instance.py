@@ -216,6 +216,8 @@ class Instance(ABC):
         self._ssh_ctrl_conn = None
         # Release event that initiates instance shutdown
         self.release_event = aio.Event()
+        # Boot event
+        self.boot_event = aio.Event()
         # Signal anybody waiting on a status change
         self.status_update_event = aio.Event()
         self.status = InstanceStatus.INIT
@@ -235,6 +237,10 @@ class Instance(ABC):
     def start(self):
         """Create the runner task that will boot the instance"""
         self.task = self.event_loop.create_task(self._run_instance())
+
+    def boot(self):
+        """Signal instance that it can start booting"""
+        self.boot_event.set()
 
     def kill(self):
         """Forcibly kill the instance"""
@@ -328,6 +334,8 @@ class Instance(ABC):
         """
         try:
             assert self.status == InstanceStatus.INIT
+            # wait for boot event
+            await self.boot_event.wait()
             # boot
             self.set_status(InstanceStatus.BOOT)
             await self._boot()
@@ -502,6 +510,8 @@ class InstanceManager:
         self._active_instances = {}
         # Spare instances if recycling instances is enabled
         self._shutdown_instances = []
+        # Queued instances to run because of concurrency limit
+        self._queued_instances = aio.Queue()
 
     def _create_instance(self, config: InstanceConfig):
         if config.platform == InstancePlatform.QEMU:
@@ -519,11 +529,15 @@ class InstanceManager:
 
     def _alloc_instance(self, owner: uuid.UUID, instance: Instance):
         self._active_instances[owner] = instance
+        instance.boot()
         self.logger.debug("Allocate instance %s to benchmark %s", instance.uuid, owner)
 
     async def request_instance(self, owner: uuid.UUID, config: InstanceConfig) -> InstanceInfo:
         instance = self._create_instance(config)
-        self._alloc_instance(owner, instance)
+        if len(self._active_instances) >= self.manager_config.concurrent_instances:
+            self._queued_instances.put_nowait((owner, instance))
+        else:
+            self._alloc_instance(owner, instance)
         await instance.wait(InstanceStatus.READY)
         return instance.get_info()
 
@@ -531,6 +545,10 @@ class InstanceManager:
         instance = self._active_instances[owner]
         del self._active_instances[owner]
         self._shutdown_instances.append(instance)
+        if not self._queued_instances.empty():
+            # Pull one queued instance and run it
+            q_owner, q_instance = self._queued_instances.get_nowait()
+            self._alloc_instance(q_owner, q_instance)
         try:
             instance.release()
             await instance.wait(InstanceStatus.SHUTDOWN)
