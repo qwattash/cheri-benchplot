@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from ..core.dataset import (DatasetName, check_multi_index_aligned, pivot_multi_index_level)
+from ..core.dataset import (DatasetName, check_multi_index_aligned, pivot_multi_index_level, quantile_slice)
 from ..core.plot import (AALineDataView, BarPlotDataView, BenchmarkPlot, BenchmarkSubPlot, BenchmarkTable, CellData,
                          LegendInfo, Symbols, TableDataView)
 
@@ -181,12 +181,13 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
         # Use base legend to separate by axis
         base = self.build_legend_by_dataset()
         legend_left = base.map_label(lambda l: f"{Symbols.DELTA}{self.metric} " + l)
-        legend_right = base.map_label(lambda l: f"% {Symbols.DELTA}{self.metric}" + l)
+        legend_right = base.map_label(lambda l: f"% {Symbols.DELTA}{self.metric} " + l)
         legend = LegendInfo.multi_axis(left=legend_left, right=legend_right)
         legend.remap_colors("Paired")
         return legend
 
-    def get_bar_limit(self):
+    @property
+    def bar_limit(self):
         """
         Get maximum number of bars to show
         """
@@ -194,6 +195,15 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
 
     def get_cell_title(self):
         return f"UMA {self.metric} variation w.r.t. baseline"
+
+    def get_high_overhead_df(self, df, columns):
+        ngroups = len(df.index.get_level_values("dataset_id").unique())
+        max_entries = int(self.bar_limit / ngroups)
+        if max_entries <= 1:
+            self.warning("Broken plot for %s metric: too many datasets cut bar entries to less than 1 per group",
+                         self.metric)
+        high_df = quantile_slice(df, columns, quantile=0.9, max_entries=max_entries, level=["dataset_id"])
+        return high_df.sort_values(columns, ascending=False)
 
     def generate(self, surface, cell):
         """
@@ -209,18 +219,12 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
         self.logger.debug("extract plot metric %s", self.metric)
 
         df["abs_delta"] = df[delta_col].abs()
-        abstop = df["abs_delta"] >= df["abs_delta"].quantile(0.90)
-        df_sel = df[abstop].sort_values("abs_delta", ascending=False)
-        maxbar = self.get_bar_limit()
-        if len(df_sel) > maxbar:
-            # Just take the largest N values
-            df_sel = df_sel.iloc[:maxbar + 1]
-        # Avoid assigning to a slice
-        df_sel = df_sel.copy()
-        df_sel[rel_col] *= 100
-        df_sel["x"] = range(len(df_sel))
+        high_df = self.get_high_overhead_df(df, ["abs_delta"])
+        high_df[rel_col] *= 100
+        high_df["x"] = high_df.groupby(["dataset_id"]).cumcount()
 
-        view = BarPlotDataView(df_sel, x="x", yleft=delta_col, yright=rel_col)
+        view = BarPlotDataView(high_df, x="x", yleft=delta_col, yright=rel_col)
+        view.bar_group = "dataset_id"
         view.legend_info = self.get_legend_info()
         view.legend_level = ["dataset_id"]
         cell.add_view(view)
@@ -238,8 +242,8 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
         cell.add_view(view)
 
         cell.x_config.label = "UMA Zone"
-        cell.x_config.ticks = df_sel["x"]
-        cell.x_config.tick_labels = df_sel.index.get_level_values("name")
+        cell.x_config.ticks = high_df["x"].unique()
+        cell.x_config.tick_labels = high_df.index.get_level_values("name").unique()
         cell.x_config.tick_rotation = 90
         cell.yleft_config.label = f"{Symbols.DELTA}{self.metric}"
         cell.yright_config.label = f"% {Symbols.DELTA}{self.metric}"

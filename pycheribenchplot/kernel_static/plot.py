@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 from ..core.dataset import (DatasetName, check_multi_index_aligned, index_where, pivot_multi_index_level,
-                            stacked_histogram)
+                            quantile_slice, stacked_histogram)
 from ..core.plot import (AALineDataView, BarPlotDataView, BenchmarkPlot, BenchmarkSubPlot, BenchmarkTable,
                          HistPlotDataView, LegendInfo, Scale, Symbols, TableDataView)
 
@@ -297,29 +297,15 @@ class KernelStructPaddingHighOverhead(KernelStructStatsPlot):
 
     def get_high_overhead_df(self, quantile, maxbar):
         df = self.get_df()
-        cols = self.columns
-        struct_key_index = df.index.names.difference(["dataset_id"])
-
-        # Get high 10% delta values
-        high_thresh = df[cols].quantile(quantile)
-        cond = (df[cols] >= high_thresh).apply(np.all, axis=1)
-        # Need to propagate True cond to all datasets containing a struct key, this is necessary
-        # to maintain alignment of the frame groups
-        cond = cond.groupby(struct_key_index).transform(lambda g: g.any())
-        # Select and cap the number of groups we display, we do not have infinite horizontal space.
-        high_df = df[cond]
-        ngroups = len(high_df.index.get_level_values("dataset_id").unique())
-        max_entries = maxbar / ngroups
-        # max() or min() should be the same here, as the groups are aligned
-        entries_per_group = high_df.iloc[:, 0].groupby("dataset_id").cumcount()
-        if entries_per_group.max() > max_entries:
-            self.logger.warning("capping high delta entries to %d, 90th percentile contains %d", maxbar, len(high_df))
-            trunc = (entries_per_group <= max_entries)
-            high_df = high_df.loc[trunc, :]
-        high_df = high_df.sort_values(cols, ascending=False)
-        # Make sure we are aligned
-        assert check_multi_index_aligned(high_df, struct_key_index)
-        return high_df
+        ngroups = len(df.index.get_level_values("dataset_id").unique())
+        max_entries = int(maxbar / ngroups)
+        match = df[df[self.columns] >= df[self.columns].quantile(quantile)]
+        if len(match) > maxbar:
+            self.logger.warning("capping high delta entries to %d, %dth percentile contains %d", maxbar, quantile * 100,
+                                len(match))
+        # Actually compute the frame. Note that this may have slightly more entries than maxbar
+        high_df = quantile_slice(df, self.columns, quantile, max_entries, ["dataset_id"])
+        return high_df.sort_values(self.columns, ascending=False)
 
 
 class KernelStructPaddingOverhead(KernelStructPaddingHighOverhead):
@@ -334,7 +320,6 @@ class KernelStructPaddingOverhead(KernelStructPaddingHighOverhead):
 
     def generate(self, surface, cell):
         high_df = self.get_high_overhead_df(0.9, 25)
-
         high_df["x"] = high_df.groupby("dataset_id").cumcount()
         view = BarPlotDataView(high_df, x="x", yleft=self.columns, bar_group="dataset_id")
         view.legend_info = self.get_legend_info()
@@ -354,7 +339,6 @@ class KernelStructPaddingOverheadTable(KernelStructPaddingHighOverhead):
 
     def generate(self, surface, cell):
         high_df = self.get_high_overhead_df(0.9, np.inf)
-
         view = TableDataView(high_df, columns=self.columns)
         view.legend_info = self.get_legend_info()
         view.legend_level = high_df.index.names
