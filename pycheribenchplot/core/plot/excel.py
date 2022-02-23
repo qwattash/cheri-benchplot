@@ -86,7 +86,7 @@ class SpreadsheetTableRenderer(ViewRenderer):
         book = excel_writer.book
         sheet = excel_writer.sheets[sheet_name]
 
-        fill_styles = self._get_cell_color_styles(cell.legend_info)
+        fill_styles = self._get_cell_color_styles(view.legend_info)
         nindex = len(view.df.index.names)
         nheader = len(view.df.columns.names)
 
@@ -122,7 +122,7 @@ class SpreadsheetTableRenderer(ViewRenderer):
                     xcell.number_format = "0.00"
                 else:
                     cell_width = len(str(xcell.value))
-                if cell.legend_info:
+                if view.legend_info:
                     xcell.fill = fill_styles[column]
                 col_width = max(col_width, cell_width)
                 xcell.border = cell_border

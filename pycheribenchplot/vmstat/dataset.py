@@ -66,7 +66,7 @@ class UMAZoneInfoDataset(DataSetContainer):
         merged_df = sysctl_df.join(vmstat_df, how="left", on="zone_tmp_id", rsuffix="_vmstat")
         merged_df["name"] = merged_df["name_vmstat"]
         df = merged_df[self.input_all_columns()].fillna(0).reset_index(drop=True)
-        df["__dataset_id"] = self.benchmark.uuid
+        df["dataset_id"] = self.benchmark.uuid
         self._append_df(df)
 
     def gen_pre_benchmark(self):
@@ -111,7 +111,7 @@ class VMStatDataset(JSONDataSetContainer):
             pre_df = pd.DataFrame.from_records(self._get_vmstat_records(pre_data))
             post_df = pd.DataFrame.from_records(self._get_vmstat_records(post_data))
             df = self._vmstat_delta(pre_df, post_df)
-            df["__dataset_id"] = self.benchmark.uuid
+            df["dataset_id"] = self.benchmark.uuid
             df["__iteration"] = iteration
             self._append_df(df)
         finally:

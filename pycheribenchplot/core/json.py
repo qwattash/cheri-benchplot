@@ -17,7 +17,7 @@ class JSONDataSetContainer(DataSetContainer):
         """
         kwargs.setdefault("dtype", self._get_input_columns_dtype())
         df = pd.io.json.read_json(path, **kwargs)
-        df["__dataset_id"] = self.benchmark.uuid
+        df["dataset_id"] = self.benchmark.uuid
         return df
 
     def _append_df(self, json_df: pd.DataFrame):

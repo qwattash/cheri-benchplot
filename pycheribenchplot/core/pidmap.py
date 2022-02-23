@@ -68,7 +68,7 @@ class PidMapDataset(JSONDataSetContainer):
         df = pid_info.merge(tid_info, how="left", left_on="process_id", right_on="process_id")
         df.rename(columns={"process_id": "pid", "thread_id": "tid"}, inplace=True)
         df["tid"].fillna(-1, inplace=True)
-        df["__dataset_id"] = self.benchmark.uuid
+        df["dataset_id"] = self.benchmark.uuid
         self._append_df(df)
 
     def load_from_kdump(self, kdump_fd):
@@ -88,7 +88,7 @@ class PidMapDataset(JSONDataSetContainer):
         pid_df = fork_df[["child_pid", "command"]].rename(columns={"child_pid": "pid"})
         pid_df["tid"] = -1
         pid_df["thread_name"] = ""
-        pid_df["__dataset_id"] = self.benchmark.uuid
+        pid_df["dataset_id"] = self.benchmark.uuid
         # Assume that the pids do not overlap
         self._append_df(pid_df)
 

@@ -47,7 +47,7 @@ class NetstatDataset(JSONDataSetContainer):
             post_df = pd.DataFrame.from_records(post_records)
             post_df.set_index(index_cols, inplace=True)
             df = post_df.subtract(pre_df).reset_index()
-            df["__dataset_id"] = self.benchmark.uuid
+            df["dataset_id"] = self.benchmark.uuid
         finally:
             pre.close()
             post.close()

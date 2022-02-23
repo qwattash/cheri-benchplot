@@ -3,7 +3,7 @@ import pandas as pd
 
 from ..core.dataset import (DatasetName, check_multi_index_aligned, pivot_multi_index_level)
 from ..core.plot import (AALineDataView, BarPlotDataView, BenchmarkPlot, BenchmarkSubPlot, BenchmarkTable, CellData,
-                         LegendInfo, TableDataView)
+                         LegendInfo, Symbols, TableDataView)
 
 
 class VMStatTable(BenchmarkSubPlot):
@@ -24,7 +24,7 @@ class VMStatTable(BenchmarkSubPlot):
         """
         baseline = legend_info.label(self.benchmark.uuid)
         sample = (view_df.columns.get_level_values("delta") == "sample")
-        delta = (~sample) & (view_df.columns.get_level_values("__dataset_id") != baseline)
+        delta = (~sample) & (view_df.columns.get_level_values("dataset_id") != baseline)
         select_cols = view_df.columns[sample]
         select_cols = select_cols.append(view_df.columns[delta])
         sorted_cols, _ = select_cols.sortlevel()
@@ -35,18 +35,18 @@ class VMStatTable(BenchmarkSubPlot):
         Generate the legend map for the pivoted view_df and map the
         dataset column index level to the legend labels.
         XXX this can be generalized in a common subplot type for tables.
-        Assume that the __dataset_id level has been already mapped to label values
+        Assume that the dataset_id level has been already mapped to label values
         """
         col_df = df.columns.to_frame()
         by_label = legend_info.with_label_index()
-        _, pivot_colors = col_df.align(by_label["colors"], axis=0, level="__dataset_id")
-        _, pivot_labels = col_df.align(by_label["labels"], axis=0, level="__dataset_id")
+        _, pivot_colors = col_df.align(by_label["colors"], axis=0, level="dataset_id")
+        _, pivot_labels = col_df.align(by_label["labels"], axis=0, level="dataset_id")
         new_map = LegendInfo(df.columns, colors=pivot_colors, labels=pivot_labels)
         return new_map
 
     def generate(self, surface: "Surface", cell: CellData):
         df = self._get_vmstat_dataset()
-        if not check_multi_index_aligned(df, "__dataset_id"):
+        if not check_multi_index_aligned(df, "dataset_id"):
             self.logger.error("Unaligned index, skipping plot")
             return
         # Make normalized fields a percentage
@@ -55,14 +55,13 @@ class VMStatTable(BenchmarkSubPlot):
         df[norm_cols] = df[norm_cols] * 100
 
         legend_info = self.get_legend_info()
-        view_df = legend_info.map_labels_to_level(df, "__dataset_id", axis=0)
-        view_df = pivot_multi_index_level(view_df, "__dataset_id")
+        view_df = legend_info.map_labels_to_level(df, "dataset_id", axis=0)
+        view_df = pivot_multi_index_level(view_df, "dataset_id")
 
         show_cols = self._get_show_columns(view_df, legend_info)
         pivot_legend_info = self._get_pivot_legend_info(view_df, legend_info)
-        assert cell.legend_info is None
-        cell.legend_info = pivot_legend_info
         view = TableDataView(view_df, columns=show_cols)
+        view.legend_info = pivot_legend_info
         cell.add_view(view)
 
 
@@ -137,6 +136,14 @@ class VMStatUMATable(VMStatTable):
             return self.uma_stats.agg_df.copy()
 
 
+class VMStatUMABucketAffinity(BenchmarkSubPlot):
+    def get_cell_title(self):
+        return "UMA Zone bucket affinity groups"
+
+    def generate(self, surface, cell):
+        pass
+
+
 class VMStatTables(BenchmarkTable):
     """
     Show vmstat datasets as tabular output for inspection.
@@ -144,6 +151,7 @@ class VMStatTables(BenchmarkTable):
     subplots = [
         VMStatMallocTable,
         VMStatUMATable,
+        VMStatUMABucketAffinity,
     ]
 
     def get_plot_name(self):
@@ -172,8 +180,8 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
     def get_legend_info(self):
         # Use base legend to separate by axis
         base = self.build_legend_by_dataset()
-        legend_left = base.map_label(lambda l: f"\u0394{self.metric} {l}")
-        legend_right = base.map_label(lambda l: f"% \u0394{self.metric} {l}")
+        legend_left = base.map_label(lambda l: f"{Symbols.DELTA}{self.metric} " + l)
+        legend_right = base.map_label(lambda l: f"% {Symbols.DELTA}{self.metric}" + l)
         legend = LegendInfo.multi_axis(left=legend_left, right=legend_right)
         legend.remap_colors("Paired")
         return legend
@@ -192,7 +200,7 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
         We filter metric to show only the values for the top 90th percentile
         of the delta, this avoid cluttering the plots with meaningless data.
         """
-        df = self.ds.agg_df[self.ds.agg_df.index.get_level_values("__dataset_id") != self.benchmark.uuid].copy()
+        df = self.ds.agg_df[self.ds.agg_df.index.get_level_values("dataset_id") != self.benchmark.uuid].copy()
         delta_col = (self.metric, "median", "delta_baseline")
         rel_col = (self.metric, "median", "norm_delta_baseline")
         if delta_col not in df.columns:
@@ -214,7 +222,7 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
 
         view = BarPlotDataView(df_sel, x="x", yleft=delta_col, yright=rel_col)
         view.legend_info = self.get_legend_info()
-        view.legend_level = "__dataset_id"
+        view.legend_level = ["dataset_id"]
         cell.add_view(view)
 
         # Add a line for the y
@@ -223,18 +231,18 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
         view.style.line_style = "dashed"
         view.style.line_width = 0.5
         view.legend_info = LegendInfo(["abs_delta"],
-                                      labels=[f"median \u0394 abs({self.metric})"],
+                                      labels=[f"median {Symbols.DELTA} abs({self.metric})"],
                                       cmap_name="Greys",
                                       color_range=(0.5, 1))
-        view.legend_level = "metric"
+        view.legend_level = ["metric"]
         cell.add_view(view)
 
         cell.x_config.label = "UMA Zone"
         cell.x_config.ticks = df_sel["x"]
         cell.x_config.tick_labels = df_sel.index.get_level_values("name")
         cell.x_config.tick_rotation = 90
-        cell.yleft_config.label = f"\u0394{self.metric}"
-        cell.yright_config.label = f"% \u0394{self.metric}"
+        cell.yleft_config.label = f"{Symbols.DELTA}{self.metric}"
+        cell.yright_config.label = f"% {Symbols.DELTA}{self.metric}"
 
 
 class VMStatDistribution(BenchmarkPlot):

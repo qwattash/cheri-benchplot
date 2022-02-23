@@ -109,7 +109,7 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
         for idx, track in tracks.iterrows():
             self.logger.debug("Detected track %s: extracting stats", track["name"])
             track_df = self._extract_track_stats(tp, track, ts_start, ts_end)
-            track_df["__dataset_id"] = self.benchmark.uuid
+            track_df["dataset_id"] = self.benchmark.uuid
             track_df["__iteration"] = i
             self._append_df(track_df)
 
@@ -210,11 +210,11 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
         aggregation metrics for these, instead we use the "meta" column name
         """
         super().aggregate()
-        grouped = self.merged_df.groupby(["__dataset_id", "__iteration"] + self.get_aggregate_index())
+        grouped = self.merged_df.groupby(["dataset_id", "__iteration"] + self.get_aggregate_index())
         # Cache the context grouping for later inspection if needed
         self.ctx_agg_df = grouped.aggregate(self._get_context_agg_strategy())
         # Now that we aggregated contexts within the same iteration, aggregate over iterations
-        grouped = self.ctx_agg_df.groupby(["__dataset_id"] + self.get_aggregate_index())
+        grouped = self.ctx_agg_df.groupby(["dataset_id"] + self.get_aggregate_index())
         self.agg_df = self._compute_aggregations(grouped)
 
     def post_aggregate(self):

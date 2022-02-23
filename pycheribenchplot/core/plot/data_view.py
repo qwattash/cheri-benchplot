@@ -1,6 +1,7 @@
 import itertools as it
 import typing
 from abc import ABC, abstractmethod
+from collections import namedtuple
 from dataclasses import dataclass, field
 
 import matplotlib.pyplot as plt
@@ -11,23 +12,42 @@ import pandas as pd
 class LegendInfo:
     """
     Helper to build legends by associating descriptive labels to dataframe index levels.
+    Legend info can be combined to create multi-index legend info that are selected using
+    more than one key for complex plot configurations.
     """
     @classmethod
-    def multi_axis(cls, left: "LegendInfo", right: "LegendInfo", cmap_name: str = None):
+    def multi_axis(cls, left: "LegendInfo", right: "LegendInfo"):
         """
         Build a multi-axis legend for both the left and right axes. The extra "axis" index
         level is added to keys and will be used internally when multiple axes are enabled,
         if it exists.
         """
-        if cmap_name is None:
-            cmap_name = left.cmap_name
-        left.info_df["axis"] = "left"
-        right.info_df["axis"] = "right"
-        combined = pd.concat((left.info_df, right.info_df)).set_index("axis", append=True).sort_index()
-        return LegendInfo(combined.index, labels=combined["labels"], cmap_name=cmap_name)
+        return cls.combine("axis", {"left": left, "right": right})
+
+    @classmethod
+    def combine(cls, index_name: str, chunks: dict[str | tuple, "LegendInfo"]) -> "LegendInfo":
+        """
+        Combine multiple LegendInfo adding a new index level with the given name.
+        Chunks is a dictionary mapping the new index key to the corresponding LegendInfo.
+        Note that the chunks should share the same index levels.
+        Note that if the chunks keys are tuples, we will still generate a single index level
+        in the legend_info dataframe. If multiple columns are required, we need to expose the
+        "levels" argument of pd.concat()
+        """
+        unique_levels = np.unique([c.info_df.index.names for c in chunks.values()])
+        assert len(unique_levels) == 1, "LegendInfo chunks should share all index levels"
+        unique_keys = pd.unique(list(chunks.keys()))
+
+        new_df = pd.concat((c.info_df for c in chunks.values()),
+                           keys=chunks.keys(),
+                           levels=[unique_keys],
+                           names=[index_name])
+        new_info = LegendInfo([], [], colors=[])
+        new_info.info_df = new_df
+        return new_info
 
     def __init__(self,
-                 keys: typing.Iterable[typing.Hashable] | pd.Index,
+                 keys: pd.Index | typing.Iterable[typing.Hashable],
                  labels: typing.Iterable[str] = None,
                  cmap_name: str = "Pastel1",
                  color_range: typing.Tuple[float, float] = (0, 1),
@@ -37,37 +57,65 @@ class LegendInfo:
         pandas index. The class factory helpers should be used in most cases.
         If a list of colors is given, override automatic creation.
         """
-        self.cmap_name = cmap_name
+        if not isinstance(keys, pd.Index):
+            # Normalize keys to index
+            keys = pd.Index(keys, name="primary")
         if labels is None:
-            labels = keys
+            labels = keys.map(str).str.cat(sep=", ")
         if colors is None:
             cmap = plt.get_cmap(cmap_name)
             cmap_range = np.linspace(color_range[0], color_range[1], len(keys))
             colors = cmap(cmap_range)
         self.info_df = pd.DataFrame({"labels": labels, "colors": list(colors)}, index=keys)
 
-    def map_label(self, fn) -> "LegendInfo":
-        new_labels = self.info_df["labels"].map(fn)
-        new_info = LegendInfo(self.info_df.index, labels=new_labels, colors=self.info_df["colors"])
-        return new_info
-
     @property
     def index(self):
         return self.info_df.index
 
-    def color(self, key: typing.Hashable, axis="left"):
-        if "axis" in self.info_df.index.names:
-            lookup_df = self.info_df.xs(axis, level="axis")
-        else:
-            lookup_df = self.info_df
-        return lookup_df.loc[key, "colors"]
+    def reindex(self, index: pd.Index) -> "LegendInfo":
+        new_df = self.info_df.reindex(index)
+        return LegendInfo(new_df.index, new_df["labels"], colors=new_df["colors"])
 
-    def label(self, key: typing.Hashable, axis="left"):
-        if "axis" in self.info_df.index.names:
-            lookup_df = self.info_df.xs(axis, level="axis")
+    def _fetch_key(self, key, column):
+        # Use index.get_loc as the normal indexing gets confused when an index
+        # level contains tuples. This might happen if there is a legend level holding
+        # multi-index column names
+        # Assume that if a key is a tuple, it holds a single key. If it is any other
+        # iterable, it is a set of keys.
+        if isinstance(key, tuple):
+            squeeze = True
+            key = [key]
         else:
-            lookup_df = self.info_df
-        return lookup_df.loc[key, "labels"]
+            squeeze = False
+
+        # If indexing with a dataframe, we need to convert it to a multiindex or a set of tuples,
+        # as we can not index with multi-dimensional arrays
+        if isinstance(key, pd.DataFrame):
+            if key.shape[1] > 1:
+                key = pd.MultiIndex.from_frame(key)
+            else:
+                key = pd.Index(key.iloc[:, 0])
+
+        result = self.info_df.loc[key, column]
+        if squeeze:
+            # If we normalized to a list with only one item, squeeze the result
+            return result.squeeze()
+        return result
+
+    def color(self, key: typing.Hashable):
+        color = self._fetch_key(key, "colors")
+        assert np.all(color != np.nan)
+        return color
+
+    def label(self, key: typing.Hashable):
+        return self._fetch_key(key, "labels")
+
+    def find(self, key: tuple) -> tuple[any, str]:
+        assert isinstance(key, tuple)
+        if len(key) == 1:
+            # Required for non-multiindex indexing
+            key = key[0]
+        return self.color(key), self.label(key)
 
     def color_items(self):
         return self.info_df["colors"].items()
@@ -75,11 +123,48 @@ class LegendInfo:
     def label_items(self):
         return self.info_df["labels"].items()
 
-    def remap_colors(self, mapname: str, color_range: typing.Tuple[float, float] = (0, 1)):
-        self.cmap_name = mapname
+    def remap_colors(self, mapname: str, color_range: typing.Tuple[float, float] = (0, 1), group_by=None, inplace=True):
         cmap = plt.get_cmap(mapname)
-        cmap_range = np.linspace(color_range[0], color_range[1], len(self.info_df))
-        self.info_df["colors"] = list(cmap(cmap_range))
+
+        def remap_group_colors(group):
+            cmap_range = np.linspace(color_range[0], color_range[1], len(group))
+            mapped_colors = list(cmap(cmap_range))
+            return pd.Series(list(cmap(cmap_range)), index=group.index)
+
+        new_legend = self._map_column(remap_group_colors, "colors", group_by=group_by)
+
+        if inplace:
+            self.info_df = new_legend.info_df
+        else:
+            return new_legend
+
+    def _map_column(self, fn, column, group_by=None) -> "LegendInfo":
+        new_df = self.info_df.copy()
+        if group_by is None:
+            new_df[column] = fn(self.info_df[column])
+        else:
+            grouped = self.info_df.groupby(group_by)
+            new_df[column] = grouped[column].apply(fn)
+
+        new_legend = LegendInfo(new_df.index, new_df["labels"], colors=new_df["colors"])
+        return new_legend
+
+    def map_color(self, fn, group_by=None) -> "LegendInfo":
+        if group_by is None:
+            group_by = self.info_df.index
+        return self._map_column(fn, "colors", group_by=group_by)
+
+    def map_label(self, fn, group_by=None) -> "LegendInfo":
+        if group_by is None:
+            group_by = self.info_df.index
+        return self._map_column(fn, "labels", group_by=group_by)
+
+    def build_key(self):
+        """
+        Return a named tuple with the correct order for the index levels in the legend info.
+        The tuple is filled by default with slice(None)
+        """
+        return namedtuple("LegendKey", field_names=self.info_df.index.names)
 
     def map_labels_to_level(self, df: pd.DataFrame, level=0, axis=0) -> pd.DataFrame:
         """
@@ -124,7 +209,7 @@ class DataView:
     df: View dataframe
     plot: The renderer to use for the plot (e.g. table, hist, line...)
     legend_info: Override legend_info from the cell, the legends will then be merged.
-    legend_level: Same as CellData.legend_level but for the overridden legend_info
+    legend_level: Frame columns/levels to use as legend keys
 
     fmt: Column data formatters map. Accept a dict of column-name => formatter.
     x: name of the column to pull X-axis values from (default 'x')
@@ -133,25 +218,35 @@ class DataView:
     """
     df: pd.DataFrame
     legend_info: LegendInfo = None
-    legend_level: str = None
+    legend_level: list[str] = None
     key: str = field(init=False)
 
     def __post_init__(self):
         # Make sure that we operate on a fresh dataframe so that renderers can mess
         # it up without risk of weird behaviours
         self.df = self.df.copy()
+        if self.legend_level is None:
+            self.legend_level = self.default_legend_level()
+        if self.legend_info is None:
+            self.legend_info = self.default_legend_info()
+        if not isinstance(self.legend_level, list):
+            self.legend_level = [self.legend_level]
 
-    def get_col(self, col, df=None):
+    def get_col(self, col: list[str | tuple] | str, df=None):
         """
         Return a dataframe column, which might be a column or index level.
         Note that index levels are normalized to dataframe.
         """
         if df is None:
             df = self.df
-        if col in df.index.names:
-            return df.index.to_frame()[col]
-        else:
-            return df[col]
+        df = df.reset_index().set_index(df.index, drop=False)
+        return df[col]
+
+    def default_legend_info(self):
+        return LegendInfo(self.df.index.unique())
+
+    def default_legend_level(self):
+        return self.df.index.names
 
 
 @dataclass
@@ -166,6 +261,7 @@ class TableDataView(DataView):
     columns: list = field(default_factory=list)
 
     def __post_init__(self):
+        super().__post_init__()
         self.key = "table"
 
 
@@ -248,27 +344,13 @@ class XYPlotDataView(DataView):
         return len(self.yright) != 0
 
     def get_x(self):
-        return self.get_col(self.x)
+        return self.get_col(self.x).squeeze()
 
     def get_yleft(self):
         return self.get_col(self.yleft)
 
     def get_yright(self):
         return self.get_col(self.yright)
-
-    def iter_yleft(self):
-        if isinstance(self.yleft, list):
-            for c in self.yleft:
-                yield c
-        else:
-            yield self.yleft
-
-    def iter_yright(self):
-        if isinstance(self.yright, list):
-            for c in self.yright:
-                yield c
-        else:
-            yield self.yright
 
 
 @dataclass
@@ -306,11 +388,17 @@ class HistPlotDataView(XYPlotDataView):
     this will be used to plot multiple histogram columns for each bucket
     """
     buckets: list[float] = field(default_factory=list)
-    bucket_group: str = None
+    bucket_group: list[str] = None
 
     def __post_init__(self):
         super().__post_init__()
         self.key = "hist"
+        if self.bucket_group is None:
+            raise ValueError("bucket_group is required")
+        if not isinstance(self.bucket_group, list):
+            self.bucket_group = [self.bucket_group]
+        # Use the bucket group as legend level
+        self.legend_level = self.bucket_group
 
 
 @dataclass
@@ -342,19 +430,11 @@ class CellData:
         Arguments:
         title: Title for the cell of the plot
         Each of the axes (x, yleft and yright) has a separate configuration object
-
-        Properties:
-        legend_info: LegendInfo mapping index label values to human-readable names and colors
-        Note that whether the legend is keyed by column names or index level currently
-        depends on the view that renders the data.
-        legend_level: Index label for the legend key of each set of data
         """
         self.title = title
         self.x_config = AxisConfig(x_label, enable=True)
         self.yleft_config = AxisConfig(yleft_label, enable=True)
         self.yright_config = AxisConfig(yright_label)
-        self.legend_info = None
-        self.legend_level = None
 
         self.views = []
         self.surface = None
@@ -365,39 +445,6 @@ class CellData:
 
     def add_view(self, view: DataView):
         self.views.append(view)
-
-    def validate(self):
-        assert self.legend_info or not self.legend_level, "CellData legend_level set without legend_info"
-
-    def default_legend_info(self, view):
-        return LegendInfo.default(view.df.index.unique().values)
-
-    def get_legend_level(self, view):
-        if view.legend_level:
-            level = view.legend_level
-        else:
-            level = self.legend_level
-        return level
-
-    def get_legend_col(self, view, df=None):
-        level = self.get_legend_level(view)
-        if level:
-            return view.get_col(level, df)
-        else:
-            if df is None:
-                df = view.df
-            flat_index = df.index.to_flat_index()
-            flat_index.name = ",".join(df.index.names)
-            return flat_index
-
-    def get_legend_info(self, view):
-        if view.legend_info:
-            legend_info = view.legend_info
-        elif self.legend_info:
-            legend_info = self.legend_info
-        else:
-            legend_info = self.default_legend_info(view)
-        return legend_info
 
     def draw(self, ctx: "Surface.DrawContext"):
         pass

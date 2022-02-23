@@ -77,7 +77,8 @@ class Field:
     Helper class to describe column and associated metadata to aid processing
     XXX-AM: Consider adding some sort of tags to the fields so that we can avoid hardcoding the
     names for some processing steps (e.g. normalized fields that should be shown as percentage,
-    or address fields for hex visualization).
+    or address fields for hex visualization). We should also use the desc field to generate
+    legend labels and human-readable version of the fields.
     May also help to split derived fields by the stage in which they are created
     (e.g. pre-merge, post-merge, post-agg). This should move the burden of declaring which fields to process.
     """
@@ -165,8 +166,8 @@ class DataSetContainer(metaclass=DatasetRegistry):
     - df: the input dataframe. There is one input dataframe for each instance of the dataset,
     belonging to each existing benchmark run. This is the dataframe on which we operate until
     we reach the *merge* step.
-    There are two mandatory index levels: the __dataset_id and __iterations levels.
-    The __dataset_id is the UUID of the benchmark run for which the data was captured.
+    There are two mandatory index levels: the dataset_id and __iterations levels.
+    The dataset_id is the UUID of the benchmark run for which the data was captured.
     The __iteration index level contains the iteration number, if it is meaningless for the
     data source, then it is set to -1.
     - merged_df: the merged dataframe contains the concatenated data from all the benchmark
@@ -186,7 +187,7 @@ class DataSetContainer(metaclass=DatasetRegistry):
     method.
     The resulting dataframes use multi-indexes on both rows and columns.
     The row multi-index levels are dataset-dependent and are declared as IndexField(), in addition
-    to the implicit __dataset_id and __iteration index levels.
+    to the implicit dataset_id and __iteration index levels.
     (Note that the __iteration index level should be absent in the agg_df as it would not make sense).
     The column index levels are the following (by convention):
     - The 1st column level contains the name of each non-index field declared as input
@@ -266,7 +267,7 @@ class DataSetContainer(metaclass=DatasetRegistry):
         return self.implicit_index_columns() + [f.name for f in self.input_index_fields()]
 
     def implicit_index_columns(self):
-        return ["__dataset_id", "__iteration"]
+        return ["dataset_id", "__iteration"]
 
     def index_columns(self) -> typing.Sequence[str]:
         """
@@ -318,9 +319,9 @@ class DataSetContainer(metaclass=DatasetRegistry):
         - The index columns must be in the given dataframe and must agree with the container dataframe.
         - The columns must be a subset of all_columns().
         """
-        if "__dataset_id" not in df.columns:
+        if "dataset_id" not in df.columns:
             self.logger.debug("No dataset column, using default")
-            df["__dataset_id"] = self.benchmark.uuid
+            df["dataset_id"] = self.benchmark.uuid
         if "__iteration" not in df.columns:
             self.logger.debug("No iteration column, using default (-1)")
             df["__iteration"] = -1
@@ -383,18 +384,18 @@ class DataSetContainer(metaclass=DatasetRegistry):
     def _compute_delta_by_dataset(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         General operation to compute the delta of aggregated data columns between
-        benchmark runs (identified by __dataset_id).
+        benchmark runs (identified by dataset_id).
         This will add the "delta_baseline" column in the delta columns index level.
         It is assumed that the current benchmark instance is the baseline instance,
         this is the case if called from post_aggregate().
         """
-        assert check_multi_index_aligned(df, "__dataset_id")
+        assert check_multi_index_aligned(df, "dataset_id")
         assert "metric" in df.columns.names, "Missing column metric level"
         assert "delta" in df.columns.names, "Missing column delta level"
 
-        datasets = df.index.get_level_values("__dataset_id").unique()
-        baseline = df.xs(self.benchmark.uuid, level="__dataset_id")
-        # broadcast the baseline cross-section across the __dataset_id
+        datasets = df.index.get_level_values("dataset_id").unique()
+        baseline = df.xs(self.benchmark.uuid, level="dataset_id")
+        # broadcast the baseline cross-section across the dataset_id
         # and perform the arithmetic operation, we want the right-join
         # result only
         _, aligned_baseline = df.align(baseline)

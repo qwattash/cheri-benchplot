@@ -1,4 +1,7 @@
 from abc import ABC, abstractmethod
+from enum import Enum
+
+import pandas as pd
 
 from ..analysis import BenchmarkAnalysis
 from ..dataset import DatasetArtefact
@@ -7,6 +10,25 @@ from .backend import ColumnLayout, Surface
 from .data_view import CellData, LegendInfo
 from .excel import SpreadsheetSurface
 from .matplotlib import MatplotlibSurface
+
+
+class Symbols(Enum):
+    DELTA = "\u0394"
+
+    def __add__(self, other):
+        if isinstance(other, str):
+            return str(self) + other
+        else:
+            return NotImplemented
+
+    def __radd__(self, other):
+        if isinstance(other, str):
+            return other + str(self)
+        else:
+            return NotImplemented
+
+    def __str__(self):
+        return self.value
 
 
 class BenchmarkPlotBase(BenchmarkAnalysis):
@@ -127,9 +149,11 @@ class BenchmarkSubPlot(ABC):
         Build a legend map that allocates colors and labels to the datasets merged
         in the current benchmark instance.
         """
-        legend = {uuid: str(bench.instance_config.name) for uuid, bench in self.benchmark.merged_benchmarks.items()}
-        legend[self.benchmark.uuid] = f"{self.benchmark.instance_config.name}(*)"
-        legend_info = LegendInfo(legend.keys(), labels=legend.values())
+        bench_group = self.benchmark.get_benchmark_group()
+        legend = {uuid: str(bench.instance_config.name) for uuid, bench in bench_group.items()}
+        legend[self.benchmark.uuid] += "(*)"
+        index = pd.Index(legend.keys(), name="dataset_id")
+        legend_info = LegendInfo(index, labels=legend.values())
         return legend_info
 
     @abstractmethod

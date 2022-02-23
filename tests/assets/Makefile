@@ -18,3 +18,6 @@ all: $(TARGETS) $(CROSS_TARGETS)
 
 riscv_%: %.c
 	$(CHERI_CC) $(CHERI_CFLAGS) -o $@ $<
+
+benchplot-assets:
+	python gen_benchplot_assets.py

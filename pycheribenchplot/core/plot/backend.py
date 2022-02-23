@@ -125,10 +125,6 @@ class Surface(ABC):
             self.logger.debug("Skipping data view %s unsupported by %s", data_view.key, self)
             return None
 
-    def _draw_cell(cell, ctx):
-        cell.validate()
-        cell.draw(ctx)
-
     def _draw_split(self, title, dest):
         base = dest.parent / "split"
         base.mkdir(exist_ok=True)
@@ -141,7 +137,6 @@ class Surface(ABC):
                 ctx.row = 0
                 ctx.col = 0
                 try:
-                    cell.validate()
                     cell.draw(ctx)
                 finally:
                     self._finalize_draw_context(ctx)
@@ -153,7 +148,6 @@ class Surface(ABC):
                 for ci, cell in enumerate(row):
                     ctx.row = ri
                     ctx.col = ci
-                    cell.validate()
                     cell.draw(ctx)
         finally:
             self._finalize_draw_context(ctx)

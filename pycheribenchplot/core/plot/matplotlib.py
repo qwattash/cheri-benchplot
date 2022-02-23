@@ -103,21 +103,30 @@ class SimpleLineRenderer(ViewRenderer):
     """
     Render vertical or horizontal lines
     """
+    def _find_legend_entry(self, view):
+        """
+        For each column, there are N line coordines. Each coordinate is in a different
+        row and should have a value associated in the legend_level column(s)
+        """
+        # get_col always returns a Dataframe, if we have only one level we need to squeeze
+        legend_key = view.get_col(view.legend_level)
+        color = view.legend_info.color(legend_key)
+        label = view.legend_info.label(legend_key)
+        return color, label
+
     def render(self, view, cell, surface, ctx):
-        legend_key = cell.get_legend_col(view)
-        legend_info = cell.get_legend_info(view)
+        # legend key is always a dataframe because legend_level is normalized to a list
         style_args = build_style_args(view.style)
+        color_set, label_set = self._find_legend_entry(view)
 
         for c in view.horizontal:
-            for k, y in zip(legend_key, view.df[c]):
-                color = legend_info.color(k) if legend_info else None
-                line = ctx.ax.axhline(y, color=color, **style_args)
-                ctx.legend.set_item(legend_info.label(k), line)
+            for coord, color, label in zip(view.df[c], color_set, label_set):
+                line = ctx.ax.axhline(coord, color=color, **style_args)
+                ctx.legend.set_item(label, line)
         for c in view.vertical:
-            for k, x in zip(legend_key, view.df[c]):
-                color = legend_info.color(k) if legend_info else None
-                line = ctx.ax.axvline(x, color=color, **style_args)
-                ctx.legend.set_item(legend_info.label(k), line)
+            for coord, color, label in zip(view.df[c], color_set, label_set):
+                line = ctx.ax.axvline(coord, color=color, **style_args)
+                ctx.legend.set_item(label, line)
 
 
 class BarRenderer(ViewRenderer):
@@ -136,11 +145,8 @@ class BarRenderer(ViewRenderer):
             by.append(view.bar_group)
         if view.stack_group:
             by.append(view.stack_group)
-
         if len(by) == 0:
-            by = cell.get_legend_level(view)
-            if by is None:
-                by = view.df.index.names
+            by = view.legend_level
         return by
 
     def _compute_bar_x(self, cell, view, ax):
@@ -291,6 +297,30 @@ class BarRenderer(ViewRenderer):
                     view.df[f"__bar_y_base_r{col}"] = 0
         return view.df
 
+    def _find_legend_entry(self, view, group_levels: list, group_key: tuple, col_name: str, axis: str):
+        """
+        Resolve a group, column, axis set to a color and label
+        """
+        Key = view.legend_info.build_key()
+        # normalize group key to be a tuple
+        if len(group_levels) == 1:
+            group_key = (group_key, )
+
+        key_levels = {}
+        for lvl in view.legend_level:
+            lvl_idx = group_levels.index(lvl)
+            assert lvl_idx >= 0, "Legend level should always be part of the groupby levels"
+            key_levels[lvl] = group_key[lvl_idx]
+        if (len(view.yleft) > 1 and axis == "left") or (len(view.yright) > 1 and axis == "right"):
+            # Expect the "column" legend level to exist
+            key_levels["column"] = col_name
+        if view.has_yleft and view.has_yright:
+            # Expect the "axis" legend level to exist
+            key_levels["axis"] = axis
+
+        key = Key(**key_levels)
+        return view.legend_info.find(key)
+
     def render(self, view, cell, surface, ctx):
         """
         For the input dataframe we split the column groups
@@ -298,8 +328,6 @@ class BarRenderer(ViewRenderer):
         x, yleft and yright columns, which are used to plot
         the data.
         """
-
-        legend_info = cell.get_legend_info(view)
         by = self._resolve_groups(cell, view)
         df = self._compute_bar_x(cell, view, ctx.ax)
         groups = df.groupby(by)
@@ -307,31 +335,24 @@ class BarRenderer(ViewRenderer):
         left_patches = []
         right_patches = []
         for key, chunk in groups:
-            legend_key = cell.get_legend_col(view, chunk).unique()
-            # There can be only one color for each group/stack
-            assert len(legend_key) == 1
-            legend_key = legend_key[0]
-            l_color = legend_info.color(legend_key, axis="left")
-            r_color = legend_info.color(legend_key, axis="right")
-            l_label = legend_info.label(legend_key, axis="left")
-            r_label = legend_info.label(legend_key, axis="right")
-
             if view.has_yleft:
-                for col_idx, col_name in enumerate(view.iter_yleft()):
+                for col_idx, col_name in enumerate(view.yleft):
+                    color, label = self._find_legend_entry(view, by, key, col_name, "left")
                     values = view.get_col(col_name, chunk).squeeze()
                     x = view.get_col(f"__bar_x_l{col_idx}", chunk)
                     base = view.get_col(f"__bar_y_base_l{col_idx}", chunk)
                     width = view.get_col(f"__bar_width_l{col_idx}", chunk)
-                    patches = ctx.ax.bar(x, height=values, bottom=base, color=l_color, width=width)
-                    ctx.legend.set_item(l_label, patches)
+                    patches = ctx.ax.bar(x, height=values, bottom=base, color=color, width=width)
+                    ctx.legend.set_item(label, patches)
             if view.has_yright:
-                for col_idx, col_name in enumerate(view.iter_yright()):
+                for col_idx, col_name in enumerate(view.yright):
+                    color, label = self._find_legend_entry(view, by, key, col_name, "right")
                     values = view.get_col(col_name, chunk).squeeze()
                     x = view.get_col(f"__bar_x_r{col_idx}", chunk)
                     base = view.get_col(f"__bar_y_base_r{col_idx}", chunk)
                     width = view.get_col(f"__bar_width_r{col_idx}", chunk)
-                    patches = ctx.rax.bar(x, height=values, bottom=base, color=r_color, width=width)
-                    ctx.legend.set_item(r_label, patches)
+                    patches = ctx.rax.bar(x, height=values, bottom=base, color=color, width=width)
+                    ctx.legend.set_item(label, patches)
 
         if view.has_yleft and view.has_yright:
             # Need to realign the Y axes 0 coordinates
@@ -343,35 +364,33 @@ class HistRenderer(ViewRenderer):
     Render an histogram plot.
     """
     def render(self, view, cell, surface, ctx):
+        """
+        Note: This uses the bucket group as legend level
+        This guarantees that the legend_level is always in the index of
+        the groups after groupby()
+        """
         xcol = view.get_x()
-
-        # Use the bucket group as legend level
-        # This guarantees that the legend_level is always in the index of
-        # the groups after groupby()
-        # XXX we may have some more complex condition if we do not wish to use
-        # the bucket group but for now this covers all use cases
-        view.legend_level = view.bucket_group
-
-        legend_info = cell.get_legend_info(view)
-        legend_col = cell.get_legend_col(view)
-        idx_values = legend_col.unique()
 
         # Note: xvec retains the bucket_group index (or more generally the legend_level)
         if view.bucket_group:
             groups = xcol.groupby(view.bucket_group)
             xvec = [chunk for _, chunk in groups]
             keys = [k for k, _ in groups]
-            colors = legend_info.color(keys)
-            labels = legend_info.label(keys)
+            colors = view.legend_info.color(keys)
+            labels = view.legend_info.label(keys)
             assert len(colors) == len(xvec), f"#colors({len(colors)}) does not match histogram #groups({len(xvec)})"
         else:
             assert len(xcol.shape) == 1 or xcol.shape[1] == 1
             xvec = xcol
-            colors = None
+            # TODO honor the legend_info here as well
+            legend_key = view.get_col(view.legend_level).unique()
+            assert len(legend_key) == 1
+            colors = view.legend_info.color(legend_key)
+            labels = view.legend_info.label(legend_key)
 
         n, bins, patches = ctx.ax.hist(xvec, bins=view.buckets, rwidth=0.5, color=colors)
         ctx.legend.set_group(labels, patches)
-        ctx.ax.set_xticks(view.buckets)
+        # ctx.ax.set_xticks(view.buckets)
 
 
 class MatplotlibSurface(Surface):

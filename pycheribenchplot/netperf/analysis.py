@@ -28,12 +28,12 @@ class NetperfSanityCheck(BenchmarkAnalysis):
             cpu_start = syms_index == "cpu_start"
             cpu_stop = syms_index == "cpu_stop"
             statcounters_sample = syms_index == "statcounters_sample"
-            check = dset.ctx_agg_df.loc[cpu_start, "call_count"].groupby("__dataset_id").sum().unique()
+            check = dset.ctx_agg_df.loc[cpu_start, "call_count"].groupby("dataset_id").sum().unique()
             if len(check) > 1:
                 self.logger.error("netperf::cpu_start anomalous #calls %s", check)
-            check = dset.ctx_agg_df.loc[cpu_stop, "call_count"].groupby("__dataset_id").sum().unique()
+            check = dset.ctx_agg_df.loc[cpu_stop, "call_count"].groupby("dataset_id").sum().unique()
             if len(check) > 1:
                 self.logger.error("netperf::cpu_stop anomalous #calls %s", check)
-            check = dset.ctx_agg_df.loc[statcounters_sample, "call_count"].groupby("__dataset_id").sum().unique()
+            check = dset.ctx_agg_df.loc[statcounters_sample, "call_count"].groupby("dataset_id").sum().unique()
             if len(check) > 1:
                 self.logger.error("libstatcounters::statcounters_sample anomalous #calls %s", check)

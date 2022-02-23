@@ -25,7 +25,7 @@ class QEMUHistSubPlot(BenchmarkSubPlot):
 
     def _get_group_levels(self, indf: pd.DataFrame):
         # This should be in sync with the dataset aggregation index
-        assert "__dataset_id" in indf.index.names, "Missing __dataset_id index level"
+        assert "dataset_id" in indf.index.names, "Missing dataset_id index level"
         assert "process" in indf.index.names, "Missing process index level"
         assert "thread" in indf.index.names, "Missing thread index level"
         assert "EL" in indf.index.names, "Missing EL index level"
@@ -58,7 +58,7 @@ class QEMUHistTable(QEMUHistSubPlot):
         baseline = legend_info.label(self.benchmark.uuid)
         data = (view_df.columns.get_level_values("metric") != "sort_metric")
         sample = data & (view_df.columns.get_level_values("delta") == "sample")
-        delta = data & (~sample) & (view_df.columns.get_level_values("__dataset_id") != baseline)
+        delta = data & (~sample) & (view_df.columns.get_level_values("dataset_id") != baseline)
         select_cols = view_df.columns[sample]
         select_cols = select_cols.append(view_df.columns[delta])
         sorted_cols, _ = select_cols.sortlevel()
@@ -72,18 +72,18 @@ class QEMUHistTable(QEMUHistSubPlot):
     def _get_pivot_legend_info(self, df, legend_info):
         """
         Generate a legend map for the pivoted view_df.
-        This will map <column index tuple> => (<__dataset_id label>, <color>)
+        This will map <column index tuple> => (<dataset_id label>, <color>)
         """
         col_df = df.columns.to_frame()
         by_label = legend_info.with_label_index()
-        _, pivot_colors = col_df.align(by_label["colors"], axis=0, level="__dataset_id")
-        _, pivot_labels = col_df.align(by_label["labels"], axis=0, level="__dataset_id")
+        _, pivot_colors = col_df.align(by_label["colors"], axis=0, level="dataset_id")
+        _, pivot_labels = col_df.align(by_label["labels"], axis=0, level="dataset_id")
         new_map = LegendInfo(df.columns, colors=pivot_colors, labels=pivot_labels)
         return new_map
 
     def generate(self, surface, cell):
         df = self._get_filtered_df()
-        if not check_multi_index_aligned(df, "__dataset_id"):
+        if not check_multi_index_aligned(df, "dataset_id"):
             self.logger.error("Unaligned index, skipping plot")
             return
         # Make normalized fields a percentage
@@ -92,21 +92,20 @@ class QEMUHistTable(QEMUHistSubPlot):
         df[norm_cols] = df[norm_cols] * 100
         df["sort_metric"] = self._get_sort_metric(df)
 
-        # Remap the __dataset_id according to the legend to make it
+        # Remap the dataset_id according to the legend to make it
         # more meaningful for visualization
         legend_info = self.get_legend_info()
-        view_df = legend_info.map_labels_to_level(df, "__dataset_id", axis=0)
-        # Pivot the __dataset_id level into the columns
-        view_df = pivot_multi_index_level(view_df, "__dataset_id")
+        view_df = legend_info.map_labels_to_level(df, "dataset_id", axis=0)
+        # Pivot the dataset_id level into the columns
+        view_df = pivot_multi_index_level(view_df, "dataset_id")
 
         show_cols = self._get_show_columns(view_df, legend_info)
         sort_cols = self._get_sort_columns(view_df, "sort_metric")
         view_df = view_df.sort_values(by=sort_cols, ascending=False)
 
         pivot_legend_info = self._get_pivot_legend_info(view_df, legend_info)
-        assert cell.legend_info is None
-        cell.legend_info = pivot_legend_info
         view = TableDataView(view_df, columns=show_cols)
+        view.legend_info = pivot_legend_info
         cell.add_view(view)
 
 

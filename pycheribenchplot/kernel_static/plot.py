@@ -2,8 +2,8 @@ import numpy as np
 import pandas as pd
 
 from ..core.dataset import (DatasetName, index_where, pivot_multi_index_level, stacked_histogram)
-from ..core.plot import (AALineDataView, BarPlotDataView, BenchmarkPlot, BenchmarkSubPlot, HistPlotDataView, LegendInfo,
-                         Scale, TableDataView)
+from ..core.plot import (AALineDataView, BarPlotDataView, BenchmarkPlot, BenchmarkSubPlot, BenchmarkTable,
+                         HistPlotDataView, LegendInfo, Scale, Symbols, TableDataView)
 
 
 class SetBoundsDistribution(BenchmarkSubPlot):
@@ -26,13 +26,11 @@ class SetBoundsDistribution(BenchmarkSubPlot):
 
     def get_legend_info(self):
         df = self.get_stats_df()
-        datasets = df.index.get_level_values("__dataset_id").unique()
-        group = self.benchmark.get_benchmark_group()
+        datasets = df.index.get_level_values("dataset_id").unique()
+        legend_info = self.build_legend_by_dataset()
         # Only use the datasets in the dataframe
-        labels = {uuid: str(b.instance_config.name) for uuid, b in group.items() if uuid in datasets}
-        if self.benchmark.uuid in labels:
-            labels[self.benchmark.uuid] += "(*)"
-        return LegendInfo(labels.keys(), cmap_name="Paired", labels=labels.values())
+        avail_labels = legend_info.index[legend_info.index.isin(datasets)]
+        return legend_info.reindex(avail_labels)
 
 
 class SetBoundsSimpleDistribution(SetBoundsDistribution):
@@ -42,7 +40,7 @@ class SetBoundsSimpleDistribution(SetBoundsDistribution):
         that we have side-by-side comparison of the buckets.
         """
         df = self.get_stats_df()
-        nviews = len(df.index.get_level_values("__dataset_id").unique())
+        nviews = len(df.index.get_level_values("dataset_id").unique())
         # Determine buckets we are going to use
         min_size = max(df["size"].min(), 1)
         max_size = max(df["size"].max(), 1)
@@ -50,8 +48,8 @@ class SetBoundsSimpleDistribution(SetBoundsDistribution):
         buckets = [2**i for i in log_buckets]
 
         # Build histograms for each dataset
-        view = HistPlotDataView(df, x="size", buckets=buckets, bucket_group="__dataset_id")
-        cell.legend_info = self.get_legend_info()
+        view = HistPlotDataView(df, x="size", buckets=buckets, bucket_group="dataset_id")
+        view.legend_info = self.get_legend_info()
         cell.x_ticks = buckets
         cell.x_config.label = "Bounds size (bytes)"
         cell.x_config.scale = Scale("log", base=2)
@@ -88,8 +86,8 @@ class KernelBoundsDistributionByKind(SetBoundsDistribution):
     def get_kind_legend_info(self):
         df = self.get_stats_df()
         kinds = df["kind"].unique()
-        labels = {k: k.name for k in kinds}
-        return LegendInfo(labels.keys(), cmap_name="Paired", labels=labels.values())
+        index = pd.Index(kinds, name="kind")
+        return LegendInfo(index, cmap_name="Paired", labels=[k.name for k in kinds])
 
     def generate(self, surface, cell):
         """
@@ -98,7 +96,7 @@ class KernelBoundsDistributionByKind(SetBoundsDistribution):
         for each setbounds kind.
         """
         df = self.get_stats_df()
-        nviews = len(df.index.get_level_values("__dataset_id").unique())
+        nviews = len(df.index.get_level_values("dataset_id").unique())
         # Determine buckets we are going to use
         min_size = max(df["size"].min(), 1)
         max_size = max(df["size"].max(), 1)
@@ -106,13 +104,13 @@ class KernelBoundsDistributionByKind(SetBoundsDistribution):
         buckets = [2**i for i in log_buckets]
 
         # Build the stacked histogram dataframe
-        hist_df = stacked_histogram(df, group="__dataset_id", stack="kind", data_col="size", bins=buckets)
+        hist_df = stacked_histogram(df, group="dataset_id", stack="kind", data_col="size", bins=buckets)
 
-        view = BarPlotDataView(hist_df, x="bin_start", yleft="count", bar_group="__dataset_id", stack_group="kind")
+        view = BarPlotDataView(hist_df, x="bin_start", yleft="count", bar_group="dataset_id", stack_group="kind")
 
         # Build histograms for each dataset
-        cell.legend_info = self.get_kind_legend_info()
-        cell.legend_level = "kind"
+        view.legend_info = self.get_kind_legend_info()
+        view.legend_level = ["kind"]
         cell.x_config.ticks = buckets
         cell.x_config.label = "Bounds size (bytes)"
         cell.x_config.scale = Scale("log", base=2)
@@ -148,7 +146,8 @@ class KernelStructSizeHist(KernelStructStatsPlot):
             for uuid, bench in self.benchmark.merged_benchmarks.items()
         }
         legend[self.benchmark.uuid] = f"median {self.benchmark.instance_config.name}(*)"
-        return LegendInfo(legend.keys(), cmap_name="Greys", labels=legend.values(), color_range=(0.5, 1))
+        index = pd.Index(legend.keys(), name="dataset_id")
+        return LegendInfo(index, cmap_name="Greys", labels=legend.values(), color_range=(0.5, 1))
 
     def get_hist_column(self):
         raise NotImplementedError("Must override")
@@ -189,7 +188,9 @@ class KernelStructSizeHist(KernelStructStatsPlot):
         buckets = self.build_buckets(df)
 
         # Build histogram
-        view = HistPlotDataView(df, x=hcol, buckets=buckets, bucket_group="__dataset_id")
+        view = HistPlotDataView(df, x=hcol, buckets=buckets, bucket_group="dataset_id")
+        view.legend_info = self.get_legend_info()
+        view.legend_level = ["dataset_id"]
         cell.add_view(view)
 
         # Add help lines for the median struct size
@@ -197,7 +198,7 @@ class KernelStructSizeHist(KernelStructStatsPlot):
         view = AALineDataView(agg_df, vertical=line_cols)
         view.style.line_style = "dashed"
         view.legend_info = self.get_median_line_legend()
-        view.legend_level = "__dataset_id"
+        view.legend_level = ["dataset_id"]
         cell.add_view(view)
 
         cell.x_config.label = "Size (bytes)"
@@ -205,8 +206,6 @@ class KernelStructSizeHist(KernelStructStatsPlot):
         cell.x_config.ticks = buckets
         cell.x_config.limits = (min(buckets), max(buckets))
         cell.yleft_config.label = "# structs"
-        cell.legend_info = self.get_legend_info()
-        cell.legend_level = "__dataset_id"
 
 
 class KernelStructSizeDistribution(KernelStructSizeHist):
@@ -230,13 +229,13 @@ class KernelStructSizeOverhead(KernelStructSizeHist):
     def get_df(self):
         df = super().get_df()
         # take the non-baseline delta values only
-        baseline = df.index.get_level_values("__dataset_id") == self.benchmark.uuid
+        baseline = df.index.get_level_values("dataset_id") == self.benchmark.uuid
         return df[~baseline]
 
     def get_agg_df(self):
         df = super().get_agg_df()
         # take the non-baseline delta values only
-        baseline = df.index.get_level_values("__dataset_id") == self.benchmark.uuid
+        baseline = df.index.get_level_values("dataset_id") == self.benchmark.uuid
         return df[~baseline]
 
     def generate(self, surface, cell):
@@ -255,7 +254,7 @@ class KernelStructSizeRelOverhead(KernelStructSizeHist):
     def get_df(self):
         df = super().get_df()
         # take the non-baseline delta values only
-        baseline = df.index.get_level_values("__dataset_id") == self.benchmark.uuid
+        baseline = df.index.get_level_values("dataset_id") == self.benchmark.uuid
         df = df[~baseline].copy()
         df[self.get_hist_column()] *= 100
         return df
@@ -263,7 +262,7 @@ class KernelStructSizeRelOverhead(KernelStructSizeHist):
     def get_agg_df(self):
         df = super().get_agg_df()
         # take the non-baseline delta values only
-        baseline = df.index.get_level_values("__dataset_id") == self.benchmark.uuid
+        baseline = df.index.get_level_values("dataset_id") == self.benchmark.uuid
         df = df[~baseline].copy()
         df[self.get_hist_column() + ("median", )] *= 100
         return df
@@ -281,6 +280,112 @@ class KernelStructSizeRelOverhead(KernelStructSizeHist):
         cell.x_config.label = "% size delta"
         cell.x_config.scale = Scale("linear")
         cell.yleft_config.scale = Scale("log", base=10)
+
+
+class KernelStructPaddingOverhead(KernelStructStatsPlot):
+    columns = [("total_pad", "delta_baseline"), ("nested_total_pad", "delta_baseline")]
+    columns_desc = [Symbols.DELTA + "padding", Symbols.DELTA + "nested padding"]
+
+    def get_cell_title(self):
+        return "Kernel struct padding overhead"
+
+    def get_df(self):
+        # Omit baseline as we are looking at deltas
+        sel = (self.struct_stat.merged_df.index.get_level_values("dataset_id") != self.benchmark.uuid)
+        return self.struct_stat.merged_df[sel]
+
+    def get_legend_info(self):
+        legend_base = self.build_legend_by_dataset()
+        legend_merge = {}
+        for col, desc in zip(self.columns, self.columns_desc):
+            legend_merge[col] = legend_base.map_label(lambda l: desc + " " + l)
+        legend_info = LegendInfo.combine("column", legend_merge)
+        legend_info.remap_colors("Paired", group_by="dataset_id")
+        return legend_info
+
+    def generate(self, surface, cell):
+        df = self.get_df()
+        cols = self.columns
+
+        # Get high 10% delta values
+        high_thresh = df[cols].quantile(0.9)
+        high_df = df[df[cols] >= high_thresh].sort_values(cols, ascending=False)
+        # Cap the number of bars we display, we do not have infinite horizontal space.
+        maxbar = 25
+        if len(high_df) > maxbar:
+            self.logger.warning("capping high total_pad delta entries to %d, 90th percentile contains %d", maxbar,
+                                len(high_df))
+            high_df = high_df.iloc[:maxbar + 1]
+
+        high_df["x"] = high_df.groupby("dataset_id").cumcount()
+        view = BarPlotDataView(high_df, x="x", yleft=cols)
+        view.legend_info = self.get_legend_info()
+        view.legend_level = ["dataset_id"]
+        cell.add_view(view)
+
+        cell.x_config.label = "struct name"
+        cell.x_config.ticks = high_df["x"].unique()
+        cell.x_config.tick_labels = high_df.index.get_level_values("name")
+        cell.x_config.tick_rotation = 90
+        cell.yleft_config.label = Symbols.DELTA + "padding (bytes)"
+
+
+class KernelStructPointerDensity(KernelStructStatsPlot):
+    def get_cell_title(self):
+        return "Kernel struct pointer density"
+
+    def generate(self, surface, cell):
+        df = self.struct_stat.merged_df.copy()
+        ptr_count_col = ("ptr_count", "sample")
+        m_count_col = ("member_count", "sample")
+
+        df["ptr_density"] = (df[ptr_count_col] / df[m_count_col]) * 100
+        buckets = range(0, 101, 10)
+
+        view = HistPlotDataView(df, x="ptr_density", buckets=buckets, bucket_group="dataset_id")
+        view.legend_info = self.build_legend_by_dataset()
+        view.legend_level = ["dataset_id"]
+        cell.add_view(view)
+
+        cell.x_config.label = "% pointer density"
+        cell.x_config.ticks = buckets
+        cell.yleft_config.label = "# structs"
+
+
+class KernelStructPackedSizeDelta(KernelStructStatsPlot):
+    """
+    Measure the size difference in structures, considering only the member size, as if the structure
+    was packed.
+    Note that nested structure padding is unchanged, perhaps it should be removed as well.
+    """
+    def get_cell_title(self):
+        return "Kernel struct packed size delta"
+
+    def generate(self, surface, cell):
+        df = self.struct_stat.merged_df.copy()
+
+
+class KernelStaticInfoPlot(BenchmarkPlot):
+    """
+    Report subobject bounds and struct statistics for the kernel
+    """
+
+    subplots = [
+        KernelBoundsDistribution,
+        ModulesBoundsDistribution,
+        KernelBoundsDistributionByKind,
+        KernelStructSizeDistribution,
+        KernelStructSizeOverhead,
+        KernelStructSizeRelOverhead,
+        KernelStructPaddingOverhead,
+        KernelStructPointerDensity,
+    ]
+
+    def get_plot_name(self):
+        return "Kernel compile-time stats"
+
+    def get_plot_file(self):
+        return self.benchmark.manager.plot_output_path / "kernel-static-stats"
 
 
 class KernelStructSizeLargeOverhead(KernelStructStatsPlot):
@@ -302,9 +407,9 @@ class KernelStructSizeLargeOverhead(KernelStructStatsPlot):
         assert high_df.index.is_unique, "Non unique index?"
 
         legend_info = self.get_legend_info()
-        # Currently only use the legend_info to map labels to __dataset_id
-        show_df = legend_info.map_labels_to_level(high_df, "__dataset_id", axis=0)
-        show_df = pivot_multi_index_level(show_df, "__dataset_id")
+        # Currently only use the legend_info to map labels to dataset_id
+        show_df = legend_info.map_labels_to_level(high_df, "dataset_id", axis=0)
+        show_df = pivot_multi_index_level(show_df, "dataset_id")
         # sort by highest delta
         sort_cols_sel = None
         for i, level_value in enumerate(col):
@@ -319,6 +424,8 @@ class KernelStructSizeLargeOverhead(KernelStructStatsPlot):
         show_cols = show_df.columns.get_level_values("metric").isin(self.struct_stat.data_columns())
         col_idx = show_df.columns[show_cols]
         view = TableDataView(show_df, columns=col_idx)
+        # force no legend coloring, have not set it up yet
+        view.legend_info = None
         cell.add_view(view)
 
 
@@ -338,33 +445,9 @@ class KernelStructSizeLargeAbsOverhead(KernelStructSizeLargeOverhead):
         return ("size", "delta_baseline")
 
 
-class KernelStaticInfoPlot(BenchmarkPlot):
+class KernelStaticInfoTables(BenchmarkTable):
     """
-    Report subobject bounds statistics for the kernel
-    """
-
-    subplots = [
-        KernelBoundsDistribution,
-        ModulesBoundsDistribution,
-        KernelBoundsDistributionByKind,
-        KernelStructSizeDistribution,
-        KernelStructSizeOverhead,
-        KernelStructSizeRelOverhead,
-    ]
-
-    def __init__(self, benchmark):
-        super().__init__(benchmark, [MatplotlibSurface()])
-
-    def get_plot_name(self):
-        return "Kernel compile-time stats"
-
-    def get_plot_file(self):
-        return self.benchmark.manager.plot_output_path / "kernel-static-stats"
-
-
-class KernelStaticInfoTables(BenchmarkPlot):
-    """
-    Report subobject bounds statistics for the kernel
+    Report tables of struct statistics with large deltas for the kernel
     """
 
     subplots = [

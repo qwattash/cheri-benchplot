@@ -43,7 +43,7 @@ class ProcstatDataset(CSVDataSetContainer):
         Iterate over (base_addr, path) of all the binaries mapped for the
         given dataset id.
         """
-        xsection = self.df.xs(dataset_id, level="__dataset_id")
+        xsection = self.df.xs(dataset_id, level="dataset_id")
         binaries = xsection["PATH"][xsection["PATH"] != ""].unique()
         for name in binaries:
             addr = xsection.loc[xsection["PATH"] == name]["START"].min()

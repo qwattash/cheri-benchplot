@@ -22,5 +22,5 @@ class CSVDataSetContainer(DataSetContainer):
         for key in kwargs["converters"].keys():
             kwargs["dtype"].pop(key, None)
         csv_df = pd.read_csv(path, **kwargs)
-        csv_df["__dataset_id"] = self.benchmark.uuid
+        csv_df["dataset_id"] = self.benchmark.uuid
         return csv_df

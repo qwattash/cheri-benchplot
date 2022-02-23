@@ -187,6 +187,7 @@ class KernelStructSizeDataset(KernelStructDWARFInfo):
         Field.data_field("nested_ptr_count", dtype=int, isderived=True),
         Field.data_field("nested_member_count", dtype=int, isderived=True),
         Field.data_field("nested_packed_size", dtype=int, isderived=True),
+        Field.data_field("nested_total_pad", dtype=int, isderived=True),
     ]
 
     def _check_has_nested(self, group):
@@ -198,7 +199,7 @@ class KernelStructSizeDataset(KernelStructDWARFInfo):
         # We do not care about per-member information so we collapse by grouping and produce extra columns
         # Do not do this in the aggregation step as it is meant for median/quartile calculations so keep it
         # separate for consistency
-        group_key = ["__dataset_id", "name", "src_file", "src_line"]
+        group_key = ["dataset_id", "name", "src_file", "src_line"]
         grouped = self.merged_df.reset_index("member_name").groupby(group_key)
 
         new_df = grouped[["size"]].first()
@@ -221,7 +222,7 @@ class KernelStructSizeDataset(KernelStructDWARFInfo):
         new_df.loc[~has_nested, "nested_member_count"] = new_df.loc[~has_nested, "member_count"]
         new_df.loc[~has_nested, "nested_total_pad"] = new_df.loc[~has_nested, "total_pad"]
         new_df.loc[~has_nested, "_visited"] = True
-        nested_key_fields = ["__dataset_id", "member_type_base_name", "member_type_src_file", "member_type_src_line"]
+        nested_key_fields = ["dataset_id", "member_type_base_name", "member_type_src_file", "member_type_src_line"]
         visit_queue = list(new_df[has_nested].index)
         while len(visit_queue):
             struct_key = visit_queue.pop(0)
@@ -259,6 +260,7 @@ class KernelStructSizeDataset(KernelStructDWARFInfo):
         # integrity checks
         assert (new_df["member_count"] >= new_df["ptr_count"]).all()
         assert (new_df["nested_packed_size"] >= 0).all()
+        assert (new_df["nested_total_pad"] >= 0).all()
 
         # Align and compute deltas
         new_df = align_multi_index_levels(new_df, ["name", "src_file", "src_line"], fill_value=np.nan)
@@ -275,7 +277,7 @@ class KernelStructSizeDataset(KernelStructDWARFInfo):
 
     def aggregate(self):
         super().aggregate()
-        grouped = self.merged_df.groupby(["__dataset_id"])
+        grouped = self.merged_df.groupby(["dataset_id"])
         self.agg_df = self._compute_aggregations(grouped)
 
 
