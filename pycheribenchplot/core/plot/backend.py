@@ -129,6 +129,8 @@ class Surface(ABC):
         base = dest.parent / "split"
         base.mkdir(exist_ok=True)
         stem = dest.stem
+        # suppress title for now, this might be an option
+        title = ""
 
         for ri, row in enumerate(self._layout):
             for ci, cell in enumerate(row):
