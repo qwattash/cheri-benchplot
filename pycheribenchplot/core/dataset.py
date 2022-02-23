@@ -595,9 +595,21 @@ def check_multi_index_aligned(df: pd.DataFrame, level: str | list[str]):
     """
     if len(df) == 0:
         return True
-    group_size = df.groupby(level).size()
-    aligned = (group_size == group_size.iloc[0]).all()
-    return aligned
+    if not df.index.is_unique:
+        return False
+
+    grouped = df.groupby(level)
+    # just grab the first group to compare
+    first_index = list(grouped.groups.values())[0]
+    match = first_index.to_frame().reset_index(drop=True).drop(level, axis=1)
+    for _, g in grouped:
+        g_match = g.index.to_frame().drop(level, axis=1).reset_index(drop=True)
+        if match.shape != g_match.shape:
+            # There is no hope of equality
+            return False
+        if not (match == g_match).all().all():
+            return False
+    return True
 
 
 def align_multi_index_levels(df: pd.DataFrame, align_levels: list[str], fill_value=np.nan):
@@ -772,3 +784,54 @@ def stacked_histogram(df_in: pd.DataFrame, group: str, stack: str, data_col: str
         hdf.loc[hist_key, "bin_end"] = b_end
         hdf.loc[hist_key, "count"] = count
     return hdf.set_index("bin_end", append=True)
+
+
+def quantile_slice(df: pd.DataFrame,
+                   columns: list[str | tuple],
+                   quantile: float,
+                   max_entries: int = None,
+                   level: list[str] = None) -> pd.DataFrame:
+    """
+    Filter a dataset to select the values where the given columns are above/below the given quantile threshold.
+    Care is taken to maintain the slice index aligned at the given level (dataset_id by default),
+    for this reason if one entry satisfies the threshold for one dataset,
+    the values for other datasets will be included as well.
+    The max_entries option allows to limit the number of entries that we select for each dataset group.
+    Returns the dataframe containing the entries above the given quantile threshold.
+    """
+    if level is None:
+        level = ["dataset_id"]
+    if isinstance(level, str):
+        level = [level]
+    if max_entries is None:
+        max_entries = np.inf
+    # preliminary checking
+    assert check_multi_index_aligned(df, level)
+
+    level_complement = df.index.names.difference(level)
+    high_thresh = df[columns].quantile(quantile)
+
+    # We split each level group to determine the top N entries for each group.
+    # Then we slice each group at max_entries and realign the values across groups.
+    # This will result in potentially more than max_entries per group, but maintains data integrity
+    # without dropping interesting values. Note that we select entries based on the global
+    # high_thresh, so there may be empty group selections.
+    def handle_group(g):
+        # Any column may be above
+        cond = (g[columns] >= high_thresh).apply(np.any, axis=1)
+        sel = pd.Series(False, index=g.index)
+        if cond.sum() > max_entries:
+            cut = g[cond].sort_values(columns, ascending=False).index[max_entries:]
+            cond.loc[cut] = False
+        sel[cond] = True
+        return sel
+
+    sel = df.groupby(level, group_keys=False).apply(handle_group)
+    # Need to propagate True values in sel across `level` containing the
+    # complementary key matching the high value, this is necessary to maintain
+    # alignment of the frame groups.
+    sel = sel.groupby(level_complement, group_keys=True).transform(lambda g: g.any())
+    high_df = df[sel]
+    # Make sure we are still aligned
+    assert check_multi_index_aligned(high_df, level)
+    return high_df

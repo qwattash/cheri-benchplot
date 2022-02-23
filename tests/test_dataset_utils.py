@@ -126,3 +126,58 @@ def test_reorder_columns(fake_simple_df):
     result_df = reorder_columns(df, ["c1", "c0"])
     assert (df.iloc[:, 0] == result_df.iloc[:, 1]).all()
     assert (df.iloc[:, 1] == result_df.iloc[:, 0]).all()
+
+
+def test_quantile_slice_high(fake_simple_df):
+    df = fake_simple_df
+    # Add a column with high values for both l0 keys
+    df["test"] = 0
+    df.loc[0, "test"] = np.arange(len(df) / 2)
+    df.loc[1, "test"] = np.arange(len(df) / 2)
+
+    result_df = quantile_slice(df, ["test"], quantile=0.8, level="l0")
+
+    # fake df has 2**4 rows, so expect test column to contain [0..7] twice.
+    # the top 20% is the 2 top values in each l0 group
+    assert check_multi_index_aligned(result_df, ["l0"])
+    assert len(result_df) == 4
+    assert (result_df.loc[0, "test"] == [6, 7]).all()
+    assert (result_df.loc[1, "test"] == [6, 7]).all()
+
+
+def test_quantile_slice_high_cap(fake_simple_df):
+    df = fake_simple_df
+    # Add a column with high values for both l0 keys
+    df["test"] = 0
+    df.loc[0, "test"] = np.arange(len(df) / 2)
+    df.loc[1, "test"] = np.arange(len(df) / 2)
+
+    result_df = quantile_slice(df, ["test"], quantile=0.6, level="l0", max_entries=2)
+
+    # fake df has 2**4 rows, so expect test column to contain [0..7] twice.
+    # the top 40% is the 4 top values in each l0 group, max_len should
+    # only return the top 2
+    assert check_multi_index_aligned(result_df, ["l0"])
+    assert len(result_df) == 4
+    assert (result_df.loc[0, "test"] == [6, 7]).all()
+    assert (result_df.loc[1, "test"] == [6, 7]).all()
+
+
+def test_quantile_slice_high_cap_mixed(fake_simple_df):
+    df = fake_simple_df
+    # Add a column with high values for both l0 keys but the keys and test values
+    # are reversed in the two l0 groups
+    df["test"] = 0
+    df.loc[0, "test"] = np.arange(len(df) / 2)
+    df.loc[1, "test"] = list(reversed(np.arange(len(df) / 2)))
+
+    result_df = quantile_slice(df, ["test"], quantile=0.6, level="l0", max_entries=2)
+    print(result_df)
+
+    # fake df has 2**4 rows, so expect test column to contain [0..7] twice.
+    # the top 40% is the 4 top values in each l0 group, max_len should
+    # only return the top 2
+    assert check_multi_index_aligned(result_df, ["l0"])
+    assert len(result_df) == 8
+    assert (result_df.loc[0, "test"] == [0, 1, 6, 7]).all()
+    assert (result_df.loc[1, "test"] == [7, 6, 1, 0]).all()
