@@ -262,6 +262,9 @@ class KernelStructSizeDataset(KernelStructDWARFInfo):
         assert (new_df["nested_packed_size"] >= 0).all()
         assert (new_df["nested_total_pad"] >= 0).all()
 
+        # Drop duplicate names with same size that are defined in multiple files
+        new_df = new_df.reset_index().drop_duplicates(["dataset_id", "name", "size"]).set_index(new_df.index.names)
+
         # Align and compute deltas
         new_df = align_multi_index_levels(new_df, ["name", "src_file", "src_line"], fill_value=np.nan)
         new_df = self._add_delta_columns(new_df)
