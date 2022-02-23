@@ -548,11 +548,8 @@ class DataSetContainer(metaclass=DatasetRegistry):
         benchmark.uuid on the merge and post-merge operations will refer to the baseline implicitly.
         """
         self.logger.debug("Merge")
-        if self.merged_df is None:
-            src = self.df
-        else:
-            src = self.merged_df
-        self.merged_df = pd.concat([src, other.df])
+        assert self.merged_df is not None, "forgot to call init_merge()?"
+        self.merged_df = pd.concat([self.merged_df, other.df])
 
     def post_merge(self):
         """

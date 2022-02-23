@@ -616,11 +616,12 @@ class BenchmarkBase(TemplateConfigContext):
         for dset in self.datasets.values():
             dset.init_merge()
         for bench in others:
+            self.logger.debug("Merge %s(%s) instance='%s'", bench.config.name, bench.uuid, bench.instance_config.name)
             self.merged_benchmarks[bench.uuid] = bench
             for parser_id, dset in bench.datasets.items():
                 self.datasets[parser_id].merge(dset)
-            for parser_id, dset in bench.datasets.items():
-                self.datasets[parser_id].post_merge()
+        for dset in self.datasets.values():
+            dset.post_merge()
 
     def aggregate(self):
         """
