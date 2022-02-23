@@ -169,11 +169,11 @@ class BarRenderer(ViewRenderer):
             nleft_cols = len(view.yleft) if isinstance(view.yleft, list) else 1
             naxes = nleft_cols
         if view.bar_group:
-            ngroups = len(view.get_col(view.bar_group).unique())
+            ngroups = len(view.df.groupby(view.bar_group))
         else:
             ngroups = 1
         if view.stack_group:
-            nstacks = len(view.get_col(view.stack_group).unique())
+            nstacks = len(view.df.groupby(view.stack_group))
         else:
             nstacks = 1
         assert naxes > 0 and ngroups >= 1 and nstacks >= 1
