@@ -207,7 +207,7 @@ class Instance(ABC):
         self.config = config
         # Unique ID of the instance
         self.uuid = uuid.uuid4()
-        self.logger = new_logger(f"{self.uuid}({self.config.name})")
+        self.logger = new_logger(f"instance[{self.config.name}]")
         # SSH port allocated for the benchmarks to connect to the instance
         self.ssh_port = self._get_ssh_port()
         # The task associated to this instance runner task
@@ -236,6 +236,7 @@ class Instance(ABC):
 
     def start(self):
         """Create the runner task that will boot the instance"""
+        self.logger.info("Created instance with UUID=%s", self.uuid)
         self.task = self.event_loop.create_task(self._run_instance())
 
     def boot(self):
@@ -530,7 +531,7 @@ class InstanceManager:
     def _alloc_instance(self, owner: uuid.UUID, instance: Instance):
         self._active_instances[owner] = instance
         instance.boot()
-        self.logger.debug("Allocate instance %s to benchmark %s", instance.uuid, owner)
+        self.logger.debug("Allocate instance %s(%s) to benchmark %s", instance.uuid, instance.config.name, owner)
 
     async def request_instance(self, owner: uuid.UUID, config: InstanceConfig) -> InstanceInfo:
         instance = self._create_instance(config)

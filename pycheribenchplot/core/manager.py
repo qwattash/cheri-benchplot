@@ -17,6 +17,7 @@ from pathlib import Path
 import asyncssh
 import pandas
 import termcolor
+from git import Repo
 
 from .analysis import AnalysisConfig, BenchmarkAnalysisRegistry
 from .benchmark import BenchmarkBase, BenchmarkRunConfig, BenchmarkRunRecord
@@ -36,6 +37,8 @@ class BenchplotUserConfig(Config):
     build_path: Path = path_field("~/cheri/build")
     perfetto_path: Path = path_field("~/cheri/cheri-perfetto/build")
     cheribuild_path: Path = path_field("~/cheri/cheribuild/cheribuild.py")
+    cheribsd_path: Path = path_field("~/cheri/cheribsd")
+    qemu_path: Path = path_field("~/cheri/qemu")
 
 
 @dataclass
@@ -58,10 +61,6 @@ class BenchmarkManagerConfig(BenchplotUserConfig, BenchmarkSessionConfig):
     Internal configuration object merging user and session top-level configurations.
     This is the top-level configuration object passed around as manager_config.
     """
-
-    # user: typing.Optional[BenchplotUserConfig] = None
-    # session: typing.Optional[BenchmarkSessionConfig] = None
-
     def __post_init__(self):
         super().__post_init__()
         # Verify basic sanity of the configuration
@@ -78,6 +77,8 @@ class BenchmarkManagerConfig(BenchplotUserConfig, BenchmarkSessionConfig):
 @dataclass
 class BenchmarkManagerRecord(Config):
     session: uuid.UUID
+    cheribsd_head: typing.Optional[str] = None
+    qemu_head: typing.Optional[str] = None
     records: list[BenchmarkRunRecord] = field(default_factory=list)
 
 
@@ -117,6 +118,12 @@ class BenchmarkManager(TemplateConfigContext):
     def record_benchmark(self, record: BenchmarkRunRecord):
         self.benchmark_records.records.append(record)
 
+    def _get_repo_head(self, path):
+        repo = Repo(path)
+        head = repo.head.object.hexsha
+        dirty = "-dirty" if repo.is_dirty() else ""
+        return f"{head}{dirty}"
+
     def _init_session(self):
         """Session-ID dependant initialization"""
         # Note: this will only bind the manager-specific options, the rest of the template arguments
@@ -128,6 +135,17 @@ class BenchmarkManager(TemplateConfigContext):
         self.benchmark_records_path = self.session_output_path / self.records_filename
         self.analysis_config = AnalysisConfig()
         self.plot_output_path = self.session_output_path / "plots"
+
+        try:
+            self.benchmark_records.cheribsd_head = self._get_repo_head(self.config.cheribsd_path)
+        except:
+            self.logger.warning("Could not record CheriBSD HEAD state, consider setting `cheribsd_path`" +
+                                " in the session configuration")
+        try:
+            self.benchmark_records.qemu_head = self._get_repo_head(self.config.qemu_path)
+        except:
+            self.logger.warning("Could not record QEMU HEAD state, consider setting `qemu_path`" +
+                                " in the session configuration")
 
     def _resolve_recorded_session(self, session: typing.Optional[uuid.UUID]):
         """
