@@ -209,6 +209,40 @@ class LegendInfo:
 
         return self.assign_colors(base_map, levels, mapper, color_range=color_range)
 
+    def assign_colors_hsv(self,
+                          levels: list[str] | str,
+                          sub_levels: list[str] | str = None,
+                          h: tuple[float, float] = (0, 1),
+                          s: tuple[float, float] = (0, 1),
+                          v: tuple[float, float] = (0, 1)):
+        """
+        Allocate the HSV color space to the legend colors.
+        The Hue selects the levels group, the saturation is used to select secondary levels and luminance offsets
+        the leaf colors.
+        """
+        if isinstance(levels, str):
+            levels = [levels]
+        if isinstance(sub_levels, str) and sub_levels is not None:
+            sub_levels = [sub_levels]
+        df = self.info_df.copy()
+
+        def gen_values(interval, group):
+            s = pd.Series(np.linspace(interval[0], interval[1], len(group)), index=group.index)
+            return s
+
+        h_levels = df.index.names.difference(levels)
+        h_values = df.groupby(h_levels, group_keys=False).apply(lambda g: gen_values(h, g))
+        if sub_levels and len(levels + sub_levels) < len(df.index.names):
+            s_values = df.groupby(levels + sub_levels, group_keys=False).apply(lambda g: gen_values(s, g))
+            v_values = df.groupby(levels + sub_levels)
+        else:
+            s_values = pd.Series((s[0] + s[1]) / 2, index=df.index)
+            v_values = df.groupby(levels, group_keys=False).apply(lambda g: gen_values(v, g))
+        hsv = pd.concat((h_values, s_values, v_values), axis=1)
+        hsv.columns = ["h", "s", "v"]
+        hsv["hsv"] = hsv.values.tolist()
+        return LegendInfo(df.index, df["labels"], colors=hsv["hsv"].map(mcolors.hsv_to_rgb))
+
     def build_key(self):
         """
         Return a named tuple with the correct order for the index levels in the legend info.
@@ -483,6 +517,7 @@ class AxisConfig:
     tick_labels: list[str] = None
     tick_rotation: int = None
     scale: Scale = None
+    padding: float = 0.05
 
     def __bool__(self):
         return self.enable

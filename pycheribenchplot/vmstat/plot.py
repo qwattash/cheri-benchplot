@@ -184,7 +184,9 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
         legend_left = base.map_label(lambda l: f"{Symbols.DELTA}{self.metric} " + l)
         legend_right = base.map_label(lambda l: f"% {Symbols.DELTA}{self.metric} " + l)
         legend = LegendInfo.multi_axis(left=legend_left, right=legend_right)
-        return legend.assign_colors_luminance("hsv", "dataset_id", color_range=(0, 0.9), lum_range=(-0.4, 0.2))
+        # legend = legend.assign_colors_luminance("hsv", "dataset_id", color_range=(0, 0.9), lum_range=(-0.4, 0.2))
+        legend = legend.assign_colors_hsv("dataset_id", h=(0.2, 1), s=(0.7, 0.7), v=(0.6, 0.9))
+        return legend
 
     @property
     def bar_limit(self):
@@ -222,7 +224,6 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
         high_df["x"] = assign_sorted_coord(high_df, sort=["abs_delta"], group_by=["dataset_id"], ascending=False)
 
         view = BarPlotDataView(high_df, x="x", yleft=delta_col, yright=rel_col)
-        view.debug = True
         view.bar_axes_ordering = "interleaved"
         view.bar_group = "dataset_id"
         view.legend_info = self.get_legend_info()
