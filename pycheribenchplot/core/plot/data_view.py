@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from collections import namedtuple
 from dataclasses import dataclass, field
 
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -123,7 +124,7 @@ class LegendInfo:
     def label_items(self):
         return self.info_df["labels"].items()
 
-    def remap_colors(self, mapname: str, color_range: typing.Tuple[float, float] = (0, 1), group_by=None, inplace=True):
+    def remap_colors(self, mapname: str, color_range: tuple[float, float] = (0, 1), group_by=None, inplace=True):
         cmap = plt.get_cmap(mapname)
 
         def remap_group_colors(group):
@@ -158,6 +159,55 @@ class LegendInfo:
         if group_by is None:
             group_by = self.info_df.index
         return self._map_column(fn, "labels", group_by=group_by)
+
+    def assign_colors(self,
+                      base_map: str | mcolors.Colormap,
+                      levels: list[str] | str,
+                      color_mapper: typing.Callable,
+                      color_range: tuple[float, float] = (0, 1)):
+        """
+        Helper to assign semantically meaningful colors to labels. The level list specifies the
+        levels of the legend_info index taken into account when scaling colors.
+
+        base_map: base colormap to use for the outermost level.
+        levels: levels to be used to scale colors
+        color_range: colormap range to use between (0, 1)
+        scale: attribute to scale for each level or callable
+        scale_range: interval in which to scale the value given
+        """
+        df = self.info_df.copy()
+        # Assign base colors
+        if isinstance(base_map, str):
+            cmap = plt.get_cmap(base_map)
+        else:
+            cmap = base_map
+        grouped = df.groupby(levels)
+        color_points = np.linspace(color_range[0], color_range[1], len(grouped))
+        for c, (group_key, group) in zip(cmap(color_points), grouped):
+            color_vec = pd.Series([c] * len(group), dtype=object, index=group.index)
+            df.loc[group.index, "colors"] = color_mapper(c, color_vec)
+        return LegendInfo(df.index, df["labels"], colors=df["colors"])
+
+    def assign_colors_luminance(self,
+                                base_map: str | mcolors.Colormap,
+                                levels: list[str] | str,
+                                color_range: tuple[float, float] = (0, 1),
+                                lum_range: tuple[float, float] = (-0.3, 0.3)):
+        """
+        Assign a primary color from the base map to each group, then offset the luminance for each
+        element in the group. This works well for monotonically increasing L* colormaps, but it is
+        acceptable also for symmetric ones. Does not respond well to greyscale printing.
+        """
+        def mapper(base_color, color_vec):
+            lum_offsets = np.linspace(lum_range[0], lum_range[1], len(color_vec))
+            hsv = color_vec.map(mcolors.to_rgb).map(mcolors.rgb_to_hsv)
+            for i, (hsv_color, offset) in enumerate(zip(hsv, lum_offsets)):
+                hsv_color[2] += offset
+                hsv_color = np.clip(hsv_color, 0, 1)
+                color_vec[i] = mcolors.to_rgba(mcolors.hsv_to_rgb(hsv_color))
+            return color_vec
+
+        return self.assign_colors(base_map, levels, mapper, color_range=color_range)
 
     def build_key(self):
         """
@@ -195,6 +245,20 @@ class LegendInfo:
         new_df = self.info_df.set_index("labels")
         new_df["labels"] = labels.values
         return new_df
+
+    def show_samples(self, grayscale=False):
+        """
+        Debug/preview helper that shows color samples for the legend
+        """
+        fig, ax = plt.subplots()
+        tmp = self.info_df.copy()
+        tmp["y"] = [1] * len(tmp)
+        if grayscale:
+            color = tmp["colors"].map(lambda c: mcolors.rgb_to_hsv(mcolors.to_rgb(c))[-1]).map(lambda c: [c] * 3)
+        else:
+            color = tmp["colors"]
+        tmp.plot.bar(y="y", ax=ax, color=color)
+        fig.show()
 
 
 @dataclass
@@ -359,17 +423,23 @@ class BarPlotDataView(XYPlotDataView):
     Parameters for bar plots
 
     Arguments:
-    bar_group: column or index level to use to generate bar groups,
+    - bar_group: column or index level to use to generate bar groups,
     each group is plotted along the given x axis
-    stack_group: column or index level to use to group bars for stacking
-    bar_width: relative size of bar with respect to the bar maximum size
+    - stack_group: column or index level to use to group bars for stacking
+    - bar_width: relative size of bar with respect to the bar maximum size
     can vary in the interval (0, 1)
-    bar_group_location: how to align the bar groups with respect to the
+    - bar_group_location: how to align the bar groups with respect to the
     X values. Allowed values are "center", "left".
+    - bar_axes_ordering: when multiple axes are used (yleft and yright),
+    determine how the bars are grouped. When the value is "sequential"
+    each group contains first the left bars and then the right bars.
+    When the value is "interleaved", left and right bars are paired, so that
+    the first yleft column is next to the first yright column, and so forth.
     """
     bar_group: str = None
     stack_group: str = None
     bar_group_location: str = "center"
+    bar_axes_ordering: str = "sequential"
     bar_width: float = 0.8
 
     def __post_init__(self):

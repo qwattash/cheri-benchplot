@@ -84,8 +84,9 @@ class Legend:
     """
     Helper to build the legend
     """
-    def __init__(self):
+    def __init__(self, legend_position="top"):
         self.handles = {}
+        self.legend_position = legend_position
 
     def set_item(self, label: str, handle: "matplotlib.artist.Artist"):
         self.handles[label] = handle
@@ -94,9 +95,39 @@ class Legend:
         for l, h in zip(labels, handles):
             self.set_item(l, h)
 
+    def _compute_legend_position(self, ctx):
+        """
+        Legend position can be top, bottom, left, right.
+        The legend is always generated outside the axes
+        """
+        nentries = len(self.handles)
+        if self.legend_position == "top":
+            loc = "lower left"
+            bbox = (0, 1.03, 1, 0.2)
+            ncol = 3
+        elif self.legend_position == "bottom":
+            pass
+        elif self.legend_position == "left":
+            pass
+        elif self.legend_position == "right":
+            pass
+        else:
+            assert False, "Invalid legend position"
+        self.bbox = bbox
+        legend_args = {
+            "loc": loc,
+            "bbox_to_anchor": bbox,
+            "ncol": ncol,
+            "fontsize": "small",
+            "mode": "expand",
+            "borderaxespad": 0.0,
+        }
+        return legend_args
+
     def build_legend(self, ctx):
         if self.handles:
-            ctx.ax.legend(handles=self.handles.values(), labels=self.handles.keys())
+            legend_kwargs = self._compute_legend_position(ctx)
+            ctx.ax.legend(handles=self.handles.values(), labels=self.handles.keys(), **legend_kwargs)
 
 
 class SimpleLineRenderer(ViewRenderer):
@@ -149,15 +180,51 @@ class BarRenderer(ViewRenderer):
             by = view.legend_level
         return by
 
-    def _compute_bar_x(self, cell, view, ax):
+    def _iter_group_slices(self, view, ngroups, naxes):
+        """
+        Generate the position and bar width matrix column slices associated
+        to each group of bars to plot. In the simple case, each group is associated to an offset
+        for each X point. If multiple columns are present there will be more than 1 matrix colum
+        that will be flattened when assigning X position data.
+        """
+        if view.bar_axes_ordering == "sequential":
+            col_set_size = ngroups
+            col_index = 0
+            for i in range(len(view.yleft)):
+                group_slice = slice(col_index * col_set_size, (col_index + 1) * col_set_size)
+                yield (group_slice, i, "l")
+                col_index += 1
+            for i in range(len(view.yright)):
+                group_slice = slice(col_index * col_set_size, (col_index + 1) * col_set_size)
+                yield (group_slice, i, "r")
+                col_index += 1
+        elif view.bar_axes_ordering == "interleaved":
+            n_ycols = max(len(view.yleft), len(view.yright))
+            col_index = 0
+            for i in range(n_ycols):
+                if i < len(view.yleft):
+                    group_slice = slice(col_index, ngroups * naxes + 1, naxes)
+                    yield (group_slice, i, "l")
+                    col_index += 1
+                if i < len(view.yright):
+                    group_slice = slice(col_index, ngroups * naxes + 1, naxes)
+                    yield (group_slice, i, "r")
+                    col_index += 1
+        else:
+            raise ValueError(f"Invalid {view}::bar_axes_ordering: only 'sequential' and 'interleaved' allowed")
+
+    def _compute_bar_x(self, cell, view, ax, group_by):
         """
         Compute the group center x for the X axis and then
         the x for each bar group.
         Returns the center x vector and the modified view dataframe.
 
         Note: this assumes that the input dataframe is aligned on the
-        bar_group and stack_group levels
+        bar_group and stack_group levels.
+        Operate on the assumption that waterver sorting was applied to the input
+        data, it is reflected on the X axis ordering.
         """
+        assert view.df.index.is_unique, "Require unique index"
         naxes = 0
         if view.has_yleft and view.has_yright:
             # naxes = 2
@@ -219,8 +286,21 @@ class BarRenderer(ViewRenderer):
         tx_offset_matrix = tx_width_vector * rel_offsets_vector
         assert tx_offset_matrix.shape == (len(tx_xcol), ngroups * naxes)
 
-        # apply the offsets to the transformed x column
-        # shift the positions to center the groups at the given x column
+        # 1. Apply the offsets to the transformed x column.
+        # 2. Shift the positions to center the groups at the given x column.
+        # Assuming that we have ngroups * naxes = 4 and 4 X points in xcol,
+        # the position matrix will look like:
+        #    _                     _     _    _     _      _     _      _
+        #   |  W0*0 W0*1 W0*2 W0*3  |   |  X0  |   |  W0/2  |   |  S0/2  |
+        #   |  W1*0 W1*1 W1*2 W1*3  | + |  X1  | + |  W1/2  | - |  S1/2  |
+        #   |  W2*0 W2*1 W2*2 W2*3  |   |  X2  |   |  W2/2  |   |  S2/2  |
+        #   |_ W3*0 W3*1 W3*2 W3*3 _|   |_ X3 _|   |_ W3/2 _|   |_ S3/2 _|
+        # Where Wi are the transformed (linear space) single-bar width for each X group
+        # 0..N are the bar indexes in each X group, Xi are the X point center coordinates.
+        # The + W/2 - S/2 term translates the positions to center them on the X points,
+        # where S is the total space allocated for a bar group at an X point. The extra W/2
+        # is there because the leftmost bar is center-aligned to the X point, we want to
+        # reference the total left position of that bar instead.
         tx_position_matrix = tx_offset_matrix + tx_xcol[:, np.newaxis]
         if view.bar_group_location == "center":
             align_offset = tx_width / 2 - (tx_space * view.bar_width) / 2
@@ -247,54 +327,32 @@ class BarRenderer(ViewRenderer):
         assert bar_end.shape == tx_bar_end.shape
         bar_width = bar_end - bar_start
 
-        # set bar width so that the size stays constant regardless of the X scale
+        # Set bar width so that the size stays constant regardless of the X scale
         # for each x we have bar width differences, these are repeated for each stack.
         # We need to flatten the bar_width matrix in column-major order.
         # We do the same for the position matrix.
-        # col_group_split represents the split point between each bar group.
-        # We assign a bar group to each column on the left/right axes.
-
-        # axis_split = position_matrix.shape[1] / naxes
-        # assert axis_split == int(axis_split)
-        # axis_split = int(axis_split)
-        col_group_split = ngroups
-        assert col_group_split * naxes == position_matrix.shape[1]
-
-        # Now for each group we broadcast the positions from the matrix
-        # and compute stack Y bases
+        # Care must be taken to preserve the X-data mapping. The dataframe may not be
+        # sorted by X value.
         if view.stack_group:
             non_stack_idx = view.df.index.names.difference([view.stack_group])
             stack_groups = view.df.groupby(non_stack_idx)
+        # Make sure we sort frame by X
+        view.df = view.df.sort_values(group_by + [view.x], ascending=True)
 
-        for col in range(nleft_cols):
-            group_slice = slice(col * col_group_split, (col + 1) * col_group_split)
+        for group_slice, col, side in self._iter_group_slices(view, ngroups, naxes):
+            # group_slice = slice(matrix_col * col_group_split, (matrix_col + 1) * col_group_split)
             bar_x_group = position_matrix[:, group_slice]
             bar_x_group_flat = bar_x_group.ravel(order="F")
-            view.df[f"__bar_x_l{col}"] = np.tile(bar_x_group_flat, nstacks)
+            view.df[f"__bar_x_{side}{col}"] = np.tile(bar_x_group_flat, nstacks)
             bar_width_group = bar_width[:, group_slice]
             bar_width_flat = bar_width_group.ravel(order="F")
-            view.df[f"__bar_width_l{col}"] = np.tile(bar_width_flat, nstacks)
+            view.df[f"__bar_width_{side}{col}"] = np.tile(bar_width_flat, nstacks)
             if view.stack_group:
-                view.df[f"__bar_y_base_l{col}"] = stack_groups[view.yleft[col]].apply(
+                group_col = view.yleft[col] if side == "l" else view.yright[col]
+                view.df[f"__bar_y_base_{side}{col}"] = stack_groups[group_col].apply(
                     lambda stack_slice: stack_slice.cumsum().shift(fill_value=0))
             else:
-                view.df[f"__bar_y_base_l{col}"] = 0
-
-        if view.has_yright:
-            base = nleft_cols * col_group_split
-            for col in range(nright_cols):
-                group_slice = slice(base + col * col_group_split, base + (col + 1) * col_group_split)
-                bar_x_group = position_matrix[:, group_slice]
-                bar_x_group_flat = bar_x_group.ravel(order="F")
-                view.df[f"__bar_x_r{col}"] = np.tile(bar_x_group_flat, nstacks)
-                bar_width_group = bar_width[:, group_slice]
-                bar_width_flat = bar_width_group.ravel(order="F")
-                view.df[f"__bar_width_r{col}"] = np.tile(bar_width_flat, nstacks)
-                if view.stack_group:
-                    view.df[f"__bar_y_base_r{col}"] = stack_groups[view.yright[col]].apply(
-                        lambda stack_slice: stack_slice.cumsum().shift(fill_value=0))
-                else:
-                    view.df[f"__bar_y_base_r{col}"] = 0
+                view.df[f"__bar_y_base_{side}{col}"] = 0
         return view.df
 
     def _find_legend_entry(self, view, group_levels: list, group_key: tuple, col_name: str, axis: str):
@@ -329,7 +387,7 @@ class BarRenderer(ViewRenderer):
         the data.
         """
         by = self._resolve_groups(cell, view)
-        df = self._compute_bar_x(cell, view, ctx.ax)
+        df = self._compute_bar_x(cell, view, ctx.ax, by)
         groups = df.groupby(by)
 
         left_patches = []
@@ -515,4 +573,6 @@ class MatplotlibPlotCell(CellData):
         ctx.ax.axhline(0, linestyle="--", linewidth=0.5, color="black")
 
         ctx.legend.build_legend(ctx)
-        ctx.ax.set_title(self.title)
+        if ctx.legend.legend_position == "top":
+            title_y = max(1.0, ctx.legend.bbox[1] + ctx.legend.bbox[3])
+        ctx.ax.set_title(self.title, y=title_y, pad=6)

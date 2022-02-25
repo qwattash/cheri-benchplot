@@ -211,6 +211,70 @@ def test_bar_render_xpos_2groups_2cols_2stacks(fake_ctx, fake_cell, bar_renderer
     assert np.isclose(out_df["__bar_y_base_l1"], [0, 0, 110, 120, 0, 0, 130, 140]).all()
 
 
+def test_bar_render_xpos_2groups_2axes_interleaved(fake_ctx, fake_cell, bar_renderer):
+    """
+    Test interleaved bar positioning with 2 sets of bars corresponding to two Y columns
+    on the same Y axis
+    """
+    df = pd.DataFrame()
+    df["x"] = [2, 4, 6, 8]
+    df["y0"] = [10, 20, 30, 40]
+    df["y1"] = [15, 25, 35, 45]
+    view = BarPlotDataView(df.copy(), x="x", yleft=["y0", "y1"])
+    view.bar_axes_order = "interleaved"
+    view.bar_width = 0.5
+    view.bar_group_location = "center"
+    fake_cell.add_view(view)
+
+    out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_ctx.ax)
+    assert np.isclose(out_df["__bar_x_l0"], [1.75, 3.75, 5.75, 7.75]).all()
+    assert np.isclose(out_df["__bar_x_l1"], [2.25, 4.25, 6.25, 8.25]).all()
+    assert np.isclose(out_df["__bar_width_l0"], [0.5] * 4).all()
+    assert np.isclose(out_df["__bar_width_l1"], [0.5] * 4).all()
+
+
+@pytest.mark.parametrize("ngroups, nleft, nright, expect", [
+    (1, 2, 0, {
+        (0, "l"): [0],
+        (1, "l"): [1]
+    }),
+    (2, 2, 0, {
+        (0, "l"): [0, 2],
+        (1, "l"): [1, 3]
+    }),
+    (3, 2, 0, {
+        (0, "l"): [0, 2, 4],
+        (1, "l"): [1, 3, 5]
+    }),
+    (3, 1, 1, {
+        (0, "l"): [0, 2, 4],
+        (0, "r"): [1, 3, 5]
+    }),
+    (3, 2, 1, {
+        (0, "l"): [0, 3, 6],
+        (0, "r"): [1, 4, 7],
+        (1, "l"): [2, 5, 8]
+    }),
+])
+def test_bar_render_gen_matrix_slices_interleaved(ngroups, nleft, nright, expect, fake_ctx, fake_cell, bar_renderer):
+    # Irrelevant if filled or not
+    df = pd.DataFrame()
+    naxes = nleft + nright
+    yleft = [f"yl{i}" for i in range(nleft)]
+    yright = [f"yr{i}" for i in range(nright)]
+    fake_posmatrix = list(range(ngroups * naxes))
+
+    view = BarPlotDataView(df, x="x", yleft=yleft, yright=yright)
+    view.bar_axes_ordering = "interleaved"
+    fake_cell.add_view(view)
+
+    gen = bar_renderer._iter_group_slices(view, ngroups, naxes)
+    items = list(gen)
+    result = {(i, lr): fake_posmatrix[s] for s, i, lr in items}
+    print(ngroups, naxes, result)
+    assert result == expect
+
+
 @pytest.fixture
 def legend_info_2levels():
     index = pd.MultiIndex.from_product([["J0", "J1"], ["K0", "K1"]], names=["J", "K"])
@@ -309,6 +373,32 @@ def test_legend_info_remap_group_colors(legend_info_2levels):
     assert (new_info.color(("J1", "K1")) == BLACK).all()
 
 
+def test_legend_info_assign_colors(legend_info_2levels):
+    WHITE = [1, 1, 1, 1]
+    BLACK = [0, 0, 0, 1]
+
+    def scale_colors(base_color, color_vec):
+        assert len(color_vec) == 2
+        J = color_vec.index.get_level_values("J")[0]
+        if J == "J0":
+            assert (base_color == WHITE).all()
+        elif J == "J1":
+            assert (base_color == BLACK).all()
+        else:
+            assert False, "This index should not exist"
+        return color_vec.map(lambda c: c + 1)
+
+    new_info = legend_info_2levels.assign_colors("Greys", ["J"], scale_colors)
+
+    # Not valid colors, just for checking the result of the map
+    NEW_WHITE = [2, 2, 2, 2]
+    NEW_BLACK = [1, 1, 1, 2]
+    assert (new_info.color(("J0", "K0")) == NEW_WHITE).all()
+    assert (new_info.color(("J0", "K1")) == NEW_WHITE).all()
+    assert (new_info.color(("J1", "K0")) == NEW_BLACK).all()
+    assert (new_info.color(("J1", "K1")) == NEW_BLACK).all()
+
+
 def test_legend_info_lookup_single():
     index = pd.Index(["K0", "K1"], name="K")
     legend_info = LegendInfo(index, ["L0", "L1"], colors=["C0", "C1"])
@@ -340,18 +430,18 @@ def test_data_view_col():
     view = DataView(df)
 
     col = view.get_col("v")
-    assert type(col) == pd.DataFrame
-    assert col.shape == (4, 1)
+    assert type(col) == pd.Series
+    assert col.shape == (4, )
     assert (col == [1, 2, 3, 4]).all()
 
     col = view.get_col(["v"])
     assert type(col) == pd.DataFrame
     assert col.shape == (4, 1)
-    assert (col == [1, 2, 3, 4]).all()
+    assert (col["v"] == [1, 2, 3, 4]).all()
 
     col = view.get_col("J")
-    assert type(col) == pd.DataFrame
-    assert col.shape == (4, 1)
+    assert type(col) == pd.Series
+    assert col.shape == (4, )
     assert (col == ["J0", "J0", "J1", "J1"]).all()
 
     col = view.get_col(["v", "w"])

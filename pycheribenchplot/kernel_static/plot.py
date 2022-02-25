@@ -1,8 +1,8 @@
 import numpy as np
 import pandas as pd
 
-from ..core.dataset import (DatasetName, check_multi_index_aligned, index_where, pivot_multi_index_level,
-                            quantile_slice, stacked_histogram)
+from ..core.dataset import (DatasetName, assign_sorted_coord, check_multi_index_aligned, index_where,
+                            pivot_multi_index_level, quantile_slice, stacked_histogram)
 from ..core.plot import (AALineDataView, BarPlotDataView, BenchmarkPlot, BenchmarkSubPlot, BenchmarkTable,
                          HistPlotDataView, LegendInfo, Scale, Symbols, TableDataView)
 
@@ -302,10 +302,10 @@ class KernelStructPaddingHighOverhead(KernelStructStatsPlot):
         match = df[df[self.columns] >= df[self.columns].quantile(quantile)]
         if len(match) > maxbar:
             self.logger.warning("capping high delta entries to %d, %dth percentile contains %d", maxbar, quantile * 100,
-                                len(match))
+                                len(match) / ngroups)
         # Actually compute the frame. Note that this may have slightly more entries than maxbar
         high_df = quantile_slice(df, self.columns, quantile, max_entries, ["dataset_id"])
-        return high_df.sort_values(self.columns, ascending=False)
+        return high_df
 
 
 class KernelStructPaddingOverhead(KernelStructPaddingHighOverhead):
@@ -320,7 +320,8 @@ class KernelStructPaddingOverhead(KernelStructPaddingHighOverhead):
 
     def generate(self, surface, cell):
         high_df = self.get_high_overhead_df(0.9, 25)
-        high_df["x"] = high_df.groupby("dataset_id").cumcount()
+        high_df["x"] = assign_sorted_coord(high_df, sort=self.columns, group_by=["dataset_id"], ascending=False)
+
         view = BarPlotDataView(high_df, x="x", yleft=self.columns, bar_group="dataset_id")
         view.legend_info = self.get_legend_info()
         view.legend_level = ["dataset_id"]

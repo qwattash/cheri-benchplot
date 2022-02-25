@@ -783,7 +783,7 @@ def stacked_histogram(df_in: pd.DataFrame, group: str, stack: str, data_col: str
         hist_key = (k_group, k_stack, slice(None))
         hdf.loc[hist_key, "bin_end"] = b_end
         hdf.loc[hist_key, "count"] = count
-    return hdf.set_index("bin_end", append=True)
+    return hdf.set_index("bin_end", append=True).sort_index()
 
 
 def quantile_slice(df: pd.DataFrame,
@@ -834,4 +834,25 @@ def quantile_slice(df: pd.DataFrame,
     high_df = df[sel]
     # Make sure we are still aligned
     assert check_multi_index_aligned(high_df, level)
-    return high_df
+    return high_df.copy()
+
+
+def assign_sorted_coord(df: pd.DataFrame, sort: list[str], group_by=list[str], **sort_kwargs):
+    """
+    Assign coordinates for plotting to dataframe groups, preserving the index mapping between groups.
+    This assumes that the dataframe is aligned at the given level.
+    """
+    assert check_multi_index_aligned(df, group_by)
+    # Do not trash source df
+    df = df.copy()
+    # We now we find the max for each complementary group. This will be used for cross-group sorting
+    index_complement = df.index.names.difference(group_by)
+    sort_max_key = df.groupby(index_complement).max()[sort]
+    # Generate temporary sort keys
+    ngroups = len(df.groupby(group_by))
+    tmp_sort_keys = [f"__sort_tmp_{i}" for i in range(len(sort))]
+    for tmp_key, col in zip(tmp_sort_keys, sort):
+        df[tmp_key] = np.tile(sort_max_key[col].values, ngroups)
+    sorted_df = df.sort_values(tmp_sort_keys + index_complement, **sort_kwargs)
+    coord_by_group = sorted_df.groupby(group_by).cumcount()
+    return coord_by_group.sort_index()

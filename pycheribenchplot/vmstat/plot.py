@@ -1,7 +1,8 @@
 import numpy as np
 import pandas as pd
 
-from ..core.dataset import (DatasetName, check_multi_index_aligned, pivot_multi_index_level, quantile_slice)
+from ..core.dataset import (DatasetName, assign_sorted_coord, check_multi_index_aligned, pivot_multi_index_level,
+                            quantile_slice)
 from ..core.plot import (AALineDataView, BarPlotDataView, BenchmarkPlot, BenchmarkSubPlot, BenchmarkTable, CellData,
                          LegendInfo, Symbols, TableDataView)
 
@@ -183,15 +184,12 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
         legend_left = base.map_label(lambda l: f"{Symbols.DELTA}{self.metric} " + l)
         legend_right = base.map_label(lambda l: f"% {Symbols.DELTA}{self.metric} " + l)
         legend = LegendInfo.multi_axis(left=legend_left, right=legend_right)
-        legend.remap_colors("Paired")
-        return legend
+        return legend.assign_colors_luminance("hsv", "dataset_id", color_range=(0, 0.9), lum_range=(-0.4, 0.2))
 
     @property
     def bar_limit(self):
-        """
-        Get maximum number of bars to show
-        """
-        return 20
+        """Get maximum number of bars to show, split among groups"""
+        return 60
 
     def get_cell_title(self):
         return f"UMA {self.metric} variation w.r.t. baseline"
@@ -203,7 +201,7 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
             self.warning("Broken plot for %s metric: too many datasets cut bar entries to less than 1 per group",
                          self.metric)
         high_df = quantile_slice(df, columns, quantile=0.9, max_entries=max_entries, level=["dataset_id"])
-        return high_df.sort_values(columns, ascending=False)
+        return high_df
 
     def generate(self, surface, cell):
         """
@@ -221,9 +219,11 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
         df["abs_delta"] = df[delta_col].abs()
         high_df = self.get_high_overhead_df(df, ["abs_delta"])
         high_df[rel_col] *= 100
-        high_df["x"] = high_df.groupby(["dataset_id"]).cumcount()
+        high_df["x"] = assign_sorted_coord(high_df, sort=["abs_delta"], group_by=["dataset_id"], ascending=False)
 
         view = BarPlotDataView(high_df, x="x", yleft=delta_col, yright=rel_col)
+        view.debug = True
+        view.bar_axes_ordering = "interleaved"
         view.bar_group = "dataset_id"
         view.legend_info = self.get_legend_info()
         view.legend_level = ["dataset_id"]
