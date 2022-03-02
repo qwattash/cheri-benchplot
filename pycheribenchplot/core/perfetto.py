@@ -57,6 +57,7 @@ class PerfettoDataSetContainer(DataSetContainer):
     t_slice = Table("slice")
     t_args = Table("args")
     t_stats = Table("stats")
+    t_counter = Table("counter")
 
     def __init__(self, benchmark, dset_key, config):
         super().__init__(benchmark, dset_key, config)
