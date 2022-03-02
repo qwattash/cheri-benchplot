@@ -1,4 +1,5 @@
 # Required for dataset registration hooks
+import pycheribenchplot.analysis
 import pycheribenchplot.core.pidmap
 import pycheribenchplot.core.procstat
 import pycheribenchplot.kernel_static.dataset

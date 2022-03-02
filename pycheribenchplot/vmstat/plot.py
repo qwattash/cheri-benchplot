@@ -166,17 +166,19 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
     """
     Histogram of UMA metrics across datasets
     """
-    @classmethod
-    def get_required_datasets(cls):
-        dsets = super().get_required_datasets()
-        dsets += [DatasetName.VMSTAT_UMA]
-        return dsets
-
     def __init__(self, plot, dataset, metric: str):
         super().__init__(plot)
         # Optional zone info dataset
         self.ds = dataset
         self.metric = metric
+        # Compute column names to use
+        delta_col = (self.metric, "median", "delta_baseline")
+        rel_col = (self.metric, "median", "norm_delta_baseline")
+        if delta_col not in self.ds.agg_df.columns:
+            delta_col = (self.metric, "-", "delta_baseline")
+            rel_col = (self.metric, "-", "norm_delta_baseline")
+        self.delta_col = delta_col
+        self.rel_col = rel_col
 
     def get_legend_info(self):
         # Use base legend to separate by axis
@@ -196,13 +198,26 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
     def get_cell_title(self):
         return f"UMA {self.metric} variation w.r.t. baseline"
 
-    def get_high_overhead_df(self, df, columns):
+    def get_df(self):
+        """
+        Generate base dataset with any auxiliary columns we need.
+        Drop the baseline data as we are showing deltas
+        """
+        df = self.ds.agg_df[self.ds.agg_df.index.get_level_values("dataset_id") != self.benchmark.uuid].copy()
+        df["abs_delta"] = df[self.delta_col].abs()
+        df[self.rel_col] *= 100
+        return df
+
+    def get_filtered_df(self, df):
+        """
+        Only select the entries in the high 10% absolute delta
+        """
         ngroups = len(df.index.get_level_values("dataset_id").unique())
         max_entries = int(self.bar_limit / ngroups)
         if max_entries <= 1:
             self.warning("Broken plot for %s metric: too many datasets cut bar entries to less than 1 per group",
                          self.metric)
-        high_df = quantile_slice(df, columns, quantile=0.9, max_entries=max_entries, level=["dataset_id"])
+        high_df = quantile_slice(df, ["abs_delta"], quantile=0.9, max_entries=max_entries, level=["dataset_id"])
         return high_df
 
     def generate(self, surface, cell):
@@ -210,22 +225,16 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
         We filter metric to show only the values for the top 90th percentile
         of the delta, this avoid cluttering the plots with meaningless data.
         """
-        df = self.ds.agg_df[self.ds.agg_df.index.get_level_values("dataset_id") != self.benchmark.uuid].copy()
-        delta_col = (self.metric, "median", "delta_baseline")
-        rel_col = (self.metric, "median", "norm_delta_baseline")
-        if delta_col not in df.columns:
-            delta_col = (self.metric, "-", "delta_baseline")
-            rel_col = (self.metric, "-", "norm_delta_baseline")
         self.logger.debug("extract plot metric %s", self.metric)
 
-        df["abs_delta"] = df[delta_col].abs()
-        high_df = self.get_high_overhead_df(df, ["abs_delta"])
-        high_df[rel_col] *= 100
+        df = self.get_df()
+        high_df = self.get_filtered_df(df)
         high_df["x"] = assign_sorted_coord(high_df, sort=["abs_delta"], group_by=["dataset_id"], ascending=False)
 
-        view = BarPlotDataView(high_df, x="x", yleft=delta_col, yright=rel_col)
+        view = BarPlotDataView(high_df, x="x", yleft=self.delta_col, yright=self.rel_col)
         view.bar_axes_ordering = "interleaved"
         view.bar_group = "dataset_id"
+        view.bar_text = True
         view.legend_info = self.get_legend_info()
         view.legend_level = ["dataset_id"]
         cell.add_view(view)
