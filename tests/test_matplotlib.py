@@ -98,7 +98,7 @@ def test_bar_render_xpos_simple(fake_ctx, fake_cell, bar_renderer):
     view.bar_group_location = "center"
     fake_cell.add_view(view)
 
-    out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_ctx.ax)
+    out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_ctx.ax, group_by=[])
     assert np.isclose(out_df["__bar_x_l0"], [1, 2, 3, 4]).all()
     assert np.isclose(out_df["__bar_width_l0"], [0.8] * 4).all()
 
@@ -117,7 +117,7 @@ def test_bar_render_xpos_2cols(fake_ctx, fake_cell, bar_renderer):
     view.bar_group_location = "center"
     fake_cell.add_view(view)
 
-    out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_ctx.ax)
+    out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_ctx.ax, group_by=[])
     assert np.isclose(out_df["__bar_x_l0"], [1.75, 3.75, 5.75, 7.75]).all()
     assert np.isclose(out_df["__bar_x_l1"], [2.25, 4.25, 6.25, 8.25]).all()
     assert np.isclose(out_df["__bar_width_l0"], [0.5] * 4).all()
@@ -138,7 +138,7 @@ def test_bar_render_xpos_2groups(fake_ctx, fake_cell, bar_renderer):
     view.bar_group_location = "center"
     fake_cell.add_view(view)
 
-    out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_ctx.ax)
+    out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_ctx.ax, ["k"])
     assert np.isclose(out_df["__bar_x_l0"], [1.75, 3.75, 5.75, 7.75] + [2.25, 4.25, 6.25, 8.25]).all()
     assert np.isclose(out_df["__bar_width_l0"], [0.5] * 8).all()
 
@@ -157,7 +157,7 @@ def test_bar_render_xpos_2stacks(fake_ctx, fake_cell, bar_renderer):
     view.bar_group_location = "center"
     fake_cell.add_view(view)
 
-    out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_ctx.ax)
+    out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_ctx.ax, ["k"])
     assert np.isclose(out_df["__bar_x_l0"], [2, 4, 6, 8] * 2).all()
     assert np.isclose(out_df["__bar_width_l0"], [1] * 8).all()
     assert np.isclose(out_df["__bar_y_base_l0"], [0, 0, 0, 0, 10, 20, 30, 50]).all()
@@ -179,7 +179,7 @@ def test_bar_render_xpos_2groups_2cols(fake_ctx, fake_cell, bar_renderer):
     view.bar_group_location = "center"
     fake_cell.add_view(view)
 
-    out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_ctx.ax)
+    out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_ctx.ax, ["k"])
     assert np.isclose(out_df["__bar_x_l0"], [1.25, 3.25, 5.25, 7.25] + [1.75, 3.75, 5.75, 7.75]).all()
     assert np.isclose(out_df["__bar_x_l1"], [2.25, 4.25, 6.25, 8.25] + [2.75, 4.75, 6.75, 8.75]).all()
     assert np.isclose(out_df["__bar_width_l0"], [0.5] * 8).all()
@@ -202,7 +202,7 @@ def test_bar_render_xpos_2groups_2cols_2stacks(fake_ctx, fake_cell, bar_renderer
     view.bar_group_location = "center"
     fake_cell.add_view(view)
 
-    out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_ctx.ax)
+    out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_ctx.ax, ["k", "s"])
     assert np.isclose(out_df["__bar_x_l0"], [2.5, 6.5, 3.5, 7.5] * 2).all()
     assert np.isclose(out_df["__bar_x_l1"], [4.5, 8.5, 5.5, 9.5] * 2).all()
     assert np.isclose(out_df["__bar_width_l0"], [1] * 8).all()
@@ -226,7 +226,7 @@ def test_bar_render_xpos_2groups_2axes_interleaved(fake_ctx, fake_cell, bar_rend
     view.bar_group_location = "center"
     fake_cell.add_view(view)
 
-    out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_ctx.ax)
+    out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_ctx.ax, group_by=[])
     assert np.isclose(out_df["__bar_x_l0"], [1.75, 3.75, 5.75, 7.75]).all()
     assert np.isclose(out_df["__bar_x_l1"], [2.25, 4.25, 6.25, 8.25]).all()
     assert np.isclose(out_df["__bar_width_l0"], [0.5] * 4).all()
@@ -362,7 +362,6 @@ def test_legend_info_remap_colors():
 
 
 def test_legend_info_remap_group_colors(legend_info_2levels):
-
     new_info = legend_info_2levels.remap_colors("Greys", group_by="J", inplace=False)
 
     WHITE = [1, 1, 1, 1]
@@ -397,6 +396,13 @@ def test_legend_info_assign_colors(legend_info_2levels):
     assert (new_info.color(("J0", "K1")) == NEW_WHITE).all()
     assert (new_info.color(("J1", "K0")) == NEW_BLACK).all()
     assert (new_info.color(("J1", "K1")) == NEW_BLACK).all()
+
+
+@pytest.mark.skip
+def test_legend_info_assign_hsv(legend_info_2levels):
+    legend = legend_info_2levels.assign_colors_hsv("J", h=(0.3, 1), s=(0.5, 1), v=(0.4, 0.9))
+    print(legend.info_df)
+    ## XXX todo
 
 
 def test_legend_info_lookup_single():
