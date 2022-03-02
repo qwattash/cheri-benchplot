@@ -3,7 +3,6 @@ import copy
 import os
 import re
 import signal
-import traceback
 import typing
 import uuid
 from abc import ABC, abstractmethod
@@ -43,6 +42,15 @@ class InstanceCheriBSD(Enum):
 
     def is_morello(self):
         return (self == InstanceCheriBSD.MORELLO_PURECAP or self == InstanceCheriBSD.MORELLO_HYBRID)
+
+    def freebsd_kconf_dir(self):
+        if self.is_riscv():
+            arch = "riscv"
+        elif self.is_morello():
+            arch = "arm64"
+        else:
+            assert False, "Unknown arch"
+        return Path("sys") / arch / "conf"
 
     def __str__(self):
         return self.value
@@ -362,7 +370,7 @@ class Instance(ABC):
 class CheribuildInstance(Instance):
     def __init__(self, inst_manager: "InstanceManager", config: InstanceConfig):
         super().__init__(inst_manager, config)
-        self._cheribuild = self.manager_config.cheribuild_path.expanduser()
+        self.cheribuild = self.manager_config.cheribuild_path.expanduser()
         # The cheribuild process task
         self._cheribuild_task = None
         # cheribuild output reader tasks
@@ -401,6 +409,7 @@ class CheribuildInstance(Instance):
             for evt, matcher in self._io_loop_observers:
                 if matcher(out, False):
                     evt.set()
+        assert self._cheribuild_task.returncode is not None
         raise InstanceManagerError("cheribuild died")
 
     async def _stderr_loop(self):
@@ -414,6 +423,7 @@ class CheribuildInstance(Instance):
             for evt, matcher in self._io_loop_observers:
                 if matcher(out, True):
                     evt.set()
+        assert self._cheribuild_task.returncode is not None
         raise InstanceManagerError("cheribuild died")
 
     async def _wait_io(self, matcher: typing.Callable[[str, bool], bool]):
@@ -460,20 +470,21 @@ class CheribuildInstance(Instance):
             ]
             run_cmd += [self._run_option("extra-options"), " ".join(qemu_options)]
 
-        self.logger.debug("%s %s", self._cheribuild, run_cmd)
-        self._cheribuild_task = await aio.create_subprocess_exec(self._cheribuild,
+        self.logger.debug("%s %s", self.cheribuild, run_cmd)
+
+        self._cheribuild_task = await aio.create_subprocess_exec(self.cheribuild,
                                                                  *run_cmd,
                                                                  stdin=aio.subprocess.PIPE,
                                                                  stdout=aio.subprocess.PIPE,
                                                                  stderr=aio.subprocess.PIPE,
                                                                  start_new_session=True)
+
         self.logger.debug("Spawned cheribuild pid=%d pgid=%d", self._cheribuild_task.pid,
                           os.getpgid(self._cheribuild_task.pid))
         self._io_tasks.append(self.event_loop.create_task(self._stdout_loop()))
         self._io_tasks.append(self.event_loop.create_task(self._stderr_loop()))
         # Now wait for the boot to complete and start sshd
         sshd_pattern = re.compile(r"Starting sshd\.")
-        ssh_keyfile = self.manager_config.ssh_key.expanduser()
         await self._wait_io(lambda out, is_stderr: sshd_pattern.match(out) if not is_stderr else False)
         # give qemu some time
         await aio.sleep(5)
@@ -535,7 +546,8 @@ class InstanceManager:
 
     async def request_instance(self, owner: uuid.UUID, config: InstanceConfig) -> InstanceInfo:
         instance = self._create_instance(config)
-        if len(self._active_instances) >= self.manager_config.concurrent_instances:
+        if (self.manager_config.concurrent_instances > 0
+                and len(self._active_instances) >= self.manager_config.concurrent_instances):
             self._queued_instances.put_nowait((owner, instance))
         else:
             self._alloc_instance(owner, instance)
