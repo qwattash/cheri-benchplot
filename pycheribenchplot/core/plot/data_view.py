@@ -490,12 +490,16 @@ class HistPlotDataView(XYPlotDataView):
     Parameters for histogram plots
 
     Arguments:
+    x: should hold the column/level to use to fill the histogram buckets for
+    each group.
     buckets: histogram buckets
     bucket_group: column or index level to use to generate histogram groups,
     this will be used to plot multiple histogram columns for each bucket
+    bar_align: where to align histogram bars
     """
     buckets: list[float] = field(default_factory=list)
     bucket_group: list[str] = None
+    bar_align: str = "mid"
 
     def __post_init__(self):
         super().__post_init__()

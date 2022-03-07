@@ -45,7 +45,7 @@ class VMStatTable(BenchmarkSubPlot):
         new_map = LegendInfo(df.columns, colors=pivot_colors, labels=pivot_labels)
         return new_map
 
-    def generate(self, surface: "Surface", cell: CellData):
+    def generate(self, surface, cell):
         df = self._get_vmstat_dataset()
         if not check_multi_index_aligned(df, "dataset_id"):
             self.logger.error("Unaligned index, skipping plot")
@@ -138,11 +138,53 @@ class VMStatUMATable(VMStatTable):
 
 
 class VMStatUMABucketAffinity(BenchmarkSubPlot):
+    """
+    A table showing changes in zone bucket size, grouped by bucket size.
+    """
+    @classmethod
+    def get_required_datasets(cls):
+        dsets = super().get_required_datasets()
+        dsets += [DatasetName.VMSTAT_UMA_INFO]
+        return dsets
+
     def get_cell_title(self):
         return "UMA Zone bucket affinity groups"
 
+    def get_legend_info(self):
+        legend = self.build_legend_by_dataset()
+        legend.remap_colors("Greys", color_range=(0, 0.5))
+        return legend
+
+    def _get_show_columns(self, df, legend_info):
+        sample = (df.columns.get_level_values("delta") == "sample")
+        metric = (df.columns.get_level_values("metric") == "bucket_size")
+        select_cols = df.columns[(sample & metric)]
+        baseline = (df.columns.get_level_values("dataset_id") == legend_info.label(self.benchmark.uuid))
+        sort_cols = df.columns[(sample & metric & baseline)].to_list()
+        return sort_cols, select_cols
+
+    def _get_table_legend_info(self, df, legend_info):
+        col_df = df.columns.to_frame()
+        by_label = legend_info.with_label_index()
+        _, pivot_colors = col_df.align(by_label["colors"], axis=0, level="dataset_id")
+        _, pivot_labels = col_df.align(by_label["labels"], axis=0, level="dataset_id")
+        new_map = LegendInfo(df.columns, colors=pivot_colors, labels=pivot_labels)
+        return new_map
+
     def generate(self, surface, cell):
-        pass
+        df = self.get_dataset(DatasetName.VMSTAT_UMA_INFO).agg_df
+        if not check_multi_index_aligned(df, "dataset_id"):
+            self.logger.error("Unaligned index, skipping plot")
+            return
+        # Group by bucket_size in the baseline
+        legend_info = self.get_legend_info()
+        view_df = legend_info.map_labels_to_level(df, "dataset_id", axis=0)
+        view_df = pivot_multi_index_level(view_df, "dataset_id")
+        sort_cols, show_cols = self._get_show_columns(view_df, legend_info)
+        view_df = view_df.sort_values(sort_cols)
+        view = TableDataView(view_df, columns=show_cols)
+        view.legend_info = self._get_table_legend_info(view_df, legend_info)
+        cell.add_view(view)
 
 
 class VMStatTables(BenchmarkTable):

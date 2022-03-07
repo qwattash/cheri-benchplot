@@ -503,9 +503,8 @@ class HistRenderer(ViewRenderer):
             colors = view.legend_info.color(legend_key)
             labels = view.legend_info.label(legend_key)
 
-        n, bins, patches = ctx.ax.hist(xvec, bins=view.buckets, rwidth=0.5, color=colors)
+        n, bins, patches = ctx.ax.hist(xvec, bins=view.buckets, rwidth=0.5, color=colors, align=view.bar_align)
         ctx.legend.set_group(labels, patches)
-        # ctx.ax.set_xticks(view.buckets)
 
 
 class MatplotlibSurface(Surface):
