@@ -41,6 +41,26 @@ def build_scale_args(scale: Scale) -> tuple[list, dict]:
     return (args, kwargs)
 
 
+def transform_x_helper(xform, v):
+    """
+    Matplotlib transform helper to apply transformation on the X axis
+    """
+    tmp_points = np.column_stack([v, np.repeat(0, len(v))])
+    tmp_tx = xform.transform(tmp_points)
+    result = tmp_tx[:, 0]
+    return result.ravel()
+
+
+def transform_y_helper(xform, v):
+    """
+    Matplotlib transform helper to apply transformation on the Y axis
+    """
+    tmp_points = np.column_stack([np.repeat(0, len(v)), v])
+    tmp_tx = xform.transform(tmp_points)
+    result = tmp_tx[:, 1]
+    return result.ravel()
+
+
 def align_y_at(ax1, p1, ax2, p2):
     """
     Align p1 on axis ax1 to p2 on axis ax2.
@@ -245,16 +265,10 @@ class BarRenderer(ViewRenderer):
             nstacks = 1
         assert naxes > 0 and ngroups >= 1 and nstacks >= 1
 
-        def _transform_helper(xform, v):
-            tmp_points = np.column_stack([v, np.repeat(0, len(v))])
-            tmp_tx = xform.transform(tmp_points)
-            result = tmp_tx[:, 0]
-            return result.ravel()
-
         x_trans = ax.get_xaxis_transform()
         x_inv = x_trans.inverted()
-        transform_helper = ft.partial(_transform_helper, x_trans)
-        transform_inv_helper = ft.partial(_transform_helper, x_inv)
+        transform_helper = ft.partial(transform_x_helper, x_trans)
+        transform_inv_helper = ft.partial(transform_x_helper, x_inv)
 
         xcol = sorted(view.get_x().unique())
         # Find the space between each x tick, we scale the bars to fit into the interval
@@ -341,6 +355,7 @@ class BarRenderer(ViewRenderer):
 
         for group_slice, col, side in self._iter_group_slices(view, ngroups, naxes):
             # group_slice = slice(matrix_col * col_group_split, (matrix_col + 1) * col_group_split)
+            col_name = view.yleft[col] if side == "l" else view.yright[col]
             bar_x_group = position_matrix[:, group_slice]
             bar_x_group_flat = bar_x_group.ravel(order="F")
             view.df[f"__bar_x_{side}{col}"] = np.tile(bar_x_group_flat, nstacks)
@@ -348,8 +363,7 @@ class BarRenderer(ViewRenderer):
             bar_width_flat = bar_width_group.ravel(order="F")
             view.df[f"__bar_width_{side}{col}"] = np.tile(bar_width_flat, nstacks)
             if view.stack_group:
-                group_col = view.yleft[col] if side == "l" else view.yright[col]
-                view.df[f"__bar_y_base_{side}{col}"] = stack_groups[group_col].apply(
+                view.df[f"__bar_y_base_{side}{col}"] = stack_groups[col_name].apply(
                     lambda stack_slice: stack_slice.cumsum().shift(fill_value=0))
             else:
                 view.df[f"__bar_y_base_{side}{col}"] = 0
@@ -378,6 +392,48 @@ class BarRenderer(ViewRenderer):
 
         key = Key(**key_levels)
         return view.legend_info.find(key)
+
+    def _draw_columns_text(self, view, ctx):
+        """
+        Draw labels at the top (or bottom) of the bars.
+        """
+        if not view.bar_text:
+            return
+
+        non_stack_idx = view.df.index.names.difference([view.stack_group])
+        for key, chunk in view.df.groupby(non_stack_idx):
+            # Sum stacked values to find the max and draw the text at the Y
+            l = [("l", idx, name) for idx, name in enumerate(view.yleft)]
+            r = [("r", idx, name) for idx, name in enumerate(view.yright)]
+            for side, col_idx, col_name in l + r:
+                # Since we are grouping the complement of the stack group index, we only
+                # have a single X coordinate for all values of the stack.
+                x = chunk[f"__bar_x_{side}{col_idx}"].iloc[0]
+                # Would be nice to know if this was a percentage
+                # maybe the text pattern can be expressed in the legend info
+                # as we keep the color already for each column "group"
+                maxv = chunk[col_name].sum()
+                if np.isnan(maxv) or np.isinf(maxv):
+                    txt = str(maxv)
+                    maxv = 0
+                elif maxv - int(maxv) != 0:
+                    txt = f"{maxv:.1f}"
+                else:
+                    txt = f"{int(maxv):d}"
+                ax = ctx.ax if side == "l" else ctx.rax
+                y_trans = ax.get_yaxis_transform()
+                y_inv = y_trans.inverted()
+                # Text padding depends on the scale (log/linear)
+                if maxv < 0:
+                    va = "top"
+                    pad_direction = -1
+                else:
+                    va = "bottom"
+                    pad_direction = 1
+                if view.bar_text_pad > 0:
+                    tx_pad = transform_y_helper(y_trans, [maxv]) + view.bar_text_pad * pad_direction
+                    maxv = transform_y_helper(y_inv, tx_pad)[0]
+                ax.text(x, maxv, txt, fontsize="x-small", rotation="vertical", va=va, ha="center")
 
     def render(self, view, cell, surface, ctx):
         """
@@ -412,6 +468,7 @@ class BarRenderer(ViewRenderer):
                     patches = ctx.rax.bar(x, height=values, bottom=base, color=color, width=width)
                     ctx.legend.set_item(label, patches)
 
+        self._draw_columns_text(view, ctx)
         if view.has_yleft and view.has_yright:
             # Need to realign the Y axes 0 coordinates
             align_y_at(ctx.ax, 0, ctx.rax, 0)

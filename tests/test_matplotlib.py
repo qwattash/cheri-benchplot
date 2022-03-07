@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pytest
+from matplotlib.axes import Axes
 
 from pycheribenchplot.core.plot import BarPlotDataView, DataView, LegendInfo
 from pycheribenchplot.core.plot.backend import GridLayout
@@ -14,7 +15,7 @@ def fake_surface():
 
 
 @pytest.fixture
-def fake_ctx(fake_surface, tmp_path):
+def fake_ctx(mocker, fake_surface, tmp_path):
     fake_surface.set_layout(GridLayout(1, 1))
     ctx = fake_surface._make_draw_context("fake", tmp_path)
     ctx.ax = ctx.axes[0][0]
@@ -273,6 +274,108 @@ def test_bar_render_gen_matrix_slices_interleaved(ngroups, nleft, nright, expect
     result = {(i, lr): fake_posmatrix[s] for s, i, lr in items}
     print(ngroups, naxes, result)
     assert result == expect
+
+
+def test_bar_renderer_top_text(mocker, fake_ctx, fake_cell, bar_renderer):
+    df = pd.DataFrame()
+    df["x"] = [1, 2, 3, 4]
+    # fake generated x positionfs for column "y"
+    df["__bar_x_l0"] = [1, 2, 3, 4]
+    df["y"] = [10, 20, 15, 30]
+    df.set_index("x", inplace=True)
+    view = BarPlotDataView(df.copy(), x="x", yleft="y")
+    view.bar_text = True
+    view.bar_text_pad = 0
+    view.bar_width = 0.8
+    view.bar_group_location = "center"
+    fake_cell.add_view(view)
+
+    text_fn = mocker.patch.object(fake_ctx.ax, "text")
+
+    bar_renderer._draw_columns_text(view, fake_ctx)
+    expect_kw = {
+        "fontsize": mocker.ANY,
+        "rotation": "vertical",
+        "ha": mocker.ANY,
+        "va": mocker.ANY,
+    }
+    text_fn.assert_any_call(1, 10, "10", **expect_kw)
+    text_fn.assert_any_call(2, 20, "20", **expect_kw)
+    text_fn.assert_any_call(3, 15, "15", **expect_kw)
+    text_fn.assert_any_call(4, 30, "30", **expect_kw)
+
+
+def test_bar_renderer_top_text_2col(mocker, fake_ctx, fake_cell, bar_renderer):
+    df = pd.DataFrame()
+    df["x"] = [1, 2, 3, 4]
+    # fake generated x positionfs for column "y"
+    df["__bar_x_l0"] = [0.75, 1.75, 2.75, 3.75]
+    df["__bar_x_l1"] = [1.25, 2.25, 3.25, 4.25]
+    df["y0"] = [10, 20, 15, 30]
+    df["y1"] = [11, 19, 14, 35]
+    df.set_index("x", inplace=True)
+    view = BarPlotDataView(df.copy(), x="x", yleft=["y0", "y1"])
+    view.bar_text = True
+    view.bar_text_pad = 0
+    view.bar_width = 1
+    view.bar_group_location = "center"
+    fake_cell.add_view(view)
+
+    text_fn = mocker.patch.object(fake_ctx.ax, "text")
+
+    bar_renderer._draw_columns_text(view, fake_ctx)
+    expect_kw = {
+        "fontsize": mocker.ANY,
+        "rotation": "vertical",
+        "ha": mocker.ANY,
+        "va": mocker.ANY,
+    }
+    text_fn.assert_any_call(0.75, 10, "10", **expect_kw)
+    text_fn.assert_any_call(1.75, 20, "20", **expect_kw)
+    text_fn.assert_any_call(2.75, 15, "15", **expect_kw)
+    text_fn.assert_any_call(3.75, 30, "30", **expect_kw)
+
+    text_fn.assert_any_call(1.25, 11, "11", **expect_kw)
+    text_fn.assert_any_call(2.25, 19, "19", **expect_kw)
+    text_fn.assert_any_call(3.25, 14, "14", **expect_kw)
+    text_fn.assert_any_call(4.25, 35, "35", **expect_kw)
+
+
+def test_bar_renderer_top_text_2col_2stacks(mocker, fake_ctx, fake_cell, bar_renderer):
+    df = pd.DataFrame()
+    df["k"] = [0] * 4 + [1] * 4
+    df["x"] = [1, 2, 3, 4] * 2
+    # fake generated x positionfs for column "y"
+    df["__bar_x_l0"] = [0.75, 1.75, 2.75, 3.75] * 2
+    df["__bar_x_l1"] = [1.25, 2.25, 3.25, 4.25] * 2
+    df["y0"] = [10, 20, 15, 30] + [5, 6, 7, 4]
+    df["y1"] = [3, 4, 10, 5] + [7, 16, 5, 10]
+    df.set_index(["x", "k"], inplace=True)
+    view = BarPlotDataView(df.copy(), x="x", yleft=["y0", "y1"], stack_group="k")
+    view.bar_text = True
+    view.bar_text_pad = 0
+    view.bar_width = 1
+    view.bar_group_location = "center"
+    fake_cell.add_view(view)
+
+    text_fn = mocker.patch.object(fake_ctx.ax, "text")
+
+    bar_renderer._draw_columns_text(view, fake_ctx)
+    expect_kw = {
+        "fontsize": mocker.ANY,
+        "rotation": "vertical",
+        "ha": mocker.ANY,
+        "va": mocker.ANY,
+    }
+    text_fn.assert_any_call(0.75, 15, "15", **expect_kw)
+    text_fn.assert_any_call(1.75, 26, "26", **expect_kw)
+    text_fn.assert_any_call(2.75, 22, "22", **expect_kw)
+    text_fn.assert_any_call(3.75, 34, "34", **expect_kw)
+
+    text_fn.assert_any_call(1.25, 10, "10", **expect_kw)
+    text_fn.assert_any_call(2.25, 20, "20", **expect_kw)
+    text_fn.assert_any_call(3.25, 15, "15", **expect_kw)
+    text_fn.assert_any_call(4.25, 15, "15", **expect_kw)
 
 
 @pytest.fixture

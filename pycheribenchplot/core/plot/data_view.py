@@ -469,12 +469,15 @@ class BarPlotDataView(XYPlotDataView):
     each group contains first the left bars and then the right bars.
     When the value is "interleaved", left and right bars are paired, so that
     the first yleft column is next to the first yright column, and so forth.
+    - bar_text: Display the bar value on top of the bar.
     """
     bar_group: str = None
     stack_group: str = None
+    bar_width: float = 0.8
     bar_group_location: str = "center"
     bar_axes_ordering: str = "sequential"
-    bar_width: float = 0.8
+    bar_text: bool = False
+    bar_text_pad: float = 0.01
 
     def __post_init__(self):
         super().__post_init__()
