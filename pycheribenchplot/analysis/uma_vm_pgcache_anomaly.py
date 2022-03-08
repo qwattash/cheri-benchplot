@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 
 from ..core.dataset import DatasetName
@@ -75,21 +76,43 @@ class UMABucketAffinityHist(BenchmarkSubPlot):
     @classmethod
     def get_required_datasets(cls):
         dsets = super().get_required_datasets()
-        dsets += [DatasetName.VMSTAT_UMA_INFO]
+        dsets += [DatasetName.VMSTAT_UMA_INFO, DatasetName.KERNEL_STRUCT_STATS]
         return dsets
 
     def get_cell_title(self):
         return "Bucket affinity distribution"
 
     def generate(self, surface, cell):
-        df = self.get_dataset(DatasetName.VMSTAT_UMA_INFO).agg_df
-        buckets = [2**i for i in range(0, 9)]
-
         size_col = ("bucket_size", "-", "sample")
-        view = HistPlotDataView(df, x=size_col, buckets=buckets, bucket_group="dataset_id")
-        view.legend_level = ["dataset_id"]
+        df = self.get_dataset(DatasetName.VMSTAT_UMA_INFO).agg_df
+        struct_stats_df = self.get_dataset(DatasetName.KERNEL_STRUCT_STATS).merged_df
+        # Note that UMA bucket sizes larger than 16 use some of the space for the bucket header.
+        # This must be accounted for when binning and it depends on the pointer size.
+        s_uma_bucket = struct_stats_df.xs("uma_bucket", level="name")
+        datasets = df.index.get_level_values("dataset_id").unique()
+        if len(s_uma_bucket) != len(datasets):
+            self.logger.error("kernel DWARF stats for struct uma_bucket do not agree with vmstat data. Skipping plot.")
+            return
+        # The number of buckets in each histogram is the same, but change the effective bucket limits
+        buckets = [2**i for i in range(1, 9)]
+        view_df = pd.DataFrame(index=pd.Index(buckets, name="bucket_size"))
+        for dsid, chunk in df.groupby("dataset_id"):
+            hdr_size = s_uma_bucket.xs(dsid, level="dataset_id")[("size", "sample")]
+            assert len(hdr_size) == 1, "More than 1 uma_struct size per dataset_id?"
+            hdr_size = hdr_size.iloc[0]
+            if dsid in self.benchmark.merged_benchmarks:
+                ptr_size = self.benchmark.merged_benchmarks[dsid].instance_config.kernel_pointer_size
+            else:
+                ptr_size = self.benchmark.instance_config.kernel_pointer_size
+            eff_limits = [1, 2, 4, 8, 16] + [2**i - np.ceil(hdr_size / ptr_size) for i in range(5, 9)]
+            count, out_bins = np.histogram(chunk[size_col], bins=eff_limits)
+            view_df[dsid] = count
+
+        view_df = view_df.melt(var_name="dataset_id", value_name="count", ignore_index=False)
+        view_df.set_index("dataset_id", append=True, inplace=True)
+        view = BarPlotDataView(view_df, x="bucket_size", yleft=["count"], bar_group="dataset_id")
         view.legend_info = self.build_legend_by_dataset()
-        view.bar_align = "right"
+        view.legend_level = ["dataset_id"]
         cell.x_config.label = "Bucket size"
         cell.x_config.ticks = buckets
         cell.x_config.tick_labels = buckets
