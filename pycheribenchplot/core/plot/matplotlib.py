@@ -124,6 +124,8 @@ class Legend:
         if self.legend_position == "top":
             loc = "lower left"
             bbox = (0, 1.03, 1, 0.2)
+            # Empirically allocate 3 columns. This should be computed
+            # based on the pixel width of the axes in the figure
             ncol = 3
         elif self.legend_position == "bottom":
             pass
@@ -547,7 +549,10 @@ class MatplotlibSurface(Surface):
         return ctx
 
     def _finalize_draw_context(self, ctx):
-        ctx.figure.savefig(ctx.dest.with_suffix(".pdf"))
+        for ext in self.config.plot_output_format:
+            path = ctx.dest.with_suffix(f".{ext}")
+            self.logger.debug("Emit %s plot %s", ext, path)
+            ctx.figure.savefig(path)
 
     def make_cell(self, **kwargs):
         return MatplotlibPlotCell(**kwargs)

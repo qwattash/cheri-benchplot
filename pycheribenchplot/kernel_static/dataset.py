@@ -282,10 +282,3 @@ class KernelStructSizeDataset(KernelStructDWARFInfo):
         super().aggregate()
         grouped = self.merged_df.groupby(["dataset_id"])
         self.agg_df = self._compute_aggregations(grouped)
-
-
-class KernelStructFragDataset:
-    """
-    Internal fragmentation for kernel structures
-    """
-    pass

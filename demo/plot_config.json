@@ -1,3 +1,4 @@
 {
-    "split_subplots": true
+    "split_subplots": true,
+    "plot_output_format": ["pdf", "jpg"]
 }

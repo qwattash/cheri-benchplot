@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .config import Config
 from .dataset import DatasetName
@@ -15,6 +15,11 @@ class BenchmarkAnalysisRegistry(type):
 @dataclass
 class AnalysisConfig(Config):
     split_subplots: bool = False
+    plot_output_format: list[str] = field(default_factory=lambda: ["pdf"])
+
+    def __post_init__(self):
+        super().__post_init__()
+        assert isinstance(self.plot_output_format, list)
 
 
 class BenchmarkAnalysis(metaclass=BenchmarkAnalysisRegistry):
