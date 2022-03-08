@@ -553,6 +553,7 @@ class MatplotlibSurface(Surface):
             path = ctx.dest.with_suffix(f".{ext}")
             self.logger.debug("Emit %s plot %s", ext, path)
             ctx.figure.savefig(path)
+        plt.close(ctx.figure)
 
     def make_cell(self, **kwargs):
         return MatplotlibPlotCell(**kwargs)
