@@ -4,7 +4,7 @@ import pandas as pd
 from ..core.dataset import (DatasetName, assign_sorted_coord, check_multi_index_aligned, pivot_multi_index_level,
                             quantile_slice)
 from ..core.plot import (AALineDataView, BarPlotDataView, BenchmarkPlot, BenchmarkSubPlot, BenchmarkTable, CellData,
-                         LegendInfo, Symbols, TableDataView)
+                         LegendInfo, Mosaic, Symbols, TableDataView)
 
 
 class VMStatTable(BenchmarkSubPlot):
@@ -313,15 +313,23 @@ class VMStatDistribution(BenchmarkPlot):
         required = set([DatasetName.VMSTAT_UMA, DatasetName.VMSTAT_UMA_INFO])
         return required.issubset(set(dsets))
 
-    def _make_subplots(self):
-        subplots = []
+    def _make_subplots_mosaic(self):
+        """
+        Make subplots mosaic as a single column.
+        """
+        subplots = {}
+        layout = []
         uma_stats = self.get_dataset(DatasetName.VMSTAT_UMA)
-        for metric in uma_stats.data_columns():
-            subplots.append(VMStatUMAMetricHist(self, uma_stats, metric))
+        for idx, metric in enumerate(uma_stats.data_columns()):
+            name = f"subplot-uma-stats-{idx}"
+            subplots[name] = VMStatUMAMetricHist(self, uma_stats, metric)
+            layout.append([name])
         uma_info = self.get_dataset(DatasetName.VMSTAT_UMA_INFO)
-        for metric in uma_info.data_columns():
-            subplots.append(VMStatUMAMetricHist(self, uma_info, metric))
-        return subplots
+        for idx, metric in enumerate(uma_info.data_columns()):
+            name = f"subplot-uma-info-{idx}"
+            subplots[name] = VMStatUMAMetricHist(self, uma_info, metric)
+            layout.append([name])
+        return Mosaic(layout, subplots)
 
     def get_plot_name(self):
         return "VMStat metrics distribution"

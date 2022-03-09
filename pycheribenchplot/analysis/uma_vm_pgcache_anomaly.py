@@ -1,9 +1,11 @@
+import itertools as it
+
 import numpy as np
 import pandas as pd
 
 from ..core.dataset import DatasetName
 from ..core.plot import (AALineDataView, BarPlotDataView, BenchmarkPlot, BenchmarkSubPlot, CellData, HistPlotDataView,
-                         LegendInfo, Scale)
+                         LegendInfo, Mosaic, Scale)
 from ..vmstat.plot import VMStatUMAMetricHist
 
 
@@ -48,18 +50,26 @@ class UMABucketAllocAnomaly(BenchmarkPlot):
             "rsize", "ipers", "bucket_size", "requests", "free", "fail", "fail_import", "bucket_alloc", "bucket_free"
         ]
 
-    def _make_subplots(self):
-        subplots = []
+    def _make_subplots_mosaic(self):
+        """
+        Build subplots as a single mosaic column
+        """
+        subplots = {}
+        layout = []
         want_stats = self._get_uma_stats()
         uma_stats = self.get_dataset(DatasetName.VMSTAT_UMA)
         uma_info = self.get_dataset(DatasetName.VMSTAT_UMA_INFO)
-        for metric in uma_stats.data_columns():
+        for idx, metric in enumerate(uma_stats.data_columns()):
             if metric in want_stats:
-                subplots.append(UMABucketAnomalyFail(self, uma_stats, metric))
-        for metric in uma_info.data_columns():
+                name = f"subplot-uma-stats-{idx}"
+                subplots[name] = UMABucketAnomalyFail(self, uma_stats, metric)
+                layout.append([name])
+        for idx, metric in enumerate(uma_info.data_columns()):
             if metric in want_stats:
-                subplots.append(UMABucketAnomalyFail(self, uma_info, metric))
-        return subplots
+                name = f"subplot-uma-info-{idx}"
+                subplots[name] = UMABucketAnomalyFail(self, uma_info, metric)
+                layout.append([name])
+        return Mosaic(layout, subplots)
 
     def get_plot_name(self):
         return "UMA Bucket vm_pgcache anomaly"

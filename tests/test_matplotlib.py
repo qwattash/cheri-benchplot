@@ -4,30 +4,25 @@ import pandas as pd
 import pytest
 from matplotlib.axes import Axes
 
+from pycheribenchplot.core.analysis import AnalysisConfig
 from pycheribenchplot.core.plot import BarPlotDataView, DataView, LegendInfo
-from pycheribenchplot.core.plot.backend import GridLayout
-from pycheribenchplot.core.plot.matplotlib import (BarRenderer, MatplotlibPlotCell, MatplotlibSurface, align_y_at)
+from pycheribenchplot.core.plot.backend import Mosaic
+from pycheribenchplot.core.plot.matplotlib import (BarRenderer, MplCellData, MplFigureManager, align_y_at)
 
 
 @pytest.fixture
-def fake_surface():
-    return MatplotlibSurface()
+def fake_manager():
+    return MplFigureManager(AnalysisConfig())
 
 
 @pytest.fixture
-def fake_ctx(mocker, fake_surface, tmp_path):
-    fake_surface.set_layout(GridLayout(1, 1))
-    ctx = fake_surface._make_draw_context("fake", tmp_path)
-    ctx.ax = ctx.axes[0][0]
-    ctx.rax = ctx.ax.twinx()
-    return ctx
-
-
-@pytest.fixture
-def fake_cell(fake_surface):
-    cell = MatplotlibPlotCell()
-    cell.set_surface(fake_surface)
-    return cell
+def fake_cell(fake_manager):
+    fig = plt.figure()
+    ax = fig.subplots(1, 1)
+    cell = MplCellData(title="fake", figure=fig, ax=ax)
+    cell.rax = ax.twinx()
+    yield cell
+    plt.close(fig)
 
 
 @pytest.fixture
@@ -87,7 +82,7 @@ def test_yaxis_aligment(yaxis_align_df):
     assert out_ylim[1] >= r_ymax, "Right axis ymax clipped"
 
 
-def test_bar_render_xpos_simple(fake_ctx, fake_cell, bar_renderer):
+def test_bar_render_xpos_simple(fake_cell, bar_renderer):
     """
     Test simple bar positioning with a single set of bars
     """
@@ -99,12 +94,12 @@ def test_bar_render_xpos_simple(fake_ctx, fake_cell, bar_renderer):
     view.bar_group_location = "center"
     fake_cell.add_view(view)
 
-    out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_ctx.ax, group_by=[])
+    out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_cell.ax, group_by=[])
     assert np.isclose(out_df["__bar_x_l0"], [1, 2, 3, 4]).all()
     assert np.isclose(out_df["__bar_width_l0"], [0.8] * 4).all()
 
 
-def test_bar_render_xpos_2cols(fake_ctx, fake_cell, bar_renderer):
+def test_bar_render_xpos_2cols(fake_cell, bar_renderer):
     """
     Test simple bar positioning with 2 sets of bars corresponding to two Y columns
     on the same Y axis
@@ -118,14 +113,14 @@ def test_bar_render_xpos_2cols(fake_ctx, fake_cell, bar_renderer):
     view.bar_group_location = "center"
     fake_cell.add_view(view)
 
-    out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_ctx.ax, group_by=[])
+    out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_cell.ax, group_by=[])
     assert np.isclose(out_df["__bar_x_l0"], [1.75, 3.75, 5.75, 7.75]).all()
     assert np.isclose(out_df["__bar_x_l1"], [2.25, 4.25, 6.25, 8.25]).all()
     assert np.isclose(out_df["__bar_width_l0"], [0.5] * 4).all()
     assert np.isclose(out_df["__bar_width_l1"], [0.5] * 4).all()
 
 
-def test_bar_render_xpos_2groups(fake_ctx, fake_cell, bar_renderer):
+def test_bar_render_xpos_2groups(fake_cell, bar_renderer):
     """
     Test simple bar positioning with 2 column groups on the same Y axis
     """
@@ -139,12 +134,12 @@ def test_bar_render_xpos_2groups(fake_ctx, fake_cell, bar_renderer):
     view.bar_group_location = "center"
     fake_cell.add_view(view)
 
-    out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_ctx.ax, ["k"])
+    out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_cell.ax, ["k"])
     assert np.isclose(out_df["__bar_x_l0"], [1.75, 3.75, 5.75, 7.75] + [2.25, 4.25, 6.25, 8.25]).all()
     assert np.isclose(out_df["__bar_width_l0"], [0.5] * 8).all()
 
 
-def test_bar_render_xpos_2stacks(fake_ctx, fake_cell, bar_renderer):
+def test_bar_render_xpos_2stacks(fake_cell, bar_renderer):
     """
     Test simple bar positioning with a single set of bars and 2 stacks for each bar
     """
@@ -158,13 +153,13 @@ def test_bar_render_xpos_2stacks(fake_ctx, fake_cell, bar_renderer):
     view.bar_group_location = "center"
     fake_cell.add_view(view)
 
-    out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_ctx.ax, ["k"])
+    out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_cell.ax, ["k"])
     assert np.isclose(out_df["__bar_x_l0"], [2, 4, 6, 8] * 2).all()
     assert np.isclose(out_df["__bar_width_l0"], [1] * 8).all()
     assert np.isclose(out_df["__bar_y_base_l0"], [0, 0, 0, 0, 10, 20, 30, 50]).all()
 
 
-def test_bar_render_xpos_2groups_2cols(fake_ctx, fake_cell, bar_renderer):
+def test_bar_render_xpos_2groups_2cols(fake_cell, bar_renderer):
     """
     Test composite bar positioning with 2 groups each with 2 bars corresponding to
     two columns.
@@ -180,13 +175,13 @@ def test_bar_render_xpos_2groups_2cols(fake_ctx, fake_cell, bar_renderer):
     view.bar_group_location = "center"
     fake_cell.add_view(view)
 
-    out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_ctx.ax, ["k"])
+    out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_cell.ax, ["k"])
     assert np.isclose(out_df["__bar_x_l0"], [1.25, 3.25, 5.25, 7.25] + [1.75, 3.75, 5.75, 7.75]).all()
     assert np.isclose(out_df["__bar_x_l1"], [2.25, 4.25, 6.25, 8.25] + [2.75, 4.75, 6.75, 8.75]).all()
     assert np.isclose(out_df["__bar_width_l0"], [0.5] * 8).all()
 
 
-def test_bar_render_xpos_2groups_2cols_2stacks(fake_ctx, fake_cell, bar_renderer):
+def test_bar_render_xpos_2groups_2cols_2stacks(fake_cell, bar_renderer):
     """
     Test composite bar positioning with 2 groups each with 2 bars corresponding to
     two columns.
@@ -203,7 +198,7 @@ def test_bar_render_xpos_2groups_2cols_2stacks(fake_ctx, fake_cell, bar_renderer
     view.bar_group_location = "center"
     fake_cell.add_view(view)
 
-    out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_ctx.ax, ["k", "s"])
+    out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_cell.ax, ["k", "s"])
     assert np.isclose(out_df["__bar_x_l0"], [2.5, 6.5, 3.5, 7.5] * 2).all()
     assert np.isclose(out_df["__bar_x_l1"], [4.5, 8.5, 5.5, 9.5] * 2).all()
     assert np.isclose(out_df["__bar_width_l0"], [1] * 8).all()
@@ -212,7 +207,7 @@ def test_bar_render_xpos_2groups_2cols_2stacks(fake_ctx, fake_cell, bar_renderer
     assert np.isclose(out_df["__bar_y_base_l1"], [0, 0, 110, 120, 0, 0, 130, 140]).all()
 
 
-def test_bar_render_xpos_2groups_2axes_interleaved(fake_ctx, fake_cell, bar_renderer):
+def test_bar_render_xpos_2groups_2axes_interleaved(fake_cell, bar_renderer):
     """
     Test interleaved bar positioning with 2 sets of bars corresponding to two Y columns
     on the same Y axis
@@ -227,7 +222,7 @@ def test_bar_render_xpos_2groups_2axes_interleaved(fake_ctx, fake_cell, bar_rend
     view.bar_group_location = "center"
     fake_cell.add_view(view)
 
-    out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_ctx.ax, group_by=[])
+    out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_cell.ax, group_by=[])
     assert np.isclose(out_df["__bar_x_l0"], [1.75, 3.75, 5.75, 7.75]).all()
     assert np.isclose(out_df["__bar_x_l1"], [2.25, 4.25, 6.25, 8.25]).all()
     assert np.isclose(out_df["__bar_width_l0"], [0.5] * 4).all()
@@ -257,7 +252,7 @@ def test_bar_render_xpos_2groups_2axes_interleaved(fake_ctx, fake_cell, bar_rend
         (1, "l"): [2, 5, 8]
     }),
 ])
-def test_bar_render_gen_matrix_slices_interleaved(ngroups, nleft, nright, expect, fake_ctx, fake_cell, bar_renderer):
+def test_bar_render_gen_matrix_slices_interleaved(ngroups, nleft, nright, expect, fake_cell, bar_renderer):
     # Irrelevant if filled or not
     df = pd.DataFrame()
     naxes = nleft + nright
@@ -276,7 +271,7 @@ def test_bar_render_gen_matrix_slices_interleaved(ngroups, nleft, nright, expect
     assert result == expect
 
 
-def test_bar_renderer_top_text(mocker, fake_ctx, fake_cell, bar_renderer):
+def test_bar_renderer_top_text(mocker, fake_cell, bar_renderer):
     df = pd.DataFrame()
     df["x"] = [1, 2, 3, 4]
     # fake generated x positionfs for column "y"
@@ -290,9 +285,9 @@ def test_bar_renderer_top_text(mocker, fake_ctx, fake_cell, bar_renderer):
     view.bar_group_location = "center"
     fake_cell.add_view(view)
 
-    text_fn = mocker.patch.object(fake_ctx.ax, "text")
+    text_fn = mocker.patch.object(fake_cell.ax, "text")
 
-    bar_renderer._draw_columns_text(view, fake_ctx)
+    bar_renderer._draw_columns_text(view, fake_cell)
     expect_kw = {
         "fontsize": mocker.ANY,
         "rotation": "vertical",
@@ -305,7 +300,7 @@ def test_bar_renderer_top_text(mocker, fake_ctx, fake_cell, bar_renderer):
     text_fn.assert_any_call(4, 30, "30", **expect_kw)
 
 
-def test_bar_renderer_top_text_2col(mocker, fake_ctx, fake_cell, bar_renderer):
+def test_bar_renderer_top_text_2col(mocker, fake_cell, bar_renderer):
     df = pd.DataFrame()
     df["x"] = [1, 2, 3, 4]
     # fake generated x positionfs for column "y"
@@ -321,9 +316,9 @@ def test_bar_renderer_top_text_2col(mocker, fake_ctx, fake_cell, bar_renderer):
     view.bar_group_location = "center"
     fake_cell.add_view(view)
 
-    text_fn = mocker.patch.object(fake_ctx.ax, "text")
+    text_fn = mocker.patch.object(fake_cell.ax, "text")
 
-    bar_renderer._draw_columns_text(view, fake_ctx)
+    bar_renderer._draw_columns_text(view, fake_cell)
     expect_kw = {
         "fontsize": mocker.ANY,
         "rotation": "vertical",
@@ -341,7 +336,7 @@ def test_bar_renderer_top_text_2col(mocker, fake_ctx, fake_cell, bar_renderer):
     text_fn.assert_any_call(4.25, 35, "35", **expect_kw)
 
 
-def test_bar_renderer_top_text_2col_2stacks(mocker, fake_ctx, fake_cell, bar_renderer):
+def test_bar_renderer_top_text_2col_2stacks(mocker, fake_cell, bar_renderer):
     df = pd.DataFrame()
     df["k"] = [0] * 4 + [1] * 4
     df["x"] = [1, 2, 3, 4] * 2
@@ -358,9 +353,9 @@ def test_bar_renderer_top_text_2col_2stacks(mocker, fake_ctx, fake_cell, bar_ren
     view.bar_group_location = "center"
     fake_cell.add_view(view)
 
-    text_fn = mocker.patch.object(fake_ctx.ax, "text")
+    text_fn = mocker.patch.object(fake_cell.ax, "text")
 
-    bar_renderer._draw_columns_text(view, fake_ctx)
+    bar_renderer._draw_columns_text(view, fake_cell)
     expect_kw = {
         "fontsize": mocker.ANY,
         "rotation": "vertical",

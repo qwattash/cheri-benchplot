@@ -1,15 +1,16 @@
 from abc import ABC, abstractmethod
 from enum import Enum
 
+import numpy as np
 import pandas as pd
 
 from ..analysis import BenchmarkAnalysis
 from ..dataset import DatasetArtefact
 from ..util import new_logger
-from .backend import ColumnLayout, Surface
+from .backend import FigureManager, Mosaic
 from .data_view import CellData, LegendInfo
-from .excel import SpreadsheetSurface
-from .matplotlib import MatplotlibSurface
+from .excel import ExcelFigureManager
+from .matplotlib import MplFigureManager
 
 
 class Symbols(Enum):
@@ -39,7 +40,6 @@ class BenchmarkPlotBase(BenchmarkAnalysis):
     Subplots are then added to the layout if the benchmark supports the required
     datasets for the subplot.
     """
-
     # List of subplot classes that we attempt to draw
     subplots = []
 
@@ -57,9 +57,9 @@ class BenchmarkPlotBase(BenchmarkAnalysis):
 
     def __init__(self, benchmark: "BenchmarkBase"):
         super().__init__(benchmark)
-        self.surfaces = [SpreadsheetSurface(), MatplotlibSurface()]
         self.logger = new_logger(self.get_plot_name(), benchmark.logger)
-        self.active_subplots = self._make_subplots()
+        self.mosaic = self._make_subplots_mosaic()
+        self.fig_manager = self._make_figure_manager()
 
     def get_plot_name(self):
         """
@@ -75,53 +75,59 @@ class BenchmarkPlotBase(BenchmarkAnalysis):
         """
         return self.benchmark.manager.plot_ouput_path / self.__class__.__name__
 
-    def _make_subplots(self) -> list["BenchmarkSubPlot"]:
+    def _make_figure_manager(self):
         """
-        By default, we create one instance for each subplot class listed in the class
+        Build the figure manager backend for this plot.
+        """
+        raise NotImplementedError("Must override")
+
+    def _make_subplots_mosaic(self) -> Mosaic:
+        """
+        Mosaic layout for matplotlib-like setup.
+        By default generate a single columns with subplots.
         """
         dset_avail = set(self.benchmark.datasets.keys())
-        active_subplots = []
-        for plot_klass in self.subplots:
+        subplots = {}
+        layout = []
+        for idx, plot_klass in enumerate(self.subplots):
             dset_req = set(plot_klass.get_required_datasets())
             if dset_req.issubset(dset_avail):
-                active_subplots.append(plot_klass(self))
-        return active_subplots
+                name = f"subplot-{idx}"
+                subplots[name] = plot_klass(self)
+                layout.append([name])
+        return Mosaic(layout, subplots)
 
-    def _setup_surface(self, surface: Surface):
-        """
-        Setup drawing surface layout and other parameters.
-        """
-        surface.set_layout(ColumnLayout(len(self.active_subplots)))
-        surface.set_config(self.config)
+    def _spawn_interactive_subplot(self, interactive):
+        # self.logger.info("Start plot in interactive mode on %s", surface)
+        # surface.set_layout(ColumnLayout(1))
+        # surface.set_config(self.config)
+        # plot = self.active_subplots[interactive.subplot_index]
+        # cell = surface.make_cell(title=plot.get_cell_title())
+        # plot.generate(surface, cell)
+        # surface.next_cell(cell)
+        # surface.draw_interactive(interactive)
+        raise NotImplementedError("TODO")
 
-    def _process_surface(self, surface: Surface):
-        """
-        Add data views to the given surface and draw it.
-        """
-        self.logger.info("Setup plot on %s", surface)
-        self._setup_surface(surface)
-        for plot in self.active_subplots:
-            cell = surface.make_cell(title=plot.get_cell_title())
-            plot.generate(surface, cell)
-            surface.next_cell(cell)
+    def process_datasets(self, interactive: InteractivePlotConfig = None):
+        """Populate the plot axes and draw everything."""
+        if interactive is not None:
+            self._spawn_interactive_subplot(interactive)
+        self.logger.info("Setup plot on %s", self.fig_manager)
+        self.fig_manager.allocate_cells(self.mosaic)
+        for subplot in self.mosaic:
+            subplot.generate(self.fig_manager, subplot.cell)
         self.logger.debug("Drawing plot '%s'", self.get_plot_name())
-        surface.draw(self.get_plot_name(), self.get_plot_file())
-
-    def process_datasets(self):
-        for surface in self.surfaces:
-            self._process_surface(surface)
+        self.fig_manager.draw(self.mosaic, self.get_plot_name(), self.get_plot_file())
 
 
 class BenchmarkTable(BenchmarkPlotBase):
-    def __init__(self, benchmark):
-        super().__init__(benchmark)
-        self.surfaces = [SpreadsheetSurface()]
+    def _make_figure_manager(self):
+        return ExcelFigureManager(self.config)
 
 
 class BenchmarkPlot(BenchmarkPlotBase):
-    def __init__(self, benchmark):
-        super().__init__(benchmark)
-        self.surfaces = [MatplotlibSurface()]
+    def _make_figure_manager(self):
+        return MplFigureManager(self.config)
 
 
 class BenchmarkSubPlot(ABC):
@@ -137,6 +143,8 @@ class BenchmarkSubPlot(ABC):
         self.plot = plot
         self.logger = plot.logger
         self.benchmark = self.plot.benchmark
+        # Cell assigned for rendering
+        self.cell = None
 
     def get_dataset(self, dset_id: DatasetArtefact):
         """Helper to access datasets in the benchmark"""
@@ -157,6 +165,6 @@ class BenchmarkSubPlot(ABC):
         return legend_info
 
     @abstractmethod
-    def generate(self, surface: Surface, cell: CellData):
+    def generate(self, fm: FigureManager, cell: CellData):
         """Generate data views to plot for a given cell"""
         ...

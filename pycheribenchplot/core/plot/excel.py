@@ -8,50 +8,58 @@ from matplotlib import colors as mcolors
 from openpyxl.styles import Border, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from .backend import Surface, ViewRenderer
+from .backend import FigureManager, Mosaic, ViewRenderer
 from .data_view import CellData, DataView, TableDataView
 
 
-class SpreadsheetSurface(Surface):
+class ExcelFigureManager(FigureManager):
     """
     Draw plots to static HTML files.
     """
-    @dataclass
-    class DrawContext(Surface.DrawContext):
-        writer: pd.ExcelWriter
 
-    def __init__(self):
-        super().__init__()
-        self._renderers = {"table": SpreadsheetTableRenderer}
+    # @dataclass
+    # class DrawContext(Surface.DrawContext):
+    #     writer: pd.ExcelWriter
 
-    def _make_draw_context(self, title, dest, **kwargs):
+    def __init__(self, config):
+        super().__init__(config)
+        self.writer = None
+
+    def allocate_cells(self, mosaic: Mosaic):
+        for subplot in mosaic:
+            subplot.cell = ExcelCellData(title=subplot.get_cell_title())
+
+    def draw(self, mosaic, title, dest):
+        super().draw(mosaic, title, dest)
+        if self.config.split_subplots:
+            self.logger.warning("Split subplots unsupported for excel figures")
         writer = pd.ExcelWriter(dest.with_suffix(".xlsx"), mode="w", engine="openpyxl")
-        return super()._make_draw_context(title, dest, writer=writer, **kwargs)
-
-    def _finalize_draw_context(self, ctx):
-        if len(ctx.writer.sheets):
-            ctx.writer.close()
-        else:
-            del ctx.writer
-
-    def make_cell(self, **kwargs):
-        return SpreadsheetPlotCell(**kwargs)
+        for subplot in mosaic:
+            subplot.cell.writer = writer
+            subplot.cell.draw()
+        writer.close()
 
 
-class SpreadsheetPlotCell(CellData):
+class ExcelCellData(CellData):
     """
     Base HTML dataset rendering class. Add wrapper functions to allow running the rendering
     step within the jinja templates, so that we can access cell and view properties within the
     template if needed.
     """
-    def draw(self, ctx: SpreadsheetSurface.DrawContext):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._renderers = {"table": SpreadsheetTableRenderer}
+        # Set at drawing time
+        self.writer = None
+
+    def draw(self):
         for view in self.views:
-            r = self.surface.get_renderer(view)
+            r = self.get_renderer(view)
             if not r:
                 continue
             if len(self.views) > 1:
                 self.surface.logger.warning("Only a single plot view is supported for each excel surface cell")
-            r.render(view, self, self.surface, excel_writer=ctx.writer)
+            r.render(view, self)
             break
 
 
@@ -74,11 +82,12 @@ class SpreadsheetTableRenderer(ViewRenderer):
             fill_styles[key] = style
         return fill_styles
 
-    def render(self, view: TableDataView, cell, surface, excel_writer):
+    def render(self, view: TableDataView, cell):
         """
         Render the dataframe as a table in an excel sheet.
         """
         assert isinstance(view, TableDataView), "Table renderer can only handle TableDataView"
+        excel_writer = cell.writer
 
         title = Path(cell.title).name
         sheet_name = re.sub("[:]", "", title)

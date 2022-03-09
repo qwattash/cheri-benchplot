@@ -549,14 +549,18 @@ class CellData:
         self.yright_config = AxisConfig(yright_label)
 
         self.views = []
-        self.surface = None
         self.cell_id = next(CellData.cell_id_gen)
-
-    def set_surface(self, surface):
-        self.surface = surface
+        self._renderers = {}
 
     def add_view(self, view: DataView):
         self.views.append(view)
 
-    def draw(self, ctx: "Surface.DrawContext"):
-        pass
+    def get_renderer(self, data_view: DataView) -> "ViewRenderer":
+        try:
+            return self._renderers[data_view.key]()
+        except KeyError:
+            self.logger.debug("Skipping data view %s unsupported", data_view.key)
+            return None
+
+    def draw(self):
+        raise NotImplementedError("Must override")

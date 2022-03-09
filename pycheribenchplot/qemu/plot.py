@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 from ..core.dataset import (DatasetName, check_multi_index_aligned, pivot_multi_index_level)
-from ..core.plot import (BenchmarkSubPlot, BenchmarkTable, CellData, LegendInfo, TableDataView)
+from ..core.plot import (BenchmarkSubPlot, BenchmarkTable, CellData, LegendInfo, Mosaic, TableDataView)
 
 
 class QEMUHistSubPlot(BenchmarkSubPlot):
@@ -140,19 +140,22 @@ class QEMUTables(BenchmarkTable):
         required = set([DatasetName.QEMU_STATS_BB_HIST, DatasetName.QEMU_STATS_CALL_HIST])
         return required.issubset(set(dsets))
 
-    def _make_subplots(self):
+    def _make_subplots_mosaic(self):
         """
-        Dynamically create subplots for each context ID
+        Dynamically create subplots for each context ID in a mosaic column
         """
-        subplots = []
+        subplots = {}
+        layout = []
         contexts = set()
         bb_df = self.benchmark.get_dataset(DatasetName.QEMU_STATS_BB_HIST).agg_df
         contexts.update(bb_df.index.get_level_values("process").unique())
         call_df = self.benchmark.get_dataset(DatasetName.QEMU_STATS_CALL_HIST).agg_df
         contexts.update(call_df.index.get_level_values("process").unique())
-        for ctx in contexts:
-            subplots.append(QEMUContextHistTable(self, ctx))
-        return subplots
+        for idx, ctx in enumerate(contexts):
+            name = f"subplot-{idx}"
+            subplots[name] = QEMUContextHistTable(self, ctx)
+            layout.append([name])
+        return Mosaic(layout, subplots)
 
     def get_plot_name(self):
         return "QEMU Stats Tables"

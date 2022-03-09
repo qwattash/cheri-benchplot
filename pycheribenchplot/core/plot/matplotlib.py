@@ -1,4 +1,5 @@
 import functools as ft
+import itertools as it
 import typing
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,7 +12,7 @@ from matplotlib.figure import Figure
 from matplotlib.patches import Patch
 from pandas.api.types import is_numeric_dtype
 
-from .backend import Surface, ViewRenderer
+from .backend import FigureManager, Mosaic, ViewRenderer
 from .data_view import BarPlotDataView, CellData, Scale, Style
 
 
@@ -115,7 +116,7 @@ class Legend:
         for l, h in zip(labels, handles):
             self.set_item(l, h)
 
-    def _compute_legend_position(self, ctx):
+    def _compute_legend_position(self):
         """
         Legend position can be top, bottom, left, right.
         The legend is always generated outside the axes
@@ -146,10 +147,10 @@ class Legend:
         }
         return legend_args
 
-    def build_legend(self, ctx):
+    def build_legend(self, cell):
         if self.handles:
-            legend_kwargs = self._compute_legend_position(ctx)
-            ctx.ax.legend(handles=self.handles.values(), labels=self.handles.keys(), **legend_kwargs)
+            legend_kwargs = self._compute_legend_position()
+            cell.ax.legend(handles=self.handles.values(), labels=self.handles.keys(), **legend_kwargs)
 
 
 class SimpleLineRenderer(ViewRenderer):
@@ -167,19 +168,19 @@ class SimpleLineRenderer(ViewRenderer):
         label = view.legend_info.label(legend_key)
         return color, label
 
-    def render(self, view, cell, surface, ctx):
+    def render(self, view, cell):
         # legend key is always a dataframe because legend_level is normalized to a list
         style_args = build_style_args(view.style)
         color_set, label_set = self._find_legend_entry(view)
 
         for c in view.horizontal:
             for coord, color, label in zip(view.df[c], color_set, label_set):
-                line = ctx.ax.axhline(coord, color=color, **style_args)
-                ctx.legend.set_item(label, line)
+                line = cell.ax.axhline(coord, color=color, **style_args)
+                cell.legend.set_item(label, line)
         for c in view.vertical:
             for coord, color, label in zip(view.df[c], color_set, label_set):
-                line = ctx.ax.axvline(coord, color=color, **style_args)
-                ctx.legend.set_item(label, line)
+                line = cell.ax.axvline(coord, color=color, **style_args)
+                cell.legend.set_item(label, line)
 
 
 class BarRenderer(ViewRenderer):
@@ -395,7 +396,7 @@ class BarRenderer(ViewRenderer):
         key = Key(**key_levels)
         return view.legend_info.find(key)
 
-    def _draw_columns_text(self, view, ctx):
+    def _draw_columns_text(self, view, cell):
         """
         Draw labels at the top (or bottom) of the bars.
         """
@@ -422,7 +423,7 @@ class BarRenderer(ViewRenderer):
                     txt = f"{maxv:.1f}"
                 else:
                     txt = f"{int(maxv):d}"
-                ax = ctx.ax if side == "l" else ctx.rax
+                ax = cell.ax if side == "l" else cell.rax
                 y_trans = ax.get_yaxis_transform()
                 y_inv = y_trans.inverted()
                 # Text padding depends on the scale (log/linear)
@@ -437,7 +438,7 @@ class BarRenderer(ViewRenderer):
                     maxv = transform_y_helper(y_inv, tx_pad)[0]
                 ax.text(x, maxv, txt, fontsize="x-small", rotation="vertical", va=va, ha="center")
 
-    def render(self, view, cell, surface, ctx):
+    def render(self, view, cell):
         """
         For the input dataframe we split the column groups
         and stack groups. Each grouping have the associated
@@ -445,7 +446,7 @@ class BarRenderer(ViewRenderer):
         the data.
         """
         by = self._resolve_groups(cell, view)
-        df = self._compute_bar_x(cell, view, ctx.ax, by)
+        df = self._compute_bar_x(cell, view, cell.ax, by)
         groups = df.groupby(by)
 
         left_patches = []
@@ -458,8 +459,8 @@ class BarRenderer(ViewRenderer):
                     x = view.get_col(f"__bar_x_l{col_idx}", chunk)
                     base = view.get_col(f"__bar_y_base_l{col_idx}", chunk)
                     width = view.get_col(f"__bar_width_l{col_idx}", chunk)
-                    patches = ctx.ax.bar(x, height=values, bottom=base, color=color, width=width)
-                    ctx.legend.set_item(label, patches)
+                    patches = cell.ax.bar(x, height=values, bottom=base, color=color, width=width)
+                    cell.legend.set_item(label, patches)
             if view.has_yright:
                 for col_idx, col_name in enumerate(view.yright):
                     color, label = self._find_legend_entry(view, by, key, col_name, "right")
@@ -467,20 +468,20 @@ class BarRenderer(ViewRenderer):
                     x = view.get_col(f"__bar_x_r{col_idx}", chunk)
                     base = view.get_col(f"__bar_y_base_r{col_idx}", chunk)
                     width = view.get_col(f"__bar_width_r{col_idx}", chunk)
-                    patches = ctx.rax.bar(x, height=values, bottom=base, color=color, width=width)
-                    ctx.legend.set_item(label, patches)
+                    patches = cell.rax.bar(x, height=values, bottom=base, color=color, width=width)
+                    cell.legend.set_item(label, patches)
 
-        self._draw_columns_text(view, ctx)
+        self._draw_columns_text(view, cell)
         if view.has_yleft and view.has_yright:
             # Need to realign the Y axes 0 coordinates
-            align_y_at(ctx.ax, 0, ctx.rax, 0)
+            align_y_at(cell.ax, 0, cell.rax, 0)
 
 
 class HistRenderer(ViewRenderer):
     """
     Render an histogram plot.
     """
-    def render(self, view, cell, surface, ctx):
+    def render(self, view, cell):
         """
         Note: This uses the bucket group as legend level
         This guarantees that the legend_level is always in the index of
@@ -505,69 +506,79 @@ class HistRenderer(ViewRenderer):
             colors = view.legend_info.color(legend_key)
             labels = view.legend_info.label(legend_key)
 
-        n, bins, patches = ctx.ax.hist(xvec, bins=view.buckets, rwidth=0.5, color=colors, align=view.bar_align)
-        ctx.legend.set_group(labels, patches)
+        n, bins, patches = cell.ax.hist(xvec, bins=view.buckets, rwidth=0.5, color=colors, align=view.bar_align)
+        cell.legend.set_group(labels, patches)
 
 
-class MatplotlibSurface(Surface):
+class MplFigureManager(FigureManager):
+    """Draw plots using matplotlib"""
+    def __init__(self, config):
+        super().__init__(config)
+        # Initialized when allocating cells
+        self.figures = []
+
+    def allocate_cells(self, mosaic: Mosaic):
+        if self.config.split_subplots:
+            # Don't care about layout as we generate only one plot per figure
+            for subplot in mosaic:
+                figure = plt.figure(constrained_layout=True, figsize=(10, 5))
+                ax = figure.subplots(1, 1)
+                cell = MplCellData(title=subplot.get_cell_title(), figure=figure, ax=ax)
+                subplot.cell = cell
+                self.figures.append(figure)
+        else:
+            # Mosaic shape must be at leaset (N, 1)
+            nrows, ncols = mosaic.shape()
+            figure = plt.figure(constrained_layout=True, figsize=(10 * ncols, 5 * nrows))
+            self.figures.append(figure)
+            mosaic_axes = figure.subplot_mosaic(mosaic.layout)
+            for name, subplot in mosaic.subplots.items():
+                ax = mosaic_axes[name]
+                subplot.cell = MplCellData(title=subplot.get_cell_title(), figure=figure, ax=ax)
+
+    def _write(self, dest: Path, figure: Figure):
+        for ext in self.config.plot_output_format:
+            path = dest.with_suffix(f".{ext}")
+            self.logger.debug("Emit %s plot %s", ext, path)
+            figure.savefig(path)
+        plt.close(figure)
+
+    def draw(self, mosaic, title, dest):
+        super().draw(mosaic, title, dest)
+        if self.config.split_subplots:
+            base = dest.parent / "split"
+            base.mkdir(exist_ok=True)
+            stem = dest.stem
+            for idx, subplot in enumerate(mosaic):
+                assert subplot.cell is not None, f"Missing cell for subplot {subplot}"
+                subplot.cell.draw()
+                cell_dest = base / dest.with_stem(f"{stem}-{idx}").name
+                self._write(cell_dest, subplot.cell.figure)
+        else:
+            assert len(self.figures) == 1, "Unexpected number of figures"
+            self.figures[0].suptitle(title)
+            for subplot in mosaic:
+                subplot.cell.draw()
+            self._write(dest, self.figures[0])
+
+
+class MplCellData(CellData):
     """
-    Draw plots using matplotlib
+    A cell in the matplotlib plot. At render time, this will be associated
+    to a unique set of axes.
     """
-    @dataclass
-    class DrawContext(Surface.DrawContext):
-        """
-        Arguments:
-        figure: the matplotlib figure
-        axes: axes matrix, mirroring the surface layout
-        ax: current left axis to use
-        rax: current right axis to use
-        """
-        figure: Figure
-        axes: list[list[Axes]]
-        legend: Legend
-        ax: typing.Optional[Axes] = None
-        rax: typing.Optional[Axes] = None
-
-    def __init__(self):
-        super().__init__()
+    def __init__(self, figure=None, ax=None, **kwargs):
+        super().__init__(**kwargs)
         self._renderers = {
             "bar": BarRenderer,
             "hist": HistRenderer,
             "axline": SimpleLineRenderer,
         }
-
-    def _make_draw_context(self, title, dest, **kwargs):
-        if self.config.split_subplots:
-            r = c = 1
-        else:
-            r, c = self._layout.shape
-        fig, axes = plt.subplots(r, c, constrained_layout=True, figsize=(10 * c, 5 * r))
-        axes = np.array(axes)
-        axes = axes.reshape((r, c))
-        fig.suptitle(title)
-        ctx = super()._make_draw_context(title, dest, figure=fig, axes=axes, legend=Legend())
-        return ctx
-
-    def _finalize_draw_context(self, ctx):
-        for ext in self.config.plot_output_format:
-            path = ctx.dest.with_suffix(f".{ext}")
-            self.logger.debug("Emit %s plot %s", ext, path)
-            ctx.figure.savefig(path)
-        plt.close(ctx.figure)
-
-    def make_cell(self, **kwargs):
-        return MatplotlibPlotCell(**kwargs)
-
-
-class MatplotlibPlotCell(CellData):
-    """
-    A cell in the matplotlib plot. At render time, this will be associated
-    to a unique set of axes.
-    """
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.figure = None
-        self.ax = None
+        self.legend = Legend()
+        self.figure = figure
+        self.ax = ax
+        # Right axis is autogenerated based on the axes config
+        self.rax = None
 
     def _config_x(self, cfg, ax):
         ax.set_xlabel(cfg.label)
@@ -593,18 +604,17 @@ class MatplotlibPlotCell(CellData):
         if cfg.tick_labels is not None:
             ax.set_yticklabels(cfg.tick_labels, rotation=cfg.tick_rotation)
 
-    def draw(self, ctx):
-        ctx.ax = ctx.axes[ctx.row][ctx.col]
-        ctx.legend = Legend()
+    def draw(self):
+        assert self.figure, "Missing cell figure"
+        assert self.ax, "Missing cell axes"
+
         # Auto enable yright axis if it is used by any view
         for view in self.views:
             if hasattr(view, "yright") and len(view.yright) > 0:
                 self.yright_config.enable = True
                 break
         if self.yright_config:
-            ctx.rax = ctx.ax.twinx()
-        else:
-            ctx.rax = None
+            self.rax = self.ax.twinx()
 
         # If ylimits are not defined, pick up the limits from the views here.
         # TODO
@@ -618,23 +628,23 @@ class MatplotlibPlotCell(CellData):
         # It may still be possible to perform some adjustment of the viewport
         # if needed.
         if self.x_config:
-            self._config_x(self.x_config, ctx.ax)
+            self._config_x(self.x_config, self.ax)
         if self.yleft_config:
-            self._config_y(self.yleft_config, ctx.ax)
+            self._config_y(self.yleft_config, self.ax)
         if self.yright_config:
-            assert ctx.rax is not None, "Missing twin axis"
-            self._config_y(self.yright_config, ctx.rax)
+            assert self.rax is not None, "Missing twin axis"
+            self._config_y(self.yright_config, self.rax)
 
         # Render all the views in the cell
         for view in self.views:
-            r = self.surface.get_renderer(view)
+            r = self.get_renderer(view)
             if not r:
                 continue
-            r.render(view, self, self.surface, ctx)
+            r.render(view, self)
         # Always render an horizontal line at origin
-        ctx.ax.axhline(0, linestyle="--", linewidth=0.5, color="black")
+        self.ax.axhline(0, linestyle="--", linewidth=0.5, color="black")
 
-        ctx.legend.build_legend(ctx)
-        if ctx.legend.legend_position == "top":
-            title_y = max(1.0, ctx.legend.bbox[1] + ctx.legend.bbox[3])
-        ctx.ax.set_title(self.title, y=title_y, pad=6)
+        self.legend.build_legend(self)
+        if self.legend.legend_position == "top":
+            title_y = max(1.0, self.legend.bbox[1] + self.legend.bbox[3])
+        self.ax.set_title(self.title, y=title_y, pad=6)
