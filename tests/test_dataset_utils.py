@@ -172,7 +172,6 @@ def test_quantile_slice_high_cap_mixed(fake_simple_df):
     df.loc[1, "test"] = list(reversed(np.arange(len(df) / 2)))
 
     result_df = quantile_slice(df, ["test"], quantile=0.6, level="l0", max_entries=2)
-    print(result_df)
 
     # fake df has 2**4 rows, so expect test column to contain [0..7] twice.
     # the top 40% is the 4 top values in each l0 group, max_len should

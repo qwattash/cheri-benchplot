@@ -267,7 +267,6 @@ def test_bar_render_gen_matrix_slices_interleaved(ngroups, nleft, nright, expect
     gen = bar_renderer._iter_group_slices(view, ngroups, naxes)
     items = list(gen)
     result = {(i, lr): fake_posmatrix[s] for s, i, lr in items}
-    print(ngroups, naxes, result)
     assert result == expect
 
 
@@ -499,7 +498,6 @@ def test_legend_info_assign_colors(legend_info_2levels):
 @pytest.mark.skip
 def test_legend_info_assign_hsv(legend_info_2levels):
     legend = legend_info_2levels.assign_colors_hsv("J", h=(0.3, 1), s=(0.5, 1), v=(0.4, 0.9))
-    print(legend.info_df)
     ## XXX todo
 
 
