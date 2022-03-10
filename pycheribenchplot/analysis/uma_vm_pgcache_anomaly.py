@@ -92,7 +92,7 @@ class UMABucketAffinityHist(BenchmarkSubPlot):
     def get_cell_title(self):
         return "Bucket affinity distribution"
 
-    def generate(self, surface, cell):
+    def generate(self, fm, cell):
         size_col = ("bucket_size", "-", "sample")
         df = self.get_dataset(DatasetName.VMSTAT_UMA_INFO).agg_df
         struct_stats_df = self.get_dataset(DatasetName.KERNEL_STRUCT_STATS).merged_df
@@ -114,7 +114,10 @@ class UMABucketAffinityHist(BenchmarkSubPlot):
                 ptr_size = self.benchmark.merged_benchmarks[dsid].instance_config.kernel_pointer_size
             else:
                 ptr_size = self.benchmark.instance_config.kernel_pointer_size
-            eff_limits = [1, 2, 4, 8, 16] + [2**i - np.ceil(hdr_size / ptr_size) for i in range(5, 9)]
+            # histogram uses half open intervals [a, b), we want the reverse here (a, b] where a, b are
+            # UMA bucket sizes.
+            eff_limits = [1, 3, 5, 9, 17]
+            eff_limits += [2**i + 1 - np.ceil(hdr_size / ptr_size) for i in range(5, 9)]
             count, out_bins = np.histogram(chunk[size_col], bins=eff_limits)
             view_df[dsid] = count
 
