@@ -841,6 +841,11 @@ def assign_sorted_coord(df: pd.DataFrame, sort: list[str], group_by=list[str], *
     """
     Assign coordinates for plotting to dataframe groups, preserving the index mapping between groups.
     This assumes that the dataframe is aligned at the given level.
+
+    df: the dataframe to operate on
+    sort: columns to use for sorting
+    group_by: grouping levels/columns
+    **sort_kwargs: extra sort_values() parameters
     """
     assert check_multi_index_aligned(df, group_by)
     # Do not trash source df
