@@ -47,7 +47,8 @@ class UMABucketAllocAnomaly(BenchmarkPlot):
 
     def _get_uma_stats(self):
         return [
-            "rsize", "ipers", "bucket_size", "requests", "free", "fail", "fail_import", "bucket_alloc", "bucket_free"
+            "rsize", "ipers", "bucket_size", "requests", "free", "fail", "fail_import", "bucket_alloc", "bucket_free",
+            "pressure"
         ]
 
     def _make_subplots_mosaic(self):
