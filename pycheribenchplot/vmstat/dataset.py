@@ -25,6 +25,7 @@ class UMAZoneInfoDataset(DataSetContainer):
         Field.data_field("rsize", dtype=int),
         Field.data_field("bucket_size", dtype=int),
         Field.data_field("bucket_size_max", dtype=int),
+        Field.data_field("bucket_refill_efficiency", dtype=float, isderived=True),
     ]
 
     def __init__(self, benchmark, dset_key, config):
@@ -72,6 +73,10 @@ class UMAZoneInfoDataset(DataSetContainer):
     def gen_pre_benchmark(self):
         self._script.gen_cmd("vmstat", ["--libxo", "json", "-z"], outfile=self._output_file_vmstat())
         self._script.gen_cmd("sysctl", ["vm.uma"], outfile=self._output_file_sysctl())
+
+    def pre_merge(self):
+        super().pre_merge()
+        self.df["bucket_refill_efficiency"] = self.df["ipers"] / self.df["bucket_size"]
 
     def aggregate(self):
         super().aggregate()

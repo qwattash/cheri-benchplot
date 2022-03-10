@@ -3,7 +3,7 @@ import itertools as it
 import numpy as np
 import pandas as pd
 
-from ..core.dataset import DatasetName
+from ..core.dataset import DatasetName, assign_sorted_coord
 from ..core.plot import (AALineDataView, BarPlotDataView, BenchmarkPlot, BenchmarkSubPlot, CellData, HistPlotDataView,
                          LegendInfo, Mosaic, Scale)
 from ..vmstat.plot import VMStatUMAMetricHist
@@ -134,11 +134,46 @@ class UMABucketAffinityHist(BenchmarkSubPlot):
         cell.add_view(view)
 
 
+class UMABucketRefillEff(BenchmarkSubPlot):
+    """
+    Show the number of requests made to each bucket zone. This is used to report pressure on each bucket
+    zone.
+    """
+    @classmethod
+    def get_required_datasets(cls):
+        dsets = super().get_required_datasets()
+        dsets += [DatasetName.VMSTAT_UMA, DatasetName.VMSTAT_UMA_INFO]
+        return dsets
+
+    def get_cell_title(self):
+        return "Bucket zone refill efficiency"
+
+    def get_bucket_zones(self):
+        return [f"{2**i} Bucket" for i in range(1, 9)]
+
+    def generate(self, fm, cell):
+        info_df = self.get_dataset(DatasetName.VMSTAT_UMA_INFO).agg_df
+        cols = [("bucket_refill_efficiency", "-", "sample")]
+
+        sel = info_df.index.get_level_values("name").isin(self.get_bucket_zones())
+        view_df = info_df[sel].copy()
+        view_df[cols] *= 100
+        view_df["x"] = assign_sorted_coord(view_df, sort=[("rsize", "-", "sample")], group_by=["dataset_id"])
+        view = BarPlotDataView(view_df, x="x", yleft=cols, bar_group="dataset_id")
+        view.legend_info = self.build_legend_by_dataset()
+        view.legend_level = ["dataset_id"]
+        cell.x_config.label = "Bucket zone"
+        cell.x_config.ticks = view_df["x"].unique()
+        cell.x_config.tick_labels = view_df.index.get_level_values("name").unique()
+        cell.yleft_config.label = "% Bucket items on refill"
+        cell.add_view(view)
+
+
 class UMABucketAnalysis(BenchmarkPlot):
     """
     Collect bucket-related data for the pgcache anomaly analysis
     """
-    subplots = [UMABucketAffinityHist]
+    subplots = [UMABucketAffinityHist, UMABucketRefillEff]
 
     def get_plot_name(self):
         return "UMA Bucket analysis"
