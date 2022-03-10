@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from pandas.api.types import (is_integer_dtype, is_numeric_dtype, is_object_dtype)
 
 from .util import new_logger
 
@@ -110,6 +111,17 @@ class Field:
         """A field that is generated during processing."""
         kwargs.setdefault("isdata", True)
         return cls(*args, isderived=True, **kwargs)
+
+    @property
+    def default_value(self):
+        if is_integer_dtype(self.dtype):
+            return 0
+        elif is_numeric_dtype(self.dtype):
+            return np.nan
+        elif is_object_dtype(self.dtype):
+            return None
+        else:
+            return ""
 
     def __post_init__(self):
         if self.desc is None:
@@ -318,6 +330,8 @@ class DataSetContainer(metaclass=DatasetRegistry):
         This means that:
         - The index columns must be in the given dataframe and must agree with the container dataframe.
         - The columns must be a subset of all_columns().
+        - The missing columns that are part of input_all_columns() are added and filled with NaN or None.
+        this will not include derived or implicit index columns.
         """
         if "dataset_id" not in df.columns:
             self.logger.debug("No dataset column, using default")
@@ -325,12 +339,23 @@ class DataSetContainer(metaclass=DatasetRegistry):
         if "__iteration" not in df.columns:
             self.logger.debug("No iteration column, using default (-1)")
             df["__iteration"] = -1
+        # Normalize columns to always contain at least all input columns
+        existing = df.columns.to_list() + list(df.index.names)
+        default_columns = []
+        for f in self.input_fields():
+            if f.name not in existing:
+                col = pd.Series(f.default_value, index=df.index, name=f.name)
+                default_columns.append(col)
+        if default_columns:
+            self.logger.debug("Add defaults for fields not found in input dataset.")
+            df = pd.concat([df] + default_columns, axis=1)
         # Normalize type for existing columns
         col_dtypes = self._get_input_columns_dtype()
-        col_dtypes = {c: t for c, t in col_dtypes.items() if c in df.columns}
         df = df.astype(col_dtypes)
         df.set_index(self.input_index_columns(), inplace=True)
-        dataset_columns = set(self.input_all_columns())
+        # Only select columns from the input that are registered as fields, the ones in the index are
+        # already selected
+        dataset_columns = set(self.input_non_index_columns())
         avail_columns = set(df.columns)
         column_subset = avail_columns.intersection(dataset_columns)
         if self.df is None:

@@ -23,5 +23,4 @@ class JSONDataSetContainer(DataSetContainer):
     def _append_df(self, json_df: pd.DataFrame):
         for col, importfn in self._get_input_columns_conv().items():
             json_df[col] = json_df[col].transform(importfn)
-        json_df = json_df.astype(self._get_input_columns_dtype())
         super()._append_df(json_df)
