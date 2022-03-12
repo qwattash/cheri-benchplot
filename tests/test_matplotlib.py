@@ -7,7 +7,8 @@ from matplotlib.axes import Axes
 from pycheribenchplot.core.analysis import AnalysisConfig
 from pycheribenchplot.core.plot import BarPlotDataView, DataView, LegendInfo
 from pycheribenchplot.core.plot.backend import Mosaic
-from pycheribenchplot.core.plot.matplotlib import (BarRenderer, MplCellData, MplFigureManager, align_y_at)
+from pycheribenchplot.core.plot.matplotlib import (BarRenderer, DynamicCoordAllocator, MplCellData, MplFigureManager,
+                                                   align_y_at)
 
 
 @pytest.fixture
@@ -89,11 +90,22 @@ def test_bar_render_xpos_simple(fake_cell, bar_renderer):
     df = pd.DataFrame()
     df["x"] = [1, 2, 3, 4]
     df["y"] = [10, 20, 15, 30]
+
+    allocator = DynamicCoordAllocator(fake_cell.ax,
+                                      axis=0,
+                                      group_keys=[],
+                                      stack_keys=[],
+                                      group_width=0.8,
+                                      group_align="center",
+                                      group_order="sequential")
+    out_df = allocator.compute_coords(df, x="x", left_cols=["y"], right_cols=[], prefix="__prefix")
+    assert np.isclose(out_df["__prefix_x_l0"], [1, 2, 3, 4]).all()
+    assert np.isclose(out_df["__prefix_width_l0"], [0.8] * 4).all()
+
     view = BarPlotDataView(df.copy(), x="x", yleft="y")
     view.bar_width = 0.8
     view.bar_group_location = "center"
     fake_cell.add_view(view)
-
     out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_cell.ax, group_by=[])
     assert np.isclose(out_df["__bar_x_l0"], [1, 2, 3, 4]).all()
     assert np.isclose(out_df["__bar_width_l0"], [0.8] * 4).all()
@@ -108,11 +120,24 @@ def test_bar_render_xpos_2cols(fake_cell, bar_renderer):
     df["x"] = [2, 4, 6, 8]
     df["y0"] = [10, 20, 30, 40]
     df["y1"] = [15, 25, 35, 45]
+
+    allocator = DynamicCoordAllocator(fake_cell.ax,
+                                      axis=0,
+                                      group_keys=[],
+                                      stack_keys=[],
+                                      group_width=0.5,
+                                      group_align="center",
+                                      group_order="sequential")
+    out_df = allocator.compute_coords(df, x="x", left_cols=["y0", "y1"], right_cols=[], prefix="__prefix")
+    assert np.isclose(out_df["__prefix_x_l0"], [1.75, 3.75, 5.75, 7.75]).all()
+    assert np.isclose(out_df["__prefix_x_l1"], [2.25, 4.25, 6.25, 8.25]).all()
+    assert np.isclose(out_df["__prefix_width_l0"], [0.5] * 4).all()
+    assert np.isclose(out_df["__prefix_width_l1"], [0.5] * 4).all()
+
     view = BarPlotDataView(df.copy(), x="x", yleft=["y0", "y1"])
     view.bar_width = 0.5
     view.bar_group_location = "center"
     fake_cell.add_view(view)
-
     out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_cell.ax, group_by=[])
     assert np.isclose(out_df["__bar_x_l0"], [1.75, 3.75, 5.75, 7.75]).all()
     assert np.isclose(out_df["__bar_x_l1"], [2.25, 4.25, 6.25, 8.25]).all()
@@ -129,11 +154,22 @@ def test_bar_render_xpos_2groups(fake_cell, bar_renderer):
     df["x"] = [2, 4, 6, 8] * 2
     df.set_index(["k", "x"], inplace=True)
     df["y"] = np.arange(8) * 10
+
+    allocator = DynamicCoordAllocator(fake_cell.ax,
+                                      axis=0,
+                                      group_keys=["k"],
+                                      stack_keys=[],
+                                      group_width=0.5,
+                                      group_align="center",
+                                      group_order="sequential")
+    out_df = allocator.compute_coords(df, x="x", left_cols=["y"], right_cols=[], prefix="__prefix")
+    assert np.isclose(out_df["__prefix_x_l0"], [1.75, 3.75, 5.75, 7.75] + [2.25, 4.25, 6.25, 8.25]).all()
+    assert np.isclose(out_df["__prefix_width_l0"], [0.5] * 8).all()
+
     view = BarPlotDataView(df.copy(), x="x", yleft=["y"], bar_group="k")
     view.bar_width = 0.5
     view.bar_group_location = "center"
     fake_cell.add_view(view)
-
     out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_cell.ax, ["k"])
     assert np.isclose(out_df["__bar_x_l0"], [1.75, 3.75, 5.75, 7.75] + [2.25, 4.25, 6.25, 8.25]).all()
     assert np.isclose(out_df["__bar_width_l0"], [0.5] * 8).all()
@@ -148,15 +184,27 @@ def test_bar_render_xpos_2stacks(fake_cell, bar_renderer):
     df["x"] = [2, 4, 6, 8] * 2
     df.set_index(["k", "x"], inplace=True)
     df["y"] = [10, 20, 30, 50, 5, 5, 5, 5]
+
+    allocator = DynamicCoordAllocator(fake_cell.ax,
+                                      axis=0,
+                                      group_keys=[],
+                                      stack_keys=["k"],
+                                      group_width=0.5,
+                                      group_align="center",
+                                      group_order="sequential")
+    out_df = allocator.compute_coords(df, x="x", left_cols=["y"], right_cols=[], prefix="__prefix")
+    assert np.isclose(out_df["__prefix_x_l0"], [2, 4, 6, 8] * 2).all()
+    assert np.isclose(out_df["__prefix_width_l0"], [1] * 8).all()
+    assert np.isclose(out_df["__prefix_base_l0"], [0, 0, 0, 0, 10, 20, 30, 50]).all()
+
     view = BarPlotDataView(df.copy(), x="x", yleft=["y"], stack_group="k")
     view.bar_width = 0.5
     view.bar_group_location = "center"
     fake_cell.add_view(view)
-
     out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_cell.ax, ["k"])
     assert np.isclose(out_df["__bar_x_l0"], [2, 4, 6, 8] * 2).all()
     assert np.isclose(out_df["__bar_width_l0"], [1] * 8).all()
-    assert np.isclose(out_df["__bar_y_base_l0"], [0, 0, 0, 0, 10, 20, 30, 50]).all()
+    assert np.isclose(out_df["__bar_base_l0"], [0, 0, 0, 0, 10, 20, 30, 50]).all()
 
 
 def test_bar_render_xpos_2groups_2cols(fake_cell, bar_renderer):
@@ -170,11 +218,23 @@ def test_bar_render_xpos_2groups_2cols(fake_cell, bar_renderer):
     df.set_index(["k", "x"], inplace=True)
     df["y0"] = [10, 20, 30, 50, 5, 5, 5, 5]
     df["y1"] = [5, 5, 5, 5, 100, 200, 300, 400]
+
+    allocator = DynamicCoordAllocator(fake_cell.ax,
+                                      axis=0,
+                                      group_keys=["k"],
+                                      stack_keys=[],
+                                      group_width=1,
+                                      group_align="center",
+                                      group_order="sequential")
+    out_df = allocator.compute_coords(df, x="x", left_cols=["y0", "y1"], right_cols=[], prefix="__prefix")
+    assert np.isclose(out_df["__prefix_x_l0"], [1.25, 3.25, 5.25, 7.25] + [1.75, 3.75, 5.75, 7.75]).all()
+    assert np.isclose(out_df["__prefix_x_l1"], [2.25, 4.25, 6.25, 8.25] + [2.75, 4.75, 6.75, 8.75]).all()
+    assert np.isclose(out_df["__prefix_width_l0"], [0.5] * 8).all()
+
     view = BarPlotDataView(df.copy(), x="x", yleft=["y0", "y1"], bar_group="k")
     view.bar_width = 1
     view.bar_group_location = "center"
     fake_cell.add_view(view)
-
     out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_cell.ax, ["k"])
     assert np.isclose(out_df["__bar_x_l0"], [1.25, 3.25, 5.25, 7.25] + [1.75, 3.75, 5.75, 7.75]).all()
     assert np.isclose(out_df["__bar_x_l1"], [2.25, 4.25, 6.25, 8.25] + [2.75, 4.75, 6.75, 8.75]).all()
@@ -193,18 +253,33 @@ def test_bar_render_xpos_2groups_2cols_2stacks(fake_cell, bar_renderer):
     df.set_index(["k", "s", "x"], inplace=True)
     df["y0"] = [10, 20] + [25, 15] + [30, 40] + [45, 35]
     df["y1"] = [110, 120] + [125, 115] + [130, 140] + [145, 135]
+
+    allocator = DynamicCoordAllocator(fake_cell.ax,
+                                      axis=0,
+                                      group_keys=["k"],
+                                      stack_keys=["s"],
+                                      group_width=1,
+                                      group_align="center",
+                                      group_order="sequential")
+    out_df = allocator.compute_coords(df, x="x", left_cols=["y0", "y1"], right_cols=[], prefix="__prefix")
+    assert np.isclose(out_df["__prefix_x_l0"], [2.5, 6.5, 3.5, 7.5] * 2).all()
+    assert np.isclose(out_df["__prefix_x_l1"], [4.5, 8.5, 5.5, 9.5] * 2).all()
+    assert np.isclose(out_df["__prefix_width_l0"], [1] * 8).all()
+    assert np.isclose(out_df["__prefix_width_l1"], [1] * 8).all()
+    assert np.isclose(out_df["__prefix_base_l0"], [0, 0, 10, 20, 0, 0, 30, 40]).all()
+    assert np.isclose(out_df["__prefix_base_l1"], [0, 0, 110, 120, 0, 0, 130, 140]).all()
+
     view = BarPlotDataView(df.copy(), x="x", yleft=["y0", "y1"], bar_group="k", stack_group="s")
     view.bar_width = 1
     view.bar_group_location = "center"
     fake_cell.add_view(view)
-
     out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_cell.ax, ["k", "s"])
     assert np.isclose(out_df["__bar_x_l0"], [2.5, 6.5, 3.5, 7.5] * 2).all()
     assert np.isclose(out_df["__bar_x_l1"], [4.5, 8.5, 5.5, 9.5] * 2).all()
     assert np.isclose(out_df["__bar_width_l0"], [1] * 8).all()
     assert np.isclose(out_df["__bar_width_l1"], [1] * 8).all()
-    assert np.isclose(out_df["__bar_y_base_l0"], [0, 0, 10, 20, 0, 0, 30, 40]).all()
-    assert np.isclose(out_df["__bar_y_base_l1"], [0, 0, 110, 120, 0, 0, 130, 140]).all()
+    assert np.isclose(out_df["__bar_base_l0"], [0, 0, 10, 20, 0, 0, 30, 40]).all()
+    assert np.isclose(out_df["__bar_base_l1"], [0, 0, 110, 120, 0, 0, 130, 140]).all()
 
 
 def test_bar_render_xpos_2groups_2axes_interleaved(fake_cell, bar_renderer):
@@ -216,12 +291,25 @@ def test_bar_render_xpos_2groups_2axes_interleaved(fake_cell, bar_renderer):
     df["x"] = [2, 4, 6, 8]
     df["y0"] = [10, 20, 30, 40]
     df["y1"] = [15, 25, 35, 45]
+
+    allocator = DynamicCoordAllocator(fake_cell.ax,
+                                      axis=0,
+                                      group_keys=[],
+                                      stack_keys=[],
+                                      group_width=0.5,
+                                      group_align="center",
+                                      group_order="interleaved")
+    out_df = allocator.compute_coords(df, x="x", left_cols=["y0", "y1"], right_cols=[], prefix="__prefix")
+    assert np.isclose(out_df["__prefix_x_l0"], [1.75, 3.75, 5.75, 7.75]).all()
+    assert np.isclose(out_df["__prefix_x_l1"], [2.25, 4.25, 6.25, 8.25]).all()
+    assert np.isclose(out_df["__prefix_width_l0"], [0.5] * 4).all()
+    assert np.isclose(out_df["__prefix_width_l1"], [0.5] * 4).all()
+
     view = BarPlotDataView(df.copy(), x="x", yleft=["y0", "y1"])
     view.bar_axes_order = "interleaved"
     view.bar_width = 0.5
     view.bar_group_location = "center"
     fake_cell.add_view(view)
-
     out_df = bar_renderer._compute_bar_x(fake_cell, view, fake_cell.ax, group_by=[])
     assert np.isclose(out_df["__bar_x_l0"], [1.75, 3.75, 5.75, 7.75]).all()
     assert np.isclose(out_df["__bar_x_l1"], [2.25, 4.25, 6.25, 8.25]).all()
@@ -252,7 +340,7 @@ def test_bar_render_xpos_2groups_2axes_interleaved(fake_cell, bar_renderer):
         (1, "l"): [2, 5, 8]
     }),
 ])
-def test_bar_render_gen_matrix_slices_interleaved(ngroups, nleft, nright, expect, fake_cell, bar_renderer):
+def test_bar_render_gen_matrix_slices_interleaved(ngroups, nleft, nright, expect, fake_cell):
     # Irrelevant if filled or not
     df = pd.DataFrame()
     naxes = nleft + nright
@@ -260,11 +348,14 @@ def test_bar_render_gen_matrix_slices_interleaved(ngroups, nleft, nright, expect
     yright = [f"yr{i}" for i in range(nright)]
     fake_posmatrix = list(range(ngroups * naxes))
 
-    view = BarPlotDataView(df, x="x", yleft=yleft, yright=yright)
-    view.bar_axes_ordering = "interleaved"
-    fake_cell.add_view(view)
-
-    gen = bar_renderer._iter_group_slices(view, ngroups, naxes)
+    allocator = DynamicCoordAllocator(fake_cell.ax,
+                                      axis=0,
+                                      group_keys=[],
+                                      stack_keys=[],
+                                      group_width=0.8,
+                                      group_align="center",
+                                      group_order="interleaved")
+    gen = allocator._iter_group_slices(yleft, yright, ngroups, naxes)
     items = list(gen)
     result = {(i, lr): fake_posmatrix[s] for s, i, lr in items}
     assert result == expect

@@ -43,24 +43,29 @@ def build_scale_args(scale: Scale) -> tuple[list, dict]:
     return (args, kwargs)
 
 
+def transform_1d_helper(xform, axis, v):
+    """
+    Matplotlib transform helper to apply transformation on the given axis,
+    discarding the other vector.
+    """
+    tmp_points = np.zeros((len(v), 2))
+    tmp_points[:, axis] = v
+    t = xform.transform(tmp_points)
+    return t[:, axis].ravel()
+
+
 def transform_x_helper(xform, v):
     """
     Matplotlib transform helper to apply transformation on the X axis
     """
-    tmp_points = np.column_stack([v, np.repeat(0, len(v))])
-    tmp_tx = xform.transform(tmp_points)
-    result = tmp_tx[:, 0]
-    return result.ravel()
+    return transform_1d_helper(xform, 0, v)
 
 
 def transform_y_helper(xform, v):
     """
     Matplotlib transform helper to apply transformation on the Y axis
     """
-    tmp_points = np.column_stack([np.repeat(0, len(v)), v])
-    tmp_tx = xform.transform(tmp_points)
-    result = tmp_tx[:, 1]
-    return result.ravel()
+    return transform_1d_helper(xform, 1, v)
 
 
 def align_y_at(ax1, p1, ax2, p2):
@@ -162,6 +167,228 @@ class Legend:
             cell.ax.legend(handles=self.handles.values(), labels=self.handles.keys(), **legend_kwargs)
 
 
+class DynamicCoordAllocator:
+    """
+    Helper to allocate coordinates based on a given vector of points.
+    """
+    def __init__(self, ax: Axes, axis: int, group_keys: list, stack_keys: list, group_width: float, group_align: str,
+                 group_order: str):
+        """
+        - ax: The axes to operate on
+        - axis: 0 -> X axis, 1 -> Y axis
+        - group_keys: A separate coordinate offset is assigned to each group.
+        - stack_keys: A separate base coordinate is assigned to each stack in each group.
+        - group_width: The fraction (0, 1) of the available space between two seed coordinates to use
+        for drawing elements. E.g. if group_width = 0.6, 40% of the space is considered padding between
+        groups.
+        - group_align: Where to align the coordinate groups relative to the seed coordinates.
+        Allowed values are "center" and "left". When align=center the seed coordinate is aligned to the
+        center of the group. When align=left the seed coordinate is aligned to the left of the group
+        """
+        self.ax = ax
+        self.axis = axis
+        self.group_keys = group_keys
+        self.stack_keys = stack_keys
+        self.group_width = group_width
+        self.group_align = group_align
+        self.group_order = group_order
+
+        assert self.axis == 0 or self.axis == 1
+        assert self.group_width > 0 and self.group_width <= 1
+        assert self.group_align in ["center", "left"]
+        assert self.group_order in ["sequential", "interleaved"]
+
+    def _fetch_col(self, df, name):
+        df = df.reset_index().set_index(df.index, drop=False)
+        return df[name]
+
+    def _iter_group_slices(self, left_cols, right_cols, ngroups, naxes):
+        """
+        Generate the position and span width matrix column slices associated
+        to each group of items to plot. In the simple case, each group is associated to an offset
+        for each X point. If multiple columns are present there will be more than 1 matrix colum
+        that will be flattened when assigning X position data.
+        """
+        if self.group_order == "sequential":
+            col_set_size = ngroups
+            col_index = 0
+            for i in range(len(left_cols)):
+                group_slice = slice(col_index * col_set_size, (col_index + 1) * col_set_size)
+                yield (group_slice, i, "l")
+                col_index += 1
+            for i in range(len(right_cols)):
+                group_slice = slice(col_index * col_set_size, (col_index + 1) * col_set_size)
+                yield (group_slice, i, "r")
+                col_index += 1
+        elif self.group_order == "interleaved":
+            n_ycols = max(len(left_cols), len(right_cols))
+            col_index = 0
+            for i in range(n_ycols):
+                if i < len(left_cols):
+                    group_slice = slice(col_index, ngroups * naxes + 1, naxes)
+                    yield (group_slice, i, "l")
+                    col_index += 1
+                if i < len(right_cols):
+                    group_slice = slice(col_index, ngroups * naxes + 1, naxes)
+                    yield (group_slice, i, "r")
+                    col_index += 1
+        else:
+            assert False, "Not reached"
+
+    def compute_coords(self,
+                       df: pd.DataFrame,
+                       x: str,
+                       left_cols: list,
+                       right_cols: list,
+                       prefix: str = "__coord_gen") -> pd.DataFrame:
+        """
+        Compute the group center x for the axis and then
+        the x for each bar group.
+        Returns the center x vector and the modified view dataframe.
+
+        df: The dataframe to operate on
+        x: the column to use for the coordinate seeds
+        left_cols: columns to allocate to the left axis
+        right_cols: columns to allocate to the right axis
+        prefix: generated columns prefix
+
+        Note: this assumes that the input dataframe is aligned on the
+        group_keys and stack_keys levels.
+        Operate on the assumption that waterver sorting was applied to the input
+        data, it is reflected on the axis ordering.
+        """
+        assert df.index.is_unique, "Require unique index"
+        if not isinstance(left_cols, list):
+            raise TypeError(f"left_cols must be list, not {type(left_cols)}")
+        if not isinstance(right_cols, list):
+            raise TypeError(f"right_cols must be list, not {type(right_cols)}")
+        # Only support right columns if left columns are present
+        # This can be easily extended by unsupported for now
+        assert (left_cols and right_cols) or left_cols
+
+        # Setup parameters
+        if left_cols and right_cols:
+            naxes = len(left_cols) + len(right_cols)
+            assert naxes >= 2
+        else:
+            naxes = len(left_cols)
+
+        if self.group_keys:
+            ngroups = len(df.groupby(self.group_keys))
+        else:
+            ngroups = 1
+
+        if self.stack_keys:
+            nstacks = len(df.groupby(self.stack_keys))
+        else:
+            nstacks = 1
+        assert naxes > 0 and ngroups >= 1 and nstacks >= 1
+
+        # Transformed coordinates will be in the Figure space
+        # variables holding transformed coordinates are prefixed with f_ indicating
+        # figure space.
+        t = self.ax.transData
+        t_inv = t.inverted()
+        to_f_coords = ft.partial(transform_1d_helper, t, self.axis)
+        to_d_coords = ft.partial(transform_1d_helper, t_inv, self.axis)
+
+        # Find the space between each x tick, we scale the bars to fit into the interval
+        # Assume that each x in xcol is the center of the bar group.
+        # Since the x axis may be subject to a transformation, we need to take that into
+        # account when computing widths so that the bars have uniform size.
+        # 1. find the distance between each x value
+        # 2. transform each width into axis coordinates
+        # 3. split the intervals to fit the bars
+        # 4. transform back the offsets
+        # transform() requires an Nx2 array, we ignore the other axis here
+        xcol = sorted(self._fetch_col(df, x).unique())
+        f_xcol = to_f_coords(xcol)
+        f_space = np.diff(f_xcol)
+        assert len(f_space) >= 1, "need to handle the special case of only 1 coordinate"
+        f_space = np.append(f_space, f_space[-1])
+        assert f_space.shape == f_xcol.shape
+
+        # Allocate artist width, this is relevant for non-linear scales
+        f_width = (f_space * self.group_width) / (ngroups * naxes)
+        # relative offsets in width units, starting from the related x position
+        # if centering, this will need a translation
+        rel_offsets = np.arange(0, (ngroups * naxes))
+        # generate transformed offset matrix via column * row vector multiplication
+        # Note that half of the groups are for the right axis if it exists
+        f_width_vector = f_width.reshape(len(f_width), 1)
+        rel_offsets_vector = rel_offsets.reshape(1, len(rel_offsets))
+        # the row is indexed by x, the colum is indexed by group/column
+        f_offset_matrix = f_width_vector * rel_offsets_vector
+        assert f_offset_matrix.shape == (len(f_xcol), ngroups * naxes)
+
+        # 1. Apply the offsets to the transformed x column.
+        # 2. Shift the positions to center the groups at the given x column.
+        # Assuming that we have ngroups * naxes = 4 and 4 points in xcol,
+        # the position matrix will look like:
+        #    _                     _     _    _     _      _     _      _
+        #   |  W0*0 W0*1 W0*2 W0*3  |   |  X0  |   |  W0/2  |   |  S0/2  |
+        #   |  W1*0 W1*1 W1*2 W1*3  | + |  X1  | + |  W1/2  | - |  S1/2  |
+        #   |  W2*0 W2*1 W2*2 W2*3  |   |  X2  |   |  W2/2  |   |  S2/2  |
+        #   |_ W3*0 W3*1 W3*2 W3*3 _|   |_ X3 _|   |_ W3/2 _|   |_ S3/2 _|
+        # Where Wi are the transformed (linear space) single-bar width for each X group
+        # 0..N are the bar indexes in each X group, Xi are the X point center coordinates.
+        # The + W/2 - S/2 term translates the positions to center them on the X points,
+        # where S is the total space allocated for a bar group at an X point. The extra W/2
+        # is there because the leftmost bar is center-aligned to the X point, we want to
+        # reference the total left position of that bar instead.
+        f_position_matrix = f_offset_matrix + f_xcol[:, np.newaxis]
+        if self.group_align == "center":
+            align_offset = f_width / 2 - (f_space * self.group_width) / 2
+            f_position_matrix += align_offset[:, np.newaxis]
+        elif self.group_align == "left":
+            # XXX TODO
+            pass
+        # compute widths allocated to each group/column, these are taken from the position matrix
+        # that gives the center of each span.
+        f_span_start = f_position_matrix - f_width[:, np.newaxis] / 2
+        f_span_end = f_position_matrix + f_width[:, np.newaxis] / 2
+        assert f_span_start.shape == f_position_matrix.shape
+        assert f_span_end.shape == f_position_matrix.shape
+
+        # transform back the coordinates
+        # XXX we have to take into account the axis (0, 0) for the position matrix, maybe?
+        position_matrix = np.apply_along_axis(to_d_coords, 1, f_position_matrix)
+        assert position_matrix.shape == f_position_matrix.shape
+        span_start = np.apply_along_axis(to_d_coords, 1, f_span_start)
+        assert span_start.shape == f_span_start.shape
+        span_end = np.apply_along_axis(to_d_coords, 1, f_span_end)
+        assert span_end.shape == f_span_end.shape
+        span_width = span_end - span_start
+
+        # Now broadcast the coordinates back into the dataframe.
+        # - Positions are repeated for each stack cross section
+        # - Span widths are repeated for each stack cross section
+        # - Stack bases are assigned for each group cross section
+        # Note: we need to flatten the matrixes in column-major order.
+        if self.stack_keys:
+            non_stack_idx = df.index.names.difference(self.stack_keys)
+            stack_groups = df.groupby(non_stack_idx)
+        # Care must be taken to preserve the X-data mapping. The dataframe may not be
+        # sorted by X value yet.
+        sort_by = self.group_keys + self.stack_keys + [x]
+        df = df.sort_values(sort_by, ascending=True)
+
+        for group_slice, col, side in self._iter_group_slices(left_cols, right_cols, ngroups, naxes):
+            col_name = left_cols[col] if side == "l" else right_cols[col]
+            x_group = position_matrix[:, group_slice]
+            x_group_flat = x_group.ravel(order="F")
+            df[f"{prefix}_x_{side}{col}"] = np.tile(x_group_flat, nstacks)
+            span_width_group = span_width[:, group_slice]
+            span_width_flat = span_width_group.ravel(order="F")
+            df[f"{prefix}_width_{side}{col}"] = np.tile(span_width_flat, nstacks)
+            if self.stack_keys:
+                df[f"{prefix}_base_{side}{col}"] = stack_groups[col_name].apply(
+                    lambda stack_slice: stack_slice.cumsum().shift(fill_value=0))
+            else:
+                df[f"{prefix}_base_{side}{col}"] = 0
+        return df
+
+
 class SimpleLineRenderer(ViewRenderer):
     """
     Render vertical or horizontal lines
@@ -212,174 +439,22 @@ class BarRenderer(ViewRenderer):
             by = view.legend_level
         return by
 
-    def _iter_group_slices(self, view, ngroups, naxes):
-        """
-        Generate the position and bar width matrix column slices associated
-        to each group of bars to plot. In the simple case, each group is associated to an offset
-        for each X point. If multiple columns are present there will be more than 1 matrix colum
-        that will be flattened when assigning X position data.
-        """
-        if view.bar_axes_ordering == "sequential":
-            col_set_size = ngroups
-            col_index = 0
-            for i in range(len(view.yleft)):
-                group_slice = slice(col_index * col_set_size, (col_index + 1) * col_set_size)
-                yield (group_slice, i, "l")
-                col_index += 1
-            for i in range(len(view.yright)):
-                group_slice = slice(col_index * col_set_size, (col_index + 1) * col_set_size)
-                yield (group_slice, i, "r")
-                col_index += 1
-        elif view.bar_axes_ordering == "interleaved":
-            n_ycols = max(len(view.yleft), len(view.yright))
-            col_index = 0
-            for i in range(n_ycols):
-                if i < len(view.yleft):
-                    group_slice = slice(col_index, ngroups * naxes + 1, naxes)
-                    yield (group_slice, i, "l")
-                    col_index += 1
-                if i < len(view.yright):
-                    group_slice = slice(col_index, ngroups * naxes + 1, naxes)
-                    yield (group_slice, i, "r")
-                    col_index += 1
-        else:
-            raise ValueError(f"Invalid {view}::bar_axes_ordering: only 'sequential' and 'interleaved' allowed")
-
     def _compute_bar_x(self, cell, view, ax, group_by):
-        """
-        Compute the group center x for the X axis and then
-        the x for each bar group.
-        Returns the center x vector and the modified view dataframe.
+        # Normalize configuration
+        bar_group = view.bar_group or []
+        bar_group = [bar_group] if not isinstance(bar_group, list) else bar_group
+        stack_group = view.stack_group or []
+        stack_group = [stack_group] if not isinstance(stack_group, list) else stack_group
 
-        Note: this assumes that the input dataframe is aligned on the
-        bar_group and stack_group levels.
-        Operate on the assumption that waterver sorting was applied to the input
-        data, it is reflected on the X axis ordering.
-        """
-        assert view.df.index.is_unique, "Require unique index"
-        naxes = 0
-        if view.has_yleft and view.has_yright:
-            # naxes = 2
-            nleft_cols = len(view.yleft) if isinstance(view.yleft, list) else 1
-            nright_cols = len(view.yright) if isinstance(view.yright, list) else 1
-            naxes = nleft_cols + nright_cols
-        else:
-            # naxes = 1
-            nleft_cols = len(view.yleft) if isinstance(view.yleft, list) else 1
-            naxes = nleft_cols
-        if view.bar_group:
-            ngroups = len(view.df.groupby(view.bar_group))
-        else:
-            ngroups = 1
-        if view.stack_group:
-            nstacks = len(view.df.groupby(view.stack_group))
-        else:
-            nstacks = 1
-        assert naxes > 0 and ngroups >= 1 and nstacks >= 1
-
-        x_trans = ax.get_xaxis_transform()
-        x_inv = x_trans.inverted()
-        transform_helper = ft.partial(transform_x_helper, x_trans)
-        transform_inv_helper = ft.partial(transform_x_helper, x_inv)
-
-        xcol = sorted(view.get_x().unique())
-        # Find the space between each x tick, we scale the bars to fit into the interval
-        # Assume that each x in xcol is the center of the bar group.
-        # Since the x axis may be subject to a transformation, we need to take that into
-        # account when computing widths so that the bars have uniform size.
-        # 1. find the distance between each x value
-        # 2. transform each width into axis coordinates
-        # 3. split the intervals to fit the bars
-        # 4. transform back the offsets
-        # transform() requires an Nx2 array, we ignore the Y axis here
-        tx_xcol = transform_helper(xcol)
-        tx_space = np.diff(tx_xcol)
-        assert len(tx_space) >= 1, "need to handle the special case of only 1 X coordinate"
-        tx_space = np.append(tx_space, tx_space[-1])
-        assert tx_space.shape == tx_xcol.shape
-
-        # allocate bar width
-        assert view.bar_width > 0 and view.bar_width <= 1
-        tx_width = (tx_space * view.bar_width) / (ngroups * naxes)
-        # relative offsets in width units, starting from the related x position
-        # if centering, this will need a translation
-        rel_offsets = np.arange(0, (ngroups * naxes))
-        # generate transformed offset matrix via column * row vector multiplication
-        # Note that half of the groups are for the yright axis if it exists
-        tx_width_vector = tx_width.reshape(len(tx_width), 1)
-        rel_offsets_vector = rel_offsets.reshape(1, len(rel_offsets))
-        # the row is indexed by x, the colum is indexed by group
-        tx_offset_matrix = tx_width_vector * rel_offsets_vector
-        assert tx_offset_matrix.shape == (len(tx_xcol), ngroups * naxes)
-
-        # 1. Apply the offsets to the transformed x column.
-        # 2. Shift the positions to center the groups at the given x column.
-        # Assuming that we have ngroups * naxes = 4 and 4 X points in xcol,
-        # the position matrix will look like:
-        #    _                     _     _    _     _      _     _      _
-        #   |  W0*0 W0*1 W0*2 W0*3  |   |  X0  |   |  W0/2  |   |  S0/2  |
-        #   |  W1*0 W1*1 W1*2 W1*3  | + |  X1  | + |  W1/2  | - |  S1/2  |
-        #   |  W2*0 W2*1 W2*2 W2*3  |   |  X2  |   |  W2/2  |   |  S2/2  |
-        #   |_ W3*0 W3*1 W3*2 W3*3 _|   |_ X3 _|   |_ W3/2 _|   |_ S3/2 _|
-        # Where Wi are the transformed (linear space) single-bar width for each X group
-        # 0..N are the bar indexes in each X group, Xi are the X point center coordinates.
-        # The + W/2 - S/2 term translates the positions to center them on the X points,
-        # where S is the total space allocated for a bar group at an X point. The extra W/2
-        # is there because the leftmost bar is center-aligned to the X point, we want to
-        # reference the total left position of that bar instead.
-        tx_position_matrix = tx_offset_matrix + tx_xcol[:, np.newaxis]
-        if view.bar_group_location == "center":
-            align_offset = tx_width / 2 - (tx_space * view.bar_width) / 2
-            tx_position_matrix += align_offset[:, np.newaxis]
-        elif view.bar_group_location == "left":
-            # XXX TODO
-            pass
-        else:
-            assert False, "Not Reached"
-        # compute bar widths, these are taken from the position matrix that gives the center of each bar
-        tx_bar_start = tx_position_matrix - tx_width[:, np.newaxis] / 2
-        tx_bar_end = tx_position_matrix + tx_width[:, np.newaxis] / 2
-        assert tx_bar_start.shape == tx_position_matrix.shape
-        assert tx_bar_end.shape == tx_position_matrix.shape
-
-        # transform back the offsets, as usual we need to add an extra useless dimension
-        # and drop it later
-        # XXX we have to take into account the axis (0, 0) for the position matrix, maybe?
-        position_matrix = np.apply_along_axis(transform_inv_helper, 1, tx_position_matrix)
-        assert position_matrix.shape == tx_position_matrix.shape
-        bar_start = np.apply_along_axis(transform_inv_helper, 1, tx_bar_start)
-        assert bar_start.shape == tx_bar_start.shape
-        bar_end = np.apply_along_axis(transform_inv_helper, 1, tx_bar_end)
-        assert bar_end.shape == tx_bar_end.shape
-        bar_width = bar_end - bar_start
-
-        # Set bar width so that the size stays constant regardless of the X scale
-        # for each x we have bar width differences, these are repeated for each stack.
-        # We need to flatten the bar_width matrix in column-major order.
-        # We do the same for the position matrix.
-        # Care must be taken to preserve the X-data mapping. The dataframe may not be
-        # sorted by X value.
-        if view.stack_group:
-            non_stack_idx = view.df.index.names.difference([view.stack_group])
-            stack_groups = view.df.groupby(non_stack_idx)
-        # Make sure we sort frame by X
-        view.df = view.df.sort_values(group_by + [view.x], ascending=True)
-
-        for group_slice, col, side in self._iter_group_slices(view, ngroups, naxes):
-            # group_slice = slice(matrix_col * col_group_split, (matrix_col + 1) * col_group_split)
-            col_name = view.yleft[col] if side == "l" else view.yright[col]
-            bar_x_group = position_matrix[:, group_slice]
-            bar_x_group_flat = bar_x_group.ravel(order="F")
-            view.df[f"__bar_x_{side}{col}"] = np.tile(bar_x_group_flat, nstacks)
-            bar_width_group = bar_width[:, group_slice]
-            bar_width_flat = bar_width_group.ravel(order="F")
-            view.df[f"__bar_width_{side}{col}"] = np.tile(bar_width_flat, nstacks)
-            if view.stack_group:
-                view.df[f"__bar_y_base_{side}{col}"] = stack_groups[col_name].apply(
-                    lambda stack_slice: stack_slice.cumsum().shift(fill_value=0))
-            else:
-                view.df[f"__bar_y_base_{side}{col}"] = 0
-        return view.df
+        coord_allocator = DynamicCoordAllocator(cell.ax,
+                                                axis=0,
+                                                group_keys=bar_group,
+                                                stack_keys=stack_group,
+                                                group_width=view.bar_width,
+                                                group_align=view.bar_group_location,
+                                                group_order=view.bar_axes_ordering)
+        df = coord_allocator.compute_coords(view.df, view.x, view.yleft, view.yright, "__bar")
+        return df
 
     def _find_legend_entry(self, view, group_levels: list, group_key: tuple, col_name: str, axis: str):
         """
@@ -478,7 +553,7 @@ class BarRenderer(ViewRenderer):
                     color, label = self._find_legend_entry(view, by, key, col_name, "left")
                     values = view.get_col(col_name, chunk).squeeze()
                     x = view.get_col(f"__bar_x_l{col_idx}", chunk)
-                    base = view.get_col(f"__bar_y_base_l{col_idx}", chunk)
+                    base = view.get_col(f"__bar_base_l{col_idx}", chunk)
                     width = view.get_col(f"__bar_width_l{col_idx}", chunk)
                     patches = cell.ax.bar(x, height=values, bottom=base, color=color, width=width)
                     cell.legend.set_item(label, patches)
@@ -487,7 +562,7 @@ class BarRenderer(ViewRenderer):
                     color, label = self._find_legend_entry(view, by, key, col_name, "right")
                     values = view.get_col(col_name, chunk).squeeze()
                     x = view.get_col(f"__bar_x_r{col_idx}", chunk)
-                    base = view.get_col(f"__bar_y_base_r{col_idx}", chunk)
+                    base = view.get_col(f"__bar_base_r{col_idx}", chunk)
                     width = view.get_col(f"__bar_width_r{col_idx}", chunk)
                     patches = cell.rax.bar(x, height=values, bottom=base, color=color, width=width)
                     cell.legend.set_item(label, patches)
