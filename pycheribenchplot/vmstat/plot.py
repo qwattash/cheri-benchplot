@@ -276,7 +276,6 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
         view = BarPlotDataView(high_df, x="x", yleft=self.delta_col, yright=self.rel_col)
         view.bar_axes_ordering = "interleaved"
         view.bar_group = "dataset_id"
-        view.bar_text = True
         view.legend_info = self.get_legend_info()
         view.legend_level = ["dataset_id"]
         cell.add_view(view)

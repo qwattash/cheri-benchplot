@@ -10,6 +10,7 @@ from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.patches import Patch
+from matplotlib.transforms import Bbox
 from pandas.api.types import is_numeric_dtype
 
 from .backend import FigureManager, Mosaic, ViewRenderer
@@ -406,10 +407,14 @@ class BarRenderer(ViewRenderer):
 
     def _draw_columns_text(self, view, cell):
         """
-        Draw labels at the top (or bottom) of the bars.
+        Draw labels at the top (or bottom) of the bars, if the view bar_text flag
+        is set.
+        Returns the left and right axis text bbox in data coordinates.
         """
+        l_bbox = Bbox([[0, 0], [0, 0]])
+        r_bbox = Bbox([[0, 0], [0, 0]])
         if not view.bar_text:
-            return
+            return l_bbox, r_bbox
 
         non_stack_idx = view.df.index.names.difference([view.stack_group])
         for key, chunk in view.df.groupby(non_stack_idx):
@@ -432,8 +437,7 @@ class BarRenderer(ViewRenderer):
                 else:
                     txt = f"{int(maxv):d}"
                 ax = cell.ax if side == "l" else cell.rax
-                y_trans = ax.get_yaxis_transform()
-                y_inv = y_trans.inverted()
+                tx_inv = ax.transData.inverted()
                 # Text padding depends on the scale (log/linear)
                 if maxv < 0:
                     va = "top"
@@ -442,9 +446,18 @@ class BarRenderer(ViewRenderer):
                     va = "bottom"
                     pad_direction = 1
                 if view.bar_text_pad > 0:
-                    tx_pad = transform_y_helper(y_trans, [maxv]) + view.bar_text_pad * pad_direction
-                    maxv = transform_y_helper(y_inv, tx_pad)[0]
-                ax.text(x, maxv, txt, fontsize="x-small", rotation="vertical", va=va, ha="center")
+                    tx_pad = transform_y_helper(ax.transData, [maxv]) + view.bar_text_pad * pad_direction
+                    maxv = transform_y_helper(tx_inv, tx_pad)[0]
+                # XXX should scale font size based on bar width
+                artist = ax.text(x, maxv, txt, fontsize="xx-small", rotation="vertical", va=va, ha="center")
+                tx_bbox = artist.get_window_extent(renderer=cell.figure.canvas.get_renderer())
+                bbox = tx_bbox.transformed(tx_inv)
+                if side == "l":
+                    l_bbox = Bbox.union([l_bbox, bbox])
+                else:
+                    r_bbox = Bbox.union([r_bbox, bbox])
+        # Return the text bbox for l and r axes
+        return l_bbox, r_bbox
 
     def render(self, view, cell):
         """
@@ -479,7 +492,17 @@ class BarRenderer(ViewRenderer):
                     patches = cell.rax.bar(x, height=values, bottom=base, color=color, width=width)
                     cell.legend.set_item(label, patches)
 
-        self._draw_columns_text(view, cell)
+        l_bbox, r_bbox = self._draw_columns_text(view, cell)
+        if view.has_yleft:
+            ymin, ymax = cell.ax.get_ylim()
+            ymin = min(ymin, np.floor(l_bbox.ymin))
+            ymax = max(ymax, np.ceil(l_bbox.ymax))
+            cell.ax.set_ylim(ymin, ymax)
+        if view.has_yright:
+            ymin, ymax = cell.rax.get_ylim()
+            ymin = min(ymin, np.floor(r_bbox.ymin))
+            ymax = max(ymax, np.ceil(r_bbox.ymax))
+            cell.rax.set_ylim(ymin, ymax)
         if view.has_yleft and view.has_yright:
             # Need to realign the Y axes 0 coordinates
             align_y_at(cell.ax, 0, cell.rax, 0)
