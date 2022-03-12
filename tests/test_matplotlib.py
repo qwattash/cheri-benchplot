@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from matplotlib.axes import Axes
+from matplotlib.transforms import Bbox
 
 from pycheribenchplot.core.analysis import AnalysisConfig
 from pycheribenchplot.core.plot import BarPlotDataView, DataView, LegendInfo
@@ -376,6 +377,7 @@ def test_bar_renderer_top_text(mocker, fake_cell, bar_renderer):
     fake_cell.add_view(view)
 
     text_fn = mocker.patch.object(fake_cell.ax, "text")
+    text_fn().get_window_extent().transformed.return_value = Bbox.null()
 
     bar_renderer._draw_columns_text(view, fake_cell)
     expect_kw = {
@@ -407,6 +409,7 @@ def test_bar_renderer_top_text_2col(mocker, fake_cell, bar_renderer):
     fake_cell.add_view(view)
 
     text_fn = mocker.patch.object(fake_cell.ax, "text")
+    text_fn().get_window_extent().transformed.return_value = Bbox.null()
 
     bar_renderer._draw_columns_text(view, fake_cell)
     expect_kw = {
@@ -444,6 +447,7 @@ def test_bar_renderer_top_text_2col_2stacks(mocker, fake_cell, bar_renderer):
     fake_cell.add_view(view)
 
     text_fn = mocker.patch.object(fake_cell.ax, "text")
+    text_fn().get_window_extent().transformed.return_value = Bbox.null()
 
     bar_renderer._draw_columns_text(view, fake_cell)
     expect_kw = {
