@@ -524,7 +524,7 @@ class AxisConfig:
     tick_labels: list[str] = None
     tick_rotation: int = None
     scale: Scale = None
-    padding: float = 0.05
+    padding: float = 0.02
 
     def __bool__(self):
         return self.enable

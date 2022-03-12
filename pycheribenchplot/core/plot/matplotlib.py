@@ -71,7 +71,9 @@ def align_y_at(ax1, p1, ax2, p2):
     picked up correctly.
     """
     ymin_ax1, ymax_ax1 = ax1.get_ylim()
+    pre_ymin_ax1, pre_ymax_ax1 = ymin_ax1, ymax_ax1
     ymin_ax2, ymax_ax2 = ax2.get_ylim()
+    pre_ymin_ax2, pre_ymax_ax2 = ymin_ax2, ymax_ax2
     t_ax1 = ax1.get_yaxis_transform()
     inv_ax1 = t_ax1.inverted()
     t_ax2 = ax2.get_yaxis_transform()
@@ -81,7 +83,7 @@ def align_y_at(ax1, p1, ax2, p2):
     _, t_p1 = t_ax1.transform((0, p1))
     _, t_p2 = t_ax2.transform((0, p2))
     t_dy = t_p1 - t_p2
-    _, dy = inv_ax2.transform((0, 0)) - inv_ax2.transform((0, t_p1 - t_p2))
+    _, dy = inv_ax2.transform((0, 0)) - inv_ax2.transform((0, t_dy))
     ymin_ax2, ymax_ax2 = ymin_ax2 + dy, ymax_ax2 + dy
     ax2.set_ylim(ymin_ax2, ymax_ax2)
 
@@ -95,10 +97,16 @@ def align_y_at(ax1, p1, ax2, p2):
         ymin_ax2 -= ext_ax2
     elif dy < 0:
         # We moved down so we need to extend the high ylim
-        ymax_ax1 += ext_ax1
-        ymax_ax2 += ext_ax2
+        ymax_ax1 -= ext_ax1
+        ymax_ax2 -= ext_ax2
     ax1.set_ylim(ymin_ax1, ymax_ax1)
     ax2.set_ylim(ymin_ax2, ymax_ax2)
+    # The limits we set must be monotonic, this function is not allowed to ever
+    # shrink the viewport
+    assert ymin_ax1 <= pre_ymin_ax1, f"{ymin_ax1} <= {pre_ymin_ax1}"
+    assert ymax_ax1 >= pre_ymax_ax1, f"{ymax_ax1} >= {pre_ymax_ax1}"
+    assert ymin_ax2 <= pre_ymin_ax2, f"{ymin_ax2} <= {pre_ymin_ax2}"
+    assert ymax_ax2 >= pre_ymax_ax2, f"{ymax_ax2} >= {pre_ymax_ax2}"
 
 
 class Legend:
@@ -521,7 +529,7 @@ class MplFigureManager(FigureManager):
         if self.config.split_subplots:
             # Don't care about layout as we generate only one plot per figure
             for subplot in mosaic:
-                figure = plt.figure(constrained_layout=True, figsize=(10, 5))
+                figure = plt.figure(constrained_layout=True, figsize=(10, 7))
                 ax = figure.subplots(1, 1)
                 cell = MplCellData(title=subplot.get_cell_title(), figure=figure, ax=ax)
                 subplot.cell = cell
@@ -529,7 +537,7 @@ class MplFigureManager(FigureManager):
         else:
             # Mosaic shape must be at leaset (N, 1)
             nrows, ncols = mosaic.shape()
-            figure = plt.figure(constrained_layout=True, figsize=(10 * ncols, 5 * nrows))
+            figure = plt.figure(constrained_layout=True, figsize=(10 * ncols, 7 * nrows))
             self.figures.append(figure)
             mosaic_axes = figure.subplot_mosaic(mosaic.layout)
             for name, subplot in mosaic.subplots.items():
@@ -604,6 +612,13 @@ class MplCellData(CellData):
         if cfg.tick_labels is not None:
             ax.set_yticklabels(cfg.tick_labels, rotation=cfg.tick_rotation)
 
+    def _pad_y_axis(self, ax, padding):
+        ymin, ymax = ax.get_ylim()
+        _, fig_pad = ax.transAxes.transform([0, padding]) - ax.transAxes.transform([0, 0])
+        inv_tx = ax.transData.inverted()
+        _, y_pad = inv_tx.transform([0, fig_pad]) - inv_tx.transform([0, 0])
+        ax.set_ylim(ymin - y_pad, ymax + y_pad)
+
     def draw(self):
         assert self.figure, "Missing cell figure"
         assert self.ax, "Missing cell axes"
@@ -643,6 +658,12 @@ class MplCellData(CellData):
             r.render(view, self)
         # Always render an horizontal line at origin
         self.ax.axhline(0, linestyle="--", linewidth=0.5, color="black")
+
+        # Pad the viewport
+        if self.yleft_config:
+            self._pad_y_axis(self.ax, self.yleft_config.padding)
+        if self.yright_config:
+            self._pad_y_axis(self.rax, self.yright_config.padding)
 
         self.legend.build_legend(self)
         if self.legend.legend_position == "top":
