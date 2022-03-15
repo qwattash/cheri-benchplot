@@ -175,7 +175,7 @@ class UMABucketAffinityDelta(UMABucketAffinityBase):
         return "Bucket affinity delta"
 
     def get_mosaic_extent(self):
-        return (5, 1)
+        return (3, 1)
 
     def get_legend_info(self):
         legend = self.build_legend_by_dataset()

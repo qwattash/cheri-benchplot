@@ -706,18 +706,20 @@ class MplFigureManager(FigureManager):
     def allocate_cells(self, mosaic: Mosaic):
         if self.config.split_subplots:
             # Don't care about layout as we generate only one plot per figure
-            for subplot in mosaic:
-                figure = plt.figure(constrained_layout=True, figsize=(10, 7))
-                ax = figure.subplots(1, 1)
-                cell = MplCellData(title=subplot.get_cell_title(), figure=figure, ax=ax)
+            for name, subplot in mosaic.subplots.items():
+                submosaic = mosaic.extract(name)
+                nrows, ncols = submosaic.shape
+                figure = plt.figure(constrained_layout=True, figsize=(10 * ncols, 7 * nrows))
+                axes = figure.subplot_mosaic(submosaic, empty_sentinel="BLANK")
+                cell = MplCellData(title=subplot.get_cell_title(), figure=figure, ax=axes[name])
                 subplot.cell = cell
                 self.figures.append(figure)
         else:
             # Mosaic shape must be at leaset (N, 1)
-            nrows, ncols = mosaic.shape()
+            nrows, ncols = mosaic.shape
             figure = plt.figure(constrained_layout=True, figsize=(10 * ncols, 7 * nrows))
             self.figures.append(figure)
-            mosaic_axes = figure.subplot_mosaic(mosaic.layout)
+            mosaic_axes = figure.subplot_mosaic(mosaic.layout, empty_sentinel="BLANK")
             for name, subplot in mosaic.subplots.items():
                 ax = mosaic_axes[name]
                 subplot.cell = MplCellData(title=subplot.get_cell_title(), figure=figure, ax=ax)
@@ -744,7 +746,11 @@ class MplFigureManager(FigureManager):
             assert len(self.figures) == 1, "Unexpected number of figures"
             self.figures[0].suptitle(title)
             for subplot in mosaic:
-                subplot.cell.draw()
+                try:
+                    subplot.cell.draw()
+                except:
+                    self.logger.error("Failed to draw subplot %s", subplot.cell.title)
+                    raise
             self._write(dest, self.figures[0])
 
 

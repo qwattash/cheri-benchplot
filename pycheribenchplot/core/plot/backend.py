@@ -55,6 +55,17 @@ class Mosaic:
         chunk = np.full((nrows, ncols), name)
         self._layout = np.concatenate([layout, chunk])
 
+    def extract(self, name: str):
+        """
+        Fetch mosaic subset for given subplot
+        """
+        r, c = np.where(self._layout == name)
+        cut = self._layout[min(r):max(r) + 1, min(c):max(c) + 1]
+        blank = np.where(cut != name)
+        cut[blank] = "BLANK"
+        return cut
+
+    @property
     def shape(self):
         """
         A mosaic is always at least 2-D. It must be a square matrix so we can
