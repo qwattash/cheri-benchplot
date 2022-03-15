@@ -862,7 +862,7 @@ def quantile_slice(df: pd.DataFrame,
     return high_df.copy()
 
 
-def assign_sorted_coord(df: pd.DataFrame, sort: list[str], group_by=list[str], **sort_kwargs):
+def assign_sorted_coord(df: pd.DataFrame, sort: list[str], group_by=list[str], **sort_kwargs) -> pd.Series:
     """
     Assign coordinates for plotting to dataframe groups, preserving the index mapping between groups.
     This assumes that the dataframe is aligned at the given level.
@@ -886,3 +886,20 @@ def assign_sorted_coord(df: pd.DataFrame, sort: list[str], group_by=list[str], *
     sorted_df = df.sort_values(tmp_sort_keys + index_complement, **sort_kwargs)
     coord_by_group = sorted_df.groupby(group_by).cumcount()
     return coord_by_group.sort_index()
+
+
+def generalized_xs(df: pd.DataFrame, match: list, levels=list, complement=False):
+    """
+    Generalized cross section that allows slicing on multiple named levels.
+    """
+    assert len(match) == len(levels)
+    nlevels = len(df.index.names)
+    slicer = [slice(None)] * nlevels
+    for m, level_name in zip(match, levels):
+        level_idx = df.index.names.index(level_name)
+        slicer[level_idx] = m
+    sel = pd.Series(False, index=df.index)
+    sel.loc[tuple(slicer)] = True
+    if complement:
+        sel = ~sel
+    return df[sel]

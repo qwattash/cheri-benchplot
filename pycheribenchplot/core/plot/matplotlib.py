@@ -13,6 +13,7 @@ from matplotlib.patches import Patch
 from matplotlib.transforms import Bbox
 from pandas.api.types import is_numeric_dtype
 
+from ..dataset import generalized_xs
 from .backend import FigureManager, Mosaic, ViewRenderer
 from .data_view import BarPlotDataView, CellData, Scale, Style
 
@@ -260,6 +261,19 @@ class DynamicCoordAllocator:
         group_keys and stack_keys levels.
         Operate on the assumption that waterver sorting was applied to the input
         data, it is reflected on the axis ordering.
+
+        This will generate the following columns in the output dataframe ('<prefix>_<column_name>_<side><index>').
+        - <side> can be 'l'/'r', it identifies whether the column is on the left or right column list.
+        - <index> is the index of the corresponding column name in left_cols or right_cols.
+        e.g. 'x_l0' contains the coordinates associated to df[left_cols[0]].
+        - <column_name> can be:
+          + x: the compute coordinate
+          + width: the width of the space allocated to the hypotetical rectangle for the column, this is
+          the width of each bar in a bar plot, but is useful for other things as well.
+          + base: the base value for stacks. This is only relevant for stack grouping and is useful for
+          stacked bar plots.
+          + gstart: the start position of a group (repeated for each member of the group), will include padding.
+          + gend: the end position of a group (repeated for each member of the group), will include padding.
         """
         assert df.index.is_unique, "Require unique index"
         if not isinstance(left_cols, list):
@@ -344,9 +358,10 @@ class DynamicCoordAllocator:
         if self.group_align == "center":
             align_offset = f_width / 2 - (f_space * self.group_width) / 2
             f_position_matrix += align_offset[:, np.newaxis]
+            f_group_start = f_xcol - f_space / 2
+            f_group_end = f_xcol + f_space / 2
         elif self.group_align == "left":
-            # XXX TODO
-            pass
+            raise NotImplementedError("TODO")
         # compute widths allocated to each group/column, these are taken from the position matrix
         # that gives the center of each span.
         f_span_start = f_position_matrix - f_width[:, np.newaxis] / 2
@@ -363,6 +378,9 @@ class DynamicCoordAllocator:
         span_end = np.apply_along_axis(to_d_coords, 1, f_span_end)
         assert span_end.shape == f_span_end.shape
         span_width = span_end - span_start
+
+        group_start = to_d_coords(f_group_start)
+        group_end = to_d_coords(f_group_end)
 
         # Now broadcast the coordinates back into the dataframe.
         # - Positions are repeated for each stack cross section
@@ -390,6 +408,8 @@ class DynamicCoordAllocator:
                     lambda stack_slice: stack_slice.cumsum().shift(fill_value=0))
             else:
                 df[f"{prefix}_base_{side}{col}"] = 0
+        df[f"{prefix}_gstart"] = np.tile(group_start, ngroups * nstacks)
+        df[f"{prefix}_gend"] = np.tile(group_end, ngroups * nstacks)
         return df
 
 
@@ -620,6 +640,62 @@ class HistRenderer(ViewRenderer):
         cell.legend.set_group(labels, patches)
 
 
+class ArrowPlotRenderer(ViewRenderer):
+    """
+    Render arrow plot.
+
+    The arrow plot scatters values and draws arrows from the points.
+    Currently this only supports horizontal plotting, where the X axis draws
+    the scatter column, the Y axis holds the grouping names/levels for which we
+    scatter the values.
+    """
+    def render(self, view, cell):
+        assert isinstance(view.group_by, list), "group_by must be a list"
+        assert len(view.group_by) > 0, "group_by must specify at least a group key"
+        assert view.base_group is not None, "base_group is required"
+        base_group = [view.base_group] if not isinstance(view.base_group, list) else view.base_group
+        assert len(base_group) == len(view.group_by), "wrong base group identifier length"
+
+        coord_allocator = DynamicCoordAllocator(cell.ax,
+                                                axis=1,
+                                                group_keys=view.group_by,
+                                                stack_keys=[],
+                                                group_width=1,
+                                                group_align="center",
+                                                group_order="sequential")
+        base_color = view.legend_info.color(base_group)[0]
+        base_label = view.legend_info.label(base_group)[0]
+
+        base = generalized_xs(view.df, base_group, view.group_by).sort_values(view.y)
+        non_base_df = generalized_xs(view.df, base_group, view.group_by, complement=True)
+        df = coord_allocator.compute_coords(non_base_df, x=view.y, left_cols=[view.x], right_cols=[], prefix="__arrow")
+        # Note: both df and base will be sorted by view.y from here on, so it is safe to share indexes
+
+        groups = df.groupby(view.group_by)
+        for key, chunk in groups:
+            base_artist = cell.ax.scatter(base["bucket_zone"], chunk["__arrow_x_l0"], color=base_color, marker="x")
+            cell.legend.set_item(base_label, base_artist)
+            color = view.legend_info.color(key)
+            label = view.legend_info.label(key)
+            artist = cell.ax.scatter(chunk["bucket_zone"], chunk["__arrow_x_l0"], color=color, marker="o")
+            cell.legend.set_item(label, artist)
+
+            for row in range(len(chunk)):
+                y = chunk["__arrow_x_l0"].iloc[row]
+                x_start = base["bucket_zone"].iloc[row]
+                x_end = chunk["bucket_zone"].iloc[row]
+                cell.ax.annotate("", xy=(x_end, y), xytext=(x_start, y), arrowprops=dict(arrowstyle="->"))
+
+        # Vertical helper lines
+        for x in cell.ax.get_xticks():
+            cell.ax.axvline(x, linestyle="--", color="black", linewidth=0.5)
+        # Group separator lines
+        for y in df["__arrow_gstart"]:
+            cell.ax.axhline(y, linestyle="dotted", color="black", linewidth=0.5)
+        y = df["__arrow_gend"].iloc[-1]
+        cell.ax.axhline(y, linestyle="dotted", color="black", linewidth=0.5)
+
+
 class MplFigureManager(FigureManager):
     """Draw plots using matplotlib"""
     def __init__(self, config):
@@ -683,6 +759,7 @@ class MplCellData(CellData):
             "bar": BarRenderer,
             "hist": HistRenderer,
             "axline": SimpleLineRenderer,
+            "arrow": ArrowPlotRenderer,
         }
         self.legend = Legend()
         self.figure = figure

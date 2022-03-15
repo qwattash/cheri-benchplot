@@ -489,6 +489,28 @@ class BarPlotDataView(XYPlotDataView):
 
 
 @dataclass
+class ArrowPlotDataView(DataView):
+    """
+    Parameters for the arrow plot.
+
+    Arguments:
+    - x: column for X axis values
+    - y: column for Y axis labels
+    - group_by: Group levels/columns to group data
+    - base_group: Baseline group name, this is the set of data from which arrows
+    originate
+    """
+    x: str = None
+    y: str = None
+    group_by: list[str] = field(default_factory=list)
+    base_group: str = None
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.key = "arrow"
+
+
+@dataclass
 class HistPlotDataView(XYPlotDataView):
     """
     Parameters for histogram plots
