@@ -765,6 +765,17 @@ def subset_xs(df: pd.DataFrame, selector: typing.Sequence[bool]):
     return values.reorder_levels(df.index.names)
 
 
+def broadcast_xs(df: pd.DataFrame, chunk: pd.DataFrame | pd.Series) -> pd.DataFrame | pd.Series:
+    """
+    Given a dataframe and a cross-section from it, with some missing index levels, generate
+    the complete series or frame with the cross-section aligned to the parent frame.
+    This is useful to perform an intermediate operations on a subset (e.g. the baseline frame)
+    and then replicate the values for the rest of the datasets.
+    """
+    _, r = df.align(chunk, axis=0)
+    return r.reorder_levels(df.index.names)
+
+
 def reorder_columns(df: pd.DataFrame, ordered_cols: typing.Sequence[str]):
     """
     Reorder columns as the given column name list. Any remaining column is
