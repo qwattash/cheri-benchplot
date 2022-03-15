@@ -226,19 +226,23 @@ class LegendInfo:
             sub_levels = [sub_levels]
         df = self.info_df.copy()
 
-        def gen_values(interval, group):
-            s = pd.Series(np.linspace(interval[0], interval[1], len(group)), index=group.index)
-            return s
+        h_group = df.groupby(levels)
+        h_values = np.linspace(h[0], h[1], len(h_group))
+        h_vector = h_group.ngroup().map(lambda i: h_values[i])
 
-        h_levels = df.index.names.difference(levels)
-        h_values = df.groupby(h_levels, group_keys=False).apply(lambda g: gen_values(h, g))
-        if sub_levels and len(levels + sub_levels) < len(df.index.names):
-            s_values = df.groupby(levels + sub_levels, group_keys=False).apply(lambda g: gen_values(s, g))
-            v_values = df.groupby(levels + sub_levels)
+        if sub_levels:
+            s_group = df.groupby(sub_levels)
+            s_values = np.linspace(s[0], s[1], len(s_group))
+            v_group = df.groupby(levels + sub_levels)
         else:
+            s_group = h_group
             s_values = pd.Series((s[0] + s[1]) / 2, index=df.index)
-            v_values = df.groupby(levels, group_keys=False).apply(lambda g: gen_values(v, g))
-        hsv = pd.concat((h_values, s_values, v_values), axis=1)
+            v_group = h_group
+        s_vector = s_group.ngroup().map(lambda i: s_values[i])
+        v_values = np.linspace(v[0], v[1], len(v_group))
+        v_vector = v_group.ngroup().map(lambda i: v_values[i])
+
+        hsv = pd.concat((h_vector, s_vector, v_vector), axis=1)
         hsv.columns = ["h", "s", "v"]
         hsv["hsv"] = hsv.values.tolist()
         return LegendInfo(df.index, df["labels"], colors=hsv["hsv"].map(mcolors.hsv_to_rgb))
