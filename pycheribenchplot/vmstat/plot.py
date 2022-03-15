@@ -208,11 +208,17 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
     """
     Histogram of UMA metrics across datasets
     """
-    def __init__(self, plot, dataset, metric: str):
+    def __init__(self, plot, dataset, metric: str, normalized: bool = False):
+        """
+        plot: the parent plot
+        metric: the base metric to display
+        normalized: whether to plot the delta or the norm_delta column
+        """
         super().__init__(plot)
         # Optional zone info dataset
         self.ds = dataset
         self.metric = metric
+        self.normalized = normalized
         # Compute column names to use
         delta_col = (self.metric, "median", "delta_baseline")
         rel_col = (self.metric, "median", "norm_delta_baseline")
@@ -225,11 +231,12 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
     def get_legend_info(self):
         # Use base legend to separate by axis
         base = self.build_legend_by_dataset()
-        legend_left = base.map_label(lambda l: f"{Symbols.DELTA}{self.metric} " + l)
-        legend_right = base.map_label(lambda l: f"% {Symbols.DELTA}{self.metric} " + l)
-        legend = LegendInfo.multi_axis(left=legend_left, right=legend_right)
-        # legend = legend.assign_colors_luminance("hsv", "dataset_id", color_range=(0, 0.9), lum_range=(-0.4, 0.2))
-        legend = legend.assign_colors_hsv("dataset_id", h=(0.2, 1), s=(0.7, 0.7), v=(0.6, 0.9))
+
+        if self.normalized:
+            legend = base.map_label(lambda l: f"% {Symbols.DELTA}{self.metric} " + l)
+        else:
+            legend = base.map_label(lambda l: f"{Symbols.DELTA}{self.metric} " + l)
+        legend.assign_colors_hsv("dataset_id", h=(0.2, 1), s=(0.7, 0.7), v=(0.6, 0.9))
         return legend
 
     @property
@@ -238,7 +245,8 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
         return 60
 
     def get_cell_title(self):
-        return f"UMA {self.metric} variation w.r.t. baseline"
+        pct = "% " if self.normalized else ""
+        return f"UMA {self.metric} {pct}variation w.r.t. baseline"
 
     def get_df(self):
         """
@@ -260,44 +268,55 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
             self.warning("Broken plot for %s metric: too many datasets cut bar entries to less than 1 per group",
                          self.metric)
         high_df = quantile_slice(df, ["abs_delta"], quantile=0.9, max_entries=max_entries, level=["dataset_id"])
-        return high_df
+        # Drop values where abs_delta is 0 everywhere
+        index_complement = high_df.index.names.difference(["dataset_id"])
+        zeros = high_df.groupby(index_complement)["abs_delta"].transform(lambda g: ((g == 0) | g.isna()).all())
+        return high_df[~zeros]
 
     def generate(self, surface, cell):
         """
         We filter metric to show only the values for the top 90th percentile
         of the delta, this avoid cluttering the plots with meaningless data.
         """
-        self.logger.debug("extract plot metric %s", self.metric)
+        self.logger.debug("extract plot metric %s normalized=%s", self.metric, self.normalized)
 
         df = self.get_df()
         high_df = self.get_filtered_df(df)
         high_df["x"] = assign_sorted_coord(high_df, sort=["abs_delta"], group_by=["dataset_id"], ascending=False)
 
-        view = BarPlotDataView(high_df, x="x", yleft=self.delta_col, yright=self.rel_col)
-        view.bar_axes_ordering = "interleaved"
-        view.bar_group = "dataset_id"
-        view.legend_info = self.get_legend_info()
-        view.legend_level = ["dataset_id"]
-        cell.add_view(view)
+        if self.normalized:
+            ycolumn = self.rel_col
+            ylabel = f"% {Symbols.DELTA}{self.metric}"
+        else:
+            ycolumn = self.delta_col
+            ylabel = f"{Symbols.DELTA}{self.metric}"
 
-        # Add a line for the y
-        df_line = df[["abs_delta"]].abs().median()
-        view = AALineDataView(df_line, horizontal=["abs_delta"])
-        view.style.line_style = "dashed"
-        view.style.line_width = 0.5
-        view.legend_info = LegendInfo(["abs_delta"],
-                                      labels=[f"median {Symbols.DELTA} abs({self.metric})"],
-                                      cmap_name="Greys",
-                                      color_range=(0.5, 1))
-        view.legend_level = ["metric"]
-        cell.add_view(view)
+        # If we don't have data, skip
+        if len(high_df):
+            view = BarPlotDataView(high_df, x="x", yleft=ycolumn)
+            view.bar_axes_ordering = "interleaved"
+            view.bar_group = "dataset_id"
+            view.legend_info = self.get_legend_info()
+            view.legend_level = ["dataset_id"]
+            cell.add_view(view)
+
+            # Add a line for the y
+            df_line = df[["abs_delta"]].abs().median()
+            view = AALineDataView(df_line, horizontal=["abs_delta"])
+            view.style.line_style = "dashed"
+            view.style.line_width = 0.5
+            view.legend_info = LegendInfo(["abs_delta"],
+                                          labels=[f"median {Symbols.DELTA} abs({self.metric})"],
+                                          cmap_name="Greys",
+                                          color_range=(0.5, 1))
+            view.legend_level = ["metric"]
+            cell.add_view(view)
 
         cell.x_config.label = "UMA Zone"
         cell.x_config.ticks = high_df["x"].unique()
         cell.x_config.tick_labels = high_df.index.get_level_values("name").unique()
         cell.x_config.tick_rotation = 90
-        cell.yleft_config.label = f"{Symbols.DELTA}{self.metric}"
-        cell.yright_config.label = f"% {Symbols.DELTA}{self.metric}"
+        cell.yleft_config.label = ylabel
 
 
 class VMStatDistribution(BenchmarkPlot):
@@ -321,13 +340,17 @@ class VMStatDistribution(BenchmarkPlot):
         uma_stats = self.get_dataset(DatasetName.VMSTAT_UMA)
         for idx, metric in enumerate(uma_stats.data_columns()):
             name = f"subplot-uma-stats-{idx}"
+            name_norm = name + "-N"
             subplots[name] = VMStatUMAMetricHist(self, uma_stats, metric)
-            layout.append([name])
+            subplots[name_norm] = VMStatUMAMetricHist(self, uma_stats, metric, normalized=True)
+            layout.append([name, name_norm])
         uma_info = self.get_dataset(DatasetName.VMSTAT_UMA_INFO)
         for idx, metric in enumerate(uma_info.data_columns()):
             name = f"subplot-uma-info-{idx}"
+            name_norm = name + "-N"
             subplots[name] = VMStatUMAMetricHist(self, uma_info, metric)
-            layout.append([name])
+            subplots[name_norm] = VMStatUMAMetricHist(self, uma_info, metric, normalized=True)
+            layout.append([name, name_norm])
         return Mosaic(layout, subplots)
 
     def get_plot_name(self):
