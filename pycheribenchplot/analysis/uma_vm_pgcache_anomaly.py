@@ -83,6 +83,12 @@ class UMABucketAffinityBase(BenchmarkSubPlot):
     """
     Base class for collecting information about UMA bucket zones
     """
+    @classmethod
+    def get_required_datasets(cls):
+        dsets = super().get_required_datasets()
+        dsets += [DatasetName.VMSTAT_UMA_INFO, DatasetName.KERNEL_STRUCT_STATS]
+        return dsets
+
     def _get_ptr_size(self, dsid):
         if dsid in self.benchmark.merged_benchmarks:
             return self.benchmark.merged_benchmarks[dsid].instance_config.kernel_pointer_size
@@ -127,47 +133,24 @@ class UMABucketAffinityBase(BenchmarkSubPlot):
         return df
 
 
-class UMABucketAffinityHist(BenchmarkSubPlot):
+class UMABucketAffinityHist(UMABucketAffinityBase):
     """
     Show histogram of number of zones using each bucket zone. This helps understanding
     the pressure a zone receives from the rest of the system.
     """
-    @classmethod
-    def get_required_datasets(cls):
-        dsets = super().get_required_datasets()
-        dsets += [DatasetName.VMSTAT_UMA_INFO, DatasetName.KERNEL_STRUCT_STATS]
-        return dsets
-
     def get_cell_title(self):
         return "Bucket affinity distribution"
 
     def generate(self, fm, cell):
-        size_col = ("bucket_size", "-", "sample")
-        df = self.get_dataset(DatasetName.VMSTAT_UMA_INFO).agg_df
-        struct_stats_df = self.get_dataset(DatasetName.KERNEL_STRUCT_STATS).merged_df
-        # Note that UMA bucket sizes larger than 16 use some of the space for the bucket header.
-        # This must be accounted for when binning and it depends on the pointer size.
-        s_uma_bucket = struct_stats_df.xs("uma_bucket", level="name")
-        datasets = df.index.get_level_values("dataset_id").unique()
-        if len(s_uma_bucket) != len(datasets):
-            self.logger.error("kernel DWARF stats for struct uma_bucket do not agree with vmstat data. Skipping plot.")
-            return
+        df = self.get_uma_df()
         # The number of buckets in each histogram is the same, but change the effective bucket limits
+        # histogram uses half open intervals [a, b), we want the reverse here (a, b] where a, b are
+        # UMA bucket sizes, so we need to add 1 to get the limits
         buckets = [2**i for i in range(1, 9)]
+        hist_limits = [1] + [2**i + 1 for i in range(1, 9)]
         view_df = pd.DataFrame(index=pd.Index(buckets, name="bucket_size"))
         for dsid, chunk in df.groupby("dataset_id"):
-            hdr_size = s_uma_bucket.xs(dsid, level="dataset_id")[("size", "sample")]
-            assert len(hdr_size) == 1, "More than 1 uma_struct size per dataset_id?"
-            hdr_size = hdr_size.iloc[0]
-            if dsid in self.benchmark.merged_benchmarks:
-                ptr_size = self.benchmark.merged_benchmarks[dsid].instance_config.kernel_pointer_size
-            else:
-                ptr_size = self.benchmark.instance_config.kernel_pointer_size
-            # histogram uses half open intervals [a, b), we want the reverse here (a, b] where a, b are
-            # UMA bucket sizes.
-            eff_limits = [1, 3, 5, 9, 17]
-            eff_limits += [2**i + 1 - np.ceil(hdr_size / ptr_size) for i in range(5, 9)]
-            count, out_bins = np.histogram(chunk[size_col], bins=eff_limits)
+            count, out_limits = np.histogram(chunk["bucket_zone"], bins=hist_limits)
             view_df[dsid] = count
 
         view_df = view_df.melt(var_name="dataset_id", value_name="count", ignore_index=False)
