@@ -122,6 +122,7 @@ class Legend:
     def __init__(self, legend_position="top"):
         self.handles = {}
         self.legend_position = legend_position
+        self.bbox = None
 
     def set_item(self, label: str, handle: "matplotlib.artist.Artist"):
         self.handles[label] = handle
@@ -150,7 +151,6 @@ class Legend:
             pass
         else:
             assert False, "Invalid legend position"
-        self.bbox = bbox
         legend_args = {
             "loc": loc,
             "bbox_to_anchor": bbox,
@@ -164,7 +164,11 @@ class Legend:
     def build_legend(self, cell):
         if self.handles:
             legend_kwargs = self._compute_legend_position()
-            cell.ax.legend(handles=self.handles.values(), labels=self.handles.keys(), **legend_kwargs)
+            legend = cell.ax.legend(handles=self.handles.values(), labels=self.handles.keys(), **legend_kwargs)
+            f_bb = legend.get_window_extent(renderer=cell.figure.canvas.get_renderer())
+            self.bbox = f_bb.transformed(cell.ax.transAxes.inverted())
+        else:
+            self.bbox = Bbox.unit()
 
 
 class DynamicCoordAllocator:
@@ -705,7 +709,7 @@ class MplCellData(CellData):
             ax.set_yscale(*args, **kwargs)
         if cfg.limits:
             ax.set_ylim(cfg.limits[0], cfg.limits[1])
-        if cfg.ticks:
+        if cfg.ticks is not None:
             ax.set_yticks(cfg.ticks)
         if cfg.tick_labels is not None:
             ax.set_yticklabels(cfg.tick_labels, rotation=cfg.tick_rotation)
@@ -765,5 +769,5 @@ class MplCellData(CellData):
 
         self.legend.build_legend(self)
         if self.legend.legend_position == "top":
-            title_y = max(1.0, self.legend.bbox[1] + self.legend.bbox[3])
-        self.ax.set_title(self.title, y=title_y, pad=6)
+            title_y = max(1.0, self.legend.bbox.ymax)
+        self.ax.set_title(self.title, y=title_y, pad=5)
