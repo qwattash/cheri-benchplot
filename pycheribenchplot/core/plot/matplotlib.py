@@ -758,8 +758,10 @@ class MplCellData(CellData):
             if not r:
                 continue
             r.render(view, self)
-        # Always render an horizontal line at origin
-        self.ax.axhline(0, linestyle="--", linewidth=0.5, color="black")
+
+        # Render an horizontal line at origin
+        if self.yleft_config.origin_line:
+            self.ax.axhline(0, linestyle="--", linewidth=0.5, color="black")
 
         # Pad the viewport
         if self.yleft_config:

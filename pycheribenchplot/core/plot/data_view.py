@@ -525,6 +525,7 @@ class AxisConfig:
     tick_rotation: int = None
     scale: Scale = None
     padding: float = 0.02
+    origin_line: bool = True
 
     def __bool__(self):
         return self.enable
