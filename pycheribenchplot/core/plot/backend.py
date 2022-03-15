@@ -24,11 +24,36 @@ class Mosaic:
     """
     Wrapper around subplot mosaic lists
     """
-    def __init__(self, layout: list[list[str]], subplots: dict[str, "BenchmarkSubPlot"]):
-        m = np.atleast_2d(np.array(layout, dtype=object))
+    def __init__(self, layout: list[list[str]] = None, subplots: dict[str, "BenchmarkSubPlot"] = None):
+        if subplots is None:
+            subplots = {}
+        if layout is not None:
+            layout = np.atleast_2d(np.array(layout, dtype=object))
         # Normalized mosaic list to be at least 2D
-        self.layout = m.tolist()
+        self._layout = layout
         self.subplots = subplots
+
+    @property
+    def layout(self):
+        if self._layout is None:
+            return np.empty((1, 0))
+        return self._layout
+
+    def allocate(self, name: str, nrows: int, ncols: int):
+        """
+        Assing nrows,ncols of space to the given plot name.
+        """
+        if self._layout is None:
+            self._layout = np.full((nrows, ncols), name)
+            return
+        # pad = [[before_ax_0, before_ax_1], [after_ax_0, after_ax_1]]
+        pad_before = [0, 0]
+        pad_after = [0, 0]
+        if self._layout.shape[1] < ncols:
+            pad_after[1] = ncols - self._layout.shape[1]
+        layout = np.pad(self._layout, [pad_before, pad_after], mode="edge")
+        chunk = np.full((nrows, ncols), name)
+        self._layout = np.concatenate([layout, chunk])
 
     def shape(self):
         """

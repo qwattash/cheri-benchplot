@@ -87,15 +87,16 @@ class BenchmarkPlotBase(BenchmarkAnalysis):
         By default generate a single columns with subplots.
         """
         dset_avail = set(self.benchmark.datasets.keys())
-        subplots = {}
-        layout = []
+        layout = Mosaic()
         for idx, plot_klass in enumerate(self.subplots):
             dset_req = set(plot_klass.get_required_datasets())
             if dset_req.issubset(dset_avail):
                 name = f"subplot-{idx}"
-                subplots[name] = plot_klass(self)
-                layout.append([name])
-        return Mosaic(layout, subplots)
+                subplot = plot_klass(self)
+                layout.subplots[name] = subplot
+                nrows, ncols = subplot.get_mosaic_extent()
+                layout.allocate(name, nrows, ncols)
+        return layout
 
     def _spawn_interactive_subplot(self, interactive):
         # self.logger.info("Start plot in interactive mode on %s", surface)
@@ -145,6 +146,14 @@ class BenchmarkSubPlot(ABC):
         self.benchmark = self.plot.benchmark
         # Cell assigned for rendering
         self.cell = None
+
+    def get_mosaic_extent(self) -> tuple[int, int]:
+        """
+        Return a tuple (nrows, ncols) that defines how many mosaic rows and columns this
+        subplot uses. This is only relevant for the default mosaic layout setup, if more
+        exotic layouts are required, override _make_subplots_mosaic() from the PlotBase.
+        """
+        return (1, 1)
 
     def get_dataset(self, dset_id: DatasetArtefact):
         """Helper to access datasets in the benchmark"""
