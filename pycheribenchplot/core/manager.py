@@ -35,6 +35,7 @@ class BenchplotUserConfig(Config):
     """
     sdk_path: Path = path_field("~/cheri/cherisdk")
     build_path: Path = path_field("~/cheri/build")
+    src_path: Path = path_field("~/cheri")
     perfetto_path: Path = path_field("~/cheri/cheri-perfetto/build")
     cheribuild_path: Path = path_field("~/cheri/cheribuild/cheribuild.py")
     cheribsd_path: Path = path_field("~/cheri/cheribsd")
@@ -79,6 +80,7 @@ class BenchmarkManagerRecord(Config):
     session: uuid.UUID
     cheribsd_head: typing.Optional[str] = None
     qemu_head: typing.Optional[str] = None
+    llvm_head: typing.Optional[str] = None
     records: list[BenchmarkRunRecord] = field(default_factory=list)
 
 
@@ -137,14 +139,19 @@ class BenchmarkManager(TemplateConfigContext):
         self.plot_output_path = self.session_output_path / "plots"
 
         try:
-            self.benchmark_records.cheribsd_head = self._get_repo_head(self.config.cheribsd_path)
+            self.benchmark_records.cheribsd_head = self._get_repo_head(self.config.src_path / "cheribsd")
         except:
-            self.logger.warning("Could not record CheriBSD HEAD state, consider setting `cheribsd_path`" +
+            self.logger.warning("Could not record CheriBSD HEAD state, consider setting `src_path`" +
                                 " in the session configuration")
         try:
-            self.benchmark_records.qemu_head = self._get_repo_head(self.config.qemu_path)
+            self.benchmark_records.qemu_head = self._get_repo_head(self.config.src_path / "qemu")
         except:
-            self.logger.warning("Could not record QEMU HEAD state, consider setting `qemu_path`" +
+            self.logger.warning("Could not record QEMU HEAD state, consider setting `src_path`" +
+                                " in the session configuration")
+        try:
+            self.benchmark_records.llvm_head = self._get_repo_head(self.config.src_path / "llvm-project")
+        except:
+            self.logger.warning("Could not record LLVM HEAD state, consider setting `src_path`" +
                                 " in the session configuration")
 
     def _resolve_recorded_session(self, session: typing.Optional[uuid.UUID]):
