@@ -102,6 +102,5 @@ class FigureManager(ABC):
         """Draw all the registered views into the surface."""
         self.logger.debug("Drawing...")
 
-
     def __str__(self):
         return self.__class__.__name__

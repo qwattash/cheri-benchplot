@@ -98,21 +98,8 @@ class BenchmarkPlotBase(BenchmarkAnalysis):
                 layout.allocate(name, nrows, ncols)
         return layout
 
-    def _spawn_interactive_subplot(self, interactive):
-        # self.logger.info("Start plot in interactive mode on %s", surface)
-        # surface.set_layout(ColumnLayout(1))
-        # surface.set_config(self.config)
-        # plot = self.active_subplots[interactive.subplot_index]
-        # cell = surface.make_cell(title=plot.get_cell_title())
-        # plot.generate(surface, cell)
-        # surface.next_cell(cell)
-        # surface.draw_interactive(interactive)
-        raise NotImplementedError("TODO")
-
-    def process_datasets(self, interactive: InteractivePlotConfig = None):
+    def process_datasets(self):
         """Populate the plot axes and draw everything."""
-        if interactive is not None:
-            self._spawn_interactive_subplot(interactive)
         self.logger.info("Setup plot on %s", self.fig_manager)
         self.fig_manager.allocate_cells(self.mosaic)
         for subplot in self.mosaic:
