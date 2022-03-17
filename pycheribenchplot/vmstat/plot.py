@@ -236,8 +236,7 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
             legend = base.map_label(lambda l: f"% {Symbols.DELTA}{self.metric} " + l)
         else:
             legend = base.map_label(lambda l: f"{Symbols.DELTA}{self.metric} " + l)
-        legend.assign_colors_hsv("dataset_id", h=(0.2, 1), s=(0.7, 0.7), v=(0.6, 0.9))
-        return legend
+        return legend.assign_colors_hsv("dataset_id", h=(0.2, 1), s=(0.7, 0.7), v=(0.6, 0.9))
 
     @property
     def bar_limit(self):
