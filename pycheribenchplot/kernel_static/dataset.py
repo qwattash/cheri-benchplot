@@ -175,6 +175,13 @@ class KernelStructDWARFInfo(CSVDataSetContainer):
         self._append_df(df)
 
 
+class KernelStructMemberDataset(KernelStructDWARFInfo):
+    """
+    Kernel struct member-level information.
+    """
+    dataset_config_name = DatasetName.KERNEL_STRUCT_MEMBER_STATS
+
+
 class KernelStructSizeDataset(KernelStructDWARFInfo):
     """
     Extract kernel struct sizes from the kernel DWARF info.

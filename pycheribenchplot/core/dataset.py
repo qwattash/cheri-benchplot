@@ -34,6 +34,7 @@ class DatasetName(Enum):
     NETSTAT = "netstat"
     KERNEL_CSETBOUNDS_STATS = "kernel-csetbounds-stats"
     KERNEL_STRUCT_STATS = "kernel-struct-stats"
+    KERNEL_STRUCT_MEMBER_STATS = "kernel-struct-member-stats"
 
     def __str__(self):
         return self.value
