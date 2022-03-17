@@ -222,3 +222,33 @@ def test_broadcast_xs(fake_simple_df):
         _, chunk = group_item
         assert len(chunk) == 2
         assert (chunk == xs_col_value).all()
+
+
+def test_filter_aggregate(fake_simple_df):
+    df = fake_simple_df
+    # c2 will all be 1 except for one element in the slice (:, 1, 1, 0)
+    df["c2"] = 1
+    df.loc[(0, 1, 1, 1), "c2"] = 0
+
+    # Should filter out the cross-section (:, 1, 1, 1) as it is not all 1
+    cond = df["c2"] == 1
+    result_df = filter_aggregate(df, cond, "l0", how="all", complement=False)
+
+    assert len(result_df) == 14
+    assert (0, 1, 1, 1) not in result_df.index
+    assert (1, 1, 1, 1) not in result_df.index
+
+
+def test_filter_aggregate_complement(fake_simple_df):
+    df = fake_simple_df
+    # c2 will all be 1 except for one element in the slice (:, 1, 1, 0)
+    df["c2"] = 1
+    df.loc[(0, 1, 1, 1), "c2"] = 0
+
+    # Should filter out the cross-section (:, 1, 1, 1) as it is not all 1
+    cond = df["c2"] == 1
+    result_df = filter_aggregate(df, cond, "l0", how="all", complement=True)
+
+    assert len(result_df) == 2
+    assert (0, 1, 1, 1) in result_df.index
+    assert (1, 1, 1, 1) in result_df.index

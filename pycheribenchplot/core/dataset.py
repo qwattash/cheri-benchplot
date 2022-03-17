@@ -926,3 +926,49 @@ def generalized_xs(df: pd.DataFrame, match: list, levels: list, complement=False
     if complement:
         sel = ~sel
     return df[sel]
+
+
+def filter_aggregate(df: pd.DataFrame, cond: pd.Series, by: list, how="all", complement=False):
+    """
+    Filter a dataframe with an aggregation function across a set of levels, where the
+    aggregation function matches in all groups or in any group, depending on the "how" parameter.
+
+    df: The dataframe to operate on
+    cond: condition vector
+    by: levels to check the condition on
+    how: "all" or "any". If "all", match the rows where `cond` is True across all `by` groups.
+    If "any", match the rows where `cond` is true in at least one `by` group.
+    complement: If False, return the matched rows, if True return `df` without the matched rows.
+
+    Example:
+    Given a dataframe, filter_aggregate(df, df["k1"] == 0, ["k0"]) gives:
+
+     k0 | k1 | k2 || V
+     0  | 0  | 0  || 1
+     0  | 0  | 1  || 2                     k0 | k1 | k2 || V
+     0  | 1  | 0  || 3  filter_aggregate() 0  | 0  | 0  || 1
+     0  | 1  | 1  || 4 ==================> 0  | 0  | 1  || 2
+     1  | 0  | 0  || 5                     1  | 0  | 0  || 5
+     1  | 0  | 1  || 6                     1  | 0  | 1  || 6
+     1  | 1  | 0  || 7
+     1  | 1  | 1  || 8
+    """
+    if cond.dtype != bool:
+        raise TypeError("cond must be a boolean series")
+    if isinstance(by, str):
+        by = [by]
+    if how == "all":
+        agg_fn = lambda g: g.all()
+    elif how == "any":
+        agg_fn = lambda g: g.any()
+    else:
+        raise ValueError("how must be 'all' or 'any'")
+
+    # Try to use the index complement first, if not available, dont know
+    index_complement = df.index.names.difference(by)
+    if len(index_complement) == 0:
+        raise ValueError("Can not select across all index levels")
+    match = cond.groupby(index_complement).transform(agg_fn)
+    if complement:
+        match = ~match
+    return df[match]
