@@ -180,3 +180,45 @@ def test_quantile_slice_high_cap_mixed(fake_simple_df):
     assert len(result_df) == 8
     assert (result_df.loc[0, "test"] == [0, 1, 6, 7]).all()
     assert (result_df.loc[1, "test"] == [7, 6, 1, 0]).all()
+
+
+def test_generalized_xs_simple(fake_simple_df):
+    result_df = generalized_xs(fake_simple_df, [0, 1], ["l0", "l1"])
+
+    assert len(result_df) == 4
+    expect_index = pd.MultiIndex.from_tuples([(0, 1, 0, 0), (0, 1, 0, 1), (0, 1, 1, 0), (0, 1, 1, 1)])
+    assert result_df.index.equals(expect_index)
+    assert (result_df["c0"] == [4, 5, 6, 7]).all()
+
+
+def test_generalized_xs_mixed(fake_simple_df):
+    result_df = generalized_xs(fake_simple_df, [0, 1], ["l1", "l2"])
+
+    assert len(result_df) == 4
+    expect_index = pd.MultiIndex.from_tuples([(0, 0, 1, 0), (0, 0, 1, 1), (1, 0, 1, 0), (1, 0, 1, 1)])
+    assert result_df.index.equals(expect_index)
+    assert (result_df["c0"] == [2, 3, 10, 11]).all()
+
+
+def test_generalized_xs_complement(fake_simple_df):
+    result_df = generalized_xs(fake_simple_df, [0, 1], ["l0", "l1"], complement=True)
+
+    assert len(result_df) == 12
+    expect_index = fake_simple_df.index.drop([(0, 1, 0, 0), (0, 1, 0, 1), (0, 1, 1, 0), (0, 1, 1, 1)])
+    assert result_df.index.equals(expect_index)
+    assert (result_df["c0"] == list(range(4)) + list(range(8, 16))).all()
+
+
+def test_broadcast_xs(fake_simple_df):
+    l1_xs = fake_simple_df.xs(0, level="l1")["c0"] + 1000
+
+    result_df = broadcast_xs(fake_simple_df, l1_xs).sort_index()
+
+    assert len(result_df) == len(fake_simple_df)
+    g = result_df.groupby(["l0", "l2", "l3"])
+    # All l1 values are the same in each combination of (l0, l2, l3)
+    assert (g.nunique() == 1).all()
+    for group_item, xs_col_value in zip(g, l1_xs):
+        _, chunk = group_item
+        assert len(chunk) == 2
+        assert (chunk == xs_col_value).all()

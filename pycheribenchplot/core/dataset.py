@@ -899,9 +899,21 @@ def assign_sorted_coord(df: pd.DataFrame, sort: list[str], group_by=list[str], *
     return coord_by_group.sort_index()
 
 
-def generalized_xs(df: pd.DataFrame, match: list, levels=list, complement=False):
+def generalized_xs(df: pd.DataFrame, match: list, levels: list, complement=False):
     """
     Generalized cross section that allows slicing on multiple named levels.
+    Example:
+    Given a dataframe, generaized_xs(df, [0, 1], levels=["k0", "k1"]) gives:
+
+     k0 | k1 | k2 || V
+     0  | 0  | 0  || 1
+     0  | 0  | 1  || 2
+     0  | 1  | 0  || 3  generalized_xs()   k0 | k1 | k2 || V
+     0  | 1  | 1  || 4 ==================> 0  | 1  | 0  || 3
+     1  | 0  | 0  || 5                     0  | 1  | 1  || 4
+     1  | 0  | 1  || 6
+     1  | 1  | 0  || 7
+     1  | 1  | 1  || 8
     """
     assert len(match) == len(levels)
     nlevels = len(df.index.names)
