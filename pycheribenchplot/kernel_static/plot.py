@@ -35,7 +35,7 @@ class SetBoundsDistribution(BenchmarkSubPlot):
 
 
 class SetBoundsSimpleDistribution(SetBoundsDistribution):
-    def generate(self, surface, cell):
+    def generate(self, fm, cell):
         """
         Generate interleaved histograms with one set of bars for each dataset, so
         that we have side-by-side comparison of the buckets.
@@ -90,7 +90,7 @@ class KernelBoundsDistributionByKind(SetBoundsDistribution):
         index = pd.Index(kinds, name="kind")
         return LegendInfo(index, cmap_name="Paired", labels=[k.name for k in kinds])
 
-    def generate(self, surface, cell):
+    def generate(self, fm, cell):
         """
         Generate interleaved and stacked histograms.
         Horizontal bars are created for each datasets, stacked bars are generated
@@ -182,7 +182,7 @@ class KernelStructSizeHist(KernelStructStatsPlot):
             buckets = neg_buckets + pos_buckets
         return sorted(buckets)
 
-    def generate(self, surface, cell):
+    def generate(self, fm, cell):
         df = self.get_df()
         agg_df = self.get_agg_df()
         hcol = self.get_hist_column()
@@ -239,8 +239,8 @@ class KernelStructSizeOverhead(KernelStructSizeHist):
         baseline = df.index.get_level_values("dataset_id") == self.benchmark.uuid
         return df[~baseline]
 
-    def generate(self, surface, cell):
-        super().generate(surface, cell)
+    def generate(self, fm, cell):
+        super().generate(fm, cell)
         cell.x_config.label = "size delta (bytes)"
         cell.yleft_config.scale = Scale("log", base=10)
 
@@ -276,24 +276,31 @@ class KernelStructSizeRelOverhead(KernelStructSizeHist):
         buckets = range(min_val, max_val + 10, 10)
         return buckets
 
-    def generate(self, surface, cell):
-        super().generate(surface, cell)
+    def generate(self, fm, cell):
+        super().generate(fm, cell)
         cell.x_config.label = "% size delta"
         cell.x_config.scale = Scale("linear")
         cell.yleft_config.scale = Scale("log", base=10)
 
 
 class KernelStructPaddingHighOverhead(KernelStructStatsPlot):
-    columns = [("total_pad", "delta_baseline"), ("nested_total_pad", "delta_baseline")]
-    columns_desc = [Symbols.DELTA + "padding", Symbols.DELTA + "nested padding"]
-
-    def get_cell_title(self):
-        return "Top kernel struct padding overhead"
-
     def get_df(self):
         # Omit baseline as we are looking at deltas
         sel = (self.struct_stat.merged_df.index.get_level_values("dataset_id") != self.benchmark.uuid)
         return self.struct_stat.merged_df[sel]
+
+    def get_legend_info(self):
+        legend_base = self.build_legend_by_dataset()
+        if len(self.columns) > 1:
+            legend_merge = {}
+            for col, desc in zip(self.columns, self.columns_desc):
+                legend_merge[col] = legend_base.map_label(lambda l: desc + " " + l)
+            legend_info = LegendInfo.combine("column", legend_merge)
+            legend_info.remap_colors("Paired", group_by="dataset_id")
+        else:
+            legend_info = legend_base.map_label(lambda l: self.columns_desc[0] + " " + l)
+            legend_info.remap_colors("Paired")
+        return legend_info
 
     def get_high_overhead_df(self, quantile, maxbar):
         df = self.get_df()
@@ -307,19 +314,8 @@ class KernelStructPaddingHighOverhead(KernelStructStatsPlot):
         high_df = quantile_slice(df, self.columns, quantile, max_entries, ["dataset_id"])
         return high_df
 
-
-class KernelStructPaddingOverhead(KernelStructPaddingHighOverhead):
-    def get_legend_info(self):
-        legend_base = self.build_legend_by_dataset()
-        legend_merge = {}
-        for col, desc in zip(self.columns, self.columns_desc):
-            legend_merge[col] = legend_base.map_label(lambda l: desc + " " + l)
-        legend_info = LegendInfo.combine("column", legend_merge)
-        legend_info.remap_colors("Paired", group_by="dataset_id")
-        return legend_info
-
-    def generate(self, surface, cell):
-        high_df = self.get_high_overhead_df(0.9, 25)
+    def generate(self, fm, cell):
+        high_df = self.get_high_overhead_df(0.9, 50)
         high_df["x"] = assign_sorted_coord(high_df, sort=self.columns, group_by=["dataset_id"], ascending=False)
 
         view = BarPlotDataView(high_df, x="x", yleft=self.columns, bar_group="dataset_id")
@@ -334,11 +330,33 @@ class KernelStructPaddingOverhead(KernelStructPaddingHighOverhead):
         cell.yleft_config.label = Symbols.DELTA + "padding (bytes)"
 
 
+class KernelStructPaddingOverhead(KernelStructPaddingHighOverhead):
+    columns = [("total_pad", "delta_baseline")]
+    columns_desc = [Symbols.DELTA + "padding"]
+
+    def get_cell_title(self):
+        return "Top kernel struct padding overhead"
+
+
+class KernelStructNestedPaddingOverhead(KernelStructPaddingHighOverhead):
+    columns = [("nested_total_pad", "delta_baseline")]
+    columns_desc = [Symbols.DELTA + "nested padding"]
+
+    def get_cell_title(self):
+        return "Top kernel cumulative struct padding overhead"
+
+
 class KernelStructPaddingOverheadTable(KernelStructPaddingHighOverhead):
+    columns = [("total_pad", "delta_baseline"), ("nested_total_pad", "delta_baseline")]
+    columns_desc = [Symbols.DELTA + "padding", Symbols.DELTA + "nested padding"]
+
     def get_legend_info(self):
         return None
 
-    def generate(self, surface, cell):
+    def get_cell_title(self):
+        return "Top kernel struct padding overhead"
+
+    def generate(self, fm, cell):
         high_df = self.get_high_overhead_df(0.9, np.inf)
         view = TableDataView(high_df, columns=self.columns)
         view.legend_info = self.get_legend_info()
@@ -350,13 +368,13 @@ class KernelStructPointerDensity(KernelStructStatsPlot):
     def get_cell_title(self):
         return "Kernel struct pointer density"
 
-    def generate(self, surface, cell):
+    def generate(self, fm, cell):
         df = self.struct_stat.merged_df.copy()
         ptr_count_col = ("ptr_count", "sample")
         m_count_col = ("member_count", "sample")
 
         df["ptr_density"] = (df[ptr_count_col] / df[m_count_col]) * 100
-        buckets = range(0, 101, 10)
+        buckets = range(0, 101, 5)
 
         view = HistPlotDataView(df, x="ptr_density", buckets=buckets, bucket_group="dataset_id")
         view.legend_info = self.build_legend_by_dataset()
@@ -377,7 +395,7 @@ class KernelStructPackedSizeDelta(KernelStructStatsPlot):
     def get_cell_title(self):
         return "Kernel struct packed size delta"
 
-    def generate(self, surface, cell):
+    def generate(self, fm, cell):
         df = self.struct_stat.merged_df.copy()
 
 
@@ -394,6 +412,7 @@ class KernelStaticInfoPlot(BenchmarkPlot):
         KernelStructSizeOverhead,
         KernelStructSizeRelOverhead,
         KernelStructPaddingOverhead,
+        KernelStructNestedPaddingOverhead,
         KernelStructPointerDensity,
     ]
 
@@ -411,7 +430,7 @@ class KernelStructSizeLargeOverhead(KernelStructStatsPlot):
     def get_col(self):
         raise NotImplementedError("Must override")
 
-    def generate(self, surface, cell):
+    def generate(self, fm, cell):
         df = self.struct_stat.merged_df
         col = self.get_col()
         # Get range high 10%
