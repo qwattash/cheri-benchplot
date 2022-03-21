@@ -187,7 +187,7 @@ class UMABucketAffinityDelta(UMABucketAffinityBase):
         # Drop all entries where the bucket_zone does not change or where there is no bucket zone
         index_complement = df.index.names.difference(["dataset_id"])
         changed = df.groupby(index_complement).nunique()["bucket_zone"] > 1
-        view_df = subset_xs(df, changed)
+        view_df = subset_xs(df, changed).copy()
         assert not view_df["bucket_zone"].isna().any()
 
         base = view_df.xs(self.benchmark.uuid, level="dataset_id")

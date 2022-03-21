@@ -157,7 +157,7 @@ class BenchmarkSubPlot(ABC):
         legend = {uuid: str(bench.instance_config.name) for uuid, bench in bench_group.items()}
         legend[self.benchmark.uuid] += "(*)"
         index = pd.Index(legend.keys(), name="dataset_id")
-        legend_info = LegendInfo(index, labels=legend.values())
+        legend_info = LegendInfo.from_index(index, legend.values())
         return legend_info
 
     @abstractmethod

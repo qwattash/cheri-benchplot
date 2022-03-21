@@ -33,11 +33,10 @@ class ExcelFigureManager(FigureManager):
         super().draw(mosaic, title, dest)
         if self.config.split_subplots:
             self.logger.warning("Split subplots unsupported for excel figures")
-        writer = pd.ExcelWriter(dest.with_suffix(".xlsx"), mode="w", engine="openpyxl")
-        for subplot in mosaic:
-            subplot.cell.writer = writer
-            subplot.cell.draw()
-        writer.close()
+        with pd.ExcelWriter(dest.with_suffix(".xlsx"), mode="w", engine="openpyxl") as writer:
+            for subplot in mosaic:
+                subplot.cell.writer = writer
+                subplot.cell.draw()
 
 
 class ExcelCellData(CellData):
@@ -53,34 +52,55 @@ class ExcelCellData(CellData):
         self.writer = None
 
     def draw(self):
-        for view in self.views:
-            r = self.get_renderer(view)
-            if not r:
-                continue
-            if len(self.views) > 1:
-                self.surface.logger.warning("Only a single plot view is supported for each excel surface cell")
-            r.render(view, self)
-            break
+        if len(self.views) > 1:
+            self.surface.logger.warning("Only a single plot view is supported for each excel surface cell")
+        try:
+            view = self.views[0]
+        except IndexError:
+            return
+        r = self.get_renderer(view)
+        r.render(view, self)
 
 
 class SpreadsheetTableRenderer(ViewRenderer):
     """
     Render table in a spreadsheet.
     """
-    def _get_cell_color_styles(self, legend_info):
-        fill_styles = {}
-        if legend_info is None:
-            return fill_styles
+    def _gen_fill_styles(self, view):
+        """
+        Generate a dataframe with the same index and columns as the view dataframe, containing the
+        colors for each cell.
+        """
+        if view.legend_info is None:
+            return None
 
-        for key, color in legend_info.color_items():
+        legend_df = view.legend_info.info_df
+        fill_styles = []
+        for color in legend_df["colors"]:
             # openpyxl uses aRGB colors while matplotlib uses RGBa
             # we need to swap the alpha here
             rgba_hex = [int(round(c * 255)) for c in color]
             argb_hex = rgba_hex[-1:] + rgba_hex[0:3]
             hexcolor = "".join(map(lambda c: f"{c:02x}", argb_hex))
             style = PatternFill(start_color=hexcolor, end_color=hexcolor, fill_type="solid")
-            fill_styles[key] = style
-        return fill_styles
+            fill_styles.append(style)
+        fs = pd.DataFrame({"fill_style": fill_styles}, index=legend_df.index)
+
+        if view.legend_level:
+            # Before joining we need to align the fs and view.df column indexes
+            extra_levels = [['']] * (view.df.columns.nlevels - 1)
+            col_idx = pd.MultiIndex.from_product([fs.columns] + extra_levels, names=view.df.columns.names)
+            fs.columns = col_idx
+            fill_df = view.df.join(fs, on=view.legend_level)
+        elif "column" in fs.index.names:
+            assert len(fs.index.names) == 1
+            index = view.df.index.repeat(len(fs))
+            fill_df = pd.DataFrame({"column": None}, index=index)
+            fill_df["column"] = np.tile(fs.index, len(view.df))
+            fill_df = fill_df.join(fs, on="column")
+        else:
+            raise ValueError("Malformed legend_info: missing legend_level or 'column' level")
+        return fill_df
 
     def render(self, view: TableDataView, cell):
         """
@@ -95,7 +115,7 @@ class SpreadsheetTableRenderer(ViewRenderer):
         book = excel_writer.book
         sheet = excel_writer.sheets[sheet_name]
 
-        fill_styles = self._get_cell_color_styles(view.legend_info)
+        cell_fill_df = self._gen_fill_styles(view)
         nindex = len(view.df.index.names)
         nheader = len(view.df.columns.names)
 
@@ -125,14 +145,21 @@ class SpreadsheetTableRenderer(ViewRenderer):
             else:
                 cell_border = border_thin
 
-            for xcell in xcells:
+            for df_index, xcell in zip(view.df.index, xcells):
                 if pd.api.types.is_float_dtype(type(xcell.value)):
                     cell_width = len(f"{xcell.value:.2f}")
                     xcell.number_format = "0.00"
                 else:
                     cell_width = len(str(xcell.value))
-                if view.legend_info:
-                    xcell.fill = fill_styles[column]
+                if cell_fill_df is not None:
+                    column_set = cell_fill_df.loc[[df_index], :]
+                    if "column" in column_set:
+                        fill = column_set.loc[column_set["column"] == column, "fill_style"]
+                        assert len(fill) == 1
+                    else:
+                        fill = column_set["fill_style"]
+                        assert len(fill) == 1
+                    xcell.fill = fill.iloc[0]
                 col_width = max(col_width, cell_width)
                 xcell.border = cell_border
             sheet.column_dimensions[get_column_letter(col_idx)].width = col_width + 2

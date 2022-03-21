@@ -252,3 +252,29 @@ def test_filter_aggregate_complement(fake_simple_df):
     assert len(result_df) == 2
     assert (0, 1, 1, 1) in result_df.index
     assert (1, 1, 1, 1) in result_df.index
+
+
+def test_subset_xs_simple(fake_simple_df):
+    df = fake_simple_df
+    # Select a subset of the frame based on a cross-section condition
+    xs = df.xs(0, level="l1")
+    # select a bunch of rows only from the sliced index
+    cond = (xs["c0"] >= 2) & (xs["c0"] <= 9)
+    sel = pd.Series(False, index=xs.index)
+    sel.loc[cond] = True
+
+    result_df = subset_xs(df, sel)
+    assert len(result_df) == 8
+    assert result_df.index.unique
+    # (0, x, 1, 0)
+    assert (0, 0, 1, 0) in result_df.index
+    assert (0, 1, 1, 0) in result_df.index
+    # (0, x, 1, 1)
+    assert (0, 0, 1, 1) in result_df.index
+    assert (0, 1, 1, 1) in result_df.index
+    # (1, x, 0, 0)
+    assert (1, 0, 0, 0) in result_df.index
+    assert (1, 1, 0, 0) in result_df.index
+    # (1, x, 0, 1)
+    assert (1, 0, 0, 1) in result_df.index
+    assert (1, 1, 0, 1) in result_df.index

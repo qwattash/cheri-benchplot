@@ -43,101 +43,92 @@ class LegendInfo:
                            keys=chunks.keys(),
                            levels=[unique_keys],
                            names=[index_name])
-        new_info = LegendInfo([], [], colors=[])
-        new_info.info_df = new_df
-        return new_info
+        return LegendInfo(new_df)
 
-    def __init__(self,
-                 keys: pd.Index | typing.Iterable[typing.Hashable],
-                 labels: typing.Iterable[str] = None,
-                 cmap_name: str = "Pastel1",
-                 color_range: typing.Tuple[float, float] = (0, 1),
-                 colors: list = None):
+    @classmethod
+    def from_index(cls,
+                   index: pd.Index | typing.Iterable,
+                   labels: typing.Iterable[str],
+                   cmap_name: str = "Pastel1",
+                   color_range: tuple[float, float] = (0, 1),
+                   colors: list = None):
+        if not isinstance(index, pd.Index):
+            # Normalize index
+            index = pd.Index(index, name="primary")
+        if colors is None:
+            cmap = plt.get_cmap(cmap_name)
+            cmap_range = np.linspace(color_range[0], color_range[1], len(index))
+            colors = cmap(cmap_range)
+        frame = pd.DataFrame({"labels": list(labels), "colors": list(colors)}, index=index)
+        return LegendInfo(frame)
+
+    @classmethod
+    def gen_colors(cls,
+                   values: pd.Series,
+                   mapname: str,
+                   color_range: tuple[float, float] = (0, 1),
+                   groupby=None) -> pd.Series:
+        """
+        Generates a set of colors with the given colormap and range for a sequence of values
+        """
+        cmap = plt.get_cmap(mapname)
+        if groupby is not None:
+            groups = values.groupby(groupby)
+            points = np.linspace(color_range[0], color_range[1], len(groups))
+            colors = cmap(points)
+            return groups.ngroup().map(lambda g: colors[g])
+        else:
+            points = np.linspace(color_range[0], color_range[1], len(values))
+            return pd.Series(list(cmap(points)), index=values.index, dtype=object)
+
+    @classmethod
+    def color_hsv_transform(cls):
+        """
+        Generate a function to alter colors, suitable to use in a dataframe map() or apply()
+        """
+        pass
+
+    def __init__(self, df: pd.DataFrame):
         """
         Note that the constructor allows the use of keys as a list of values or a more comples
         pandas index. The class factory helpers should be used in most cases.
         If a list of colors is given, override automatic creation.
         """
-        if not isinstance(keys, pd.Index):
-            # Normalize keys to index
-            keys = pd.Index(keys, name="primary")
-        if labels is None:
-            labels = keys.map(str).str.cat(sep=", ")
-        if colors is None:
-            cmap = plt.get_cmap(cmap_name)
-            cmap_range = np.linspace(color_range[0], color_range[1], len(keys))
-            colors = cmap(cmap_range)
-        self.info_df = pd.DataFrame({"labels": labels, "colors": list(colors)}, index=keys)
+        assert "labels" in df.columns
+        assert "colors" in df.columns
+        self.info_df = df
+
+    def remap_colors(self, mapname: str, **kwargs) -> "LegendInfo":
+        new_df = self.info_df.copy()
+        new_df["colors"] = LegendInfo.gen_colors(self.info_df["labels"], mapname, **kwargs)
+        return LegendInfo(new_df)
+
+    def resolve(self, df: pd.DataFrame, levels: list[str]):
+        """
+        Return a dataframe with the corresponding labels and colors columns joined onto the
+        given df over levels.
+        """
+        assert len(self.info_df.index.names) == len(levels)
+        tmp_df = df.copy()
+        tmp_df.columns = df.columns.to_flat_index()
+        joined = tmp_df.merge(self.info_df, left_on=levels, right_index=True)
+        assert not joined["colors"].isna().any()
+        assert not joined["labels"].isna().any()
+        return joined
 
     @property
-    def index(self):
-        return self.info_df.index
+    def labels(self):
+        return self.info_df.loc[:, "labels"]
 
-    def reindex(self, index: pd.Index) -> "LegendInfo":
-        new_df = self.info_df.reindex(index)
-        return LegendInfo(new_df.index, new_df["labels"], colors=new_df["colors"])
+    @property
+    def colors(self):
+        return self.info_df.loc[:, "colors"]
 
-    def _fetch_key(self, key, column):
-        # Use index.get_loc as the normal indexing gets confused when an index
-        # level contains tuples. This might happen if there is a legend level holding
-        # multi-index column names
-        # Assume that if a key is a tuple, it holds a single key. If it is any other
-        # iterable, it is a set of keys.
-        if isinstance(key, tuple):
-            squeeze = True
-            key = [key]
-        else:
-            squeeze = False
-
-        # If indexing with a dataframe, we need to convert it to a multiindex or a set of tuples,
-        # as we can not index with multi-dimensional arrays
-        if isinstance(key, pd.DataFrame):
-            if key.shape[1] > 1:
-                key = pd.MultiIndex.from_frame(key)
-            else:
-                key = pd.Index(key.iloc[:, 0])
-
-        result = self.info_df.loc[key, column]
-        if squeeze:
-            # If we normalized to a list with only one item, squeeze the result
-            return result.squeeze()
-        return result
-
-    def color(self, key: typing.Hashable):
-        color = self._fetch_key(key, "colors")
-        assert np.all(color != np.nan)
-        return color
-
-    def label(self, key: typing.Hashable):
-        return self._fetch_key(key, "labels")
-
-    def find(self, key: tuple) -> tuple[any, str]:
-        assert isinstance(key, tuple)
-        if len(key) == 1:
-            # Required for non-multiindex indexing
-            key = key[0]
-        return self.color(key), self.label(key)
-
-    def color_items(self):
-        return self.info_df["colors"].items()
-
-    def label_items(self):
-        return self.info_df["labels"].items()
-
-    def remap_colors(self, mapname: str, color_range: tuple[float, float] = (0, 1), group_by=None, inplace=True):
-        cmap = plt.get_cmap(mapname)
-
-        def remap_group_colors(group):
-            cmap_range = np.linspace(color_range[0], color_range[1], len(group))
-            mapped_colors = list(cmap(cmap_range))
-            return pd.Series(list(cmap(cmap_range)), index=group.index)
-
-        new_legend = self._map_column(remap_group_colors, "colors", group_by=group_by)
-
-        if inplace:
-            self.info_df = new_legend.info_df
-        else:
-            return new_legend
+    def with_label_index(self):
+        labels = self.info_df["labels"]
+        new_df = self.info_df.set_index("labels")
+        new_df["labels"] = labels.values
+        return new_df
 
     def _map_column(self, fn, column, group_by=None) -> "LegendInfo":
         new_df = self.info_df.copy()
@@ -147,8 +138,7 @@ class LegendInfo:
             grouped = self.info_df.groupby(group_by)
             new_df[column] = grouped[column].apply(fn)
 
-        new_legend = LegendInfo(new_df.index, new_df["labels"], colors=new_df["colors"])
-        return new_legend
+        return LegendInfo(new_df)
 
     def map_color(self, fn, group_by=None) -> "LegendInfo":
         if group_by is None:
@@ -186,7 +176,7 @@ class LegendInfo:
         for c, (group_key, group) in zip(cmap(color_points), grouped):
             color_vec = pd.Series([c] * len(group), dtype=object, index=group.index)
             df.loc[group.index, "colors"] = color_mapper(c, color_vec)
-        return LegendInfo(df.index, df["labels"], colors=df["colors"])
+        return LegendInfo(df)
 
     def assign_colors_luminance(self,
                                 base_map: str | mcolors.Colormap,
@@ -245,14 +235,11 @@ class LegendInfo:
         hsv = pd.concat((h_vector, s_vector, v_vector), axis=1)
         hsv.columns = ["h", "s", "v"]
         hsv["hsv"] = hsv.values.tolist()
-        return LegendInfo(df.index, df["labels"], colors=hsv["hsv"].map(mcolors.hsv_to_rgb))
+        df["colors"] = hsv["hsv"].map(mcolors.hsv_to_rgb)
+        return LegendInfo(df)
 
-    def build_key(self):
-        """
-        Return a named tuple with the correct order for the index levels in the legend info.
-        The tuple is filled by default with slice(None)
-        """
-        return namedtuple("LegendKey", field_names=self.info_df.index.names)
+    ## XXX New interface that assumes public access to the info_df
+    # this should make things much flexible
 
     def map_labels_to_level(self, df: pd.DataFrame, level=0, axis=0) -> pd.DataFrame:
         """
@@ -277,12 +264,6 @@ class LegendInfo:
         else:
             df.columns = new_index
         return df
-
-    def with_label_index(self):
-        labels = self.info_df["labels"]
-        new_df = self.info_df.set_index("labels")
-        new_df["labels"] = labels.values
-        return new_df
 
     def show_samples(self, grayscale=False):
         """
@@ -345,7 +326,9 @@ class DataView:
         return df[col]
 
     def default_legend_info(self):
-        return LegendInfo(self.df.index.unique())
+        keys = self.df.index.unique()
+        labels = keys.map(str).str.join(",")
+        return LegendInfo.from_index(keys, labels)
 
     def default_legend_level(self):
         return self.df.index.names
@@ -359,6 +342,11 @@ class TableDataView(DataView):
     Arguments:
     columns: a list of columns to display, the column identifiers
     depend on the dataframe column index.
+
+    The associated legend_info can have the usual per-row coloring using
+    legend_levels. Column indexes can also be used, these should be set in the
+    special "column" legend frame index and must contain the column names.
+    This allows to implement single-cell coloring if required.
     """
     columns: list = field(default_factory=list)
 
@@ -580,6 +568,8 @@ class CellData:
         self._renderers = {}
 
     def add_view(self, view: DataView):
+        if not isinstance(view.df, pd.DataFrame):
+            raise TypeError("DataView has invalid dataframe")
         self.views.append(view)
 
     def get_renderer(self, data_view: DataView) -> "ViewRenderer":

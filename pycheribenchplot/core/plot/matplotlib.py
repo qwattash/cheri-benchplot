@@ -423,10 +423,8 @@ class SimpleLineRenderer(ViewRenderer):
         row and should have a value associated in the legend_level column(s)
         """
         # get_col always returns a Dataframe, if we have only one level we need to squeeze
-        legend_key = view.get_col(view.legend_level)
-        color = view.legend_info.color(legend_key)
-        label = view.legend_info.label(legend_key)
-        return color, label
+        df = view.legend_info.resolve(view.df, view.legend_level)
+        return df["colors"], df["labels"]
 
     def render(self, view, cell):
         # legend key is always a dataframe because legend_level is normalized to a list
@@ -484,25 +482,23 @@ class BarRenderer(ViewRenderer):
         """
         Resolve a group, column, axis set to a color and label
         """
-        Key = view.legend_info.build_key()
-        # normalize group key to be a tuple
+        key_levels = group_levels
         if len(group_levels) == 1:
-            group_key = (group_key, )
-
-        key_levels = {}
-        for lvl in view.legend_level:
-            lvl_idx = group_levels.index(lvl)
-            assert lvl_idx >= 0, "Legend level should always be part of the groupby levels"
-            key_levels[lvl] = group_key[lvl_idx]
+            key = [group_key]
+        else:
+            key = list(group_key)
         if (len(view.yleft) > 1 and axis == "left") or (len(view.yright) > 1 and axis == "right"):
             # Expect the "column" legend level to exist
-            key_levels["column"] = col_name
+            key_levels.append("column")
+            key.append(col_name)
         if view.has_yleft and view.has_yright:
             # Expect the "axis" legend level to exist
-            key_levels["axis"] = axis
+            key_levels.append("axis")
+            key.append(axis)
 
-        key = Key(**key_levels)
-        return view.legend_info.find(key)
+        entry = generalized_xs(view.legend_info.info_df, key, key_levels)
+        assert len(entry) == 1
+        return entry["colors"][0], entry["labels"][0]
 
     def _draw_columns_text(self, view, cell):
         """
@@ -624,8 +620,8 @@ class HistRenderer(ViewRenderer):
             groups = xcol.groupby(view.bucket_group)
             xvec = [chunk for _, chunk in groups]
             keys = [k for k, _ in groups]
-            colors = view.legend_info.color(keys)
-            labels = view.legend_info.label(keys)
+            colors = view.legend_info.colors[keys]
+            labels = view.legend_info.labels[keys]
             assert len(colors) == len(xvec), f"#colors({len(colors)}) does not match histogram #groups({len(xvec)})"
         else:
             assert len(xcol.shape) == 1 or xcol.shape[1] == 1
@@ -633,8 +629,8 @@ class HistRenderer(ViewRenderer):
             # TODO honor the legend_info here as well
             legend_key = view.get_col(view.legend_level).unique()
             assert len(legend_key) == 1
-            colors = view.legend_info.color(legend_key)
-            labels = view.legend_info.label(legend_key)
+            colors = view.legend_info.colors[legend_key]
+            labels = view.legend_info.labels[legend_key]
 
         n, bins, patches = cell.ax.hist(xvec, bins=view.buckets, rwidth=0.5, color=colors, align=view.bar_align)
         cell.legend.set_group(labels, patches)
@@ -663,8 +659,8 @@ class ArrowPlotRenderer(ViewRenderer):
                                                 group_width=1,
                                                 group_align="center",
                                                 group_order="sequential")
-        base_color = view.legend_info.color(base_group)[0]
-        base_label = view.legend_info.label(base_group)[0]
+        base_color = view.legend_info.colors[base_group][0]
+        base_label = view.legend_info.labels[base_group][0]
 
         base = generalized_xs(view.df, base_group, view.group_by).sort_values(view.y)
         non_base_df = generalized_xs(view.df, base_group, view.group_by, complement=True)
@@ -675,8 +671,8 @@ class ArrowPlotRenderer(ViewRenderer):
         for key, chunk in groups:
             base_artist = cell.ax.scatter(base["bucket_zone"], chunk["__arrow_x_l0"], color=base_color, marker="x")
             cell.legend.set_item(base_label, base_artist)
-            color = view.legend_info.color(key)
-            label = view.legend_info.label(key)
+            color = view.legend_info.colors[key]
+            label = view.legend_info.labels[key]
             artist = cell.ax.scatter(chunk["bucket_zone"], chunk["__arrow_x_l0"], color=color, marker="o")
             cell.legend.set_item(label, artist)
 

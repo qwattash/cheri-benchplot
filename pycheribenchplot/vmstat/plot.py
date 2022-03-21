@@ -13,8 +13,7 @@ class VMStatTable(BenchmarkSubPlot):
     """
     def get_legend_info(self):
         legend = self.build_legend_by_dataset()
-        legend.remap_colors("Greys", color_range=(0, 0.5))
-        return legend
+        return legend.remap_colors("Greys", color_range=(0, 0.5))
 
     def _get_show_columns(self, view_df, legend_info):
         """
@@ -23,7 +22,7 @@ class VMStatTable(BenchmarkSubPlot):
         The remaining delta level keys are shown only for non-baseline columns.
         XXX this can be generalized in a common subplot type for tables.
         """
-        baseline = legend_info.label(self.benchmark.uuid)
+        baseline = legend_info.labels[self.benchmark.uuid]
         sample = (view_df.columns.get_level_values("delta") == "sample")
         delta = (~sample) & (view_df.columns.get_level_values("dataset_id") != baseline)
         select_cols = view_df.columns[sample]
@@ -42,8 +41,8 @@ class VMStatTable(BenchmarkSubPlot):
         by_label = legend_info.with_label_index()
         _, pivot_colors = col_df.align(by_label["colors"], axis=0, level="dataset_id")
         _, pivot_labels = col_df.align(by_label["labels"], axis=0, level="dataset_id")
-        new_map = LegendInfo(df.columns, colors=pivot_colors, labels=pivot_labels)
-        return new_map
+        index = pd.Index(df.columns, name="column")
+        return LegendInfo.from_index(index, colors=pivot_colors, labels=pivot_labels)
 
     def generate(self, surface, cell):
         df = self._get_vmstat_dataset()
@@ -63,6 +62,7 @@ class VMStatTable(BenchmarkSubPlot):
         pivot_legend_info = self._get_pivot_legend_info(view_df, legend_info)
         view = TableDataView(view_df, columns=show_cols)
         view.legend_info = pivot_legend_info
+        view.legend_level = []  # No row coloring, only columns
         cell.add_view(view)
 
 
@@ -152,14 +152,13 @@ class VMStatUMABucketAffinity(BenchmarkSubPlot):
 
     def get_legend_info(self):
         legend = self.build_legend_by_dataset()
-        legend.remap_colors("Greys", color_range=(0, 0.5))
-        return legend
+        return legend.remap_colors("Greys", color_range=(0, 0.5))
 
     def _get_show_columns(self, df, legend_info):
         sample = (df.columns.get_level_values("delta") == "sample")
         metric = (df.columns.get_level_values("metric") == "bucket_size")
         select_cols = df.columns[(sample & metric)]
-        baseline = (df.columns.get_level_values("dataset_id") == legend_info.label(self.benchmark.uuid))
+        baseline = (df.columns.get_level_values("dataset_id") == legend_info.labels[self.benchmark.uuid])
         sort_cols = df.columns[(sample & metric & baseline)].to_list()
         return sort_cols, select_cols
 
@@ -168,8 +167,8 @@ class VMStatUMABucketAffinity(BenchmarkSubPlot):
         by_label = legend_info.with_label_index()
         _, pivot_colors = col_df.align(by_label["colors"], axis=0, level="dataset_id")
         _, pivot_labels = col_df.align(by_label["labels"], axis=0, level="dataset_id")
-        new_map = LegendInfo(df.columns, colors=pivot_colors, labels=pivot_labels)
-        return new_map
+        index = pd.Index(df.columns, name="column")
+        return LegendInfo.from_index(index, colors=pivot_colors, labels=pivot_labels)
 
     def generate(self, surface, cell):
         df = self.get_dataset(DatasetName.VMSTAT_UMA_INFO).agg_df
@@ -184,6 +183,7 @@ class VMStatUMABucketAffinity(BenchmarkSubPlot):
         view_df = view_df.sort_values(sort_cols)
         view = TableDataView(view_df, columns=show_cols)
         view.legend_info = self._get_table_legend_info(view_df, legend_info)
+        view.legend_level = []
         cell.add_view(view)
 
 
@@ -237,6 +237,15 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
         else:
             legend = base.map_label(lambda l: f"{Symbols.DELTA}{self.metric} " + l)
         return legend.assign_colors_hsv("dataset_id", h=(0.2, 1), s=(0.7, 0.7), v=(0.6, 0.9))
+
+    def get_line_legend_info(self):
+        base = self.build_legend_by_dataset()
+
+        if self.normalized:
+            legend = base.map_label(lambda l: f"median % {Symbols.DELTA}|{self.metric}|")
+        else:
+            legend = base.map_label(lambda l: f"median {Symbols.DELTA}|{self.metric}|")
+        return legend.remap_colors("Greys", color_range=(0.5, 1))
 
     @property
     def bar_limit(self):
@@ -300,15 +309,12 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
             cell.add_view(view)
 
             # Add a line for the y
-            df_line = df[["abs_delta"]].abs().median()
+            df_line = df.groupby("dataset_id").median()[["abs_delta"]]
             view = AALineDataView(df_line, horizontal=["abs_delta"])
             view.style.line_style = "dashed"
             view.style.line_width = 0.5
-            view.legend_info = LegendInfo(["abs_delta"],
-                                          labels=[f"median {Symbols.DELTA} abs({self.metric})"],
-                                          cmap_name="Greys",
-                                          color_range=(0.5, 1))
-            view.legend_level = ["metric"]
+            view.legend_info = self.get_line_legend_info()
+            view.legend_level = ["dataset_id"]
             cell.add_view(view)
 
         cell.x_config.label = "UMA Zone"
