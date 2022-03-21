@@ -1,8 +1,8 @@
 import numpy as np
 import pandas as pd
 
-from ..core.dataset import (DatasetName, assign_sorted_coord, check_multi_index_aligned, index_where,
-                            pivot_multi_index_level, quantile_slice, stacked_histogram)
+from ..core.dataset import (DatasetName, assign_sorted_coord, check_multi_index_aligned, filter_aggregate,
+                            pivot_multi_index_level, quantile_slice, stacked_histogram, subset_xs)
 from ..core.plot import (AALineDataView, BarPlotDataView, BenchmarkPlot, BenchmarkSubPlot, BenchmarkTable,
                          HistPlotDataView, LegendInfo, Scale, Symbols, TableDataView)
 
@@ -30,8 +30,9 @@ class SetBoundsDistribution(BenchmarkSubPlot):
         datasets = df.index.get_level_values("dataset_id").unique()
         legend_info = self.build_legend_by_dataset()
         # Only use the datasets in the dataframe
-        avail_labels = legend_info.index[legend_info.index.isin(datasets)]
-        return legend_info.reindex(avail_labels)
+        legend_index = legend_info.info_df.index
+        avail_labels = legend_index[legend_index.isin(datasets)]
+        return LegendInfo(legend_info.info_df.reindex(avail_labels))
 
 
 class SetBoundsSimpleDistribution(SetBoundsDistribution):
@@ -148,7 +149,7 @@ class KernelStructSizeHist(KernelStructStatsPlot):
         }
         legend[self.benchmark.uuid] = f"median {self.benchmark.instance_config.name}(*)"
         index = pd.Index(legend.keys(), name="dataset_id")
-        return LegendInfo(index, cmap_name="Greys", labels=legend.values(), color_range=(0.5, 1))
+        return LegendInfo.from_index(index, cmap_name="Greys", labels=legend.values(), color_range=(0.5, 1))
 
     def get_hist_column(self):
         raise NotImplementedError("Must override")
@@ -480,6 +481,90 @@ class KernelStructSizeLargeAbsOverhead(KernelStructSizeLargeOverhead):
         return ("size", "delta_baseline")
 
 
+class PAHoleTable(BenchmarkSubPlot):
+    """
+    Produce tabular output to provide information similar to what pahole generates.
+    Struct members are on the Y axis. Datasets are pivoted to the columns axis.
+    """
+    @classmethod
+    def get_required_datasets(cls):
+        dsets = super().get_required_datasets()
+        dsets += [DatasetName.KERNEL_STRUCT_STATS, DatasetName.KERNEL_STRUCT_MEMBER_STATS]
+        return dsets
+
+    def __init__(self, plot):
+        super().__init__(plot)
+        self.struct_stats = self.get_dataset(DatasetName.KERNEL_STRUCT_STATS)
+        self.member_stats = self.get_dataset(DatasetName.KERNEL_STRUCT_MEMBER_STATS)
+
+    def get_cell_title(self):
+        return "Kernel pahole"
+
+    def build_table_legend(self, view_df) -> tuple[LegendInfo, pd.DataFrame]:
+        """
+        Generate the legend for the pivoted table.
+        We color rows in alternate colors and highlight the padding members.
+        """
+        legend_levels = ["color_stripe", "is_synth_member"]
+        ntiles = len(view_df) / 2
+        stripe_index = np.tile(np.arange(0, 2), int(ntiles))
+        if ntiles != int(ntiles):
+            stripe_index = np.append(stripe_index, 0)
+        synth_member = view_df.index.get_level_values("member_name").str.endswith(".pad")
+        # Insert the legend keys into the view frame
+        view_df["color_stripe"] = stripe_index
+        view_df["is_synth_member"] = synth_member
+
+        # Build legend info
+        legend_index = pd.MultiIndex.from_product([[0, 1], [True, False]], names=legend_levels)
+        legend = LegendInfo.from_index(legend_index, [""] * len(legend_index))
+        legend.info_df["colors"] = LegendInfo.gen_colors(legend.info_df,
+                                                         mapname="Greys",
+                                                         groupby=["color_stripe"],
+                                                         color_range=(0.7, 1))
+        return legend, legend_levels
+
+    def generate(self, fm, cell):
+        struct_df = self.struct_stats.merged_df
+        member_df = self.member_stats.merged_df
+        if "__iteration" in struct_df.index.names:
+            struct_df = struct_df.droplevel("__iteration")
+        if "__iteration" in member_df.index.names:
+            member_df = member_df.droplevel("__iteration")
+
+        # First drop any struct that has no change in padding and size
+        same_pad = struct_df[("total_pad", "delta_baseline")] == 0
+        same_size = struct_df[("size", "delta_baseline")] == 0
+        not_changed_df = filter_aggregate(struct_df, same_pad & same_size, ["dataset_id"], how="all")
+        drop = pd.Series(True, index=not_changed_df.index)
+
+        pahole_df = self.member_stats.gen_pahole_table()
+        pahole_df = subset_xs(pahole_df, drop, complement=True)
+        # Ensure things are still aligned
+        assert check_multi_index_aligned(pahole_df, ["name", "src_file", "src_line", "member_name"])
+
+        # Pivot the dataset_id level to the columns. We only care about the member_offset and member_size
+        # columns at this point
+        legend_info = self.build_legend_by_dataset()
+        view_df = pahole_df[["member_offset", "member_size"]]
+        view_df = legend_info.map_labels_to_level(view_df, "dataset_id", axis=0)
+        view_df = pivot_multi_index_level(view_df, "dataset_id")
+        # After pivoting, we need to order the struct members by member_offset
+        # member reordering is tricky to handle so just ignore it and sort by the baseline member_offset
+        member_offset_baseline = ("member_offset", legend_info.labels[self.benchmark.uuid])
+        view_df = view_df.sort_values(view_df.index.names + [member_offset_baseline])
+
+        # Generate the table legend and associated columns
+        table_legend, legend_levels = self.build_table_legend(view_df)
+
+        table_columns = ["member_size"]
+        col_sel = view_df.columns.get_level_values("metric").isin(table_columns)
+        view = TableDataView(view_df, columns=view_df.columns[col_sel])
+        view.legend_info = table_legend
+        view.legend_level = legend_levels
+        cell.add_view(view)
+
+
 class KernelStaticInfoTables(BenchmarkTable):
     """
     Report tables of struct statistics with large deltas for the kernel
@@ -488,6 +573,7 @@ class KernelStaticInfoTables(BenchmarkTable):
     subplots = [
         KernelStructSizeLargeRelOverhead,
         KernelStructSizeLargeAbsOverhead,
+        PAHoleTable,
     ]
 
     def get_plot_name(self):

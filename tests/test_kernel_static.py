@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 
 from pycheribenchplot.core.benchmark import BenchmarkDataSetConfig
-from pycheribenchplot.core.dataset import DatasetName
+from pycheribenchplot.core.dataset import *
 from pycheribenchplot.kernel_static.dataset import *
 
 
@@ -97,3 +97,49 @@ async def test_kstruct_size_dataset_gen(mocker, tmp_path, fake_simple_benchmark)
     assert (bar["size"] == 8).all()
     assert (bar["src_line"] == 4).all()
     assert (bar["src_file"].map(lambda p: Path(p).name) == "test_dwarf_simple.c").all()
+
+
+def test_kstruct_member_pahole(fake_simple_benchmark):
+    """
+    Test dataset PAHOLE table generator using a simple test with only 1 structure and 2
+    merged datasets.
+    """
+    config = BenchmarkDataSetConfig(type=DatasetName.KERNEL_STRUCT_MEMBER_STATS)
+    ds = KernelStructMemberDataset(fake_simple_benchmark, "__test__", config)
+
+    # Fill the fake merged_df dataframe
+    df = pd.DataFrame({
+        "name": ["my_struct"] * 2,
+        "src_file": ["my/src/file.c"] * 2,
+        "src_line": [1] * 2,
+        "member_name": ["foo", "bar"],
+        "member_size": [8, 16],
+    })
+    a_df = df.copy()
+    a_df["dataset_id"] = "a"
+    a_df["member_offset"] = [0, 8]
+    a_df["member_pad"] = [0, 0]
+
+    b_df = df.copy()
+    b_df["dataset_id"] = "b"
+    b_df["member_offset"] = [0, 16]
+    b_df["member_pad"] = [8, 0]
+    df = pd.concat([a_df, b_df], ignore_index=True, axis=0)
+    df.set_index(["dataset_id", "name", "src_file", "src_line", "member_name"], inplace=True)
+    ds.merged_df = df
+
+    # Run the method under test
+    result_df = ds.gen_pahole_table()
+
+    # Check the resulting pahole structure
+    assert len(result_df) == 6
+    assert ("a", "my_struct", "my/src/file.c", 1, "foo.pad") in result_df.index
+    assert ("b", "my_struct", "my/src/file.c", 1, "foo.pad") in result_df.index
+    a = result_df.xs("a", level="dataset_id").sort_values("member_offset")
+    assert a["member_size"].iloc[0] == 8
+    assert np.isnan(a["member_size"].iloc[1])
+    assert a["member_size"].iloc[2] == 16
+    assert (a.index.get_level_values("member_name") == ["foo", "foo.pad", "bar"]).all()
+    b = result_df.xs("b", level="dataset_id").sort_values("member_offset")
+    assert (b["member_size"] == [8, 8, 16]).all()
+    assert (b.index.get_level_values("member_name") == ["foo", "foo.pad", "bar"]).all()

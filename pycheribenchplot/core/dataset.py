@@ -746,24 +746,20 @@ def rotate_multi_index_level(df: pd.DataFrame,
         return df.reset_index(level=level, drop=True), colmap
 
 
-def subset_xs(df: pd.DataFrame, selector: typing.Sequence[bool]):
+def subset_xs(df: pd.DataFrame, selector: pd.Series, complement=False):
     """
     Extract a cross section of the given levels of the dataframe, regarless of frame index ordering,
     where the values match the given set of values.
     """
-    # XXX align the dataframe?
-    levels = selector.index.names
-    # First, make our levels the last ones
-    swapped_levels = [n for n in df.index.names if n not in levels]
-    swapped_levels.extend(levels)
-    swapped = df.reorder_levels(swapped_levels)
-    # Now we tile the selector
-    ntiles = len(swapped) / len(selector)
-    assert ntiles == int(ntiles)
-    tiled = selector.loc[np.tile(selector.index, int(ntiles))]
-    # Now we can cross-section with the boolean selection
-    values = swapped.loc[tiled.values]
-    return values.reorder_levels(df.index.names)
+    if selector.dtype != bool:
+        raise TypeError("selector must be a bool series")
+
+    l, _ = selector.align(df)
+    l = l.reorder_levels(df.index.names).fillna(False).sort_index()
+    assert l.index.equals(df.index)
+    if complement:
+        l = ~l
+    return df.loc[l]
 
 
 def broadcast_xs(df: pd.DataFrame, chunk: pd.DataFrame | pd.Series) -> pd.DataFrame | pd.Series:

@@ -6,7 +6,8 @@ import numpy as np
 import pandas as pd
 
 from ..core.csv import CSVDataSetContainer
-from ..core.dataset import (DatasetArtefact, DatasetName, DatasetProcessingError, Field, align_multi_index_levels)
+from ..core.dataset import (DatasetArtefact, DatasetName, DatasetProcessingError, Field, align_multi_index_levels,
+                            check_multi_index_aligned, filter_aggregate, index_where)
 from ..core.instance import InstanceKernelABI
 
 
@@ -147,7 +148,7 @@ class KernelStructDWARFInfo(CSVDataSetContainer):
         return kern
 
     def output_file(self):
-        return super().output_file().with_suffix(".csv")
+        return self.benchmark.get_output_path() / f"struct-stats-{self.benchmark.uuid}.csv"
 
     async def after_extract_results(self):
         await super().after_extract_results()
@@ -180,6 +181,50 @@ class KernelStructMemberDataset(KernelStructDWARFInfo):
     Kernel struct member-level information.
     """
     dataset_config_name = DatasetName.KERNEL_STRUCT_MEMBER_STATS
+
+    def post_merge(self):
+        super().post_merge()
+        self.merged_df = align_multi_index_levels(self.merged_df, ["name", "src_file", "src_line", "member_name"],
+                                                  fill_value=np.nan)
+
+    def gen_pahole_table(self, selector: pd.Series = None):
+        """
+        Generate a pahole table for the structures in the merged dataframe.
+        The selector can be used to filter out unwanted structures.
+        This will return a table with the following properties:
+        - index: the __iteration level is dropped as it is unused, otherwise unchanged.
+        - rows: extra synthetic members representing the padding are created. These members
+        are named from the previous member name and offset and have the member_size column set to
+        the padding width.
+        - columns: only the member_offset and member_pad are retained
+
+        Note that the index will be aligned at the member_name level. This will include the padding synthetic
+        members for all datasets but places without padding will have a NaN for the synthetic member size.
+        Offset ordering is expected to be sensible so that the table rows will stay aligned.
+        The returned dataset is not sorted.
+        """
+        if selector is not None and selector.dtype != bool:
+            raise TypeError("selector must be a bool series")
+        df = self.merged_df
+        if selector is not None:
+            df = df.loc[selector]
+
+        assert check_multi_index_aligned(df, ["name", "src_file", "src_line", "member_name"])
+        # Assume that every member has padding first. Generate synthetic padding members for all datasets and all members.
+        # Then filter out those where the padding is zero across all datasets.
+        synth_members = df[["member_offset", "member_pad"]].copy()
+        base_name = synth_members.index.levels[synth_members.index.names.index("member_name")]
+        synth_members.index = synth_members.index.set_levels(base_name + ".pad", level="member_name")
+        synth_members.loc[:, "member_size"] = synth_members["member_pad"].mask(synth_members["member_pad"] == 0, np.nan)
+        synth_members = filter_aggregate(synth_members,
+                                         synth_members["member_size"].isna(), ["dataset_id"],
+                                         complement=True)
+        # Add a small value to ensure that the synthetic member will always be after the real one
+        synth_members.loc[:, "member_offset"] += 0.001
+
+        pahole_df = pd.concat([df, synth_members], axis=0)
+        assert len(pahole_df) == len(df) + len(synth_members)
+        return pahole_df.droplevel("__iteration").sort_index()
 
 
 class KernelStructSizeDataset(KernelStructDWARFInfo):
