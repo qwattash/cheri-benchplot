@@ -192,7 +192,8 @@ class KernelStructMemberDataset(KernelStructDWARFInfo):
         Generate a pahole table for the structures in the merged dataframe.
         The selector can be used to filter out unwanted structures.
         This will return a table with the following properties:
-        - index: the __iteration level is dropped as it is unused, otherwise unchanged.
+        - index: the __iteration level is dropped as it is unused, the member_name level is swapped for
+        the member_offset.
         - rows: extra synthetic members representing the padding are created. These members
         are named from the previous member name and offset and have the member_size column set to
         the padding width.
@@ -205,26 +206,33 @@ class KernelStructMemberDataset(KernelStructDWARFInfo):
         """
         if selector is not None and selector.dtype != bool:
             raise TypeError("selector must be a bool series")
-        df = self.merged_df
+        df = self.merged_df.droplevel("__iteration")
         if selector is not None:
             df = df.loc[selector]
 
-        assert check_multi_index_aligned(df, ["name", "src_file", "src_line", "member_name"])
-        # Assume that every member has padding first. Generate synthetic padding members for all datasets and all members.
-        # Then filter out those where the padding is zero across all datasets.
-        synth_members = df[["member_offset", "member_pad"]].copy()
-        base_name = synth_members.index.levels[synth_members.index.names.index("member_name")]
-        synth_members.index = synth_members.index.set_levels(base_name + ".pad", level="member_name")
-        synth_members.loc[:, "member_size"] = synth_members["member_pad"].mask(synth_members["member_pad"] == 0, np.nan)
-        synth_members = filter_aggregate(synth_members,
-                                         synth_members["member_size"].isna(), ["dataset_id"],
-                                         complement=True)
-        # Add a small value to ensure that the synthetic member will always be after the real one
-        synth_members.loc[:, "member_offset"] += 0.001
-
-        pahole_df = pd.concat([df, synth_members], axis=0)
-        assert len(pahole_df) == len(df) + len(synth_members)
-        return pahole_df.droplevel("__iteration").sort_index()
+        # Swap the member_name for member_offset. We can drop NaN member_offsets (missing) as they will
+        # be reintroduced later as synthetic members if needed.
+        df = df.dropna(subset=["member_offset"])
+        pahole_df = df.reset_index("member_name").set_index("member_offset", append=True)
+        # Now generate the synthetic padding members, only for those members that have padding.
+        synth_members = df.loc[df["member_pad"] != 0, ["member_offset", "member_pad", "member_size"]].copy()
+        synth_members.loc[:, "member_offset"] += synth_members["member_size"]
+        synth_members["member_size"] = synth_members["member_pad"]
+        synth_members = synth_members.reset_index("member_name").set_index("member_offset", append=True)
+        synth_members["member_name"] = synth_members["member_name"] + ".pad"
+        # Merge the synthetic members. This should result in the frame becoming aligned again.
+        # If not, something went wrong.
+        out_cols = ["member_name", "member_size"]
+        pahole_df = pd.concat([pahole_df[out_cols], synth_members[out_cols]], axis=0)
+        pahole_df = pahole_df.sort_index()
+        # If members have zero size, there may be duplicate index entries with the member_offset.
+        # Add a last-level index to ensure deduplication
+        member_index = pahole_df.groupby(["dataset_id", "name", "src_file", "src_line"]).cumcount()
+        pahole_df["member_index"] = member_index
+        pahole_df.set_index("member_index", append=True, inplace=True)
+        pahole_df = align_multi_index_levels(pahole_df,
+                                             ["name", "src_file", "src_line", "member_offset", "member_index"])
+        return pahole_df
 
 
 class KernelStructSizeDataset(KernelStructDWARFInfo):

@@ -107,14 +107,20 @@ class LegendInfo:
         """
         Return a dataframe with the corresponding labels and colors columns joined onto the
         given df over levels.
+        Note that since we need to join the levels on the info_df index, only columns with
+        a single value on the column multi-index level 0 are supported. We drop any other
+        column index level.
         """
         assert len(self.info_df.index.names) == len(levels)
-        tmp_df = df.copy()
-        tmp_df.columns = df.columns.to_flat_index()
+        if len(df.columns.names) > 1:
+            tmp_df = df.copy()
+            tmp_df.columns = tmp_df.columns.droplevel(tmp_df.columns.names[1:])
+        else:
+            tmp_df = df
         joined = tmp_df.merge(self.info_df, left_on=levels, right_index=True)
         assert not joined["colors"].isna().any()
         assert not joined["labels"].isna().any()
-        return joined
+        return joined[["colors", "labels"]]
 
     @property
     def labels(self):
@@ -564,6 +570,7 @@ class CellData:
         self.yright_config = AxisConfig(yright_label)
 
         self.views = []
+        self.figure_manager = None
         self.cell_id = next(CellData.cell_id_gen)
         self._renderers = {}
 

@@ -505,24 +505,18 @@ class PAHoleTable(BenchmarkSubPlot):
         Generate the legend for the pivoted table.
         We color rows in alternate colors and highlight the padding members.
         """
-        legend_levels = ["color_stripe", "is_synth_member"]
-        ntiles = len(view_df) / 2
-        stripe_index = np.tile(np.arange(0, 2), int(ntiles))
-        if ntiles != int(ntiles):
-            stripe_index = np.append(stripe_index, 0)
-        synth_member = view_df.index.get_level_values("member_name").str.endswith(".pad")
+        stripe_index = view_df.groupby("name").ngroup() % 2
         # Insert the legend keys into the view frame
         view_df["color_stripe"] = stripe_index
-        view_df["is_synth_member"] = synth_member
 
         # Build legend info
-        legend_index = pd.MultiIndex.from_product([[0, 1], [True, False]], names=legend_levels)
+        legend_index = pd.Index([0, 1], name="color_stripe")
         legend = LegendInfo.from_index(legend_index, [""] * len(legend_index))
         legend.info_df["colors"] = LegendInfo.gen_colors(legend.info_df,
                                                          mapname="Greys",
                                                          groupby=["color_stripe"],
-                                                         color_range=(0.7, 1))
-        return legend, legend_levels
+                                                         color_range=(0.0, 0.5))
+        return legend, ["color_stripe"]
 
     def generate(self, fm, cell):
         struct_df = self.struct_stats.merged_df
@@ -532,32 +526,24 @@ class PAHoleTable(BenchmarkSubPlot):
         if "__iteration" in member_df.index.names:
             member_df = member_df.droplevel("__iteration")
 
-        # First drop any struct that has no change in padding and size
-        same_pad = struct_df[("total_pad", "delta_baseline")] == 0
-        same_size = struct_df[("size", "delta_baseline")] == 0
-        not_changed_df = filter_aggregate(struct_df, same_pad & same_size, ["dataset_id"], how="all")
-        drop = pd.Series(True, index=not_changed_df.index)
-
         pahole_df = self.member_stats.gen_pahole_table()
-        pahole_df = subset_xs(pahole_df, drop, complement=True)
         # Ensure things are still aligned
-        assert check_multi_index_aligned(pahole_df, ["name", "src_file", "src_line", "member_name"])
+        assert check_multi_index_aligned(pahole_df, ["name", "src_file", "src_line", "member_offset", "member_index"])
 
-        # Pivot the dataset_id level to the columns. We only care about the member_offset and member_size
+        # Pivot the dataset_id level to the columns. We only care about the member_name and member_size
         # columns at this point
+        pahole_columns = ["member_name", "member_size"]
         legend_info = self.build_legend_by_dataset()
-        view_df = pahole_df[["member_offset", "member_size"]]
+        view_df = pahole_df[pahole_columns]
         view_df = legend_info.map_labels_to_level(view_df, "dataset_id", axis=0)
         view_df = pivot_multi_index_level(view_df, "dataset_id")
-        # After pivoting, we need to order the struct members by member_offset
-        # member reordering is tricky to handle so just ignore it and sort by the baseline member_offset
-        member_offset_baseline = ("member_offset", legend_info.labels[self.benchmark.uuid])
-        view_df = view_df.sort_values(view_df.index.names + [member_offset_baseline])
 
         # Generate the table legend and associated columns
         table_legend, legend_levels = self.build_table_legend(view_df)
 
-        table_columns = ["member_size"]
+        # Swap the columns metric/dataset_id levels
+        # XXX TODO
+        table_columns = ["member_name", "member_size"]
         col_sel = view_df.columns.get_level_values("metric").isin(table_columns)
         view = TableDataView(view_df, columns=view_df.columns[col_sel])
         view.legend_info = table_legend

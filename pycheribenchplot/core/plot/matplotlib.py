@@ -708,6 +708,7 @@ class MplFigureManager(FigureManager):
                 figure = plt.figure(constrained_layout=True, figsize=(10 * ncols, 7 * nrows))
                 axes = figure.subplot_mosaic(submosaic, empty_sentinel="BLANK")
                 cell = MplCellData(title=subplot.get_cell_title(), figure=figure, ax=axes[name])
+                cell.figure_manager = self
                 subplot.cell = cell
                 self.figures.append(figure)
         else:
@@ -719,6 +720,7 @@ class MplFigureManager(FigureManager):
             for name, subplot in mosaic.subplots.items():
                 ax = mosaic_axes[name]
                 subplot.cell = MplCellData(title=subplot.get_cell_title(), figure=figure, ax=ax)
+                subplot.cell.figure_manager = self
 
     def _write(self, dest: Path, figure: Figure):
         for ext in self.config.plot_output_format:

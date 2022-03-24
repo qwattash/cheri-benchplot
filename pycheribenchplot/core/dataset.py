@@ -756,7 +756,7 @@ def subset_xs(df: pd.DataFrame, selector: pd.Series, complement=False):
 
     l, _ = selector.align(df)
     l = l.reorder_levels(df.index.names).fillna(False).sort_index()
-    assert l.index.equals(df.index)
+    assert l.index.equals(df.index), f"{l.index} != {df.index}"
     if complement:
         l = ~l
     return df.loc[l]
