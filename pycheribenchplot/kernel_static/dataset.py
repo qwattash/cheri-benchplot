@@ -193,7 +193,7 @@ class KernelStructMemberDataset(KernelStructDWARFInfo):
         The selector can be used to filter out unwanted structures.
         This will return a table with the following properties:
         - index: the __iteration level is dropped as it is unused, the member_name level is swapped for
-        the member_offset.
+        the new member_index level.
         - rows: extra synthetic members representing the padding are created. These members
         are named from the previous member name and offset and have the member_size column set to
         the padding width.
@@ -229,9 +229,10 @@ class KernelStructMemberDataset(KernelStructDWARFInfo):
         # Add a last-level index to ensure deduplication
         member_index = pahole_df.groupby(["dataset_id", "name", "src_file", "src_line"]).cumcount()
         pahole_df["member_index"] = member_index
-        pahole_df.set_index("member_index", append=True, inplace=True)
-        pahole_df = align_multi_index_levels(pahole_df,
-                                             ["name", "src_file", "src_line", "member_offset", "member_index"])
+        # Now replace the member_offset index level with the member_index column
+        pahole_df = pahole_df.reset_index("member_offset").set_index("member_index", append=True)
+        # Align the missing indexes for longer structures
+        pahole_df = align_multi_index_levels(pahole_df, ["name", "src_file", "src_line", "member_index"])
         return pahole_df
 
 

@@ -515,7 +515,7 @@ class PAHoleTable(BenchmarkSubPlot):
         legend.info_df["colors"] = LegendInfo.gen_colors(legend.info_df,
                                                          mapname="Greys",
                                                          groupby=["color_stripe"],
-                                                         color_range=(0.0, 0.5))
+                                                         color_range=(0.0, 0.2))
         return legend, ["color_stripe"]
 
     def generate(self, fm, cell):
@@ -528,11 +528,15 @@ class PAHoleTable(BenchmarkSubPlot):
 
         pahole_df = self.member_stats.gen_pahole_table()
         # Ensure things are still aligned
-        assert check_multi_index_aligned(pahole_df, ["name", "src_file", "src_line", "member_offset", "member_index"])
+        assert check_multi_index_aligned(pahole_df, ["name", "src_file", "src_line", "member_index"])
+
+        # Combine the member size (or padding size) with the member name, for ease of reading
+        pahole_df["member_name"] = pahole_df["member_name"] + " (" + pahole_df["member_size"].map(
+            lambda s: f"{s:.0f}") + ")"
 
         # Pivot the dataset_id level to the columns. We only care about the member_name and member_size
         # columns at this point
-        pahole_columns = ["member_name", "member_size"]
+        pahole_columns = ["member_name"]
         legend_info = self.build_legend_by_dataset()
         view_df = pahole_df[pahole_columns]
         view_df = legend_info.map_labels_to_level(view_df, "dataset_id", axis=0)
@@ -541,10 +545,7 @@ class PAHoleTable(BenchmarkSubPlot):
         # Generate the table legend and associated columns
         table_legend, legend_levels = self.build_table_legend(view_df)
 
-        # Swap the columns metric/dataset_id levels
-        # XXX TODO
-        table_columns = ["member_name", "member_size"]
-        col_sel = view_df.columns.get_level_values("metric").isin(table_columns)
+        col_sel = view_df.columns.get_level_values("metric").isin(pahole_columns)
         view = TableDataView(view_df, columns=view_df.columns[col_sel])
         view.legend_info = table_legend
         view.legend_level = legend_levels
