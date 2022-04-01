@@ -13,7 +13,24 @@ from ..core.instance import PlatformOptions
 from ..core.perfetto import PerfettoDataSetContainer
 
 
-class ContextStatsHistogramBase(PerfettoDataSetContainer):
+class QEMUTraceDataset(PerfettoDataSetContainer):
+    """
+    Base class for all datasets requiring qemu-perfetto trace output.
+    This initializes the qemu instance configuration so that all the datasets will point to
+    the same qemu output file. Subclasses should enable their own trace categories.
+    """
+    def output_file(self):
+        return self.benchmark.get_output_path() / f"qemu-perfetto-{self.benchmark.uuid}.pb"
+
+    def configure(self, opts: PlatformOptions) -> PlatformOptions:
+        opts = super().configure(opts)
+        opts.qemu_trace = True
+        opts.qemu_trace_file = self.output_file()
+        opts.qemu_trace_categories.add("ctrl")
+        return opts
+
+
+class ContextStatsHistogramBase(QEMUTraceDataset):
     """
     Base class that handles loading QEMU stats tracks from the perfetto backend, and attempts to resolve
     the context to which data records are associated.
@@ -228,17 +245,9 @@ class ContextStatsHistogramBase(PerfettoDataSetContainer):
 
     def configure(self, opts: PlatformOptions) -> PlatformOptions:
         opts = super().configure(opts)
-        opts.qemu_trace = True
-        opts.qemu_trace_file = self.output_file()
-        opts.qemu_trace_categories.add("ctrl")
         opts.qemu_trace_categories.add("stats")
         opts.qemu_trace_categories.add("marker")
         return opts
-
-    def output_file(self):
-        # This must be shared by all the histogram datasets
-        # Note that the output is common to all iterations
-        return self.benchmark.get_output_path() / f"qemu-stats-{self.benchmark.uuid}.pb"
 
 
 class QEMUStatsBBHistogramDataset(ContextStatsHistogramBase):
@@ -318,3 +327,54 @@ class QEMUStatsBranchHistogramDataset(ContextStatsHistogramBase):
         match = self.df.apply(lambda row: resolver.match_fn(row["target"], row["process_name"]), axis=1)
         is_call = ~match.isna()
         self.df["call_count"] = self.df["branch_count"].where(is_call, 0).astype(int)
+
+
+class QEMUGuestCountersDataset(QEMUTraceDataset):
+    """
+    Dataset collecting global guest-driven qemu counters with the perfetto trace backend.
+    This detects and separates counters samples in tracks for each dataset.
+    """
+    dataset_source_id = DatasetArtefact.QEMU_COUNTERS
+    fields = [
+        Field.index_field("ts", dtype=float),
+        Field.index_field("name", dtype=str),
+        Field.index_field("slot", dtype=int),
+        Field.data_field("value", dtype=float),
+    ]
+
+    def _extract_counters(self, tp, iteration, ts_start, ts_end):
+        """
+        Extract counters during a single iteration
+        """
+        cnt_query = Query.from_(self.t_counter_track).join(
+            self.t_counter).on(self.t_counter_track.id == self.t_counter.track_id)
+        cnt_query = cnt_query.select(self.t_counter_track.name, self.t_counter.ts, self.t_counter.value)
+        cnt_query = self._query_filter_ts(cnt_query, self.t_counter.ts, ts_start, ts_end)
+        cnt_df = self._query_to_df(tp, cnt_query.get_sql(quote_char=None))
+
+        name_split = cnt_df["name"].str.split(":")
+        name = name_split.map(lambda v: v[0])
+        slot = name_split.map(lambda v: v[1])
+        cnt_df["name"] = name
+        cnt_df["slot"] = slot
+        cnt_df["dataset_id"] = self.benchmark.uuid
+        cnt_df["__iteration"] = iteration
+        # Make timestamp relative to the beginning of the iteration
+        cnt_df["ts"] = cnt_df["ts"] - ts_start
+        self._append_df(cnt_df)
+
+    def load(self):
+        tp = self._get_trace_processor(self.output_file())
+        iterations = self._extract_iteration_markers(tp)
+        if len(iterations) != self.benchmark.config.iterations:
+            self.logger.error("QEMU trace does not have the expected iteration markers: %d configured %d",
+                              len(iterations), self.benchmark.config.iterations)
+            raise DatasetProcessingError("QEMU trace has invalid iteration markers")
+        for i, (start, end) in enumerate(iterations):
+            self._extract_counters(tp, i, start, end)
+
+    def configure(self, opts):
+        opts = super().configure(opts)
+        opts.qemu_trace_categories.add("counter")
+        opts.qemu_trace_categories.add("marker")
+        return opts

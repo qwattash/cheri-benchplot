@@ -100,7 +100,7 @@ class BenchmarkPlotBase(BenchmarkAnalysis):
 
     def process_datasets(self):
         """Populate the plot axes and draw everything."""
-        self.logger.info("Setup plot on %s", self.fig_manager)
+        self.logger.info("Setup plot %s on %s", self.get_plot_name(), self.fig_manager)
         self.fig_manager.allocate_cells(self.mosaic)
         for subplot in self.mosaic:
             subplot.generate(self.fig_manager, subplot.cell)

@@ -450,6 +450,21 @@ class XYPlotDataView(DataView):
 
 
 @dataclass
+class LinePlotDataView(XYPlotDataView):
+    """
+    Parameters for simple line plots
+    """
+    line_group: list[str] = None
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.key = "line"
+        # Normalize lists
+        if isinstance(self.line_group, str):
+            self.line_group = [self.line_group]
+
+
+@dataclass
 class BarPlotDataView(XYPlotDataView):
     """
     Parameters for bar plots

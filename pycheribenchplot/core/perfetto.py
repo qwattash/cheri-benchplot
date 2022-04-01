@@ -58,6 +58,7 @@ class PerfettoDataSetContainer(DataSetContainer):
     t_args = Table("args")
     t_stats = Table("stats")
     t_counter = Table("counter")
+    t_counter_track = Table("counter_track")
 
     def __init__(self, benchmark, dset_key, config):
         super().__init__(benchmark, dset_key, config)
@@ -78,9 +79,12 @@ class PerfettoDataSetContainer(DataSetContainer):
 
     def _query_slice_ts(self, ts_start, ts_end) -> Query:
         query = self._query_slice_args()
-        query = query.where(self.t_slice.ts >= ts_start)
+        return self._query_filter_ts(query, self.t_slice.ts, ts_start, ts_end)
+
+    def _query_filter_ts(self, query, ts, ts_start, ts_end) -> Query:
+        query = query.where(ts >= ts_start)
         if np.isfinite(ts_end):
-            query = query.where(self.t_slice.ts < ts_end)
+            query = query.where(ts < ts_end)
         return query
 
     def _query_to_df(self, tp: TraceProcessor, query_str: str):

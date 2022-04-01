@@ -8,6 +8,8 @@ import pycheribenchplot.netperf.analysis
 import pycheribenchplot.netperf.dataset
 import pycheribenchplot.netstat.dataset
 import pycheribenchplot.pmc
+import pycheribenchplot.qemu.cheribsd_counters
+import pycheribenchplot.qemu.cheribsd_counters_plot
 import pycheribenchplot.qemu.dataset
 import pycheribenchplot.qemu.plot
 import pycheribenchplot.vmstat.dataset

@@ -185,6 +185,9 @@ class VMStatKMalloc(VMStatDataset):
 
 
 class VMStatUMA(VMStatDataset):
+    """
+    XXX TODO should also extract the keg.npages keg.free_items and zone current count.
+    """
     dataset_config_name = DatasetName.VMSTAT_UMA
     dataset_source_id = DatasetArtefact.VMSTAT
     dataset_run_order = DatasetRunOrder.LAST

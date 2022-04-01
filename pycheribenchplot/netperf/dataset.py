@@ -258,9 +258,10 @@ class NetperfData(CSVDataSetContainer):
         self.netserver_bin = Path("/") / rootfs_netserver_bin.relative_to(self.benchmark.rootfs)
         self.logger.debug("Using %s %s", self.netperf_bin, self.netserver_bin)
         # Determine any extra options for cooperation with other datasets
+        # qemu = self.benchmark.has_qemu_datasets()
         qemu = (self.benchmark.get_dataset(DatasetName.QEMU_STATS_BB_HIST)
                 or self.benchmark.get_dataset(DatasetName.QEMU_STATS_CALL_HIST)
-                or self.benchmark.get_dataset(DatasetName.QEMU_CTX_CTRL))
+                or self.benchmark.get_dataset(DatasetName.QEMU_UMA_COUNTERS))
         pmc = self.benchmark.get_dataset(DatasetName.PMC)
         if pmc and not qemu:
             self._set_netperf_option("-g", "all")

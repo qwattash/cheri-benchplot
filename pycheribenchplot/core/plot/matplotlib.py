@@ -9,6 +9,7 @@ import pandas as pd
 from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
+from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 from matplotlib.transforms import Bbox
 from pandas.api.types import is_numeric_dtype
@@ -320,10 +321,13 @@ class DynamicCoordAllocator:
         # 4. transform back the offsets
         # transform() requires an Nx2 array, we ignore the other axis here
         xcol = sorted(self._fetch_col(df, x).unique())
+        assert len(xcol) > 0, "No seed coordinates for data points"
         f_xcol = to_f_coords(xcol)
-        f_space = np.diff(f_xcol)
-        assert len(f_space) >= 1, "need to handle the special case of only 1 coordinate"
-        f_space = np.append(f_space, f_space[-1])
+        if len(f_xcol) > 1:
+            f_space = np.diff(f_xcol)
+            f_space = np.append(f_space, f_space[-1])
+        else:
+            f_space = np.array([1])
         assert f_space.shape == f_xcol.shape
 
         # Allocate artist width, this is relevant for non-linear scales
@@ -439,6 +443,39 @@ class SimpleLineRenderer(ViewRenderer):
             for coord, color, label in zip(view.df[c], color_set, label_set):
                 line = cell.ax.axvline(coord, color=color, **style_args)
                 cell.legend.set_item(label, line)
+
+
+class LinePlotRenderer(ViewRenderer):
+    """
+    Render plot lines.
+
+    This supports plotting groups as different lines
+    """
+    def _resolve_legend(self, view) -> pd.DataFrame:
+        df = view.legend_info.resolve(view.df, view.legend_level)
+        return df
+
+    def render(self, view, cell):
+        legend_df = self._resolve_legend(view)
+        if view.line_group:
+            grouped = view.df.groupby(view.line_group)
+        else:
+            raise NotImplementedError("Need to special-case the legend handling")
+
+        for group_key, df in grouped:
+            df_with_legend = df.join(legend_df)
+            colors = df_with_legend["colors"]
+            labels = df_with_legend["labels"]
+            # Only one color/label per group allowed, can try to relax this but not needed
+            color = colors[0]
+            label = labels[0]
+
+            x = view.get_col(view.x, df)
+            for ycol in view.yleft:
+                y = view.get_col(ycol, df)
+                cell.ax.plot(x, y, color=color)
+                # Need to use a proxy artist due to matplotlib limitation
+                cell.legend.set_item(label, Line2D([], [], color=color))
 
 
 class BarRenderer(ViewRenderer):
@@ -764,6 +801,7 @@ class MplCellData(CellData):
             "hist": HistRenderer,
             "axline": SimpleLineRenderer,
             "arrow": ArrowPlotRenderer,
+            "line": LinePlotRenderer,
         }
         self.legend = Legend()
         self.figure = figure

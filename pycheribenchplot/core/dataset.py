@@ -26,7 +26,7 @@ class DatasetName(Enum):
     PROCSTAT_NETPERF = "procstat-netperf"
     QEMU_STATS_BB_HIST = "qemu-stats-bb"
     QEMU_STATS_CALL_HIST = "qemu-stats-call"
-    QEMU_CTX_CTRL = "qemu-ctx-tracks"
+    QEMU_UMA_COUNTERS = "qemu-glob-uma-counters"
     PIDMAP = "pidmap"
     VMSTAT_UMA_INFO = "vmstat-uma-info"
     VMSTAT_MALLOC = "vmstat-malloc"
@@ -54,6 +54,7 @@ class DatasetArtefact(Enum):
     PROCSTAT = auto()
     PIDMAP = auto()
     QEMU_STATS = auto()
+    QEMU_COUNTERS = auto()
     NETSTAT = auto()
     KERNEL_CSETBOUNDS_STATS = auto()
     KERNEL_STRUCT_STATS = auto()
@@ -852,7 +853,7 @@ def quantile_slice(df: pd.DataFrame,
     def handle_group(g):
         # Any column may be above
         cond = (g[columns] >= high_thresh).apply(np.any, axis=1)
-        sel = pd.Series(False, index=g.index)
+        sel = pd.DataFrame({"quantile_slice_select": False}, index=g.index)
         if cond.sum() > max_entries:
             cut = g[cond].sort_values(columns, ascending=False).index[max_entries:]
             cond.loc[cut] = False
@@ -864,7 +865,7 @@ def quantile_slice(df: pd.DataFrame,
     # complementary key matching the high value, this is necessary to maintain
     # alignment of the frame groups.
     sel = sel.groupby(level_complement, group_keys=True).transform(lambda g: g.any())
-    high_df = df[sel]
+    high_df = df[sel["quantile_slice_select"]]
     # Make sure we are still aligned
     assert check_multi_index_aligned(high_df, level)
     return high_df.copy()
