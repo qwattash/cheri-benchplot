@@ -62,11 +62,14 @@ class BenchmarkRunConfig(TemplateConfig):
     benchmark_dataset: Configuration for the dataset handler that runs the actual benchmark
     datasets: Additional datasets configuration. Each entry describes a dataset handler that
       is used to generate additional information about the benchmark and process it.
+    drop_iterations: Number of iterations to drop from the beginning. These are considered
+    unreliable as the benchmark is priming the system caches/buffers.
     """
     name: str
     iterations: int
     benchmark_dataset: BenchmarkDataSetConfig
     datasets: dict[str, BenchmarkDataSetConfig]
+    drop_iterations: int = 0
     desc: str = ""
 
 
@@ -598,9 +601,10 @@ class BenchmarkBase(TemplateConfigContext):
         """
         self._load_kernel_symbols()
         for dset in self.datasets.values():
-            self.logger.info("Loading %s data", dset.name)
+            self.logger.info("Loading %s data, dropping first %d iterations", dset.name, self.config.drop_iterations)
             for i in range(self.config.iterations):
-                dset.load_iteration(i)
+                if i >= self.config.drop_iterations:
+                    dset.load_iteration(i)
             dset.load()
 
     def pre_merge(self):

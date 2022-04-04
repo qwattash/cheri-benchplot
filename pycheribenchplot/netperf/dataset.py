@@ -16,8 +16,6 @@ from ..core.procstat import ProcstatDataset
 class NetperfRunConfig(TemplateConfig):
     # Path to netperf/netserver in the guest
     netperf_path: Path = path_field("opt/{cheri_target}/netperf/bin")
-    # Benchmark priming options
-    netperf_prime_options: list[str] = field(default_factory=list)
     # Actual benchmark options
     netperf_options: list[str] = field(default_factory=list)
     # Netserver options (used for both priming and the actual benchmark)
@@ -295,7 +293,6 @@ class NetperfData(CSVDataSetContainer):
             netserver_options = self.config.netserver_options
         self.netserver_task = self._script.gen_bg_cmd(netserver_cmd, netserver_options, env=self.run_env)
         self._script.gen_sleep(5)
-        self._script.gen_cmd(self.netperf_bin, self.config.netperf_prime_options, env=self.run_env)
 
     def gen_benchmark(self, iteration):
         super().gen_benchmark(iteration)
