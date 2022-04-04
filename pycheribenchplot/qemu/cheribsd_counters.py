@@ -93,3 +93,17 @@ class QEMUUMACountersDataset(QEMUGuestCountersDataset):
         """
         super().aggregate()
         # TODO
+
+
+class QEMUKernMemCountersDataset(QEMUGuestCountersDataset):
+    dataset_config_name = DatasetName.QEMU_VM_KERN_COUNTERS
+
+    def _get_kmem_counter_names(self):
+        names = ["kva", "kmem"]
+        return names
+
+    def pre_merge(self):
+        super().pre_merge()
+        # Only grab interesting counters
+        valid_counters = self.df.index.isin(self._get_kmem_counter_names(), level="name")
+        self.df = self.df.loc[valid_counters].copy()

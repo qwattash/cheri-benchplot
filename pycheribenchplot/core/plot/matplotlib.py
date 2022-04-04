@@ -751,9 +751,14 @@ class MplFigureManager(FigureManager):
         else:
             # Mosaic shape must be at leaset (N, 1)
             nrows, ncols = mosaic.shape
-            figure = plt.figure(constrained_layout=True, figsize=(10 * ncols, 7 * nrows))
+            if nrows < 1 or ncols < 1:
+                # Just produce an empty figure
+                figure = plt.figure(constrained_layout=True, figsize=(10, 7))
+                mosaic_axes = {}
+            else:
+                figure = plt.figure(constrained_layout=True, figsize=(10 * ncols, 7 * nrows))
+                mosaic_axes = figure.subplot_mosaic(mosaic.layout, empty_sentinel="BLANK")
             self.figures.append(figure)
-            mosaic_axes = figure.subplot_mosaic(mosaic.layout, empty_sentinel="BLANK")
             for name, subplot in mosaic.subplots.items():
                 ax = mosaic_axes[name]
                 subplot.cell = MplCellData(title=subplot.get_cell_title(), figure=figure, ax=ax)

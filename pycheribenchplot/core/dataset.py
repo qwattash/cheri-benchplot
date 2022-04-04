@@ -27,6 +27,7 @@ class DatasetName(Enum):
     QEMU_STATS_BB_HIST = "qemu-stats-bb"
     QEMU_STATS_CALL_HIST = "qemu-stats-call"
     QEMU_UMA_COUNTERS = "qemu-glob-uma-counters"
+    QEMU_VM_KERN_COUNTERS = "qemu-glob-vm-kern-counters"
     PIDMAP = "pidmap"
     VMSTAT_UMA_INFO = "vmstat-uma-info"
     VMSTAT_MALLOC = "vmstat-malloc"
