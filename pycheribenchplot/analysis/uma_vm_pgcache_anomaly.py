@@ -76,7 +76,7 @@ class UMABucketAllocAnomaly(BenchmarkPlot):
         return "UMA Bucket vm_pgcache anomaly"
 
     def get_plot_file(self):
-        return self.benchmark.manager.plot_output_path / "uma-bucket-vm-pgcache-anomaly"
+        return self.benchmark.get_plot_path() / "uma-bucket-vm-pgcache-anomaly"
 
 
 class UMABucketAffinityBase(BenchmarkSubPlot):
@@ -263,4 +263,4 @@ class UMABucketAnalysis(BenchmarkPlot):
         return "UMA Bucket analysis"
 
     def get_plot_file(self):
-        return self.benchmark.manager.plot_output_path / "uma-bucket-vm-pgcache-summary"
+        return self.benchmark.get_plot_path() / "uma-bucket-vm-pgcache-summary"

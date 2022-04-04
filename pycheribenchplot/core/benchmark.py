@@ -317,6 +317,8 @@ class BenchmarkBase(TemplateConfigContext):
         # Ensure that we have the main output directory
         self._result_path = self.manager.session_output_path / str(self.uuid)
         self._result_path.mkdir(parents=True, exist_ok=True)
+        # Ensure that we have the plot output directory
+        self.get_plot_path().mkdir(parents=True, exist_ok=True)
 
         self._configure_datasets()
         self.logger.info("Benchmark instance with UUID=%s", self.uuid)
@@ -400,6 +402,14 @@ class BenchmarkBase(TemplateConfigContext):
         of the benchmark.
         """
         return self._result_path
+
+    def get_plot_path(self):
+        """
+        Get base plot path for the current benchmark instance.
+        Every plot should use this path as the base path to generate plots.
+        """
+        group_name = self.config.name
+        return self.manager.plot_output_path / group_name
 
     def get_iter_output_path(self, iteration: int):
         """

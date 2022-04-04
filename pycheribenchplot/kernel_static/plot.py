@@ -421,7 +421,7 @@ class KernelStaticInfoPlot(BenchmarkPlot):
         return "Kernel compile-time stats"
 
     def get_plot_file(self):
-        return self.benchmark.manager.plot_output_path / "kernel-static-stats"
+        return self.benchmark.get_plot_path() / "kernel-static-stats"
 
 
 class KernelStructSizeLargeOverhead(KernelStructStatsPlot):
@@ -567,4 +567,4 @@ class KernelStaticInfoTables(BenchmarkTable):
         return "Kernel compile-time detailed stats"
 
     def get_plot_file(self):
-        return self.benchmark.manager.plot_output_path / "kernel-static-tables"
+        return self.benchmark.get_plot_path() / "kernel-static-tables"

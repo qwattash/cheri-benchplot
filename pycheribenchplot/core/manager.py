@@ -296,8 +296,9 @@ class BenchmarkManager(TemplateConfigContext):
         if len(aggregate_baseline) != len(self.config.benchmarks):
             self.logger.error("Number of benchmark variants does not match " + "number of runs marked as baseline")
             raise Exception("Missing baseline")
+        self.logger.debug("Benchmark baseline groups: %s", {k: b.uuid for k, b in aggregate_baseline.items()})
         self.logger.debug("Benchmark aggregation groups: %s",
-                          {k: map(lambda b: b.uuid, v)
+                          {k: list(map(lambda b: b.uuid, v))
                            for k, v in aggregate_groups.items()})
         # Load datasets concurrently
         loading_tasks = []

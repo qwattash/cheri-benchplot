@@ -78,7 +78,7 @@ class UMAQEMUCountersPlot(BenchmarkPlot):
         return "QEMU UMA counters"
 
     def get_plot_file(self):
-        return self.benchmark.manager.plot_output_path / "qemu-uma-counters"
+        return self.benchmark.get_plot_path() / "qemu-uma-counters"
 
 
 class KernMemQEMUCountersPlot(BenchmarkPlot):
@@ -110,4 +110,4 @@ class KernMemQEMUCountersPlot(BenchmarkPlot):
         return "QEMU kmem counters"
 
     def get_plot_file(self):
-        return self.benchmark.manager.plot_output_path / "qemu-vmkern-counters"
+        return self.benchmark.get_plot_path() / "qemu-vmkern-counters"

@@ -201,7 +201,7 @@ class VMStatTables(BenchmarkTable):
         return "VMStat Tables"
 
     def get_plot_file(self):
-        return self.benchmark.manager.plot_output_path / "vmstat_tables"
+        return self.benchmark.get_plot_path() / "vmstat_tables"
 
 
 class VMStatUMAMetricHist(BenchmarkSubPlot):
@@ -362,4 +362,4 @@ class VMStatDistribution(BenchmarkPlot):
         return "VMStat metrics distribution"
 
     def get_plot_file(self):
-        return self.benchmark.manager.plot_output_path / "vmstat-histograms"
+        return self.benchmark.get_plot_path() / "vmstat-histograms"
