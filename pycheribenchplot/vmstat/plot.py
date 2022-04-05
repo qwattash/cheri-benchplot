@@ -324,9 +324,10 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
         cell.yleft_config.label = ylabel
 
 
-class VMStatDistribution(BenchmarkPlot):
+class UMAStaticMetricsDistribution(BenchmarkPlot):
     """
-    Show vstat datasets distribution of interesting metrics
+    Static UMA metrics distributions. These only change with the underlying kernel,
+    or by manually tuning sysctls.
     """
     @classmethod
     def check_required_datasets(cls, dsets: list[DatasetName]):
@@ -338,17 +339,10 @@ class VMStatDistribution(BenchmarkPlot):
 
     def _make_subplots_mosaic(self):
         """
-        Make subplots mosaic as a single column.
+        Make subplots mosaic with 2 columns: Left is the raw metric delta, the right column is the normalized delta.
         """
         subplots = {}
         layout = []
-        uma_stats = self.get_dataset(DatasetName.VMSTAT_UMA)
-        for idx, metric in enumerate(uma_stats.data_columns()):
-            name = f"subplot-uma-stats-{idx}"
-            name_norm = name + "-N"
-            subplots[name] = VMStatUMAMetricHist(self, uma_stats, metric)
-            subplots[name_norm] = VMStatUMAMetricHist(self, uma_stats, metric, normalized=True)
-            layout.append([name, name_norm])
         uma_info = self.get_dataset(DatasetName.VMSTAT_UMA_INFO)
         for idx, metric in enumerate(uma_info.data_columns()):
             name = f"subplot-uma-info-{idx}"
@@ -359,7 +353,45 @@ class VMStatDistribution(BenchmarkPlot):
         return Mosaic(layout, subplots)
 
     def get_plot_name(self):
-        return "VMStat metrics distribution"
+        return "VMStat static UMA metrics distribution"
 
     def get_plot_file(self):
-        return self.benchmark.get_plot_path() / "vmstat-histograms"
+        return self.benchmark.get_plot_path() / "vmstat-uma-static-histograms"
+
+
+class UMADynamicMetricDistribution(BenchmarkPlot):
+    """
+    Dynamic UMA metrics distributions. These actually depend on the workload.
+    """
+    @classmethod
+    def check_required_datasets(cls, dsets: list[DatasetName]):
+        """
+        Check dataset list against qemu stats dataset names
+        """
+        required = set([DatasetName.VMSTAT_UMA])
+        return required.issubset(set(dsets))
+
+    def _make_subplots_mosaic(self):
+        """
+        Make subplots mosaic with 2 columns: Left is the raw metric delta, the right column is the normalized delta.
+        """
+        ignore_metrics = ["size"]
+        subplots = {}
+        layout = []
+        uma_stats = self.get_dataset(DatasetName.VMSTAT_UMA)
+        for idx, metric in enumerate(uma_stats.data_columns()):
+            if metric in ignore_metrics:
+                continue
+            name = f"subplot-uma-stats-{idx}"
+            name_norm = name + "-N"
+            subplots[name] = VMStatUMAMetricHist(self, uma_stats, metric)
+            subplots[name_norm] = VMStatUMAMetricHist(self, uma_stats, metric, normalized=True)
+            layout.append([name, name_norm])
+        return Mosaic(layout, subplots)
+
+    def get_plot_name(self):
+        return "VMStat dynamic UMA metrics distribution"
+
+    def get_plot_file(self):
+        return self.benchmark.get_plot_path() / "vmstat-uma-dynamic-histograms"
+
