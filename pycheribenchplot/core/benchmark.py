@@ -64,13 +64,23 @@ class BenchmarkRunConfig(TemplateConfig):
       is used to generate additional information about the benchmark and process it.
     drop_iterations: Number of iterations to drop from the beginning. These are considered
     unreliable as the benchmark is priming the system caches/buffers.
+    parameterize: Generate a parameterized benchmark using a range of values associated to a name.
+    The name is used to resolve names in template strings of benchmark commands.
+    parameters: Set of parameters assigned to a benchmark run, from the `parameterize` dictionary,
+    this is only valid for benchmark records and should not be used in the main configuration.
     """
     name: str
     iterations: int
     benchmark_dataset: BenchmarkDataSetConfig
     datasets: dict[str, BenchmarkDataSetConfig]
+    parameterize: dict[str, list[any]] = field(default_factory=dict)
+    parameters: dict[str, any] = field(default_factory=dict)
     drop_iterations: int = 0
     desc: str = ""
+
+    @property
+    def is_parameterized(self):
+        return len(self.parameterize) > 0
 
 
 @dataclass
@@ -286,13 +296,16 @@ class BenchmarkBase(TemplateConfigContext):
             self.uuid = run_id
         else:
             self.uuid = uuid.uuid4()
-        self.logger = new_logger(f"{config.name}:{instance_config.name}")
         self.manager = manager
         self.instance_manager = manager.instance_manager
         self.manager_config = manager.config
         self.instance_config = instance_config
         self.config = config
+        self.datasets = {}
 
+        self._bind_early_configs()
+
+        self.logger = new_logger(f"{self.config.name}:{self.instance_config.name}")
         # InstanceInfo of the instance we have allocated
         self._reserved_instance = None
         # Connection to the CheriBSD instance
@@ -307,8 +320,6 @@ class BenchmarkBase(TemplateConfigContext):
         # Dwarf information extraction helper
         self.dwarf_helper = DWARFHelper(self)
 
-        self._bind_early_configs()
-        self.datasets = {}
         self._collect_datasets()
         self._bind_configs()
 
@@ -342,6 +353,9 @@ class BenchmarkBase(TemplateConfigContext):
         self.register_template_subst(uuid=self.uuid,
                                      cheri_target=self.instance_config.cheri_target,
                                      session=self.manager.session)
+        if self.config.is_parameterized:
+            # Register the parameters for template substitution
+            self.register_template_subst(**self.config.parameters)
         self.instance_config = self.instance_config.bind(self)
         self.config = self.config.bind(self)
 

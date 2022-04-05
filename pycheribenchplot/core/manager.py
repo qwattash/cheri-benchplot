@@ -8,8 +8,8 @@ import multiprocessing
 import shutil
 import typing
 import uuid
-from collections import defaultdict
-from dataclasses import asdict, dataclass, field
+from collections import OrderedDict, defaultdict
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -293,9 +293,11 @@ class BenchmarkManager(TemplateConfigContext):
             else:
                 # Must belong to a group
                 aggregate_groups[record.run.name].append(bench)
-        if len(aggregate_baseline) != len(self.config.benchmarks):
-            self.logger.error("Number of benchmark variants does not match " + "number of runs marked as baseline")
-            raise Exception("Missing baseline")
+        # Check that every aggregate group has an associated baseline
+        for group_key in aggregate_groups.keys():
+            if group_key not in aggregate_baseline:
+                self.logger.error("Missing baseline instance for benchmark %s", group_key)
+                raise Exception("Missing baseline")
         self.logger.debug("Benchmark baseline groups: %s", {k: b.uuid for k, b in aggregate_baseline.items()})
         self.logger.debug("Benchmark aggregation groups: %s",
                           {k: list(map(lambda b: b.uuid, v))
@@ -345,11 +347,25 @@ class BenchmarkManager(TemplateConfigContext):
         self.session_output_path.mkdir(parents=True)
         self.logger.info("Start benchplot session %s", self.session)
         for conf in self.config.benchmarks:
-            self.logger.debug("Found benchmark %s", conf.name)
-            for inst_conf in self.config.instances:
-                bench = self.create_benchmark(conf, inst_conf)
-                bench.task = self.loop.create_task(bench.run())
-                self.queued_tasks.append(bench.task)
+            if conf.is_parameterized:
+                self.logger.debug("Found parameterized benchmark %s", conf.name)
+                params = OrderedDict(conf.parameterize)
+                combinations = []
+                for param_set in it.product(*params.values()):
+                    combinations.append(dict(zip(params.keys(), param_set)))
+                self.logger.debug("Parameter combinations: %s", combinations)
+                benchmark_group = []
+                for param_dict in combinations:
+                    benchmark_group.append(replace(conf, parameters=param_dict))
+            else:
+                self.logger.debug("Found benchmark %s", conf.name)
+                print(conf.parameterize)
+                benchmark_group = [conf]
+            for sub_conf in benchmark_group:
+                for inst_conf in self.config.instances:
+                    bench = self.create_benchmark(sub_conf, inst_conf)
+                    bench.task = self.loop.create_task(bench.run())
+                    self.queued_tasks.append(bench.task)
 
     def _handle_analysis_command(self, args: ap.Namespace):
         self._resolve_recorded_session(args.session)

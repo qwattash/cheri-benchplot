@@ -394,4 +394,3 @@ class UMADynamicMetricDistribution(BenchmarkPlot):
 
     def get_plot_file(self):
         return self.benchmark.get_plot_path() / "vmstat-uma-dynamic-histograms"
-
