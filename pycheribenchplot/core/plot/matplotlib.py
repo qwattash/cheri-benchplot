@@ -478,6 +478,36 @@ class LinePlotRenderer(ViewRenderer):
                 cell.legend.set_item(label, Line2D([], [], color=color))
 
 
+class ScatterPlotRenderer(ViewRenderer):
+    """
+    Render scatter plots.
+    """
+    def _resolve_legend(self, view) -> pd.DataFrame:
+        df = view.legend_info.resolve(view.df, view.legend_level)
+        return df
+
+    def render(self, view, cell):
+        legend_df = self._resolve_legend(view)
+        if view.group_by:
+            grouped = view.df.groupby(view.group_by)
+        else:
+            grouped = [(None, view.df)]
+
+        for group_key, df in grouped:
+            df_with_legend = df.join(legend_df)
+            colors = df_with_legend["colors"]
+            labels = df_with_legend["labels"]
+            # Only one color/label per group allowed, can try to relax this but not needed
+            color = colors[0]
+            label = labels[0]
+
+            x = view.get_col(view.x, df)
+            for ycol in view.yleft:
+                y = view.get_col(ycol, df)
+                patches = cell.ax.scatter(x, y, color=color, s=view.style.marker_width)
+                cell.legend.set_item(label, patches)
+
+
 class BarRenderer(ViewRenderer):
     """
     Render a bar plot.
@@ -807,6 +837,7 @@ class MplCellData(CellData):
             "axline": SimpleLineRenderer,
             "arrow": ArrowPlotRenderer,
             "line": LinePlotRenderer,
+            "scatter": ScatterPlotRenderer,
         }
         self.legend = Legend()
         self.figure = figure
@@ -824,7 +855,7 @@ class MplCellData(CellData):
         if cfg.ticks is not None:
             ax.set_xticks(cfg.ticks)
         if cfg.tick_labels is not None:
-            ax.set_xticklabels(cfg.tick_labels, rotation=cfg.tick_rotation)
+            ax.set_xticklabels(cfg.tick_labels, rotation=cfg.tick_rotation, fontsize=cfg.tick_font_size)
 
     def _config_y(self, cfg, ax):
         ax.set_ylabel(cfg.label)
@@ -836,7 +867,7 @@ class MplCellData(CellData):
         if cfg.ticks is not None:
             ax.set_yticks(cfg.ticks)
         if cfg.tick_labels is not None:
-            ax.set_yticklabels(cfg.tick_labels, rotation=cfg.tick_rotation)
+            ax.set_yticklabels(cfg.tick_labels, rotation=cfg.tick_rotation, fontsize=cfg.tick_font_size)
 
     def _pad_y_axis(self, ax, padding):
         ymin, ymax = ax.get_ylim()

@@ -385,6 +385,7 @@ class Style:
     """
     line_style: str = "solid"
     line_width: int = None
+    marker_width: float = 1.0
 
 
 @dataclass
@@ -462,6 +463,19 @@ class LinePlotDataView(XYPlotDataView):
         # Normalize lists
         if isinstance(self.line_group, str):
             self.line_group = [self.line_group]
+
+
+@dataclass
+class ScatterPlotDataView(XYPlotDataView):
+    group_by: list[str] = None
+    style: Style = field(default_factory=Style)
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.key = "scatter"
+        # Normalize lists
+        if isinstance(self.group_by, str):
+            self.group_by = [self.group_by]
 
 
 @dataclass
@@ -558,6 +572,7 @@ class AxisConfig:
     ticks: list[float] = None
     tick_labels: list[str] = None
     tick_rotation: int = None
+    tick_font_size: float | str = None
     scale: Scale = None
     padding: float = 0.02
     origin_line: bool = True
