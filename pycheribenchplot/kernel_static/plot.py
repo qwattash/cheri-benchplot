@@ -4,7 +4,7 @@ import pandas as pd
 from ..core.dataset import (DatasetName, assign_sorted_coord, check_multi_index_aligned, filter_aggregate,
                             pivot_multi_index_level, quantile_slice, stacked_histogram, subset_xs)
 from ..core.plot import (AALineDataView, BarPlotDataView, BenchmarkPlot, BenchmarkSubPlot, BenchmarkTable,
-                         HistPlotDataView, LegendInfo, Scale, Symbols, TableDataView)
+                         HistPlotDataView, LegendInfo, Scale, ScatterPlotDataView, Symbols, TableDataView)
 
 
 class SetBoundsDistribution(BenchmarkSubPlot):
@@ -135,10 +135,20 @@ class KernelStructStatsPlot(BenchmarkSubPlot):
         self.struct_stat = self.get_dataset(DatasetName.KERNEL_STRUCT_STATS)
         assert self.struct_stat is not None, "Can not find required dataset"
 
+    def get_df_no_baseline(self):
+        # Omit baseline as we are looking at deltas
+        sel = (self.struct_stat.merged_df.index.get_level_values("dataset_id") != self.benchmark.uuid)
+        return self.struct_stat.merged_df[sel]
+
+    def get_df(self):
+        return self.struct_stat.merged_df
+
+    def get_agg_df(self):
+        return self.struct_stat.agg_df
+
     def get_legend_info(self):
         legend = self.build_legend_by_dataset()
-        legend.remap_colors("Paired")
-        return legend
+        return legend.assign_colors_hsv("dataset_id", h=(0.1, 0.9), s=(0.4, 0.9), v=(0.6, 1))
 
 
 class KernelStructSizeHist(KernelStructStatsPlot):
@@ -153,12 +163,6 @@ class KernelStructSizeHist(KernelStructStatsPlot):
 
     def get_hist_column(self):
         raise NotImplementedError("Must override")
-
-    def get_df(self):
-        return self.struct_stat.merged_df
-
-    def get_agg_df(self):
-        return self.struct_stat.agg_df
 
     def get_df_selector(self):
         return None
@@ -284,7 +288,52 @@ class KernelStructSizeRelOverhead(KernelStructSizeHist):
         cell.yleft_config.scale = Scale("log", base=10)
 
 
-class KernelStructPaddingHighOverhead(KernelStructStatsPlot):
+class KernelStructSizeCachelineFixableOverhead(KernelStructStatsPlot):
+    """
+    Show kernel structure size overhead in terms of number of cache lines.
+    We only show structures for which the size overhead causes the structure to grow by
+    more than one cache line and for which removing the padding would fix the issue.
+    """
+    def get_cell_title(self):
+        return "Fixable overhead larger than 64-byte cache lines"
+
+    def generate(self, fm, cell):
+        all_df = self.get_df()
+        baseline_df = all_df.xs(self.benchmark.uuid, level="dataset_id").copy()
+        other_df = self.get_df_no_baseline().copy()
+        cacheline_size = 64
+        dsize_col = ("size", "delta_baseline")
+        size_col = ("size", "sample")
+
+        def count_cachelines(v):
+            return np.ceil(float(v) / cacheline_size)
+
+        baseline_df["size_ncachelines"] = baseline_df[size_col].map(count_cachelines)
+        other_df["size_ncachelines"] = other_df[size_col].map(count_cachelines)
+        other_df["size_fixup_ncachelines"] = (other_df[size_col] -
+                                              other_df[("total_pad", "delta_baseline")]).map(count_cachelines)
+        _, aligned_baseline = other_df.align(baseline_df)
+        aligned_baseline = aligned_baseline.reorder_levels(other_df.index.names).sort_index()
+        changed_cachelines = other_df["size_ncachelines"] > aligned_baseline["size_ncachelines"]
+        fixable_cachelines = other_df["size_fixup_ncachelines"] == aligned_baseline["size_ncachelines"]
+        sel = (changed_cachelines & fixable_cachelines)
+        # We need to keep the frame aligned when selecting, otherwise we will shuffle the bar data
+        view_df = filter_aggregate(other_df, sel, by=["dataset_id"], how="any").copy()
+        view_df["x"] = assign_sorted_coord(view_df, sort=[dsize_col], group_by=["dataset_id"], ascending=False)
+
+        view = BarPlotDataView(view_df, x="x", yleft=[dsize_col], bar_group="dataset_id")
+        view.legend_info = self.get_legend_info()
+        view.legend_level = ["dataset_id"]
+        cell.add_view(view)
+
+        cell.x_config.label = "struct name"
+        cell.x_config.ticks = view_df["x"].unique()
+        cell.x_config.tick_labels = view_df.index.get_level_values("name").unique()
+        cell.x_config.tick_rotation = 90
+        cell.yleft_config.label = Symbols.DELTA + "size (bytes)"
+
+
+class KernelStructHighOverhead(KernelStructStatsPlot):
     def get_df(self):
         # Omit baseline as we are looking at deltas
         sel = (self.struct_stat.merged_df.index.get_level_values("dataset_id") != self.benchmark.uuid)
@@ -328,26 +377,49 @@ class KernelStructPaddingHighOverhead(KernelStructStatsPlot):
         cell.x_config.ticks = high_df["x"].unique()
         cell.x_config.tick_labels = high_df.index.get_level_values("name").unique()
         cell.x_config.tick_rotation = 90
-        cell.yleft_config.label = Symbols.DELTA + "padding (bytes)"
 
 
-class KernelStructPaddingOverhead(KernelStructPaddingHighOverhead):
+class KernelStructPaddingOverhead(KernelStructHighOverhead):
     columns = [("total_pad", "delta_baseline")]
     columns_desc = [Symbols.DELTA + "padding"]
 
     def get_cell_title(self):
         return "Top kernel struct padding overhead"
 
+    def generate(self, fm, cell):
+        super().generate(fm, cell)
+        cell.yleft_config.label = Symbols.DELTA + "padding (bytes)"
 
-class KernelStructNestedPaddingOverhead(KernelStructPaddingHighOverhead):
+
+class KernelStructNestedPaddingOverhead(KernelStructHighOverhead):
     columns = [("nested_total_pad", "delta_baseline")]
     columns_desc = [Symbols.DELTA + "nested padding"]
 
     def get_cell_title(self):
         return "Top kernel cumulative struct padding overhead"
 
+    def generate(self, fm, cell):
+        super().generate(fm, cell)
+        cell.yleft_config.label = Symbols.DELTA + "padding (bytes)"
 
-class KernelStructPaddingOverheadTable(KernelStructPaddingHighOverhead):
+
+class KernelStructNestedPackedSizeOverhead(KernelStructHighOverhead):
+    """
+    Measure the size difference in structures, considering only the member size, as if the structure
+    was packed.
+    """
+    columns = [("nested_packed_size", "delta_baseline")]
+    columns_desc = [Symbols.DELTA + "nested packed size"]
+
+    def get_cell_title(self):
+        return "Kernel struct packed size delta"
+
+    def generate(self, fm, cell):
+        super().generate(fm, cell)
+        cell.yleft_config.label = Symbols.DELTA + "packed size (bytes)"
+
+
+class KernelStructPaddingOverheadTable(KernelStructHighOverhead):
     columns = [("total_pad", "delta_baseline"), ("nested_total_pad", "delta_baseline")]
     columns_desc = [Symbols.DELTA + "padding", Symbols.DELTA + "nested padding"]
 
@@ -387,17 +459,51 @@ class KernelStructPointerDensity(KernelStructStatsPlot):
         cell.yleft_config.label = "# structs"
 
 
-class KernelStructPackedSizeDelta(KernelStructStatsPlot):
+class KernelPaddingDistribution(KernelStructStatsPlot):
     """
-    Measure the size difference in structures, considering only the member size, as if the structure
-    was packed.
-    Note that nested structure padding is unchanged, perhaps it should be removed as well.
+    Histogram showing the structure padding distribution.
     """
     def get_cell_title(self):
-        return "Kernel struct packed size delta"
+        return "Kernel struct padding distribution"
 
     def generate(self, fm, cell):
         df = self.struct_stat.merged_df.copy()
+        pad_col = ("total_pad", "sample")
+        max_bucket = int(np.log2(df[pad_col].max())) + 1
+        buckets = [2**i for i in range(max_bucket)]
+
+        view = HistPlotDataView(df, x=pad_col, buckets=buckets, bucket_group="dataset_id")
+        view.legend_info = self.get_legend_info()
+        view.legend_level = ["dataset_id"]
+        cell.add_view(view)
+
+        cell.x_config.label = "padding (bytes)"
+        cell.x_config.ticks = buckets
+        cell.x_config.scale = Scale("log", base=2)
+        cell.yleft_config.label = "# structs"
+
+
+class KernelPaddingScatter(KernelStructStatsPlot):
+    """
+    Scatter plot showing the structure padding delta, without showing the structure names
+    to better display the distribution of structure sizes.
+    """
+    def get_cell_title(self):
+        return "Kernel struct padding scatter distribution"
+
+    def generate(self, fm, cell):
+        df = self.struct_stat.merged_df.copy()
+        df["x"] = df.groupby("dataset_id").cumcount()
+        pad_col = ("total_pad", "delta_baseline")
+
+        view = ScatterPlotDataView(df, x="x", yleft=pad_col, group_by="dataset_id")
+        view.legend_info = self.get_legend_info()
+        view.legend_level = ["dataset_id"]
+        cell.add_view(view)
+        cell.x_config.label = "struct"
+        cell.x_config.ticks = [df["x"].min(), df["x"].max()]
+        cell.x_config.tick_labels = []
+        cell.yleft_config.label = Symbols.DELTA + "padding (bytes)"
 
 
 class KernelStaticInfoPlot(BenchmarkPlot):
@@ -412,9 +518,13 @@ class KernelStaticInfoPlot(BenchmarkPlot):
         KernelStructSizeDistribution,
         KernelStructSizeOverhead,
         KernelStructSizeRelOverhead,
+        KernelStructSizeCachelineFixableOverhead,
         KernelStructPaddingOverhead,
         KernelStructNestedPaddingOverhead,
+        KernelStructNestedPackedSizeOverhead,
         KernelStructPointerDensity,
+        KernelPaddingDistribution,
+        KernelPaddingScatter,
     ]
 
     def get_plot_name(self):
