@@ -609,14 +609,6 @@ def dataframe_debug():
         yield
 
 
-def col2stat(prefix, colnames):
-    """
-    Map base column namens to the respective statistic column with
-    the given prefix
-    """
-    return list(map(lambda c: "{}_{}".format(prefix, c), colnames))
-
-
 def check_multi_index_aligned(df: pd.DataFrame, level: str | list[str]):
     """
     Check that the given index level(s) are aligned.
