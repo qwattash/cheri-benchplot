@@ -79,6 +79,8 @@ class Config(DataClassJsonMixin):
 
     def __post_init__(self):
         for f in fields(self):
+            if not f.init:
+                continue
             # Check for existence as this will cause issues down the line
             assert hasattr(self, f.name), f"Missing field {f.name}, use a default value"
             origin = typing.get_origin(f.type)
@@ -170,6 +172,8 @@ class TemplateConfig(Config):
         """
         changes = {}
         for f in fields(self):
+            if not f.init:
+                continue
             replaced = self.bind_field(context, f, getattr(self, f.name))
             if replaced:
                 changes[f.name] = replaced

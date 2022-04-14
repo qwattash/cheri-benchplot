@@ -37,9 +37,18 @@ class BenchplotUserConfig(Config):
     build_path: Path = path_field("~/cheri/build")
     src_path: Path = path_field("~/cheri")
     perfetto_path: Path = path_field("~/cheri/cheri-perfetto/build")
-    cheribuild_path: Path = path_field("~/cheri/cheribuild/cheribuild.py")
-    cheribsd_path: Path = path_field("~/cheri/cheribsd")
-    qemu_path: Path = path_field("~/cheri/qemu")
+    cheribuild_path: Path = field(init=False, default=None)
+    cheribsd_path: Path = field(init=False, default=None)
+    qemu_path: Path = field(init=False, default=None)
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.sdk_path = self.sdk_path.expanduser()
+        self.build_path = self.build_path.expanduser()
+        self.src_path = self.src_path.expanduser()
+        self.cheribuild_path = self.src_path / "cheribuild"
+        self.cheribsd_path = self.src_path / "cheribsd"
+        self.qemu_path = self.src_path / "qemu"
 
 
 @dataclass

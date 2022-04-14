@@ -22,10 +22,7 @@ class InstanceManagerError(Exception):
 
 class InstancePlatform(Enum):
     QEMU = "qemu"
-    FLUTE = "flute"
-    TOOOBA = "toooba"
-    MORELLO_FPGA = "morello"
-    FPGA = "fpga"
+    VCU118 = "vcu118"
 
     def __str__(self):
         return self.value
@@ -72,12 +69,16 @@ class PlatformOptions(Config):
     This is internally used during benchmark dataset collection to
     set options for the instance that is to be run.
     """
+    # Number of cores in the system
+    cores: int = 1
     # The trace file used by default unless one of the datasets overrides it
     qemu_trace_file: Path = path_field("/tmp/qemu.pb")
     # Run qemu with tracing enabled
     qemu_trace: bool = False
     # Trace categories to enable for qemu-perfetto
     qemu_trace_categories: set[str] = field(default_factory=set)
+    # VCU118 bios
+    vcu118_bios: Path = path_field("/must/be/set")
 
 
 @dataclass
@@ -230,6 +231,11 @@ class Instance(ABC):
         self.status_update_event = aio.Event()
         self.status = InstanceStatus.INIT
 
+        # output reader tasks
+        self._io_tasks = []
+        # Events used to wait on instance output
+        self._io_loop_observers = []
+
     def set_status(self, next_status):
         self.logger.debug("STATUS %s -> %s", self.status, next_status)
         self.status = next_status
@@ -366,17 +372,65 @@ class Instance(ABC):
             self.set_status(InstanceStatus.DEAD)
             self.logger.debug("Exiting benchmark instance main loop")
 
+    def _attach_io_observers(self, proc_task):
+        stdout_task = self.event_loop.create_task(self._stdout_loop(proc_task))
+        stderr_task = self.event_loop.create_task(self._stderr_loop(proc_task))
+        self._io_tasks.append(stdout_task)
+        self._io_tasks.append(stderr_task)
+
+    async def _stdout_loop(self, proc_task):
+        while not proc_task.stdout.at_eof():
+            raw_out = await proc_task.stdout.readline()
+            if not raw_out:
+                continue
+            out = raw_out.decode("ascii")
+            if self.manager_config.verbose:
+                self.logger.debug(out.rstrip())
+            for evt, matcher in self._io_loop_observers:
+                if matcher(out, False):
+                    evt.set()
+        assert proc_task.returncode is not None
+        raise InstanceManagerError("cheribuild died")
+
+    async def _stderr_loop(self, proc_task):
+        while not proc_task.stderr.at_eof():
+            raw_out = await proc_task.stderr.readline()
+            if not raw_out:
+                continue
+            out = raw_out.decode("ascii")
+            if self.manager_config.verbose:
+                self.logger.warning(out.rstrip())
+            for evt, matcher in self._io_loop_observers:
+                if matcher(out, True):
+                    evt.set()
+        assert proc_task.returncode is not None
+        raise InstanceManagerError("cheribuild died")
+
+    async def _wait_io(self, matcher: typing.Callable[[str, bool], bool]):
+        """Wait for matching I/O from cheribuild on stdout or stderr"""
+        event = aio.Event()
+        self._io_loop_observers.append((event, matcher))
+        waiter = self.event_loop.create_task(event.wait())
+        try:
+            done, pending = await aio.wait([waiter, *self._io_tasks], return_when=aio.FIRST_COMPLETED)
+            self._io_loop_observers.remove((event, matcher))
+            errors = [t.exception() for t in done if t.exception() is not None]
+            if errors:
+                self.logger.error("Errors occurred while waiting for instance I/O: %s", errors)
+                raise errors[0]
+        finally:
+            # Mop up the waiter task
+            if not waiter.done() and not waiter.cancelled():
+                waiter.cancel()
+                await waiter
+
 
 class CheribuildInstance(Instance):
     def __init__(self, inst_manager: "InstanceManager", config: InstanceConfig):
         super().__init__(inst_manager, config)
-        self.cheribuild = self.manager_config.cheribuild_path.expanduser()
+        self.cheribuild = self.manager_config.cheribuild_path / "cheribuild.py"
         # The cheribuild process task
         self._cheribuild_task = None
-        # cheribuild output reader tasks
-        self._io_tasks = []
-        # Events used to wait on cheribuild output
-        self._io_loop_observers = []
 
     def _cheribuild_target(self, prefix):
         return f"{prefix}-{self.config.cheri_target}"
@@ -397,52 +451,6 @@ class CheribuildInstance(Instance):
         info = super().get_info()
         info.ssh_host = "localhost"
         return info
-
-    async def _stdout_loop(self):
-        while not self._cheribuild_task.stdout.at_eof():
-            raw_out = await self._cheribuild_task.stdout.readline()
-            if not raw_out:
-                continue
-            out = raw_out.decode("ascii")
-            if self.manager_config.verbose:
-                self.logger.debug(out.rstrip())
-            for evt, matcher in self._io_loop_observers:
-                if matcher(out, False):
-                    evt.set()
-        assert self._cheribuild_task.returncode is not None
-        raise InstanceManagerError("cheribuild died")
-
-    async def _stderr_loop(self):
-        while not self._cheribuild_task.stderr.at_eof():
-            raw_out = await self._cheribuild_task.stderr.readline()
-            if not raw_out:
-                continue
-            out = raw_out.decode("ascii")
-            if self.manager_config.verbose:
-                self.logger.warning(out.rstrip())
-            for evt, matcher in self._io_loop_observers:
-                if matcher(out, True):
-                    evt.set()
-        assert self._cheribuild_task.returncode is not None
-        raise InstanceManagerError("cheribuild died")
-
-    async def _wait_io(self, matcher: typing.Callable[[str, bool], bool]):
-        """Wait for matching I/O from cheribuild on stdout or stderr"""
-        event = aio.Event()
-        self._io_loop_observers.append((event, matcher))
-        waiter = self.event_loop.create_task(event.wait())
-        try:
-            done, pending = await aio.wait([waiter, *self._io_tasks], return_when=aio.FIRST_COMPLETED)
-            self._io_loop_observers.remove((event, matcher))
-            errors = [t.exception() for t in done if t.exception() is not None]
-            if errors:
-                self.logger.error("Errors occurred while waiting for instance I/O: %s", errors)
-                raise errors[0]
-        finally:
-            # Mop up the waiter task
-            if not waiter.done() and not waiter.cancelled():
-                waiter.cancel()
-                await waiter
 
     async def _boot(self):
         run_cmd = [self._cheribuild_target("run"), "--skip-update"]
@@ -481,8 +489,7 @@ class CheribuildInstance(Instance):
 
         self.logger.debug("Spawned cheribuild pid=%d pgid=%d", self._cheribuild_task.pid,
                           os.getpgid(self._cheribuild_task.pid))
-        self._io_tasks.append(self.event_loop.create_task(self._stdout_loop()))
-        self._io_tasks.append(self.event_loop.create_task(self._stderr_loop()))
+        self._attach_io_observers(self._cheribuild_task)
         # Now wait for the boot to complete and start sshd
         sshd_pattern = re.compile(r"Starting sshd\.")
         await self._wait_io(lambda out, is_stderr: sshd_pattern.match(out) if not is_stderr else False)
@@ -510,6 +517,85 @@ class CheribuildInstance(Instance):
         self._ssh_ctrl_conn = None
 
 
+class VCU118Instance(Instance):
+    """
+    Runner for VCU 118 boards, using the vcu118-run script in cheribuild.
+    """
+    def __init__(self, inst_manager: "InstanceManager", config: InstanceConfig):
+        super().__init__(inst_manager, config)
+        self.runner_script = self.manager_config.cheribuild_path / "vcu118-run.py"
+        if inst_manager.manager_config.concurrent_instances != 1:
+            self.logger.error("VCU118 MUST use concurrent_instances = 1")
+            raise InstanceManagerError("Too many concurrent instances")
+
+    def _get_fpga_bios(self):
+        return self.config.platform_options.vcu118_bios
+
+    def _get_fpga_kernel(self):
+        sdk = self.manager_config.sdk_path
+        kernel = sdk / f"kernel-{self.config.cheri_target}.{self.config.kernel}"
+        assert kernel.exists(), f"Missing kernel {kernel}"
+        return kernel
+
+    def _get_fpga_gdb(self):
+        gdb = self.manager_config.sdk_path / "sdk" / "bin" / "gdb"
+        assert gdb.exists()
+        return gdb
+
+    def _get_fpga_cores(self):
+        return str(self.config.platform_options.cores)
+
+    def _get_fpga_pubkey(self):
+        ssh_privkey = self.manager_config.ssh_key
+        ssh_pubkey = ssh_privkey.with_suffix(".pub")
+        with open(ssh_pubkey, "r") as fd:
+            pubkey_str = fd.read()
+        return pubkey_str
+
+    async def _boot(self):
+        # Assume that the FPGA image has been initialized already.
+        # vcu118-run --bitfile design.bit --ltxfile design.ltx --bios bbl-gfe-riscv64-purecap --kernel kernel --gdb gdb --openocd /usr/bin/openocd --num-cores N --benchmark-config
+        run_cmd = [
+            "--bios",
+            self._get_fpga_bios(), "--kernel",
+            self._get_fpga_kernel(), "--gdb",
+            self._get_fpga_gdb(), "--openocd", "/usr/bin/openocd", "--num-cores",
+            self._get_fpga_cores(), "--benchmark-config"
+        ]
+        run_cmd += ["--test-command='ifconfig xae0 10.88.88.2 netmask 255.255.255.0 up'"]
+        run_cmd += ["--test-command='mkdir -p /root/.ssh'"]
+        pubkey = self._get_fpga_pubkey()
+        run_cmd += [f"--test-command='printf \'%s\' \'{pubkey}\' > /root/.ssh/authorized_keys'"]
+        run_cmd += ["--test-command='echo Instance startup done'"]
+        self.logger.debug("%s %s", self.runner_script, run_cmd)
+        self._run_task = await aio.create_subprocess_exec(self.runner_script,
+                                                          *run_cmd,
+                                                          stdin=aio.subprocess.PIPE,
+                                                          stdout=aio.subprocess.PIPE,
+                                                          stderr=aio.subprocess.PIPE,
+                                                          start_new_session=True)
+        self.logger.debug("Spawned vcu118 runner pid=%d pgid=%d", self._run_task.pid, os.getpgid(self._run_task.pid))
+        self._attach_io_observers(self._run_task)
+        # Now wait for boot to reach login
+        wait_pattern = re.compile(r"Instance startup done")
+        await self._wait_io(lambda out, is_stderr: wait_pattern.match(out) if not is_stderr else False)
+        # give some time to settle
+        await aio.sleep(2)
+
+    async def _shutdown(self):
+        if self._ssh_ctrl_conn:
+            await self._run_cmd("poweroff")
+            self._ssh_ctrl_conn.close()
+            await self._run_task.wait()
+        elif self._run_task and self._run_task.returncode is None:
+            self.logger.debug("Sending SIGTERM to vcu118 runner")
+            os.killpg(os.getpgid(self._run_task, signal.SIGTERM))
+        if len(self._io_tasks):
+            await aio.gather(*self._io_tasks, return_exceptions=True)
+        self._run_task = None
+        self._ssh_ctrl_conn = None
+
+
 class InstanceManager:
     """
     Helper object used to manage the lifetime of instances we run things on
@@ -528,9 +614,8 @@ class InstanceManager:
     def _create_instance(self, config: InstanceConfig):
         if config.platform == InstancePlatform.QEMU:
             instance = CheribuildInstance(self, config)
-        elif config.platform == InstancePlatform.FPGA:
-            self.logger.error("Not yet implemented")
-            raise InstanceManagerError("Not yet implemented")
+        elif config.platform == InstancePlatform.VCU118:
+            instance = VCU118Instance(self, config)
         else:
             self.logger.error(f"Unknown instance platform {config.platform}")
             raise InstanceManagerError("Unknown instance platform")
@@ -587,4 +672,10 @@ class InstanceManager:
         for instance in self._active_instances.values():
             instance.kill()
         await aio.gather(*[i.task for i in self._active_instances.values()], return_exceptions=True)
+        queued = []
+        while not self._queued_instances.empty():
+            _, instance = self._queued_instances.get_nowait()
+            instance.kill()
+            queued.append(instance)
+        await aio.gather(*[i.task for i in queued], return_exceptions=True)
         self.logger.debug("Instances killed successfully")
