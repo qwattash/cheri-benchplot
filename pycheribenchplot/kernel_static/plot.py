@@ -87,9 +87,13 @@ class KernelBoundsDistributionByKind(SetBoundsDistribution):
 
     def get_kind_legend_info(self):
         df = self.get_stats_df()
-        kinds = df["kind"].unique()
-        index = pd.Index(kinds, name="kind")
-        return LegendInfo(index, cmap_name="Paired", labels=[k.name for k in kinds])
+        kind = df["kind"].unique()
+        dsid = df.index.unique("dataset_id")
+        index = pd.MultiIndex.from_product([dsid, kind], names=["dataset_id", "kind"])
+        legend_df = pd.DataFrame(index=index)
+        legend_df["labels"] = np.array(map(lambda k: k.name, kind))
+        legend_df["colors"] = LegendInfo.gen_colors(legend_df, "Paired", groupby="kind")
+        return LegendInfo(legend_df)
 
     def generate(self, fm, cell):
         """
@@ -112,7 +116,6 @@ class KernelBoundsDistributionByKind(SetBoundsDistribution):
 
         # Build histograms for each dataset
         view.legend_info = self.get_kind_legend_info()
-        view.legend_level = ["kind"]
         cell.x_config.ticks = buckets
         cell.x_config.label = "Bounds size (bytes)"
         cell.x_config.scale = Scale("log", base=2)
