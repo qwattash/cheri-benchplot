@@ -7,8 +7,8 @@ class NetperfSanityCheck(BenchmarkAnalysis):
     Sanity check for netperf stats
     """
     @classmethod
-    def check_required_datasets(cls, dsets):
-        return DatasetName.NETPERF_DATA in set(dsets)
+    def check_enabled(cls, datasets, config):
+        return DatasetName.NETPERF_DATA in datasets
 
     def process_datasets(self):
         self.logger.info("Verify integrity of netperf datasets")

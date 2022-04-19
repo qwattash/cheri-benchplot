@@ -54,12 +54,9 @@ class UMAQEMUCountersPlot(BenchmarkPlot):
     Show vstat datasets distribution of interesting metrics
     """
     @classmethod
-    def check_required_datasets(cls, dsets: list[DatasetName]):
-        """
-        Check dataset list against qemu stats dataset names
-        """
-        required = set([DatasetName.QEMU_UMA_COUNTERS, DatasetName.VMSTAT_UMA_INFO])
-        return required.issubset(set(dsets))
+    def check_enabled(cls, datasets, config):
+        required = {DatasetName.QEMU_UMA_COUNTERS, DatasetName.VMSTAT_UMA_INFO}
+        return required.issubset(datasets)
 
     def _make_subplots_mosaic(self):
         subplots = {}
@@ -86,12 +83,14 @@ class KernMemQEMUCountersPlot(BenchmarkPlot):
     Show vstat datasets distribution of interesting metrics
     """
     @classmethod
-    def check_required_datasets(cls, dsets: list[DatasetName]):
+    def check_enabled(cls, datasets, config):
         """
         Check dataset list against qemu stats dataset names
         """
-        required = set([DatasetName.QEMU_VM_KERN_COUNTERS])
-        return required.issubset(set(dsets))
+        required = {
+            DatasetName.QEMU_VM_KERN_COUNTERS,
+        }
+        return required.issubset(datasets)
 
     def _make_subplots_mosaic(self):
         subplots = {}

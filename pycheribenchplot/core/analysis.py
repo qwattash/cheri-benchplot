@@ -33,12 +33,9 @@ class BenchmarkAnalysis(metaclass=BenchmarkAnalysisRegistry):
     This supports plotting and other forms of dataset manipulation by specialization.
     Note that the dataframe manipulation logic may be shared between plot analysis and other
     presentation methods.
-    When running the analysis step, we gather the analysis classes we can run based
-    on the dataset dependencies they advertise.
     """
     @classmethod
-    def check_required_datasets(cls, dsets: list[DatasetName]):
-        """Check whether this analysis step can run"""
+    def check_enabled(cls, datasets: set[DatasetName], config: AnalysisConfig):
         return False
 
     def __init__(self, benchmark: "BenchmarkBase", **kwargs):

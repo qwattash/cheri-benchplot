@@ -669,8 +669,9 @@ class BenchmarkBase(TemplateConfigContext):
         """
         self.logger.debug("Analise %s", self.config.name)
         analysers = []
+        datasets = set(self.datasets.keys())
         for handler_class in BenchmarkAnalysisRegistry.analysis_steps:
-            if handler_class.check_required_datasets(self.datasets.keys()):
+            if handler_class.check_enabled(datasets, self.manager.analysis_config):
                 analysers.append(handler_class(self))
         self.logger.debug("Resolved analysys steps %s", [str(a) for a in analysers])
         for handler in analysers:

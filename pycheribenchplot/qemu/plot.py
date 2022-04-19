@@ -133,12 +133,10 @@ class QEMUTables(BenchmarkTable):
     ]
 
     @classmethod
-    def check_required_datasets(cls, dsets: list[DatasetName]):
-        """
-        Check dataset list against qemu stats dataset names
-        """
-        required = set([DatasetName.QEMU_STATS_BB_HIST, DatasetName.QEMU_STATS_CALL_HIST])
-        return required.issubset(set(dsets))
+    def check_enabled(cls, datasets, config):
+        """Check dataset list against qemu stats dataset names"""
+        required = {DatasetName.QEMU_STATS_BB_HIST, DatasetName.QEMU_STATS_CALL_HIST}
+        return required.issubset(datasets)
 
     def _make_subplots_mosaic(self):
         """

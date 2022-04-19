@@ -330,12 +330,9 @@ class UMAStaticMetricsDistribution(BenchmarkPlot):
     or by manually tuning sysctls.
     """
     @classmethod
-    def check_required_datasets(cls, dsets: list[DatasetName]):
-        """
-        Check dataset list against qemu stats dataset names
-        """
-        required = set([DatasetName.VMSTAT_UMA, DatasetName.VMSTAT_UMA_INFO])
-        return required.issubset(set(dsets))
+    def check_enabled(cls, datasets, config):
+        required = {DatasetName.VMSTAT_UMA, DatasetName.VMSTAT_UMA_INFO}
+        return required.issubset(datasets)
 
     def _make_subplots_mosaic(self):
         """
@@ -364,12 +361,11 @@ class UMADynamicMetricDistribution(BenchmarkPlot):
     Dynamic UMA metrics distributions. These actually depend on the workload.
     """
     @classmethod
-    def check_required_datasets(cls, dsets: list[DatasetName]):
-        """
-        Check dataset list against qemu stats dataset names
-        """
-        required = set([DatasetName.VMSTAT_UMA])
-        return required.issubset(set(dsets))
+    def check_enabled(cls, datasets, config):
+        required = {
+            DatasetName.VMSTAT_UMA,
+        }
+        return required.issubset(datasets)
 
     def _make_subplots_mosaic(self):
         """

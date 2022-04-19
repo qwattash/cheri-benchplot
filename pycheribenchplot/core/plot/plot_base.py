@@ -44,14 +44,11 @@ class BenchmarkPlotBase(BenchmarkAnalysis):
     subplots = []
 
     @classmethod
-    def check_required_datasets(cls, dsets: list[DatasetArtefact]):
-        """
-        Check if any of the subplots we have can be generated
-        """
-        dset_avail = set(dsets)
+    def check_enabled(cls, datasets, config):
+        """Check if any of the subplots we have can be generated"""
         for plot_klass in cls.subplots:
             dset_req = set(plot_klass.get_required_datasets())
-            if dset_req.issubset(dset_avail):
+            if dset_req.issubset(datasets):
                 return True
         return False
 

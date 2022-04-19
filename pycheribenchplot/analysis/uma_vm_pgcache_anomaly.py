@@ -40,10 +40,9 @@ class UMABucketAllocAnomaly(BenchmarkPlot):
     be a common issue.
     """
     @classmethod
-    def check_required_datasets(cls, dsets: list):
-        """Check dataset list against qemu stats dataset names"""
-        required = set([DatasetName.VMSTAT_UMA, DatasetName.VMSTAT_UMA_INFO])
-        return required.issubset(set(dsets))
+    def check_enabled(cls, datasets, config):
+        required = {DatasetName.VMSTAT_UMA, DatasetName.VMSTAT_UMA_INFO}
+        return required.issubset(datasets)
 
     def _get_uma_stats(self):
         return [
