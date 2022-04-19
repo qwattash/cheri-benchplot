@@ -83,7 +83,7 @@ class UMAZoneInfoDataset(DataSetContainer):
         # We just sum if there are repeated index entries, we have no per-iteration data here
         self.agg_df = self.merged_df.groupby(self.merged_df.index.names).sum()
         # We expect no iteration information to be present in the data
-        assert (self.agg_df.index.get_level_values("__iteration") == -1).all()
+        assert (self.agg_df.index.get_level_values("iteration") == -1).all()
         # Add the aggregate index level
         self.agg_df = self._add_aggregate_columns(self.agg_df)
 
@@ -117,7 +117,7 @@ class VMStatDataset(JSONDataSetContainer):
             post_df = pd.DataFrame.from_records(self._get_vmstat_records(post_data))
             df = self._vmstat_delta(pre_df, post_df)
             df["dataset_id"] = self.benchmark.uuid
-            df["__iteration"] = iteration
+            df["iteration"] = iteration
             self._append_df(df)
         finally:
             pre.close()
@@ -129,7 +129,7 @@ class VMStatDataset(JSONDataSetContainer):
         tmp = self.merged_df.groupby(self.merged_df.index.names).sum()
         # Then aggregate across iterations
         iter_index = list(self.merged_df.index.names)
-        iter_index.remove("__iteration")
+        iter_index.remove("iteration")
         grouped = tmp.groupby(iter_index)
         self.agg_df = self._compute_aggregations(grouped)
 

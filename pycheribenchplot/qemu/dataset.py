@@ -127,7 +127,7 @@ class ContextStatsHistogramBase(QEMUTraceDataset):
             self.logger.debug("Detected track %s: extracting stats", track["name"])
             track_df = self._extract_track_stats(tp, track, ts_start, ts_end)
             track_df["dataset_id"] = self.benchmark.uuid
-            track_df["__iteration"] = i
+            track_df["iteration"] = i
             self._append_df(track_df)
 
     def _resolve_pid_tid(self):
@@ -227,7 +227,7 @@ class ContextStatsHistogramBase(QEMUTraceDataset):
         aggregation metrics for these, instead we use the "meta" column name
         """
         super().aggregate()
-        grouped = self.merged_df.groupby(["dataset_id", "__iteration"] + self.get_aggregate_index())
+        grouped = self.merged_df.groupby(["dataset_id", "iteration"] + self.get_aggregate_index())
         # Cache the context grouping for later inspection if needed
         self.ctx_agg_df = grouped.aggregate(self._get_context_agg_strategy())
         # Now that we aggregated contexts within the same iteration, aggregate over iterations
@@ -358,7 +358,7 @@ class QEMUGuestCountersDataset(QEMUTraceDataset):
         cnt_df["name"] = name
         cnt_df["slot"] = slot
         cnt_df["dataset_id"] = self.benchmark.uuid
-        cnt_df["__iteration"] = iteration
+        cnt_df["iteration"] = iteration
         # Make timestamp relative to the beginning of the iteration
         cnt_df["ts"] = cnt_df["ts"] - ts_start
         self._append_df(cnt_df)

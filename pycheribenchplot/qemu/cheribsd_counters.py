@@ -77,7 +77,7 @@ class QEMUUMACountersDataset(QEMUGuestCountersDataset):
         # Align monotonic counters after each iteration
         for slot in self._get_monotonic_slots():
             sel = (slots == slot)
-            base_value = new_df.loc[sel].groupby(["dataset_id", "__iteration", "name"]).first()
+            base_value = new_df.loc[sel].groupby(["dataset_id", "iteration", "name"]).first()
             relative = new_df.loc[sel] - base_value + 1
             new_df.loc[sel] = relative.reorder_levels(new_df.index.names)
         assert not new_df["value"].isna().any()

@@ -47,7 +47,7 @@ class PMCStatData(CSVDataSetContainer):
     def load_iteration(self, iteration):
         path = self.iteration_output_file(iteration)
         csv_df = self._load_csv(path)
-        csv_df["__iteration"] = iteration
+        csv_df["iteration"] = iteration
         self._append_df(csv_df)
 
 

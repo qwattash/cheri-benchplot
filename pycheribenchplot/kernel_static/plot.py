@@ -548,8 +548,8 @@ class KernelStructSizeLargeOverhead(KernelStructStatsPlot):
         high_thresh = df[col].quantile(0.9)
         cond = (df[col] >= high_thresh)
         high_df = df[cond]
-        if "__iteration" in df.index.names:
-            high_df = high_df.droplevel("__iteration")
+        if "iteration" in df.index.names:
+            high_df = high_df.droplevel("iteration")
         assert high_df.index.is_unique, "Non unique index?"
 
         legend_info = self.get_legend_info()
@@ -631,10 +631,10 @@ class PAHoleTable(BenchmarkSubPlot):
     def generate(self, fm, cell):
         struct_df = self.struct_stats.merged_df
         member_df = self.member_stats.merged_df
-        if "__iteration" in struct_df.index.names:
-            struct_df = struct_df.droplevel("__iteration")
-        if "__iteration" in member_df.index.names:
-            member_df = member_df.droplevel("__iteration")
+        if "iteration" in struct_df.index.names:
+            struct_df = struct_df.droplevel("iteration")
+        if "iteration" in member_df.index.names:
+            member_df = member_df.droplevel("iteration")
 
         pahole_df = self.member_stats.gen_pahole_table()
         # Ensure things are still aligned

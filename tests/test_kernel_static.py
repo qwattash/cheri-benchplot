@@ -110,7 +110,7 @@ def test_kstruct_member_pahole(fake_simple_benchmark):
     # Fill the fake merged_df dataframe. baz is placed in the middle of foo and bar
     # and only present in A.
     df = pd.DataFrame({
-        "__iteration": -1,
+        "iteration": -1,
         "name": ["my_struct"] * 3,
         "src_file": ["my/src/file.c"] * 3,
         "src_line": [1] * 3,
@@ -128,7 +128,7 @@ def test_kstruct_member_pahole(fake_simple_benchmark):
     b_df["member_offset"] = [0, 16, np.nan]
     b_df["member_pad"] = [8, 0, np.nan]
     df = pd.concat([a_df, b_df], ignore_index=True, axis=0)
-    df.set_index(["dataset_id", "__iteration", "name", "src_file", "src_line", "member_name"], inplace=True)
+    df.set_index(["dataset_id", "iteration", "name", "src_file", "src_line", "member_name"], inplace=True)
     ds.merged_df = df
 
     # Run the method under test

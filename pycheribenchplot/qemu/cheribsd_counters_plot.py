@@ -25,7 +25,7 @@ class QEMUCounterTrack(BenchmarkSubPlot):
     def generate(self, fm, cell):
         self.logger.debug("extract qemu counter track %s (%s:%d)", self.track_desc, self.track_name, self.track_slot)
 
-        view = LinePlotDataView(self.df, x="ts", yleft="value", line_group=["dataset_id", "__iteration"])
+        view = LinePlotDataView(self.df, x="ts", yleft="value", line_group=["dataset_id", "iteration"])
         view.legend_info = self.build_legend_by_dataset()
         view.legend_level = ["dataset_id"]
         cell.add_view(view)

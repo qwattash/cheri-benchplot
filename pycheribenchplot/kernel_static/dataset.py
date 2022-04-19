@@ -192,7 +192,7 @@ class KernelStructMemberDataset(KernelStructDWARFInfo):
         Generate a pahole table for the structures in the merged dataframe.
         The selector can be used to filter out unwanted structures.
         This will return a table with the following properties:
-        - index: the __iteration level is dropped as it is unused, the member_name level is swapped for
+        - index: the iteration level is dropped as it is unused, the member_name level is swapped for
         the new member_index level.
         - rows: extra synthetic members representing the padding are created. These members
         are named from the previous member name and offset and have the member_size column set to
@@ -206,7 +206,7 @@ class KernelStructMemberDataset(KernelStructDWARFInfo):
         """
         if selector is not None and selector.dtype != bool:
             raise TypeError("selector must be a bool series")
-        df = self.merged_df.droplevel("__iteration")
+        df = self.merged_df.droplevel("iteration")
         if selector is not None:
             df = df.loc[selector]
 

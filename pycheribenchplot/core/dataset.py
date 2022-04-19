@@ -181,9 +181,9 @@ class DataSetContainer(metaclass=DatasetRegistry):
     - df: the input dataframe. There is one input dataframe for each instance of the dataset,
     belonging to each existing benchmark run. This is the dataframe on which we operate until
     we reach the *merge* step.
-    There are two mandatory index levels: the dataset_id and __iterations levels.
+    There are two mandatory index levels: the dataset_id and iterations levels.
     The dataset_id is the UUID of the benchmark run for which the data was captured.
-    The __iteration index level contains the iteration number, if it is meaningless for the
+    The iteration index level contains the iteration number, if it is meaningless for the
     data source, then it is set to -1.
     - merged_df: the merged dataframe contains the concatenated data from all the benchmark
     runs of a given benchmark. This dataframe is built only once for each benchmark, in the
@@ -202,8 +202,8 @@ class DataSetContainer(metaclass=DatasetRegistry):
     method.
     The resulting dataframes use multi-indexes on both rows and columns.
     The row multi-index levels are dataset-dependent and are declared as IndexField(), in addition
-    to the implicit dataset_id and __iteration index levels.
-    (Note that the __iteration index level should be absent in the agg_df as it would not make sense).
+    to the implicit dataset_id and iteration index levels.
+    (Note that the iteration index level should be absent in the agg_df as it would not make sense).
     The column index levels are the following (by convention):
     - The 1st column level contains the name of each non-index field declared as input
     (including derived fields from pre_merge()).
@@ -282,7 +282,7 @@ class DataSetContainer(metaclass=DatasetRegistry):
         return self.implicit_index_columns() + [f.name for f in self.input_index_fields()]
 
     def implicit_index_columns(self):
-        return ["dataset_id", "__iteration"]
+        return ["dataset_id", "iteration"]
 
     def index_columns(self) -> typing.Sequence[str]:
         """
@@ -339,9 +339,9 @@ class DataSetContainer(metaclass=DatasetRegistry):
         if "dataset_id" not in df.columns:
             self.logger.debug("No dataset column, using default")
             df["dataset_id"] = self.benchmark.uuid
-        if "__iteration" not in df.columns:
+        if "iteration" not in df.columns:
             self.logger.debug("No iteration column, using default (-1)")
-            df["__iteration"] = -1
+            df["iteration"] = -1
         # Normalize columns to always contain at least all input columns
         existing = df.columns.to_list() + list(df.index.names)
         default_columns = []
