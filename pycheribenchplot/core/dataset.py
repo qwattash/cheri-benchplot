@@ -79,12 +79,6 @@ class DatasetRunOrder(IntEnum):
 class Field:
     """
     Helper class to describe column and associated metadata to aid processing
-    XXX-AM: Consider adding some sort of tags to the fields so that we can avoid hardcoding the
-    names for some processing steps (e.g. normalized fields that should be shown as percentage,
-    or address fields for hex visualization). We should also use the desc field to generate
-    legend labels and human-readable version of the fields.
-    May also help to split derived fields by the stage in which they are created
-    (e.g. pre-merge, post-merge, post-agg). This should move the burden of declaring which fields to process.
     """
     name: str
     desc: str = None
@@ -243,7 +237,7 @@ class DataSetContainer(metaclass=DatasetRegistry):
         Return a list of fields that we care about in the input data source.
         This will not contain any derived fields.
         """
-        fields = [f for f in self.__class__._all_fields if not f.isderived]
+        fields = [f for f in self._all_fields if not f.isderived]
         return fields
 
     def input_index_fields(self) -> typing.Sequence[Field]:
@@ -282,7 +276,14 @@ class DataSetContainer(metaclass=DatasetRegistry):
         return self.implicit_index_columns() + [f.name for f in self.input_index_fields()]
 
     def implicit_index_columns(self):
-        return ["dataset_id", "iteration"]
+        cols = ["dataset_id", "iteration"]
+        cols += self.parameter_index_columns()
+        return cols
+
+    def parameter_index_columns(self):
+        if self.benchmark.config.is_parameterized:
+            return list(self.benchmark.config.parameters.keys())
+        return []
 
     def index_columns(self) -> typing.Sequence[str]:
         """
@@ -290,20 +291,20 @@ class DataSetContainer(metaclass=DatasetRegistry):
         This will contain both input and derived index columns.
         """
         input_cols = self.input_index_columns()
-        return input_cols + [f.name for f in self.__class__._all_fields if f.isderived and f.isindex]
+        return input_cols + [f.name for f in self._all_fields if f.isderived and f.isindex]
 
     def all_columns(self) -> typing.Sequence[str]:
         """
         All columns (derived or not) in the pre-merge dataframe, including index columns.
         """
-        return self.implicit_index_columns() + [f.name for f in self.__class__._all_fields]
+        return self.implicit_index_columns() + [f.name for f in self._all_fields]
 
     def data_columns(self) -> typing.Sequence[str]:
         """
         All data column names in the container dataframe.
         This, by default, does not include synthetic data columns that are generated after importing the dataframe.
         """
-        return [f.name for f in self.__class__._all_fields if f.isdata and not f.isindex]
+        return [f.name for f in self._all_fields if f.isdata and not f.isindex]
 
     def _get_input_columns_dtype(self) -> dict[str, type]:
         """
@@ -342,6 +343,11 @@ class DataSetContainer(metaclass=DatasetRegistry):
         if "iteration" not in df.columns:
             self.logger.debug("No iteration column, using default (-1)")
             df["iteration"] = -1
+        for pcol in self.parameter_index_columns():
+            if pcol not in df.columns:
+                param = self.benchmark.config.parameters[pcol]
+                self.logger.debug("No parameter %s column, generate from config %s", pcol, param)
+                df[pcol] = param
         # Normalize columns to always contain at least all input columns
         existing = df.columns.to_list() + list(df.index.names)
         default_columns = []
