@@ -20,5 +20,6 @@ setup(
         "termcolor>=1.1.0",
         "XlsxWriter>=3.0.2",
         "yapf>=0.31.0",
+        "gitpython>=3.1.27",
     ]
 )
