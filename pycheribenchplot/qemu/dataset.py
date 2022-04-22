@@ -1,5 +1,6 @@
 import logging
 import re
+import typing
 from functools import reduce
 from pathlib import Path
 
@@ -56,7 +57,7 @@ class ContextStatsHistogramBase(QEMUTraceDataset):
         """Get the name of the slices containing histogram data for this dataset"""
         raise NotImplementedError("Must override")
 
-    def _get_arg_key_map(self) -> dict[str, str]:
+    def _get_arg_key_map(self) -> typing.Dict[str, str]:
         """Get mapping of argument flat_key to destination column in the imported dataframe"""
         raise NotImplementedError("Must override")
 

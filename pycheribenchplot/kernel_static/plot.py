@@ -1,3 +1,5 @@
+import typing
+
 import numpy as np
 import pandas as pd
 
@@ -613,7 +615,7 @@ class PAHoleTable(BenchmarkSubPlot):
     def get_cell_title(self):
         return "Kernel pahole"
 
-    def build_table_legend(self, view_df) -> tuple[LegendInfo, pd.DataFrame]:
+    def build_table_legend(self, view_df) -> typing.Tuple[LegendInfo, pd.DataFrame]:
         """
         Generate the legend for the pivoted table.
         We color rows in alternate colors and highlight the padding members.

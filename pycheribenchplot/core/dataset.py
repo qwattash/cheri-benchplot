@@ -306,7 +306,7 @@ class DataSetContainer(metaclass=DatasetRegistry):
         """
         return [f.name for f in self._all_fields if f.isdata and not f.isindex]
 
-    def _get_input_columns_dtype(self) -> dict[str, type]:
+    def _get_input_columns_dtype(self) -> typing.Dict[str, type]:
         """
         Get a dictionary suitable for pandas DataFrame.astype() to normalize the data type
         of input fields.
@@ -320,7 +320,7 @@ class DataSetContainer(metaclass=DatasetRegistry):
         """
         return {f.name: f.importfn for f in self.input_fields() if f.importfn is not None}
 
-    def _get_all_columns_dtype(self) -> dict[str, type]:
+    def _get_all_columns_dtype(self) -> typing.Dict[str, type]:
         """
         Get a dictionary suitable for pandas DataFrame.astype() to normalize the data type
         of all dataframe fields.
@@ -366,7 +366,7 @@ class DataSetContainer(metaclass=DatasetRegistry):
         # already selected
         dataset_columns = set(self.input_non_index_columns())
         avail_columns = set(df.columns)
-        column_subset = avail_columns.intersection(dataset_columns)
+        column_subset = list(avail_columns.intersection(dataset_columns))
         if self.df is None:
             self.df = df[column_subset]
         else:
@@ -615,7 +615,7 @@ def dataframe_debug():
         yield
 
 
-def check_multi_index_aligned(df: pd.DataFrame, level: str | list[str]):
+def check_multi_index_aligned(df: pd.DataFrame, level: str | typing.List[str]):
     """
     Check that the given index level(s) are aligned.
     """
@@ -638,7 +638,7 @@ def check_multi_index_aligned(df: pd.DataFrame, level: str | list[str]):
     return True
 
 
-def align_multi_index_levels(df: pd.DataFrame, align_levels: list[str], fill_value=np.nan):
+def align_multi_index_levels(df: pd.DataFrame, align_levels: typing.List[str], fill_value=np.nan):
     """
     Align a subset of the levels of a multi-index.
     This will generate the union of the sets of values in the align_levels parameter.
@@ -697,8 +697,8 @@ def pivot_multi_index_level(df: pd.DataFrame, level: str, rename_map: dict = Non
 
 def rotate_multi_index_level(df: pd.DataFrame,
                              level: str,
-                             suffixes: dict[str, str] = None,
-                             fill_value=None) -> tuple[pd.DataFrame]:
+                             suffixes: typing.Dict[str, str] = None,
+                             fill_value=None) -> typing.Tuple[pd.DataFrame]:
     """
     Given a dataframe with multiple datasets indexed by one level of the multi-index, rotate datasets into
     columns so that the index level is removed and the column values related to each dataset are concatenated
@@ -820,10 +820,10 @@ def stacked_histogram(df_in: pd.DataFrame, group: str, stack: str, data_col: str
 
 
 def quantile_slice(df: pd.DataFrame,
-                   columns: list[str | tuple],
+                   columns: typing.List[str | tuple],
                    quantile: float,
                    max_entries: int = None,
-                   level: list[str] = None) -> pd.DataFrame:
+                   level: typing.List[str] = None) -> pd.DataFrame:
     """
     Filter a dataset to select the values where the given columns are above/below the given quantile threshold.
     Care is taken to maintain the slice index aligned at the given level (dataset_id by default),
@@ -870,7 +870,10 @@ def quantile_slice(df: pd.DataFrame,
     return high_df.copy()
 
 
-def assign_sorted_coord(df: pd.DataFrame, sort: list[str], group_by=list[str], **sort_kwargs) -> pd.Series:
+def assign_sorted_coord(df: pd.DataFrame,
+                        sort: typing.List[str],
+                        group_by=typing.List[str],
+                        **sort_kwargs) -> pd.Series:
     """
     Assign coordinates for plotting to dataframe groups, preserving the index mapping between groups.
     This assumes that the dataframe is aligned at the given level.

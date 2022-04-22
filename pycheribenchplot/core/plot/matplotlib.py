@@ -31,7 +31,7 @@ def build_style_args(style: Style) -> dict:
     return args
 
 
-def build_scale_args(scale: Scale) -> tuple[list, dict]:
+def build_scale_args(scale: Scale) -> typing.Tuple[list, dict]:
     """
     Convert a Scale wrapper into scale arguments
     """
@@ -129,7 +129,7 @@ class Legend:
     def set_item(self, label: str, handle: "matplotlib.artist.Artist"):
         self.handles[label] = handle
 
-    def set_group(self, labels: list[str], handles: list["matplotlib.artist.Artist"]):
+    def set_group(self, labels: typing.List[str], handles: typing.List["matplotlib.artist.Artist"]):
         for l, h in zip(labels, handles):
             self.set_item(l, h)
 

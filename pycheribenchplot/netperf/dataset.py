@@ -1,5 +1,6 @@
 import asyncio as aio
 import io
+import typing
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -17,9 +18,9 @@ class NetperfRunConfig(TemplateConfig):
     # Path to netperf/netserver in the guest
     netperf_path: Path = path_field("opt/{cheri_target}/netperf/bin")
     # Actual benchmark options
-    netperf_options: list[str] = field(default_factory=list)
+    netperf_options: typing.List[str] = field(default_factory=list)
     # Netserver options (used for both priming and the actual benchmark)
-    netserver_options: list[str] = field(default_factory=list)
+    netserver_options: typing.List[str] = field(default_factory=list)
     # use KTRACE netserver to resolve forked netserver PIDs?
     netserver_resolve_forks: bool = True
 

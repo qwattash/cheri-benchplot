@@ -1,3 +1,4 @@
+import typing
 from abc import ABC, abstractmethod
 from enum import Enum
 
@@ -131,7 +132,7 @@ class BenchmarkSubPlot(ABC):
         # Cell assigned for rendering
         self.cell = None
 
-    def get_mosaic_extent(self) -> tuple[int, int]:
+    def get_mosaic_extent(self) -> typing.Tuple[int, int]:
         """
         Return a tuple (nrows, ncols) that defines how many mosaic rows and columns this
         subplot uses. This is only relevant for the default mosaic layout setup, if more

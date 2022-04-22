@@ -1,3 +1,4 @@
+import typing
 from dataclasses import dataclass, field
 
 from .config import Config
@@ -15,7 +16,7 @@ class BenchmarkAnalysisRegistry(type):
 @dataclass
 class AnalysisConfig(Config):
     split_subplots: bool = False
-    plot_output_format: list[str] = field(default_factory=lambda: ["pdf"])
+    plot_output_format: typing.List[str] = field(default_factory=lambda: ["pdf"])
 
     def __post_init__(self):
         super().__post_init__()
@@ -35,7 +36,7 @@ class BenchmarkAnalysis(metaclass=BenchmarkAnalysisRegistry):
     presentation methods.
     """
     @classmethod
-    def check_enabled(cls, datasets: set[DatasetName], config: AnalysisConfig):
+    def check_enabled(cls, datasets: typing.Set[DatasetName], config: AnalysisConfig):
         return False
 
     def __init__(self, benchmark: "BenchmarkBase", **kwargs):

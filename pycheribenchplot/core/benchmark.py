@@ -44,7 +44,7 @@ class BenchmarkDataSetConfig(TemplateConfig):
     run_options: dataset-specific options to produce the dataset
     """
     type: DatasetName
-    run_options: dict[str, any] = field(default_factory=dict)
+    run_options: typing.Dict[str, any] = field(default_factory=dict)
 
 
 @dataclass
@@ -72,9 +72,9 @@ class BenchmarkRunConfig(TemplateConfig):
     name: str
     iterations: int
     benchmark_dataset: BenchmarkDataSetConfig
-    datasets: dict[str, BenchmarkDataSetConfig]
-    parameterize: dict[str, list[any]] = field(default_factory=dict)
-    parameters: dict[str, any] = field(default_factory=dict)
+    datasets: typing.Dict[str, BenchmarkDataSetConfig]
+    parameterize: typing.Dict[str, typing.List[any]] = field(default_factory=dict)
+    parameters: typing.Dict[str, any] = field(default_factory=dict)
     drop_iterations: int = 0
     desc: str = ""
 
@@ -108,13 +108,13 @@ class BenchmarkScriptCommand:
     Represent a single command executed by the benchmark script
     """
     cmd: str
-    args: list[str]
-    env: dict[str, str]
+    args: typing.List[str]
+    env: typing.Dict[str, str]
     background: bool = False
     collect_pid: bool = True
     remote_output: Path = None
     local_output: Path = None
-    extra_output: dict[Path, Path] = field(default_factory=dict)
+    extra_output: typing.Dict[Path, Path] = field(default_factory=dict)
     extractfn: typing.Callable[["BenchmarkBase", Path, Path], None] = None
 
     def build_sh_command(self, cmd_index: int):
@@ -202,9 +202,9 @@ class BenchmarkScript:
                 command: str,
                 args: list,
                 outfile: Path = None,
-                env: dict[str, str] = None,
+                env: typing.Dict[str, str] = None,
                 extractfn=None,
-                extra_outfiles: list[Path] = []):
+                extra_outfiles: typing.List[Path] = []):
         """
         Add a foreground command to the run script.
         If the output is to be captured, the outfile argument specifies the host path in which it will be
@@ -227,7 +227,7 @@ class BenchmarkScript:
                    command: str,
                    args: list,
                    outfile: Path = None,
-                   env: dict[str, str] = None,
+                   env: typing.Dict[str, str] = None,
                    extractfn=None) -> VariableRef:
         """
         Similar to add_cmd() but will return an handle that can be used at a later time to terminate the
@@ -264,7 +264,7 @@ class BenchmarkScript:
                 var = self.get_variable(f"PID_{i}")
                 fd.write(f"echo {var} >> {pid_history_path}\n")
 
-    def get_extract_files(self) -> list[tuple[Path, Path, typing.Optional[typing.Callable]]]:
+    def get_extract_files(self) -> typing.List[typing.Tuple[Path, Path, typing.Optional[typing.Callable]]]:
         """
         Get a list of all files to extract for the benchmark.
         Each list item is a tuple of the form (remote_file, local_file, extract_fn)
@@ -409,7 +409,7 @@ class BenchmarkBase(TemplateConfigContext):
         handler = handler_class(self, dset_key, config)
         return handler
 
-    def _dataset_generators_sorted(self, reverse=False) -> list[DataSetContainer]:
+    def _dataset_generators_sorted(self, reverse=False) -> typing.List[DataSetContainer]:
         return sorted(self.datasets_gen.values(), key=lambda ds: ds.dataset_run_order, reverse=reverse)
 
     def get_output_path(self):
@@ -635,7 +635,7 @@ class BenchmarkBase(TemplateConfigContext):
         self.load()
         self.pre_merge()
 
-    def merge(self, others: list["BenchmarkBase"]):
+    def merge(self, others: typing.List["BenchmarkBase"]):
         """
         Merge datasets from compatible runs into a single dataset.
         Note that this is called only on the baseline benchmark instance

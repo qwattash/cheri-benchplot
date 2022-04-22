@@ -76,7 +76,7 @@ class PlatformOptions(Config):
     # Run qemu with tracing enabled
     qemu_trace: bool = False
     # Trace categories to enable for qemu-perfetto
-    qemu_trace_categories: set[str] = field(default_factory=set)
+    qemu_trace_categories: typing.Set[str] = field(default_factory=set)
     # VCU118 bios
     vcu118_bios: Path = path_field("/must/be/set")
 

@@ -275,7 +275,7 @@ class DWARFStructInfo:
     # Source line
     src_line: int
     # List of struct members descriptors
-    members: list["DWARFMemberInfo"] = field(default_factory=list)
+    members: typing.List["DWARFMemberInfo"] = field(default_factory=list)
     # Is the struct anonymous?
     is_anon: bool = False
 

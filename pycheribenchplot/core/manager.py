@@ -60,8 +60,8 @@ class BenchmarkSessionConfig(TemplateConfig):
     ssh_key: Path = Path("~/.ssh/id_rsa")
     output_path: Path = field(default_factory=Path.cwd)
     concurrent_instances: int = 0
-    instances: list[InstanceConfig] = field(default_factory=list)
-    benchmarks: list[BenchmarkRunConfig] = field(default_factory=list)
+    instances: typing.List[InstanceConfig] = field(default_factory=list)
+    benchmarks: typing.List[BenchmarkRunConfig] = field(default_factory=list)
 
 
 #class BenchmarkManagerConfig(TemplateConfig):
@@ -90,7 +90,7 @@ class BenchmarkManagerRecord(Config):
     cheribsd_head: typing.Optional[str] = None
     qemu_head: typing.Optional[str] = None
     llvm_head: typing.Optional[str] = None
-    records: list[BenchmarkRunRecord] = field(default_factory=list)
+    records: typing.List[BenchmarkRunRecord] = field(default_factory=list)
 
 
 class BenchmarkManager(TemplateConfigContext):

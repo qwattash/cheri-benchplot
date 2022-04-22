@@ -35,7 +35,7 @@ class Config(DataClassJsonMixin):
             return super().from_json(jsonfile.read())
 
     @classmethod
-    def merge(cls, *other: tuple["Config"]):
+    def merge(cls, *other: typing.Tuple["Config"]):
         """
         Similar to dataclass replace but uses fields from another dataclass that must be
         a parent class of the instance type we are replacing into.

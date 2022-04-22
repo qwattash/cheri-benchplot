@@ -24,7 +24,9 @@ class Mosaic:
     """
     Wrapper around subplot mosaic lists
     """
-    def __init__(self, layout: list[list[str]] = None, subplots: dict[str, "BenchmarkSubPlot"] = None):
+    def __init__(self,
+                 layout: typing.List[typing.List[str]] = None,
+                 subplots: typing.Dict[str, "BenchmarkSubPlot"] = None):
         if subplots is None:
             subplots = {}
         if layout is not None:

@@ -26,7 +26,7 @@ class LegendInfo:
         return cls.combine("axis", {"left": left, "right": right})
 
     @classmethod
-    def combine(cls, index_name: str, chunks: dict[str | tuple, "LegendInfo"]) -> "LegendInfo":
+    def combine(cls, index_name: str, chunks: typing.Dict[str | tuple, "LegendInfo"]) -> "LegendInfo":
         """
         Combine multiple LegendInfo adding a new index level with the given name.
         Chunks is a dictionary mapping the new index key to the corresponding LegendInfo.
@@ -50,7 +50,7 @@ class LegendInfo:
                    index: pd.Index | typing.Iterable,
                    labels: typing.Iterable[str],
                    cmap_name: str = "Pastel1",
-                   color_range: tuple[float, float] = (0, 1),
+                   color_range: typing.Tuple[float, float] = (0, 1),
                    colors: list = None):
         if not isinstance(index, pd.Index):
             # Normalize index
@@ -66,7 +66,7 @@ class LegendInfo:
     def gen_colors(cls,
                    values: pd.Series,
                    mapname: str,
-                   color_range: tuple[float, float] = (0, 1),
+                   color_range: typing.Tuple[float, float] = (0, 1),
                    groupby=None) -> pd.Series:
         """
         Generates a set of colors with the given colormap and range for a sequence of values
@@ -103,7 +103,7 @@ class LegendInfo:
         new_df["colors"] = LegendInfo.gen_colors(self.info_df["labels"], mapname, **kwargs)
         return LegendInfo(new_df)
 
-    def resolve(self, df: pd.DataFrame, levels: list[str]):
+    def resolve(self, df: pd.DataFrame, levels: typing.List[str]):
         """
         Return a dataframe with the corresponding labels and colors columns joined onto the
         given df over levels.
@@ -158,9 +158,9 @@ class LegendInfo:
 
     def assign_colors(self,
                       base_map: str | mcolors.Colormap,
-                      levels: list[str] | str,
+                      levels: typing.List[str] | str,
                       color_mapper: typing.Callable,
-                      color_range: tuple[float, float] = (0, 1)):
+                      color_range: typing.Tuple[float, float] = (0, 1)):
         """
         Helper to assign semantically meaningful colors to labels. The level list specifies the
         levels of the legend_info index taken into account when scaling colors.
@@ -186,9 +186,9 @@ class LegendInfo:
 
     def assign_colors_luminance(self,
                                 base_map: str | mcolors.Colormap,
-                                levels: list[str] | str,
-                                color_range: tuple[float, float] = (0, 1),
-                                lum_range: tuple[float, float] = (-0.3, 0.3)):
+                                levels: typing.List[str] | str,
+                                color_range: typing.Tuple[float, float] = (0, 1),
+                                lum_range: typing.Tuple[float, float] = (-0.3, 0.3)):
         """
         Assign a primary color from the base map to each group, then offset the luminance for each
         element in the group. This works well for monotonically increasing L* colormaps, but it is
@@ -206,11 +206,11 @@ class LegendInfo:
         return self.assign_colors(base_map, levels, mapper, color_range=color_range)
 
     def assign_colors_hsv(self,
-                          levels: list[str] | str,
-                          sub_levels: list[str] | str = None,
-                          h: tuple[float, float] = (0, 1),
-                          s: tuple[float, float] = (0, 1),
-                          v: tuple[float, float] = (0, 1)):
+                          levels: typing.List[str] | str,
+                          sub_levels: typing.List[str] | str = None,
+                          h: typing.Tuple[float, float] = (0, 1),
+                          s: typing.Tuple[float, float] = (0, 1),
+                          v: typing.Tuple[float, float] = (0, 1)):
         """
         Allocate the HSV color space to the legend colors.
         The Hue selects the levels group, the saturation is used to select secondary levels and luminance offsets
@@ -307,7 +307,7 @@ class DataView:
     """
     df: pd.DataFrame
     legend_info: LegendInfo = None
-    legend_level: list[str] = None
+    legend_level: typing.List[str] = None
     key: str = field(init=False)
 
     def __post_init__(self):
@@ -321,7 +321,7 @@ class DataView:
         if not isinstance(self.legend_level, list):
             self.legend_level = [self.legend_level]
 
-    def get_col(self, col: list[str | tuple] | str, df=None):
+    def get_col(self, col: typing.List[str | tuple] | str, df=None):
         """
         Return a dataframe column, which might be a column or index level.
         Note that index levels are normalized to dataframe.
@@ -398,8 +398,8 @@ class AALineDataView(DataView):
     horizontal: column names to use for the horizontal lines Y axis values
     vertical: column names to use for the vertical lines X axis value
     """
-    horizontal: list[str] = field(default_factory=list)
-    vertical: list[str] = field(default_factory=list)
+    horizontal: typing.List[str] = field(default_factory=list)
+    vertical: typing.List[str] = field(default_factory=list)
     style: Style = field(default_factory=Style)
 
     def __post_init__(self):
@@ -421,8 +421,8 @@ class XYPlotDataView(DataView):
     <ax>_scale: axis scale, if None use whatever default the surface provides
     """
     x: str = "x"
-    yleft: list[str] = field(default_factory=list)
-    yright: list[str] = field(default_factory=list)
+    yleft: typing.List[str] = field(default_factory=list)
+    yright: typing.List[str] = field(default_factory=list)
 
     def __post_init__(self):
         super().__post_init__()
@@ -455,7 +455,7 @@ class LinePlotDataView(XYPlotDataView):
     """
     Parameters for simple line plots
     """
-    line_group: list[str] = None
+    line_group: typing.List[str] = None
 
     def __post_init__(self):
         super().__post_init__()
@@ -467,7 +467,7 @@ class LinePlotDataView(XYPlotDataView):
 
 @dataclass
 class ScatterPlotDataView(XYPlotDataView):
-    group_by: list[str] = None
+    group_by: typing.List[str] = None
     style: Style = field(default_factory=Style)
 
     def __post_init__(self):
@@ -525,7 +525,7 @@ class ArrowPlotDataView(DataView):
     """
     x: str = None
     y: str = None
-    group_by: list[str] = field(default_factory=list)
+    group_by: typing.List[str] = field(default_factory=list)
     base_group: str = None
 
     def __post_init__(self):
@@ -546,8 +546,8 @@ class HistPlotDataView(XYPlotDataView):
     this will be used to plot multiple histogram columns for each bucket
     bar_align: where to align histogram bars
     """
-    buckets: list[float] = field(default_factory=list)
-    bucket_group: list[str] = None
+    buckets: typing.List[float] = field(default_factory=list)
+    bucket_group: typing.List[str] = None
     bar_align: str = "mid"
 
     def __post_init__(self):
@@ -568,9 +568,9 @@ class AxisConfig:
     """
     label: str
     enable: bool = False
-    limits: tuple[float, float] = None
-    ticks: list[float] = None
-    tick_labels: list[str] = None
+    limits: typing.Tuple[float, float] = None
+    ticks: typing.List[float] = None
+    tick_labels: typing.List[str] = None
     tick_rotation: int = None
     tick_font_size: float | str = None
     scale: Scale = None
