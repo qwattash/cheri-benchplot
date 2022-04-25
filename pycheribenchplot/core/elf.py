@@ -3,7 +3,7 @@ import typing
 from collections import defaultdict
 from dataclasses import dataclass, field, fields, replace
 from enum import Flag, IntFlag, auto
-from functools import cached_property, reduce
+from functools import reduce
 from pathlib import Path
 
 import numpy as np
