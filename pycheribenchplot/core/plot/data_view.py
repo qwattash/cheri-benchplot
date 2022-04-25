@@ -26,7 +26,7 @@ class LegendInfo:
         return cls.combine("axis", {"left": left, "right": right})
 
     @classmethod
-    def combine(cls, index_name: str, chunks: typing.Dict[str | tuple, "LegendInfo"]) -> "LegendInfo":
+    def combine(cls, index_name: str, chunks: typing.Dict[typing.Hashable, "LegendInfo"]) -> "LegendInfo":
         """
         Combine multiple LegendInfo adding a new index level with the given name.
         Chunks is a dictionary mapping the new index key to the corresponding LegendInfo.
@@ -47,7 +47,7 @@ class LegendInfo:
 
     @classmethod
     def from_index(cls,
-                   index: pd.Index | typing.Iterable,
+                   index: pd.Index,
                    labels: typing.Iterable[str],
                    cmap_name: str = "Pastel1",
                    color_range: typing.Tuple[float, float] = (0, 1),
@@ -157,8 +157,8 @@ class LegendInfo:
         return self._map_column(fn, "labels", group_by=group_by)
 
     def assign_colors(self,
-                      base_map: str | mcolors.Colormap,
-                      levels: typing.List[str] | str,
+                      base_map: typing.Union[str, mcolors.Colormap],
+                      levels: typing.List[str],
                       color_mapper: typing.Callable,
                       color_range: typing.Tuple[float, float] = (0, 1)):
         """
@@ -185,8 +185,8 @@ class LegendInfo:
         return LegendInfo(df)
 
     def assign_colors_luminance(self,
-                                base_map: str | mcolors.Colormap,
-                                levels: typing.List[str] | str,
+                                base_map: typing.Union[str, mcolors.Colormap],
+                                levels: typing.List[str],
                                 color_range: typing.Tuple[float, float] = (0, 1),
                                 lum_range: typing.Tuple[float, float] = (-0.3, 0.3)):
         """
@@ -206,8 +206,8 @@ class LegendInfo:
         return self.assign_colors(base_map, levels, mapper, color_range=color_range)
 
     def assign_colors_hsv(self,
-                          levels: typing.List[str] | str,
-                          sub_levels: typing.List[str] | str = None,
+                          levels: typing.List[str],
+                          sub_levels: typing.List[str] = None,
                           h: typing.Tuple[float, float] = (0, 1),
                           s: typing.Tuple[float, float] = (0, 1),
                           v: typing.Tuple[float, float] = (0, 1)):
@@ -321,7 +321,7 @@ class DataView:
         if not isinstance(self.legend_level, list):
             self.legend_level = [self.legend_level]
 
-    def get_col(self, col: typing.List[str | tuple] | str, df=None):
+    def get_col(self, col: typing.Union[list, str], df=None):
         """
         Return a dataframe column, which might be a column or index level.
         Note that index levels are normalized to dataframe.
@@ -572,7 +572,7 @@ class AxisConfig:
     ticks: typing.List[float] = None
     tick_labels: typing.List[str] = None
     tick_rotation: int = None
-    tick_font_size: float | str = None
+    tick_font_size: float = None
     scale: Scale = None
     padding: float = 0.02
     origin_line: bool = True

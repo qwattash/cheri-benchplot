@@ -615,7 +615,7 @@ def dataframe_debug():
         yield
 
 
-def check_multi_index_aligned(df: pd.DataFrame, level: str | typing.List[str]):
+def check_multi_index_aligned(df: pd.DataFrame, level: typing.List[str]):
     """
     Check that the given index level(s) are aligned.
     """
@@ -762,7 +762,7 @@ def subset_xs(df: pd.DataFrame, selector: pd.Series, complement=False):
     return df.loc[l]
 
 
-def broadcast_xs(df: pd.DataFrame, chunk: pd.DataFrame | pd.Series) -> pd.DataFrame | pd.Series:
+def broadcast_xs(df: pd.DataFrame, chunk: pd.DataFrame) -> pd.DataFrame:
     """
     Given a dataframe and a cross-section from it, with some missing index levels, generate
     the complete series or frame with the cross-section aligned to the parent frame.
@@ -820,7 +820,7 @@ def stacked_histogram(df_in: pd.DataFrame, group: str, stack: str, data_col: str
 
 
 def quantile_slice(df: pd.DataFrame,
-                   columns: typing.List[str | tuple],
+                   columns: typing.List[typing.Union[str, tuple]],
                    quantile: float,
                    max_entries: int = None,
                    level: typing.List[str] = None) -> pd.DataFrame:
