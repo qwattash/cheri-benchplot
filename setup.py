@@ -21,5 +21,6 @@ setup(
         "XlsxWriter>=3.0.2",
         "yapf>=0.31.0",
         "gitpython>=3.1.27",
+        "typing_inspect>=0.5.0"
     ]
 )

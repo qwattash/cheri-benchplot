@@ -3,6 +3,7 @@ import collections
 import itertools
 import json
 import typing
+from typing_inspect import get_origin, get_args, is_generic_type
 from dataclasses import (MISSING, Field, dataclass, field, fields, is_dataclass, replace)
 from enum import Enum
 from pathlib import Path
@@ -57,7 +58,7 @@ class Config(DataClassJsonMixin):
         return inst
 
     def _normalize_sequence(self, f, sequence):
-        type_args = typing.get_args(f.type)
+        type_args = get_args(f.type)
         item_type = type_args[0]
         if len(sequence) == 0:
             # Nothing to normalize
@@ -67,7 +68,7 @@ class Config(DataClassJsonMixin):
             setattr(self, f.name, items)
 
     def _normalize_mapping(self, f, mapping):
-        type_args = typing.get_args(f.type)
+        type_args = get_args(f.type)
         item_type = type_args[1]
         if len(mapping) == 0:
             # Nothing to normalize
@@ -83,8 +84,8 @@ class Config(DataClassJsonMixin):
                 continue
             # Check for existence as this will cause issues down the line
             assert hasattr(self, f.name), f"Missing field {f.name}, use a default value"
-            origin = typing.get_origin(f.type)
-            type_args = typing.get_args(f.type)
+            origin = get_origin(f.type)
+            type_args = get_args(f.type)
             value = getattr(self, f.name)
             if is_dataclass(f.type):
                 if type(value) == dict:
@@ -97,7 +98,7 @@ class Config(DataClassJsonMixin):
                     self._normalize_mapping(f, value)
                 else:
                     setattr(self, f.name, origin(value))
-            elif type(origin) != typing._SpecialForm:
+            elif not is_generic_type(origin):
                 # Not a typing class (e.g. Union)
                 if issubclass(f.type, Path):
                     setattr(self, f.name, Path(getattr(self, f.name)).expanduser())
@@ -137,12 +138,12 @@ class TemplateConfig(Config):
         If the field is a collection or a nested TemplateConfig, we recursively bind
         each value.
         """
-        origin = typing.get_origin(f.type)
+        origin = get_origin(f.type)
         if is_dataclass(f.type):
             # Forward the nested bind if the dataclass is a TemplateConfig
             return self._bind_one(context, f.type, value)
         elif origin is typing.Union:
-            args = typing.get_args(f.type)
+            args = get_args(f.type)
             if len(args) == 2 and args[1] == None:
                 # If we have an optional field, bind with the type argument instead
                 return self._bind_one(context, args[0], value)
@@ -154,10 +155,10 @@ class TemplateConfig(Config):
             # Generic type argument is a subclass of the type metaclass so it is safe
             # to check with issubclass()
             if issubclass(origin, collections.abc.Sequence):
-                arg_type = typing.get_args(f.type)[0]
+                arg_type = get_args(f.type)[0]
                 return [self._bind_one(context, arg_type, v) for v in value]
             if issubclass(origin, collections.abc.Mapping):
-                arg_type = typing.get_args(f.type)[1]
+                arg_type = get_args(f.type)[1]
                 return {key: self._bind_one(context, arg_type, v) for key, v in value.items()}
         else:
             return self._bind_one(context, f.type, value)
