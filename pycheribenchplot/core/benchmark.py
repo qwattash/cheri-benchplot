@@ -180,9 +180,10 @@ class BenchmarkScript:
             self._add_command("mkdir", [self._guest_output / str(i)])
 
     def local_to_remote_path(self, host_path: Path) -> Path:
+        base_path = self.benchmark.get_output_path()
         assert host_path.is_absolute(), "Ensure host_path is absolute"
-        assert host_path.is_relative_to(self.benchmark.get_output_path()), "Ensure host_path is in benchmark output"
-        return self._guest_output / host_path.relative_to(self.benchmark.get_output_path())
+        assert str(host_path).startswith(str(base_path)), "Ensure host_path is in benchmark output"
+        return self._guest_output / host_path.relative_to(base_path)
 
     def command_history_path(self):
         return self.benchmark.get_output_path() / "command-history.csv"
