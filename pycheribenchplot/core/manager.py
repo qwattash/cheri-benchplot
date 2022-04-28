@@ -212,7 +212,7 @@ class BenchmarkManager(TemplateConfigContext):
     def _emit_records(self):
         self.logger.debug("Emit benchmark records")
         with open(self.benchmark_records_path, "w") as record_file:
-            record_file.write(self.benchmark_records.to_json(indent=4))
+            record_file.write(self.benchmark_records.emit_json())
 
     def create_benchmark(self, bench_config: BenchmarkRunConfig, instance: InstanceConfig, uid: uuid.UUID = None):
         """Create a benchmark run on an instance"""

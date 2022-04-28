@@ -3,12 +3,13 @@ import collections
 import itertools
 import json
 import typing
-from typing_inspect import get_origin, get_args, is_generic_type
+import uuid
 from dataclasses import (MISSING, Field, dataclass, field, fields, is_dataclass, replace)
 from enum import Enum
 from pathlib import Path
 
 from dataclasses_json import DataClassJsonMixin, config
+from typing_inspect import get_args, get_origin, is_generic_type
 
 
 def _template_safe(temp: str, **kwargs):
@@ -20,6 +21,17 @@ def _template_safe(temp: str, **kwargs):
 
 def path_field(default=None):
     return field(default=Path(default) if default else None, metadata=config(encoder=str, decoder=Path))
+
+
+class ConfigEncoder(json.JSONEncoder):
+    def default(self, o):
+        if isinstance(o, uuid.UUID):
+            return str(o)
+        elif isinstance(o, Path):
+            return str(o)
+        elif isinstance(o, Enum):
+            return o.value
+        return super().default(o)
 
 
 @dataclass
@@ -56,6 +68,14 @@ class Config(DataClassJsonMixin):
         for name, val in other_fields.items():
             setattr(inst, name, val)
         return inst
+
+    def emit_json(self) -> str:
+        """
+        Custom logic to emit json.
+        This is required as in older python version pathlib objects are not serializable.
+        """
+        data = self.to_dict()
+        return json.dumps(data, cls=ConfigEncoder, indent=4)
 
     def _normalize_sequence(self, f, sequence):
         type_args = get_args(f.type)
@@ -98,7 +118,7 @@ class Config(DataClassJsonMixin):
                     self._normalize_mapping(f, value)
                 else:
                     setattr(self, f.name, origin(value))
-            elif not is_generic_type(origin):
+            elif origin is None:
                 # Not a typing class (e.g. Union)
                 if issubclass(f.type, Path):
                     setattr(self, f.name, Path(getattr(self, f.name)).expanduser())
