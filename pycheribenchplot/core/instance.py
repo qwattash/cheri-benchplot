@@ -78,7 +78,7 @@ class PlatformOptions(Config):
     # Trace categories to enable for qemu-perfetto
     qemu_trace_categories: typing.Set[str] = field(default_factory=set)
     # VCU118 bios
-    vcu118_bios: Path = path_field("/must/be/set")
+    vcu118_bios: Path = None
 
 
 @dataclass
@@ -97,7 +97,7 @@ class InstanceConfig(TemplateConfig):
     # specified via --cheribsd/extra-kernel-configs?
     cheribuild_kernel: bool = True
     # Internal fields, should not appear in the config file and are missing by default
-    platform_options: typing.Optional[PlatformOptions] = field(default=None, init=False)
+    platform_options: PlatformOptions = field(default_factory=PlatformOptions)
 
     @property
     def user_pointer_size(self):

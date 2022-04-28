@@ -369,10 +369,9 @@ class BenchmarkBase(TemplateConfigContext):
 
     def _configure_datasets(self):
         """Resolve platform options for the instance configuration and finalize dataset configuration"""
-        opts = PlatformOptions()
+        opts = self.instance_config.platform_options
         for dset in self.datasets.values():
             opts = dset.configure(opts)
-        self.instance_config.platform_options = opts
 
     def _collect_datasets(self):
         """
