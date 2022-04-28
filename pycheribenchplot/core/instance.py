@@ -168,6 +168,7 @@ class InstanceInfo:
         if self.conn is not None:
             await self.disconnect()
             self.conn = None
+        self.logger.debug("Attempt to connect to %s:%d", self.ssh_host, self.ssh_port)
         self.conn = await asyncssh.connect(self.ssh_host,
                                            port=self.ssh_port,
                                            known_hosts=None,
@@ -245,7 +246,8 @@ class Instance(ABC):
         """
         Get instance information needed by benchmarks to connect and run on the instance
         """
-        info = InstanceInfo(self.logger, self.uuid, "localhost", self.ssh_port, self.manager_config.ssh_key)
+        info = InstanceInfo(self.logger, self.uuid, "localhost", self.ssh_port,
+                            self.manager_config.ssh_key.expanduser())
         return info
 
     def start(self):
@@ -295,30 +297,19 @@ class Instance(ABC):
         return port
 
     async def _run_cmd(self, prog, *args):
-        cmdline = f"{prog}" + " ".join(args)
-        self.logger.debug("exec %s", cmdline)
-        result = await self._ssh_ctrl_conn.run(cmdline)
-        if result.returncode != 0:
-            self.logger.error("Command failed with %d: %s", result.returncode, result.stderr)
-            raise InstanceManagerError("Control command failed")
-        self.logger.debug("%s", result.stdout)
+        assert self._ssh_ctrl_conn is not None, "No control connection"
+        self._ssh_ctrl_conn.run_cmd(prog, args)
 
     async def _make_control_connection(self):
         """
         Make sure that the cheribsd host accepts all environment variables we are going to send.
         To do this, update the configuration and restart sshd
         """
-        ssh_keyfile = self.manager_config.ssh_key.expanduser()
-        self.logger.debug("Connect root@localhost:%d key=%s", self.ssh_port, ssh_keyfile)
+        self._ssh_ctrl_conn = self.get_info()
         retry = 3
         while True:
             try:
-                self._ssh_ctrl_conn = await asyncssh.connect("localhost",
-                                                             port=self.ssh_port,
-                                                             known_hosts=None,
-                                                             client_keys=[ssh_keyfile],
-                                                             username="root",
-                                                             passphrase="")
+                await self._ssh_ctrl_conn.connect()
                 break
             except Exception as ex:
                 if retry == 0:
@@ -389,8 +380,7 @@ class Instance(ABC):
             for evt, matcher in self._io_loop_observers:
                 if matcher(out, False):
                     evt.set()
-        assert proc_task.returncode is not None
-        raise InstanceManagerError("cheribuild died")
+        raise InstanceManagerError(f"cheribuild died {proc_task.returncode}")
 
     async def _stderr_loop(self, proc_task):
         while not proc_task.stderr.at_eof():
@@ -403,8 +393,7 @@ class Instance(ABC):
             for evt, matcher in self._io_loop_observers:
                 if matcher(out, True):
                     evt.set()
-        assert proc_task.returncode is not None
-        raise InstanceManagerError("cheribuild died")
+        raise InstanceManagerError(f"cheribuild died {proc_task.returncode}")
 
     async def _wait_io(self, matcher: typing.Callable[[str, bool], bool]):
         """Wait for matching I/O from cheribuild on stdout or stderr"""
@@ -480,7 +469,7 @@ class CheribuildInstance(Instance):
 
         self.logger.debug("%s %s", self.cheribuild, run_cmd)
 
-        self._cheribuild_task = await aio.create_subprocess_exec(self.cheribuild,
+        self._cheribuild_task = await aio.create_subprocess_exec(str(self.cheribuild),
                                                                  *run_cmd,
                                                                  stdin=aio.subprocess.PIPE,
                                                                  stdout=aio.subprocess.PIPE,
@@ -503,7 +492,7 @@ class CheribuildInstance(Instance):
         """
         if self._ssh_ctrl_conn:
             await self._run_cmd("poweroff")
-            self._ssh_ctrl_conn.close()
+            self._ssh_ctrl_conn.disconnect()
             # Add timeout and force kill?
             await self._cheribuild_task.wait()
         elif self._cheribuild_task and self._cheribuild_task.returncode is None:
@@ -528,8 +517,13 @@ class VCU118Instance(Instance):
             self.logger.error("VCU118 MUST use concurrent_instances = 1")
             raise InstanceManagerError("Too many concurrent instances")
 
+        self.ssh_port = 22
+
     def _get_fpga_bios(self):
-        return self.config.platform_options.vcu118_bios
+        if self.config.platform_options.vcu118_bios:
+            return self.config.platform_options.vcu118_bios
+        else:
+            return self.manager_config.sdk_path / "sdk" / "bbl-gfe" / self.config.cheri_target / "bbl"
 
     def _get_fpga_kernel(self):
         sdk = self.manager_config.sdk_path
@@ -539,6 +533,7 @@ class VCU118Instance(Instance):
 
     def _get_fpga_gdb(self):
         gdb = self.manager_config.sdk_path / "sdk" / "bin" / "gdb"
+        gdb = Path("/homes/jrtc4/out/criscv-gdb")
         assert gdb.exists()
         return gdb
 
@@ -550,7 +545,13 @@ class VCU118Instance(Instance):
         ssh_pubkey = ssh_privkey.with_suffix(".pub")
         with open(ssh_pubkey, "r") as fd:
             pubkey_str = fd.read()
-        return pubkey_str
+        return pubkey_str.rstrip()
+
+    def get_info(self):
+        info = super().get_info()
+        info.ssh_host = "10.88.88.2"
+        info.ssh_port = self.ssh_port
+        return info
 
     async def _boot(self):
         # Assume that the FPGA image has been initialized already.
@@ -562,13 +563,14 @@ class VCU118Instance(Instance):
             self._get_fpga_gdb(), "--openocd", "/usr/bin/openocd", "--num-cores",
             self._get_fpga_cores(), "--benchmark-config"
         ]
-        run_cmd += ["--test-command='ifconfig xae0 10.88.88.2 netmask 255.255.255.0 up'"]
-        run_cmd += ["--test-command='mkdir -p /root/.ssh'"]
+        run_cmd += ["--test-command=ifconfig xae0 10.88.88.2 netmask 255.255.255.0 up"]
+        run_cmd += ["--test-command=mkdir -p /root/.ssh"]
         pubkey = self._get_fpga_pubkey()
-        run_cmd += [f"--test-command='printf \'%s\' \'{pubkey}\' > /root/.ssh/authorized_keys'"]
-        run_cmd += ["--test-command='echo Instance startup done'"]
+        run_cmd += [f"--test-command=printf \'%s\' \'{pubkey}\' > /root/.ssh/authorized_keys"]
+        run_cmd += ["--test-command=echo Instance startup done"]
+        run_cmd = [str(arg) for arg in run_cmd]
         self.logger.debug("%s %s", self.runner_script, run_cmd)
-        self._run_task = await aio.create_subprocess_exec(self.runner_script,
+        self._run_task = await aio.create_subprocess_exec(str(self.runner_script),
                                                           *run_cmd,
                                                           stdin=aio.subprocess.PIPE,
                                                           stdout=aio.subprocess.PIPE,
@@ -585,7 +587,7 @@ class VCU118Instance(Instance):
     async def _shutdown(self):
         if self._ssh_ctrl_conn:
             await self._run_cmd("poweroff")
-            self._ssh_ctrl_conn.close()
+            self._ssh_ctrl_conn.disconnect()
             await self._run_task.wait()
         elif self._run_task and self._run_task.returncode is None:
             self.logger.debug("Sending SIGTERM to vcu118 runner")
