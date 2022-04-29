@@ -298,7 +298,7 @@ class Instance(ABC):
 
     async def _run_cmd(self, prog, *args):
         assert self._ssh_ctrl_conn is not None, "No control connection"
-        self._ssh_ctrl_conn.run_cmd(prog, args)
+        await self._ssh_ctrl_conn.run_cmd(prog, args)
 
     async def _make_control_connection(self):
         """
@@ -492,7 +492,7 @@ class CheribuildInstance(Instance):
         """
         if self._ssh_ctrl_conn:
             await self._run_cmd("poweroff")
-            self._ssh_ctrl_conn.disconnect()
+            await self._ssh_ctrl_conn.disconnect()
             # Add timeout and force kill?
             await self._cheribuild_task.wait()
         elif self._cheribuild_task and self._cheribuild_task.returncode is None:
@@ -587,7 +587,7 @@ class VCU118Instance(Instance):
     async def _shutdown(self):
         if self._ssh_ctrl_conn:
             await self._run_cmd("poweroff")
-            self._ssh_ctrl_conn.disconnect()
+            await self._ssh_ctrl_conn.disconnect()
             await self._run_task.wait()
         elif self._run_task and self._run_task.returncode is None:
             self.logger.debug("Sending SIGTERM to vcu118 runner")
