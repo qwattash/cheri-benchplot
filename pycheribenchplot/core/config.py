@@ -120,8 +120,8 @@ class Config(DataClassJsonMixin):
                     setattr(self, f.name, origin(value))
             elif origin is None:
                 # Not a typing class (e.g. Union)
-                if issubclass(f.type, Path):
-                    setattr(self, f.name, Path(getattr(self, f.name)).expanduser())
+                if issubclass(f.type, Path) and value is not None:
+                    setattr(self, f.name, Path(value).expanduser())
 
 
 class TemplateConfigContext:
