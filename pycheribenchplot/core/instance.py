@@ -645,10 +645,6 @@ class InstanceManager:
         instance = self._active_instances[owner]
         del self._active_instances[owner]
         self._shutdown_instances.append(instance)
-        if not self._queued_instances.empty():
-            # Pull one queued instance and run it
-            q_owner, q_instance = self._queued_instances.get_nowait()
-            self._alloc_instance(q_owner, q_instance)
         try:
             instance.release()
             await instance.wait(InstanceStatus.SHUTDOWN)
@@ -659,6 +655,12 @@ class InstanceManager:
             instance.stop()
         finally:
             self.logger.debug("Released instance: %s", instance.uuid)
+        if not self._queued_instances.empty():
+            # If we have queued instances to run, wait until the instance poweroff and
+            # run the next in the queue
+            await instance.wait(InstanceStatus.DEAD)
+            q_owner, q_instance = self._queued_instances.get_nowait()
+            self._alloc_instance(q_owner, q_instance)
 
     async def shutdown(self):
         # Force-release everything and wait for shutdown
