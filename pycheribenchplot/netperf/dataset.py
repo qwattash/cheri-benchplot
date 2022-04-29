@@ -199,6 +199,20 @@ class NetperfData(CSVDataSetContainer):
         self.netserver_task = None
         self._script = self.benchmark.get_script_builder()
 
+    @property
+    def has_qemu(self):
+        if (self.benchmark.get_dataset(DatasetName.QEMU_STATS_BB_HIST) is not None
+                or self.benchmark.get_dataset(DatasetName.QEMU_STATS_CALL_HIST) is not None
+                or self.benchmark.get_dataset(DatasetName.QEMU_UMA_COUNTERS) is not None):
+            return True
+        return False
+
+    @property
+    def has_pmc(self):
+        if self.benchmark.get_dataset(DatasetName.PMC) is not None:
+            return True
+        return False
+
     def _load_csv(self, path: Path, **kwargs):
         kwargs["skiprows"] = 1
         return super()._load_csv(path, **kwargs)
@@ -256,22 +270,16 @@ class NetperfData(CSVDataSetContainer):
         self.netperf_bin = Path("/") / rootfs_netperf_bin.relative_to(self.benchmark.rootfs)
         self.netserver_bin = Path("/") / rootfs_netserver_bin.relative_to(self.benchmark.rootfs)
         self.logger.debug("Using %s %s", self.netperf_bin, self.netserver_bin)
-        # Determine any extra options for cooperation with other datasets
-        # qemu = self.benchmark.has_qemu_datasets()
-        qemu = (self.benchmark.get_dataset(DatasetName.QEMU_STATS_BB_HIST)
-                or self.benchmark.get_dataset(DatasetName.QEMU_STATS_CALL_HIST)
-                or self.benchmark.get_dataset(DatasetName.QEMU_UMA_COUNTERS))
-        pmc = self.benchmark.get_dataset(DatasetName.PMC)
-        if pmc and not qemu:
+        if self.has_pmc and not self.has_qemu:
             self._set_netperf_option("-g", "all")
-        if qemu:
+        elif self.has_qemu:
             self._set_netperf_option("-g", "qemu")
         return opts
 
     def configure_iteration(self, iteration):
         super().configure_iteration(iteration)
-        pmc = self.benchmark.get_dataset(DatasetName.PMC)
-        if pmc:
+        if self.has_pmc:
+            pmc = self.benchmark.get_dataset(DatasetName.PMC)
             pmc_output = pmc.iteration_output_file(iteration)
             pmc_remote_output = self._script.local_to_remote_path(pmc_output)
             self._set_netperf_option("-G", pmc_remote_output, replace=True)
