@@ -116,6 +116,7 @@ class BenchmarkScriptCommand:
     local_output: Path = None
     extra_output: typing.Dict[Path, Path] = field(default_factory=dict)
     extractfn: typing.Callable[["BenchmarkBase", Path, Path], None] = None
+    cpu: int = None
 
     def build_sh_command(self, cmd_index: int):
         cmdargs = f"{self.cmd} " + " ".join(map(str, self.args))
@@ -125,16 +126,21 @@ class BenchmarkScriptCommand:
         else:
             output_redirect = " >> /dev/null"
         envstr = " ".join(env_vars)
+        if self.cpu is None:
+            cpuset = ""
+        else:
+            cpuset = f"cpuset -c -l {cpu}"
+
         if self.background:
-            cmdline = f"{envstr} {cmdargs} {output_redirect} &\n"
+            cmdline = f"{envstr} {cpuset} {cmdargs} {output_redirect} &\n"
             if self.collect_pid:
                 cmdline += f"PID_{cmd_index}=$!"
         else:
             cmdline = f"{cmdargs} {output_redirect}"
             if self.collect_pid:
-                cmdline = f"PID_{cmd_index}=`sh -c \"echo \\\\$\\\\$; {envstr} exec {cmdline}\"`"
+                cmdline = f"PID_{cmd_index}=`{cpuset} sh -c 'echo $$; {envstr} exec {cmdline}'`"
             else:
-                cmdline = f"{envstr} {cmdline}"
+                cmdline = f"{envstr} {cpuset} {cmdline}"
         return cmdline
 
 
@@ -205,7 +211,8 @@ class BenchmarkScript:
                 outfile: Path = None,
                 env: typing.Dict[str, str] = None,
                 extractfn=None,
-                extra_outfiles: typing.List[Path] = []):
+                extra_outfiles: typing.List[Path] = [],
+                pin_cpu=None):
         """
         Add a foreground command to the run script.
         If the output is to be captured, the outfile argument specifies the host path in which it will be
@@ -217,6 +224,8 @@ class BenchmarkScript:
         """
         env = env or {}
         cmd = BenchmarkScriptCommand(command, args, env)
+        if pin_cpu is not None:
+            cmd.cpu = pin_cpu
         if outfile is not None:
             cmd.remote_output = self.local_to_remote_path(outfile)
         cmd.local_output = outfile
@@ -229,13 +238,16 @@ class BenchmarkScript:
                    args: list,
                    outfile: Path = None,
                    env: typing.Dict[str, str] = None,
-                   extractfn=None) -> VariableRef:
+                   extractfn=None,
+                   pin_cpu=None) -> VariableRef:
         """
         Similar to add_cmd() but will return an handle that can be used at a later time to terminate the
         background process.
         """
         env = env or {}
         cmd = BenchmarkScriptCommand(command, args, env)
+        if pin_cpu is not None:
+            cmd.cpu = pin_cpu
         if outfile is not None:
             cmd.remote_output = self.local_to_remote_path(outfile)
         cmd.local_output = outfile
