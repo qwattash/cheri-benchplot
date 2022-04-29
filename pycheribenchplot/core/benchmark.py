@@ -13,7 +13,7 @@ import pandas as pd
 
 from ..pmc import PMCStatData
 from .analysis import BenchmarkAnalysisRegistry
-from .config import TemplateConfig, TemplateConfigContext
+from .config import TemplateConfig, TemplateConfigContext, path_field
 from .dataset import (DatasetArtefact, DataSetContainer, DatasetName, DatasetRegistry)
 from .elf import DWARFHelper, Symbolizer
 from .instance import InstanceConfig, InstanceInfo, PlatformOptions
@@ -68,15 +68,17 @@ class BenchmarkRunConfig(TemplateConfig):
     The name is used to resolve names in template strings of benchmark commands.
     parameters: Set of parameters assigned to a benchmark run, from the `parameterize` dictionary,
     this is only valid for benchmark records and should not be used in the main configuration.
+    remote_output_dir: The root output file directory on the remote instance.
     """
     name: str
     iterations: int
     benchmark_dataset: BenchmarkDataSetConfig
     datasets: typing.Dict[str, BenchmarkDataSetConfig]
+    desc: str = ""
     parameterize: typing.Dict[str, typing.List[any]] = field(default_factory=dict)
     parameters: typing.Dict[str, any] = field(default_factory=dict)
     drop_iterations: int = 0
-    desc: str = ""
+    remote_output_dir: Path = path_field("benchmark-output")
 
     @property
     def is_parameterized(self):
@@ -164,7 +166,7 @@ class BenchmarkScript:
         self._commands = []
         # Intentionally relative to the run-script location.
         # We may want to add a knob to be able to store these in tmpfs or other places.
-        self._guest_output = Path("benchmark-output")
+        self._guest_output = benchmark.config.remote_output_dir
 
         self._prepare_guest_output_dirs()
 
