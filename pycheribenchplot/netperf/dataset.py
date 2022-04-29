@@ -22,7 +22,7 @@ class NetperfRunConfig(TemplateConfig):
     # Netserver options (used for both priming and the actual benchmark)
     netserver_options: typing.List[str] = field(default_factory=list)
     # use KTRACE netserver to resolve forked netserver PIDs?
-    netserver_resolve_forks: bool = True
+    netserver_resolve_forks: bool = False
 
 
 class NetperfProcstat(ProcstatDataset):
