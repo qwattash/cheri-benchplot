@@ -395,9 +395,6 @@ class BenchmarkBase(TemplateConfigContext):
         self.datasets[self.config.benchmark_dataset.type] = self._get_dataset_handler(
             "benchmark", self.config.benchmark_dataset)
         # Implicit auxiliary datasets
-        # Procstat dataset should be added in configuration file as it depends on the benchmark
-        # self.datasets[DatasetArtefact.PROCSTAT] = self._get_dataset_handler(
-        #     "procstat", BenchmarkDataSetConfig(type=DatasetName.PROCSTAT))
         self.datasets[DatasetArtefact.PIDMAP] = self._get_dataset_handler(
             "pidmap", BenchmarkDataSetConfig(type=DatasetName.PIDMAP))
         # Extra datasets configured
