@@ -16,7 +16,7 @@ from pandas.api.types import is_numeric_dtype
 
 from ..dataset import generalized_xs
 from .backend import FigureManager, Mosaic, ViewRenderer
-from .data_view import BarPlotDataView, CellData, Scale, Style
+from .data_view import BarPlotDataView, CellData, Scale, Style, get_col_or_idx
 
 
 def build_style_args(style: Style) -> dict:
@@ -621,6 +621,13 @@ class BarRenderer(ViewRenderer):
         # Return the text bbox for l and r axes
         return l_bbox, r_bbox
 
+    def _draw_errorbar(self, ax, view, df, x, y):
+        if view.err_hi is None or view.err_lo is None:
+            return
+        err_hi = get_col_or_idx(df, view.err_hi)
+        err_lo = get_col_or_idx(df, view.err_lo)
+        ax.errorbar(x, y, yerr=[err_lo, err_hi], color="black", capsize=5)
+
     def render(self, view, cell):
         """
         For the input dataframe we split the column groups
@@ -635,24 +642,25 @@ class BarRenderer(ViewRenderer):
         left_patches = []
         right_patches = []
         for key, chunk in groups:
-            if view.has_yleft:
-                for col_idx, col_name in enumerate(view.yleft):
-                    color, label = self._find_legend_entry(view, by, key, col_name, "left")
-                    values = view.get_col(col_name, chunk).squeeze()
-                    x = view.get_col(f"__bar_x_l{col_idx}", chunk)
-                    base = view.get_col(f"__bar_base_l{col_idx}", chunk)
-                    width = view.get_col(f"__bar_width_l{col_idx}", chunk)
-                    patches = cell.ax.bar(x, height=values, bottom=base, color=color, width=width)
-                    cell.legend.set_item(label, patches)
-            if view.has_yright:
-                for col_idx, col_name in enumerate(view.yright):
-                    color, label = self._find_legend_entry(view, by, key, col_name, "right")
-                    values = view.get_col(col_name, chunk).squeeze()
-                    x = view.get_col(f"__bar_x_r{col_idx}", chunk)
-                    base = view.get_col(f"__bar_base_r{col_idx}", chunk)
-                    width = view.get_col(f"__bar_width_r{col_idx}", chunk)
-                    patches = cell.rax.bar(x, height=values, bottom=base, color=color, width=width)
-                    cell.legend.set_item(label, patches)
+            for col_idx, col_name in enumerate(view.yleft):
+                color, label = self._find_legend_entry(view, by, key, col_name, "left")
+                values = view.get_col(col_name, chunk).squeeze()
+                x = view.get_col(f"__bar_x_l{col_idx}", chunk)
+                base = view.get_col(f"__bar_base_l{col_idx}", chunk)
+                width = view.get_col(f"__bar_width_l{col_idx}", chunk)
+                patches = cell.ax.bar(x, height=values, bottom=base, color=color, width=width)
+                cell.legend.set_item(label, patches)
+                self._draw_errorbar(cell.ax, view, chunk, x, base + values)
+
+            for col_idx, col_name in enumerate(view.yright):
+                color, label = self._find_legend_entry(view, by, key, col_name, "right")
+                values = view.get_col(col_name, chunk).squeeze()
+                x = view.get_col(f"__bar_x_r{col_idx}", chunk)
+                base = view.get_col(f"__bar_base_r{col_idx}", chunk)
+                width = view.get_col(f"__bar_width_r{col_idx}", chunk)
+                patches = cell.rax.bar(x, height=values, bottom=base, color=color, width=width)
+                cell.legend.set_item(label, patches)
+                self._draw_errorbar(cell.rax, view, chunk, x, base + values)
 
         l_bbox, r_bbox = self._draw_columns_text(view, cell)
         if view.has_yleft:
@@ -772,7 +780,9 @@ class MplFigureManager(FigureManager):
             for name, subplot in mosaic.subplots.items():
                 submosaic = mosaic.extract(name)
                 nrows, ncols = submosaic.shape
-                figure = plt.figure(constrained_layout=True, figsize=(10 * ncols, 7 * nrows))
+                w = 10 * ncols
+                h = min(7 * nrows, 300)
+                figure = plt.figure(constrained_layout=True, figsize=(w, h))
                 axes = figure.subplot_mosaic(submosaic, empty_sentinel="BLANK")
                 cell = MplCellData(title=subplot.get_cell_title(), figure=figure, ax=axes[name])
                 cell.figure_manager = self
@@ -786,7 +796,9 @@ class MplFigureManager(FigureManager):
                 figure = plt.figure(constrained_layout=True, figsize=(10, 7))
                 mosaic_axes = {}
             else:
-                figure = plt.figure(constrained_layout=True, figsize=(10 * ncols, 7 * nrows))
+                w = 10 * ncols
+                h = min(7 * nrows, 300)
+                figure = plt.figure(constrained_layout=True, figsize=(w, h))
                 mosaic_axes = figure.subplot_mosaic(mosaic.layout, empty_sentinel="BLANK")
             self.figures.append(figure)
             for name, subplot in mosaic.subplots.items():
@@ -876,6 +888,13 @@ class MplCellData(CellData):
         _, y_pad = inv_tx.transform([0, fig_pad]) - inv_tx.transform([0, 0])
         ax.set_ylim(ymin - y_pad, ymax + y_pad)
 
+    def _pad_x_axis(self, ax, padding):
+        xmin, xmax = ax.get_xlim()
+        fig_pad, _ = ax.transAxes.transform([padding, 0]) - ax.transAxes.transform([0, 0])
+        inv_tx = ax.transData.inverted()
+        x_pad, _ = inv_tx.transform([fig_pad, 0]) - inv_tx.transform([0, 0])
+        ax.set_xlim(xmin - x_pad, xmax + x_pad)
+
     def draw(self):
         assert self.figure, "Missing cell figure"
         assert self.ax, "Missing cell axes"
@@ -923,6 +942,7 @@ class MplCellData(CellData):
             self._pad_y_axis(self.ax, self.yleft_config.padding)
         if self.yright_config:
             self._pad_y_axis(self.rax, self.yright_config.padding)
+        self._pad_x_axis(self.ax, self.x_config.padding)
 
         self.legend.build_legend(self)
         if self.legend.legend_position == "top":

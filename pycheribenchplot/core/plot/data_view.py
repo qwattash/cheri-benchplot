@@ -286,6 +286,17 @@ class LegendInfo:
         fig.show()
 
 
+def get_col_or_idx(df, name):
+    """
+    Helper to transparently return a column or an index level from a dataframe.
+    This is to avoid having to distinguish between index.get_level_values() and simple [] indexing.
+    Return a dataframe column, which might be a column or index level.
+    Note that index levels are normalized to dataframe first.
+    """
+    df = df.reset_index().set_index(df.index, drop=False)
+    return df[name]
+
+
 @dataclass
 class DataView:
     """
@@ -328,8 +339,7 @@ class DataView:
         """
         if df is None:
             df = self.df
-        df = df.reset_index().set_index(df.index, drop=False)
-        return df[col]
+        return get_col_or_idx(df, col)
 
     def default_legend_info(self):
         keys = self.df.index.unique()
@@ -497,6 +507,8 @@ class BarPlotDataView(XYPlotDataView):
     When the value is "interleaved", left and right bars are paired, so that
     the first yleft column is next to the first yright column, and so forth.
     - bar_text: Display the bar value on top of the bar.
+    - err_hi: High error bar column
+    - err_lo: Low error bar column
     """
     bar_group: str = None
     stack_group: str = None
@@ -505,6 +517,8 @@ class BarPlotDataView(XYPlotDataView):
     bar_axes_ordering: str = "sequential"
     bar_text: bool = False
     bar_text_pad: float = 0.01
+    err_hi: str = None
+    err_lo: str = None
 
     def __post_init__(self):
         super().__post_init__()

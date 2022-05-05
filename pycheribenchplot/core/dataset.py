@@ -972,3 +972,14 @@ def filter_aggregate(df: pd.DataFrame, cond: pd.Series, by: list, how="all", com
     if complement:
         match = ~match
     return df[match]
+
+
+def scale_to_std_notation(series: pd.Series) -> int:
+    """
+    Return the standard power of 10 for the magnitude of a given series
+    """
+    mag = np.log10(series.abs().max())
+    if np.isnan(mag):
+        return 0
+    std_mag = 3 * int(mag / 3)
+    return std_mag
