@@ -11,7 +11,6 @@ from pathlib import Path
 import asyncssh
 import pandas as pd
 
-from ..pmc import PMCStatData
 from .analysis import BenchmarkAnalysisRegistry
 from .config import TemplateConfig, TemplateConfigContext, path_field
 from .dataset import (DatasetArtefact, DataSetContainer, DatasetName, DatasetRegistry)
@@ -591,10 +590,14 @@ class BenchmarkBase(TemplateConfigContext):
             await self.instance_manager.release_instance(self.uuid)
 
     def _load_kernel_symbols(self):
+        # Boot kernel location
         kernel = self.rootfs / "boot" / f"kernel.{self.instance_config.kernel}" / "kernel.full"
         if not kernel.exists():
+            # FPGA kernels fallback location
+            kernel = self.rootfs / f"kernel.{self.instance_config.kernel}.full"
+        if not kernel.exists():
             self.logger.warning("Kernel name not found in kernel.<CONF> directories, using the default kernel")
-            kernel = self.rootfs / "kernel" / "kernel.full"
+            kernel = self.rootfs / "boot" / "kernel" / "kernel.full"
         self.sym_resolver.register_sym_source(0, "kernel.full", kernel, shared=True)
         arch_pointer_size = self.instance_config.kernel_pointer_size
         self.dwarf_helper.register_object("kernel.full", kernel, arch_pointer_size)
