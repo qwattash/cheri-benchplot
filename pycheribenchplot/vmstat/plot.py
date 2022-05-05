@@ -281,7 +281,7 @@ class VMStatUMAMetricHist(BenchmarkSubPlot):
         zeros = high_df.groupby(index_complement)["abs_delta"].transform(lambda g: ((g == 0) | g.isna()).all())
         return high_df[~zeros]
 
-    def generate(self, surface, cell):
+    def generate(self, fm, cell):
         """
         We filter metric to show only the values for the top 90th percentile
         of the delta, this avoid cluttering the plots with meaningless data.
