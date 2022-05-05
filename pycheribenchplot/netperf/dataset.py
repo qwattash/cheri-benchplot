@@ -222,7 +222,7 @@ class NetperfData(CSVDataSetContainer):
 
     def load(self):
         pidmap = self.benchmark.get_dataset_by_artefact(DatasetArtefact.PIDMAP)
-        if pidmap:
+        if pidmap and self.config.netserver_resolve_forks:
             kdump_out = self._kdump_output_path()
             # Load the kdump auxiliary data to resolve extra PIDs
             self.logger.info("Loading netserver PIDs from auxiliary kdump %s", kdump_out)
