@@ -31,6 +31,7 @@
         "platform": "vcu118",
         "cheri_target": "riscv64-purecap",
         "kernelabi": "purecap",
+        "cheribuild_kernel": false,
 	    "platform_options": {
 		    "cores": 2,
 		    "vcu118_bios": "{sdk_path}/sdk/bbl-gfe/riscv64-purecap/bbl"
@@ -42,6 +43,7 @@
         "platform": "vcu118",
         "cheri_target": "riscv64-purecap",
         "kernelabi": "hybrid",
+        "cheribuild_kernel": false,
 	    "platform_options": {
 		    "cores": 2,
 		    "vcu118_bios": "{sdk_path}/sdk/bbl-gfe/riscv64-purecap/bbl"
@@ -52,7 +54,8 @@
         "kernel": "CHERI-PURECAP-GFE-BUCKET-ADJUST",
         "platform": "vcu118",
         "cheri_target": "riscv64-purecap",
-        "kernelabi": "hybrid",
+        "kernelabi": "purecap",
+        "cheribuild_kernel": false,
 	    "platform_options": {
 		    "cores": 2,
 		    "vcu118_bios": "{sdk_path}/sdk/bbl-gfe/riscv64-purecap/bbl"
