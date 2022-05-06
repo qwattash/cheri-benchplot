@@ -1,0 +1,73 @@
+{
+    "output_path": "benchmarks/netperf/vcu118/simple",
+    "ssh_key": "extra_files/freebsd_test_id_rsa",
+    "concurrent_instances": 1,
+    "instances": [
+        {
+            "name": "hybrid",
+            "baseline": true,
+            "kernel": "CHERI-GFE-NODEBUG",
+            "platform": "vcu118",
+            "cheri_target": "riscv64-purecap",
+            "kernelabi": "hybrid",
+	    "platform_options": {
+		"cores": 2,
+		"vcu118_bios": "{sdk_path}/sdk/bbl-gfe/riscv64-purecap/bbl"
+	    }
+	},
+        {
+            "name": "purecap",
+            "baseline": false,
+            "kernel": "CHERI-PURECAP-GFE-NODEBUG",
+            "platform": "vcu118",
+            "cheri_target": "riscv64-purecap",
+            "kernelabi": "purecap",
+	    "platform_options": {
+		"cores": 2,
+		"vcu118_bios": "{sdk_path}/sdk/bbl-gfe/riscv64-purecap/bbl"
+	    }
+	}
+    ],
+    "benchmarks": [
+        {
+            "name": "udp_rr_5k_1b",
+            "desc": "UDP RR 5k transactions 1-byte",
+            "type": "netperf",
+            "iterations": 12,
+	    "drop_iterations": 2,
+	    "remote_output_dir": "/tmp/benchmark-output",
+            "benchmark_dataset": {
+		"type": "netperf-data",
+		"run_options": {
+                    "netperf_options": [
+			"-P", "1",
+			"-T", "0,1",
+			"-i", "5,5",
+			"-l", "-5000",
+			"-t", "UDP_RR", "--",
+			"-o", "SOCKET_TYPE,PROTOCOL,DIRECTION,ELAPSED_TIME,THROUGHPUT,THROUGHPUT_UNITS,REQUEST_SIZE,RESPONSE_SIZE,CONFIDENCE_ITERATION,UUID,NETPERF_ABI,KERNEL_ABI,COMMAND_LINE",
+			"-r", "1,1",
+			"-u", "{uuid}"],
+                    "netserver_options": ["-D"]
+		}
+            },
+            "datasets": {
+		"netperf-pmc": {
+                    "type": "pmc"
+		},
+		"netperf-uma-info": {
+                    "type": "vmstat-uma-info"
+		},
+		"netperf-vmstat-malloc": {
+                    "type": "vmstat-malloc"
+		},
+		"netperf-vmstat-uma": {
+                    "type": "vmstat-uma"
+		},
+		"netperf-netstat": {
+                    "type": "netstat"
+		}
+            }
+	}
+    ]
+}
