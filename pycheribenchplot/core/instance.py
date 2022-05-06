@@ -12,7 +12,7 @@ from pathlib import Path
 
 import asyncssh
 
-from .config import Config, TemplateConfig, path_field
+from .config import TemplateConfig, path_field
 from .util import new_logger
 
 
@@ -63,7 +63,7 @@ class InstanceKernelABI(Enum):
 
 
 @dataclass
-class PlatformOptions(Config):
+class PlatformOptions(TemplateConfig):
     """
     Base class for platform-specific options.
     This is internally used during benchmark dataset collection to
@@ -72,7 +72,7 @@ class PlatformOptions(Config):
     # Number of cores in the system
     cores: int = 1
     # The trace file used by default unless one of the datasets overrides it
-    qemu_trace_file: Path = path_field("/tmp/qemu.pb")
+    qemu_trace_file: Path = None
     # Run qemu with tracing enabled
     qemu_trace: bool = False
     # Trace categories to enable for qemu-perfetto

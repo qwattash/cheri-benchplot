@@ -15,7 +15,7 @@ from .analysis import BenchmarkAnalysisRegistry
 from .config import TemplateConfig, TemplateConfigContext, path_field
 from .dataset import (DatasetArtefact, DataSetContainer, DatasetName, DatasetRegistry)
 from .elf import DWARFHelper, Symbolizer
-from .instance import InstanceConfig, InstanceInfo, PlatformOptions
+from .instance import InstanceConfig, InstanceInfo
 from .pidmap import PidMapDataset
 from .plot import BenchmarkPlot
 from .procstat import ProcstatDataset
@@ -382,7 +382,7 @@ class BenchmarkBase(TemplateConfigContext):
 
     def _configure_datasets(self):
         """Resolve platform options for the instance configuration and finalize dataset configuration"""
-        opts = self.instance_config.platform_options
+        opts = self.instance_config.platform_options.replace()
         for dset in self.datasets.values():
             opts = dset.configure(opts)
 

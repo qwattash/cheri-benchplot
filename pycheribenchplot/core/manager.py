@@ -63,6 +63,11 @@ class BenchmarkSessionConfig(TemplateConfig):
     instances: typing.List[InstanceConfig] = field(default_factory=list)
     benchmarks: typing.List[BenchmarkRunConfig] = field(default_factory=list)
 
+    def __post_init__(self):
+        super().__post_init__()
+        self.ssh_key = self.ssh_key.resolve()
+        self.output_path = self.output_path.resolve()
+
 
 #class BenchmarkManagerConfig(TemplateConfig):
 @dataclass
@@ -139,7 +144,11 @@ class BenchmarkManager(TemplateConfigContext):
         """Session-ID dependant initialization"""
         # Note: this will only bind the manager-specific options, the rest of the template arguments
         # will remain as they will need to be bound to specific benchmark instances.
-        self.register_template_subst(session=self.session)
+        # Paths from the user config must be filled, so they are safe to substitute
+        self.register_template_subst(session=self.session,
+                                     sdk_path=self._config_template.sdk_path,
+                                     build_path=self._config_template.build_path,
+                                     src_path=self._config_template.src_path)
         self.config = self._config_template.bind(self)
         self.session_output_path = self.config.output_path / f"benchplot-session-{str(self.session)}"
         self.benchmark_records = BenchmarkManagerRecord(session=self.session)
