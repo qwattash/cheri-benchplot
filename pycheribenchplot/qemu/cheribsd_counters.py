@@ -1,5 +1,5 @@
 from ..core.dataset import DatasetName, Field
-from .dataset import QEMUGuestCountersDataset
+from .dataset import DatasetProcessingError, QEMUGuestCountersDataset
 
 
 class QEMUUMACountersDataset(QEMUGuestCountersDataset):
