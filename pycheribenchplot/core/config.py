@@ -171,15 +171,12 @@ class TemplateConfig(Config):
                 # Common union field, use whatever type we have as the argument as we do not
                 # know how to parse it
                 return self._bind_one(context, type(value), value)
-        elif type(origin) == type:
-            # Generic type argument is a subclass of the type metaclass so it is safe
-            # to check with issubclass()
-            if issubclass(origin, collections.abc.Sequence):
-                arg_type = get_args(f.type)[0]
-                return [self._bind_one(context, arg_type, v) for v in value]
-            if issubclass(origin, collections.abc.Mapping):
-                arg_type = get_args(f.type)[1]
-                return {key: self._bind_one(context, arg_type, v) for key, v in value.items()}
+        elif origin is typing.List or origin is list:
+            arg_type = get_args(f.type)[0]
+            return [self._bind_one(context, arg_type, v) for v in value]
+        elif origin is typing.Dict or origin is dict:
+            arg_type = get_args(f.type)[1]
+            return {key: self._bind_one(context, arg_type, v) for key, v in value.items()}
         else:
             return self._bind_one(context, f.type, value)
 
