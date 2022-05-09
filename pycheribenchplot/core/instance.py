@@ -72,13 +72,15 @@ class PlatformOptions(TemplateConfig):
     # Number of cores in the system
     cores: int = 1
     # The trace file used by default unless one of the datasets overrides it
-    qemu_trace_file: Path = None
+    qemu_trace_file: typing.Optional[Path] = None
     # Run qemu with tracing enabled
     qemu_trace: bool = False
     # Trace categories to enable for qemu-perfetto
     qemu_trace_categories: typing.Set[str] = field(default_factory=set)
     # VCU118 bios
     vcu118_bios: Path = None
+    # IP to use for the VCU118 board
+    vcu118_ip: str = "10.88.88.2"
 
 
 @dataclass
@@ -549,7 +551,7 @@ class VCU118Instance(Instance):
 
     def get_info(self):
         info = super().get_info()
-        info.ssh_host = "10.88.88.2"
+        info.ssh_host = self.config.platform_options.vcu118_ip
         info.ssh_port = self.ssh_port
         return info
 
@@ -560,10 +562,11 @@ class VCU118Instance(Instance):
             "--bios",
             self._get_fpga_bios(), "--kernel",
             self._get_fpga_kernel(), "--gdb",
-            self._get_fpga_gdb(), "--openocd", "/usr/bin/openocd", "--num-cores",
+            self._get_fpga_gdb(), "--openocd", self.manager_config.openocd_path, "--num-cores",
             self._get_fpga_cores(), "--benchmark-config"
         ]
-        run_cmd += ["--test-command=ifconfig xae0 10.88.88.2 netmask 255.255.255.0 up"]
+        ip_addr = self.config.platform_options.vcu118_ip
+        run_cmd += [f"--test-command=ifconfig xae0 {ip_addr} netmask 255.255.255.0 up"]
         run_cmd += ["--test-command=mkdir -p /root/.ssh"]
         pubkey = self._get_fpga_pubkey()
         run_cmd += [f"--test-command=printf \'%s\' \'{pubkey}\' > /root/.ssh/authorized_keys"]
