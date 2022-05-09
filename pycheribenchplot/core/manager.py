@@ -37,6 +37,7 @@ class BenchplotUserConfig(Config):
     build_path: Path = path_field("~/cheri/build")
     src_path: Path = path_field("~/cheri")
     perfetto_path: Path = path_field("~/cheri/cheri-perfetto/build")
+    openocd_path: typing.Optional[Path] = None
     cheribuild_path: Path = field(init=False, default=None)
     cheribsd_path: Path = field(init=False, default=None)
     qemu_path: Path = field(init=False, default=None)
@@ -49,6 +50,9 @@ class BenchplotUserConfig(Config):
         self.cheribuild_path = self.src_path / "cheribuild"
         self.cheribsd_path = self.src_path / "cheribsd"
         self.qemu_path = self.src_path / "qemu"
+        # Try to autodetect openocd
+        if self.openocd_path is None:
+            self.openocd_path = shutil.which("openocd")
 
 
 @dataclass
@@ -377,7 +381,6 @@ class BenchmarkManager(TemplateConfigContext):
                     benchmark_group.append(replace(conf, parameters=param_dict))
             else:
                 self.logger.debug("Found benchmark %s", conf.name)
-                print(conf.parameterize)
                 benchmark_group = [conf]
             for sub_conf in benchmark_group:
                 for inst_conf in self.config.instances:
