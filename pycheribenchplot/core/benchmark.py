@@ -4,7 +4,7 @@ import json
 import re
 import typing
 import uuid
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
@@ -382,7 +382,7 @@ class BenchmarkBase(TemplateConfigContext):
 
     def _configure_datasets(self):
         """Resolve platform options for the instance configuration and finalize dataset configuration"""
-        opts = replace(self.instance_config.platform_options)
+        opts = self.instance_config.platform_options
         for dset in self.datasets.values():
             opts = dset.configure(opts)
 
