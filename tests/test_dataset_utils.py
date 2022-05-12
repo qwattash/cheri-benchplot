@@ -224,6 +224,21 @@ def test_broadcast_xs(fake_simple_df):
         assert (chunk == xs_col_value).all()
 
 
+def test_broadcast_xs_flat_index(fake_simple_df):
+    fake_simple_df["l0"] = range(len(fake_simple_df))
+    # fake_simple_df["l1"] = fake_simple_df["l0"] + 10
+    df = fake_simple_df.set_index(["l0"])
+    xs = df.iloc[[0], :]
+
+    result_df = broadcast_xs(df, xs)
+    assert len(result_df) == len(df)
+    assert not result_df.isna().any().any()
+    g = result_df.groupby("l0")
+    for _, chunk in g:
+        assert len(chunk) == 1
+        assert (chunk == xs.values).all().all()
+
+
 def test_filter_aggregate(fake_simple_df):
     df = fake_simple_df
     # c2 will all be 1 except for one element in the slice (:, 1, 1, 0)

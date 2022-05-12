@@ -415,37 +415,109 @@ class DataSetContainer(metaclass=DatasetRegistry):
         df.columns = new_index
         return df
 
+    def _compute_data_delta(self, data: pd.DataFrame, baseline: pd.DataFrame) -> pd.DataFrame:
+        """
+        Compute a simple delta columnwise between the data and baseline dataframes.
+        """
+        baseline_xs = baseline.loc[:, data.columns]
+        assert data.columns.equals(baseline_xs.columns)
+        aligned_baseline = broadcast_xs(data, baseline_xs)
+        delta = data.subtract(aligned_baseline)
+        norm_delta = delta.divide(aligned_baseline)
+        result = [
+            self._set_delta_columns_name("delta_baseline", delta),
+            self._set_delta_columns_name("norm_delta_baseline", norm_delta)
+        ]
+        return result
+
+    def _compute_iqr_delta(self, data: pd.DataFrame, baseline: pd.DataFrame, median_df,
+                           median_delta: pd.DataFrame) -> pd.DataFrame:
+        """
+        Compute the error propagation for a delta between the data and baseline columns.
+        We subtract directly the quartile values so that the resulting error becomes:
+        new_err_hi = data_err_hi + bs_err_lo
+        new_err_lo = data_err_lo + bs_err_hi
+        """
+        bs_q75_xs = baseline.xs(("q75", "sample"), level=["aggregate", "delta"], axis=1, drop_level=False)
+        bs_q25_xs = baseline.xs(("q25", "sample"), level=["aggregate", "delta"], axis=1, drop_level=False)
+        q75_xs = data.xs(("q75", "sample"), level=["aggregate", "delta"], axis=1, drop_level=False)
+        q25_xs = data.xs(("q25", "sample"), level=["aggregate", "delta"], axis=1, drop_level=False)
+        # broadcast baseline along data
+        bs_q75_xs = broadcast_xs(q75_xs, bs_q75_xs)
+        bs_q25_xs = broadcast_xs(q25_xs, bs_q25_xs)
+        # Need to rename the columns we are subtracting for clean subtraction or just use the values,
+        # the latter relies on column ordering but it should be stable here
+        q75_delta = q75_xs.subtract(bs_q25_xs.values)
+        q25_delta = q25_xs.subtract(bs_q75_xs.values)
+        result = [
+            self._set_delta_columns_name("delta_baseline", q75_delta),
+            self._set_delta_columns_name("delta_baseline", q25_delta)
+        ]
+        # Now compute the normalized quantile values. These are simple normalization of the delta w.r.t the
+        # baseline median.
+        bs_median = baseline.xs(("median", "sample"), level=["aggregate", "delta"], axis=1)
+        # align the indexes by broadcasting the median cross section with the frames we divide
+        bs_median = broadcast_xs(q75_delta, bs_median)
+        q75_norm = q75_delta.divide(bs_median)
+        bs_median = broadcast_xs(q25_delta, bs_median)
+        q25_norm = q25_delta.divide(bs_median)
+        result += [
+            self._set_delta_columns_name("norm_delta_baseline", q75_norm),
+            self._set_delta_columns_name("norm_delta_baseline", q25_norm)
+        ]
+        return result
+
     def _compute_delta_by_dataset(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         General operation to compute the delta of aggregated data columns between
         benchmark runs (identified by dataset_id).
-        This will add the "delta_baseline" column in the delta columns index level.
+        This will add the delta columns in the delta index level.
         It is assumed that the current benchmark instance is the baseline instance,
         this is the case if called from post_aggregate().
         """
         assert check_multi_index_aligned(df, "dataset_id")
         assert "metric" in df.columns.names, "Missing column metric level"
+        assert "aggregate" in df.columns.names, "Missing column aggregate level"
         assert "delta" in df.columns.names, "Missing column delta level"
 
+        result = []
+        # Find valid data columns that we have in the dataframe
+        metric_cols = df.columns.unique("metric")
+        valid_metrics = set(self.data_columns()).intersection(metric_cols)
+        df = df.loc[:, df.columns.get_level_values("metric").isin(valid_metrics)]
+
         datasets = df.index.get_level_values("dataset_id").unique()
-        baseline = df.xs(self.benchmark.uuid, level="dataset_id")
-        # broadcast the baseline cross-section across the dataset_id
-        # and perform the arithmetic operation, we want the right-join
-        # result only
-        _, aligned_baseline = df.align(baseline)
-        metric_cols = df.columns.get_level_values("metric")
-        data_cols = set(self.data_columns()).intersection(metric_cols)
-        column_idx = metric_cols.isin(data_cols)
-        aligned_data_baseline = aligned_baseline.loc[:, column_idx]
-        delta = df.subtract(aligned_data_baseline)
-        norm_delta = delta.divide(aligned_data_baseline)
-        result = pd.concat([
-            df,
-            self._set_delta_columns_name("delta_baseline", delta),
-            self._set_delta_columns_name("norm_delta_baseline", norm_delta)
-        ],
-                           axis=1)
-        return result.sort_index(axis=1)
+        baseline = generalized_xs(df, [self.benchmark.uuid], levels=["dataset_id"], droplevels=True)
+
+        # For each existing column (metric, <x>, sample) we decide the action to take
+        # based on the value of x.
+        # - The data columns (e.g. mean, median and value) are simply subtracted.
+        # - The error columns are combined according to error propagation rules.
+        try:
+            sample_xs = df.xs(("-", "sample"), level=["aggregate", "delta"], axis=1, drop_level=False)
+            sample_delta = self._compute_data_delta(sample_xs, baseline)
+            result.extend(sample_delta)
+        except KeyError:
+            self.logger.debug("No 'sample' agg value, skip deltas")
+
+        try:
+            median_xs = df.xs(("median", "sample"), level=["aggregate", "delta"], axis=1, drop_level=False)
+            median_delta = self._compute_data_delta(median_xs, baseline)
+            result.extend(median_delta)
+            # assume that IQR columns are also there
+            err_iqr = self._compute_iqr_delta(df, baseline, median_xs, median_delta)
+            result.extend(err_iqr)
+        except KeyError:
+            self.logger.debug("No 'median' agg value, skip deltas")
+
+        try:
+            mean_xs = df.xs(("mean", "sample"), level=["aggregate", "delta"], axis=1, drop_level=False)
+            # XXX TODO
+        except KeyError:
+            self.logger.debug("No 'mean' agg value, skip deltas")
+
+        delta_df = pd.concat([df] + result, axis=1)
+        return delta_df.sort_index(axis=1)
 
     def _get_aggregation_strategy(self) -> dict:
         """
@@ -469,6 +541,7 @@ class DataSetContainer(metaclass=DatasetRegistry):
         Helper to generate the aggregate dataframe and normalize the column index level names.
         """
         agg = grouped.aggregate(self._get_aggregation_strategy())
+        assert "metric" in agg.columns.names, "Missing column metric level"
         levels = list(agg.columns.names)
         levels[-1] = "aggregate"
         agg.columns = agg.columns.set_names(levels)
@@ -769,8 +842,19 @@ def broadcast_xs(df: pd.DataFrame, chunk: pd.DataFrame) -> pd.DataFrame:
     This is useful to perform an intermediate operations on a subset (e.g. the baseline frame)
     and then replicate the values for the rest of the datasets.
     """
-    _, r = df.align(chunk, axis=0)
-    return r.reorder_levels(df.index.names)
+    if df.index.nlevels > 1:
+        _, r = df.align(chunk, axis=0)
+        return r.reorder_levels(df.index.names)
+    else:
+        if chunk.index.nlevels > 1:
+            raise TypeError("Can not broadcast multiindex into flat index")
+        nrepeat = len(df) / len(chunk)
+        if nrepeat != int(nrepeat):
+            raise TypeError("Can not broadcast non-alignable chunk")
+        # Just repeat the chunk along the frame
+        df = df.copy()
+        df.loc[:] = chunk.values.repeat(nrepeat, axis=0)
+        return df
 
 
 def reorder_columns(df: pd.DataFrame, ordered_cols: typing.Sequence[str]):
@@ -899,7 +983,7 @@ def assign_sorted_coord(df: pd.DataFrame,
     return coord_by_group.sort_index()
 
 
-def generalized_xs(df: pd.DataFrame, match: list, levels: list, complement=False):
+def generalized_xs(df: pd.DataFrame, match: list, levels: list, complement=False, droplevels=False):
     """
     Generalized cross section that allows slicing on multiple named levels.
     Example:
@@ -925,7 +1009,13 @@ def generalized_xs(df: pd.DataFrame, match: list, levels: list, complement=False
     sel.loc[tuple(slicer)] = True
     if complement:
         sel = ~sel
-    return df[sel]
+    result = df[sel]
+    if droplevels:
+        if nlevels > len(levels):
+            result = result.droplevel(levels)
+        else:
+            result = result.reset_index()
+    return result
 
 
 def filter_aggregate(df: pd.DataFrame, cond: pd.Series, by: list, how="all", complement=False):
@@ -979,7 +1069,7 @@ def scale_to_std_notation(series: pd.Series) -> int:
     Return the standard power of 10 for the magnitude of a given series
     """
     mag = np.log10(series.abs().max())
-    if np.isnan(mag):
+    if np.isnan(mag) or np.isinf(mag):
         return 0
     std_mag = 3 * int(mag / 3)
     return std_mag
