@@ -124,6 +124,18 @@ class FluteStatcountersData(PMCStatData):
         Field.data_field("tagcache_evict", "tag cache eviction count"),  # 0x44
         Field.data_field("tagcache_set_store", "tag cache set tag write"),  # 0x45
         Field.data_field("tagcache_set_load", "tag cache set tag read"),  # 0x46
+        # Derived metrics
+        Field.data_field("ipc", "instruction per cycle", isderived=True),
+        Field.data_field("icache_load_hit_rate", "iCache load hit rate", isderived=True),
+        Field.data_field("dcache_load_hit_rate", "dCache load hit rate", isderived=True),
+        Field.data_field("icache_store_hit_rate", "iCache store hit rate", isderived=True),
+        Field.data_field("dcache_store_hit_rate", "dCache store hit rate", isderived=True),
+        Field.data_field("itlb_hit_rate", "iTLB hit rate", isderived=True),
+        Field.data_field("dtlb_hit_rate", "dTLB hit rate", isderived=True),
+        Field.data_field("dcache_amo_hit_rate", "dCache atomic op hit rate", isderived=True),
+        Field.data_field("llcache_load_hit_rate", "LL cache load hit rate", isderived=True),
+        Field.data_field("tagcache_store_hit_rate", "tag cache store hit rate", isderived=True),
+        Field.data_field("tagcache_load_hit_rate", "tag cache load hit rate", isderived=True),
     ]
 
     def valid_data_columns(self):
@@ -136,29 +148,43 @@ class FluteStatcountersData(PMCStatData):
         avail_cols = set(self.df.columns).intersection(data_cols)
         return list(avail_cols)
 
-    def pre_merge(self):
-        new_columns = {}
-        for c in self.valid_input_columns():
-            if c.endswith("_miss"):
-                base_metric = c[:-len("_miss")]
-                if base_metric not in self.df.columns:
-                    base_metric = base_metric + "_access"
-                    if base_metric not in self.df.columns:
-                        self.logger.warning("Can not determine base column for %s, skipping", c)
-                        continue
+    def _hit_rate(self, name):
+        """
+        Generate a derived cache hit-rate metric from the base PMC name.
+        This uses the _miss and _access columns.
+        """
+        miss_col = f"{name}_miss"
+        access_col = f"{name}_access"
+        hit_col = f"{name}_hit_rate"
+        if miss_col not in self.valid_input_columns():
+            self.df[hit_col] = np.nan
+            return
 
-                hit = self.df[base_metric] - self.df[c]
-                if ((hit >= 0) | hit.isna()).all():
-                    hit_rate = hit / self.df[base_metric]
-                else:
-                    if (self.df[base_metric] == 0).all():
-                        self.logger.warning("Invalid hit count for %s, maybe %s is unimplemented", c, base_metric)
-                        hit_rate = np.NaN
-                    else:
-                        self.logger.critical("Negative hit count %s".format(base_metric))
-                        exit(1)
-                new_columns["{}_hit_rate".format(base_metric)] = hit_rate
-        self.df = self.df.assign(**new_columns)
+        if access_col in self.df.columns:
+            total = self.df[access_col]
+        elif name in self.df.columns:
+            total = self.df[name]
+        else:
+            self.logger.warning("No total column for %s, skip computing derived hit_rate", name)
+            total = np.nan
+        self.df[hit_col] = ((total - self.df[miss_col]) / total) * 100
+        if (self.df[hit_col] < 0).any():
+            self.logger.error("Invalid negative hit rate for %s", name)
+
+    def pre_merge(self):
+        super().pre_merge()
+        # Compute derived metrics
+        self.df["ipc"] = self.df["instructions"] / self.df["cycles"]
+        self._hit_rate("icache_load")
+        self._hit_rate("dcache_load")
+        self._hit_rate("icache_store")
+        self._hit_rate("dcache_store")
+        self._hit_rate("itlb")
+        self._hit_rate("dtlb")
+        self._hit_rate("dcache_amo")
+        self._hit_rate("llcache_load")
+        self._hit_rate("tagcache_load")
+        self._hit_rate("tagcache_store")
 
     def _get_aggregation_strategy(self):
         agg_strat = super()._get_aggregation_strategy()
@@ -170,18 +196,7 @@ class FluteStatcountersData(PMCStatData):
         # Median and quartiles
         group_index = ["dataset_id", "progname", "archname"]
         grouped = self.merged_df[self.valid_data_columns()].groupby(group_index)
-        agg = self._compute_aggregations(grouped)
-        # Compute error columns from median and quartiles
-        # XXX this should be in post-aggregate?
-        for col in self.valid_data_columns():
-            median = agg.loc[:, (col, "median")]
-            q75 = agg.loc[:, (col, "q75")]
-            q25 = agg.loc[:, (col, "q25")]
-            err_hi = q75 - median
-            err_lo = median - q25
-            agg[(col, "errhi")] = err_hi.values
-            agg[(col, "errlo")] = err_lo.values
-        self.agg_df = agg.sort_index(axis=1)
+        self.agg_df = self._compute_aggregations(grouped)
 
     def post_aggregate(self):
         super().post_aggregate()

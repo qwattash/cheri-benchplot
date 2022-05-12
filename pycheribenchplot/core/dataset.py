@@ -511,8 +511,8 @@ class DataSetContainer(metaclass=DatasetRegistry):
             self.logger.debug("No 'median' agg value, skip deltas")
 
         try:
-            mean_xs = df.xs(("mean", "sample"), level=["aggregate", "delta"], axis=1, drop_level=False)
             # XXX TODO
+            mean_xs = df.xs(("mean", "sample"), level=["aggregate", "delta"], axis=1, drop_level=False)
         except KeyError:
             self.logger.debug("No 'mean' agg value, skip deltas")
 
