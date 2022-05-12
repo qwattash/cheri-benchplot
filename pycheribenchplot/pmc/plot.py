@@ -29,13 +29,13 @@ class PMCMetricBar(BenchmarkSubPlot):
 
     def generate(self, fm, cell):
         self.logger.debug("extract PMC metric %s", self.metric)
-
         # Note that we have a single bar group for each metric
         df = self.get_df()
         df["x"] = 0
 
         # Scale y column
         mag = scale_to_std_notation(df[self.col])
+        # bar plots want relative errors
         df[self.err_hi_col] = df[self.err_hi_col] - df[self.col]
         df[self.err_lo_col] = df[self.col] - df[self.err_lo_col]
         if mag != 0:
@@ -56,6 +56,56 @@ class PMCMetricBar(BenchmarkSubPlot):
         cell.x_config.tick_labels = [f"PMC {self.metric}"]
         cell.x_config.padding = 0.4
         cell.yleft_config.label = f"{self.metric} {mag_suffix}"
+
+
+class PMCDeltaBar(BenchmarkSubPlot):
+    """
+    Draw a set of bar for each PMC delta metric
+    """
+    def __init__(self, plot, dataset, metric: str):
+        super().__init__(plot)
+        self.ds = dataset
+        self.metric = metric
+        self.col = (self.metric, "median", "norm_delta_baseline")
+        self.err_hi_col = (self.metric, "q75", "norm_delta_baseline")
+        self.err_lo_col = (self.metric, "q25", "norm_delta_baseline")
+
+    def get_legend_info(self):
+        base = self.build_legend_by_dataset()
+        legend = base.map_label(lambda l: f"{Symbols.DELTA}{self.metric} " + l)
+        return legend.assign_colors_hsv("dataset_id", h=(0.2, 1), s=(0.7, 0.7), v=(0.6, 0.9))
+
+    def get_cell_title(self):
+        return f"PMC {Symbols.DELTA}{self.metric} w.r.t baseline"
+
+    def get_df(self):
+        df = self.ds.agg_df
+        sel = df.index.get_level_values("dataset_id") != self.benchmark.uuid
+        return df[sel].copy()
+
+    def generate(self, fm, cell):
+        self.logger.debug("extract PMC Delta metric %s", self.metric)
+        # We have a single bar group for each metric, so just one X coordinate
+        df = self.get_df()
+        df["x"] = 0
+
+        # bar plots want relative errors and we convert things to a percentage
+        df[self.err_hi_col] = (df[self.err_hi_col] - df[self.col]) * 100
+        df[self.err_lo_col] = (df[self.col] - df[self.err_lo_col]) * 100
+        df[self.col] = df[self.col] * 100
+
+        # import code
+        # code.interact(local=locals())
+        view = BarPlotDataView(df, x="x", yleft=self.col, err_hi=self.err_hi_col, err_lo=self.err_lo_col)
+        view.bar_group = "dataset_id"
+        view.legend_info = self.get_legend_info()
+        view.legend_level = ["dataset_id"]
+        cell.add_view(view)
+
+        cell.x_config.ticks = [0]
+        cell.x_config.tick_labels = [f"% {Symbols.DELTA}{self.metric}"]
+        cell.x_config.padding = 0.4
+        cell.yleft_config.label = f"% {Symbols.DELTA}{self.metric}"
 
 
 class RV64PMCOverviewPlot(BenchmarkPlot):
@@ -93,12 +143,6 @@ class PMCDeltaAll(BenchmarkSubPlot):
     """
     Combine all the PMC on the X axis with relative deltas on the Y axis
     """
-    @classmethod
-    def get_required_datasets(cls):
-        dsets = super().get_required_datasets()
-        dsets += [DatasetName.PMC]
-        return dsets
-
     def __init__(self, plot):
         super().__init__(plot)
         self.ds = self.get_dataset(DatasetName.PMC)
@@ -151,7 +195,29 @@ class RV64PMCDeltaOverviewPlot(BenchmarkPlot):
     """
     Overview of all PMC data we have for this benchmark
     """
-    subplots = [PMCDeltaAll]
+    @classmethod
+    def check_enabled(cls, datasets, config):
+        required = {DatasetName.PMC}
+        return required.issubset(datasets)
+
+    def _make_subplots_mosaic(self):
+        """
+        Make mosaic with 2 columns: Left is the raw metric delta, right is the normalized % delta
+        """
+        subplots = {}
+        layout = []
+        subplots["pmc-delta-all"] = PMCDeltaAll(self)
+        layout.append(["pmc-delta-all"])
+
+        pmc_stats = self.get_dataset(DatasetName.PMC)
+        for idx, metric in enumerate(pmc_stats.data_columns()):
+            name = f"subplot-pmc-stats-{idx}"
+            if pmc_stats.agg_df[(metric, "median", "sample")].isna().all():
+                continue
+            subplots[name] = PMCDeltaBar(self, pmc_stats, metric)
+            layout.append([name])
+
+        return Mosaic(layout, subplots)
 
     def get_plot_name(self):
         return "PMC delta overview"
