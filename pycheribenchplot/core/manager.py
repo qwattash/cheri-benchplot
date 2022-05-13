@@ -64,6 +64,7 @@ class BenchmarkSessionConfig(TemplateConfig):
     ssh_key: Path = Path("~/.ssh/id_rsa")
     output_path: Path = field(default_factory=Path.cwd)
     concurrent_instances: int = 0
+    reuse_instances: bool = False
     instances: typing.List[InstanceConfig] = field(default_factory=list)
     benchmarks: typing.List[BenchmarkRunConfig] = field(default_factory=list)
 

@@ -193,7 +193,7 @@ class BenchmarkScript:
         return self._guest_output / host_path.relative_to(base_path)
 
     def command_history_path(self):
-        return self.benchmark.get_output_path() / "command-history.csv"
+        return self.benchmark.get_output_path() / f"command-history-{self.benchmark.uuid}.csv"
 
     def get_commands_with_pid(self):
         """Return a list of commands for which we recorded the PID in the command history"""

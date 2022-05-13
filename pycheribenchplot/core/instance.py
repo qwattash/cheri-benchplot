@@ -6,11 +6,13 @@ import signal
 import typing
 import uuid
 from abc import ABC, abstractmethod
+from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
 import asyncssh
+from multi_await import multi_await
 
 from .config import TemplateConfig, path_field
 from .util import new_logger
@@ -130,7 +132,7 @@ class InstanceConfig(TemplateConfig):
     def __post_init__(self):
         super().__post_init__()
         if self.name is None:
-            self.name = f"{self.platform}-{self.cheri_target}-{self.kernelabi}"
+            self.name = f"{self.platform}-{self.cheri_target}-{self.kernelabi}-{self.kernel}"
 
 
 class InstanceStatus(Enum):
@@ -261,10 +263,6 @@ class Instance(ABC):
         """Signal instance that it can start booting"""
         self.boot_event.set()
 
-    def kill(self):
-        """Forcibly kill the instance"""
-        self.task.cancel()
-
     def release(self):
         """
         Release instance from the current benchmark. This indicates that the benchmark
@@ -275,13 +273,14 @@ class Instance(ABC):
         self.release_event.set()
 
     def stop(self):
+        """Forcibly kill the instance"""
         self.logger.info("Stopping instance")
         if self.task:
             self.task.cancel()
 
     def __str__(self):
-        return (f"Instance {self.uuid} {self.config.platform} cheribsd:{self.config.cheribsd} " +
-                f"kernel:{self.config.kernel}")
+        return (f"Instance {self.config.name}({self.uuid}) {self.config.platform}-{self.config.cheri_target}-" +
+                f"{self.config.kernel}")
 
     async def wait(self, status: InstanceStatus):
         while self.status != status:
@@ -601,6 +600,20 @@ class VCU118Instance(Instance):
         self._ssh_ctrl_conn = None
 
 
+class InstanceRequest:
+    def __init__(self, loop: aio.AbstractEventLoop, owner: uuid.UUID, config: InstanceConfig):
+        self.instance = loop.create_future()
+        self.owner = owner
+        self.config = config
+
+    @property
+    def name(self):
+        return self.config.name
+
+    def __str__(self):
+        return f"InstanceRequest({self.config.name})"
+
+
 class InstanceManager:
     """
     Helper object used to manage the lifetime of instances we run things on
@@ -609,12 +622,34 @@ class InstanceManager:
         self.logger = new_logger("instance-manager")
         self.loop = loop
         self.manager_config = manager_config
+        # Max concurrent instances
+        if self.manager_config.concurrent_instances == 0:
+            self.concurrent_instances = np.inf
+        else:
+            self.concurrent_instances = self.manager_config.concurrent_instances
+        self._sched_task = loop.create_task(self._schedule())
+        self._shutdown_drain = loop.create_task(self._shutdown_drain())
+        # Cleanup event triggering shutdown
+        self._sched_shutdown = aio.Event()
+
+        # internal instance request queues that are waiting for active instances to be done
+        self._instance_request_queues = defaultdict(list)
+        # done instance queue to the scheduler
+        self._done_queue = aio.Queue()
+        # requests to the scheduler
+        self._request_queue = aio.Queue()
+        # internale idle instance list
+        self._idle_instances = []
+        # instances pending shutdown
+        self._shutdown_instances = []
+        self._shutdown_drain_wakeup = aio.Event()
+        # Current number of instances
+        self._instance_count = 0
         # Map running instances to the benchmark owning them
         self._active_instances = {}
-        # Spare instances if recycling instances is enabled
-        self._shutdown_instances = []
-        # Queued instances to run because of concurrency limit
-        self._queued_instances = aio.Queue()
+
+        self.logger.info("Instance manager: instance_reuse=%s max_concurrent=%s",
+                         "Enabled" if self.manager_config.reuse_instances else "Disabled", self.concurrent_instances)
 
     def _create_instance(self, config: InstanceConfig):
         if config.platform == InstancePlatform.QEMU:
@@ -624,65 +659,218 @@ class InstanceManager:
         else:
             self.logger.error(f"Unknown instance platform {config.platform}")
             raise InstanceManagerError("Unknown instance platform")
-        # creates main loop task and boot the instance
+        self._instance_count += 1
+        # creates main loop task and wait for the boot trigger
         instance.start()
         self.logger.debug("Created instance %s", instance.uuid)
         return instance
 
     def _alloc_instance(self, owner: uuid.UUID, instance: Instance):
         self._active_instances[owner] = instance
-        instance.boot()
+        if instance.status == InstanceStatus.INIT:
+            instance.boot()
         self.logger.debug("Allocate instance %s(%s) to benchmark %s", instance.uuid, instance.config.name, owner)
 
-    async def request_instance(self, owner: uuid.UUID, config: InstanceConfig) -> InstanceInfo:
-        instance = self._create_instance(config)
-        if (self.manager_config.concurrent_instances > 0
-                and len(self._active_instances) >= self.manager_config.concurrent_instances):
-            self._queued_instances.put_nowait((owner, instance))
+    def _sched_dispose(self, instance):
+        """
+        Dispose of an instance that has finished running a benchmark
+        """
+        if self.manager_config.reuse_instances:
+            # check to see whether we have queued request for this instance
+            self.logger.debug("Sched: new idle instance %s(%s)", instance.uuid, instance.config.name)
+            self._idle_instances.append(instance)
+            self._sched_try_next()
         else:
-            self._alloc_instance(owner, instance)
+            # release and add to shutdown queue
+            instance.release()
+            self._shutdown_instances.append(instance)
+            self._shutdown_drain_wakeup.set()
+
+    def _sched_try_next(self):
+        """
+        Look for an instance request without any currently active instance running.
+        Prioritize requests for which we have idle instances.
+        If one is found, schedule it; otherwise grab any other queued request and schedule it.
+        """
+        self.logger.debug("Sched: try scheduling from queues")
+        idle = [i.config.name for i in self._idle_instances]
+        # keep idle instances busy if possible
+        for queue_name in idle:
+            queue = self._instance_request_queues[queue_name]
+            if not queue:
+                continue
+            request = queue.pop(0)
+            handled = self._schedule_request(request)
+            if not handled:
+                self.logger.warning("Could not assign request to idle instance immediately")
+
+        # otherwise try to schedule something new
+        for name, queue in self._instance_request_queues.items():
+            if not queue:
+                continue
+            handled = True
+            while queue and handled:
+                request = queue.pop(0)
+                handled = self._schedule_request(request)
+                if not handled:
+                    queue.insert(0, request)
+                    break
+            if not handled:
+                break
+
+    def _schedule_request(self, request) -> bool:
+        """
+        Handle an instance request.
+        Frist try to locate an idle instance to satisfy the request. If none is present,
+        try to allocate a new instance. If this would exceed the concurrent instances limit,
+        first we grab an idle instance and shut it down.
+        """
+        # If manager_config.reuse_instances is False the idle list will always be empty.
+        assert len(
+            self._idle_instances) == 0 or self.manager_config.reuse_instances, "Idle instance but reuse is forbidden"
+        found_instance = None
+        for instance in self._idle_instances:
+            if request.name == instance.config.name:
+                found_instance = instance
+                break
+        if found_instance:
+            self.logger.debug("Sched: reuse idle instance %s(%s)", instance.uuid, instance.config.name)
+            self._idle_instances.remove(found_instance)
+            self._alloc_instance(request.owner, found_instance)
+            request.instance.set_result(found_instance)
+            return True
+        assert self._instance_count <= self.concurrent_instances, "Too many booted instances"
+        if self._instance_count < self.concurrent_instances:
+            self.logger.debug("Sched: new instance for %s", request.name)
+            # We did not find an idle instance, boot one if possible
+            instance = self._create_instance(request.config)
+            self._alloc_instance(request.owner, instance)
+            request.instance.set_result(instance)
+            return True
+        elif len(self._idle_instances):
+            # Shutdown an idle instance
+            instance = self._idle_instances.pop(0)
+            self.logger.debug("Sched: shutdown idle instance %s(%s)", instance.uuid, instance.config.name)
+            instance.release()
+            self._shutdown_instances.append(instance)
+            self._shutdown_drain_wakeup.set()
+        return False
+
+    async def _schedule_loop(self):
+        """
+        Instance scheduler loop
+        """
+        async with multi_await() as select:
+            select.add(self._request_queue.get)
+            select.add(self._done_queue.get)
+            select.add(self._sched_shutdown.wait)
+
+            while True:
+                complete, failures = await select.get()
+                for err in failures:
+                    if err is not None:
+                        self.logger.error("Error while waiting on queue %s", err)
+                request, instance, sched_shutdown = complete
+                # First try to serve the done queue
+                if instance is not None:
+                    self.logger.debug("Instance %s returned to scheduler", instance.uuid)
+                    self._sched_dispose(instance)
+                    self._done_queue.task_done()
+                if request is not None:
+                    handled = self._schedule_request(request)
+                    if not handled:
+                        self._instance_request_queues[request.name].append(request)
+                    self._request_queue.task_done()
+                if sched_shutdown:
+                    break
+            self._drain_done_queue()
+
+    def _drain_done_queue(self):
+        # move any instance from the done queue into the idle list to be destroyed
+        while not self._done_queue.empty():
+            instance = self._done_queue.get_nowait()
+            self.logger.debug("Drain %s from sched done queue", instance)
+            self._idle_instances.append(instance)
+
+    async def _schedule(self):
+        self.logger.debug("Start instance scheduler loop")
+        try:
+            await self._schedule_loop()
+        except aio.CancelledError:
+            self.logger.warning("Scheduler loop killed")
+            self._drain_done_queue()
+        finally:
+            self.logger.debug("Scheduler loop exited")
+
+    async def _shutdown_drain(self):
+        """
+        Drain the shutdown instance queue
+        """
+        while True:
+            try:
+                await self._shutdown_drain_wakeup.wait()
+                while self._shutdown_instances:
+                    instance = self._shutdown_instances[0]
+                    await instance.wait(InstanceStatus.DEAD)
+                    self.logger.debug("Drain dead instance %s(%s)", instance.uuid, instance.config.name)
+                    self._shutdown_instances.pop(0)
+                    self._instance_count -= 1
+                    # Trigger request scanning
+                    self._sched_try_next()
+                self._shutdown_drain_wakeup.clear()
+            except aio.CancelledError:
+                break
+
+    async def request_instance(self, owner: uuid.UUID, config: InstanceConfig) -> InstanceInfo:
+        request = InstanceRequest(self.loop, owner, config)
+        self.logger.debug("Enqueue instance request for %s benchmark=%s", config.name, owner)
+        self._request_queue.put_nowait(request)
+        instance = await request.instance
+        self.logger.debug("Wait for %s to boot", instance)
         await instance.wait(InstanceStatus.READY)
+        # Here we are guaranteed that the instance is booted and ready to use
         return instance.get_info()
 
     async def release_instance(self, owner: uuid.UUID):
         instance = self._active_instances[owner]
+        self.logger.debug("Release %s benchmark=%s", instance, owner)
         del self._active_instances[owner]
-        self._shutdown_instances.append(instance)
-        try:
-            instance.release()
-            await instance.wait(InstanceStatus.SHUTDOWN)
-        except aio.CancelledError as ex:
-            raise ex
-        except Exception as ex:
-            self.logger.exception("Failed to release instance %s", instance.uuid)
-            instance.stop()
-        finally:
-            self.logger.debug("Released instance: %s", instance.uuid)
-        if not self._queued_instances.empty():
-            # If we have queued instances to run, wait until the instance poweroff and
-            # run the next in the queue
-            await instance.wait(InstanceStatus.DEAD)
-            q_owner, q_instance = self._queued_instances.get_nowait()
-            self._alloc_instance(q_owner, q_instance)
+        self._done_queue.put_nowait(instance)
 
     async def shutdown(self):
+        # Stop the scheduler and shutdown drain
+        self._shutdown_drain.cancel()
+        await self._shutdown_drain
+        self._sched_shutdown.set()
+        await self._sched_task
+
+        # await aio.gather([self._sched_task, self._shutdown_task], return_exceptions=True)
         # Force-release everything and wait for shutdown
         for instance in self._active_instances.values():
             instance.release()
-        await aio.gather(*[i.wait(InstanceStatus.DEAD) for i in self._active_instances], return_exceptions=True)
+        for instance in self._idle_instances:
+            instance.release()
+        await aio.gather(*[i.wait(InstanceStatus.DEAD) for i in self._active_instances.values()],
+                         return_exceptions=True)
+        await aio.gather(*[i.wait(InstanceStatus.DEAD) for i in self._idle_instances], return_exceptions=True)
         await aio.gather(*[i.wait(InstanceStatus.DEAD) for i in self._shutdown_instances], return_exceptions=True)
         # XXX possibly report any errors here
         self.logger.debug("Instances shutdown completed")
 
     async def kill(self):
+        # Stop the scheduler and shutdown drain
+        self._sched_task.cancel()
+        self._shutdown_drain.cancel()
+        await self._sched_task
+        await self._shutdown_drain
         # Force kill all instances
         for instance in self._active_instances.values():
-            instance.kill()
+            instance.stop()
+        for instance in self._idle_instances:
+            instance.stop()
+        for instance in self._shutdown_instances:
+            instance.stop()
         await aio.gather(*[i.task for i in self._active_instances.values()], return_exceptions=True)
-        queued = []
-        while not self._queued_instances.empty():
-            _, instance = self._queued_instances.get_nowait()
-            instance.kill()
-            queued.append(instance)
-        await aio.gather(*[i.task for i in queued], return_exceptions=True)
+        await aio.gather(*[i.task for i in self._idle_instances], return_exceptions=True)
+        await aio.gather(*[i.task for i in self._shutdown_instances], return_exceptions=True)
         self.logger.debug("Instances killed successfully")
