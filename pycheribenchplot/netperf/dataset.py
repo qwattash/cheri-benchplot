@@ -323,3 +323,13 @@ class NetperfData(CSVDataSetContainer):
         if pidmap and self.config.netserver_resolve_forks:
             # Grab the extra pids forked by netserver
             self._script.gen_cmd("kdump", ["-s"], outfile=self._kdump_output_path())
+
+    def aggregate(self):
+        super().aggregate()
+        grouped = self.merged_df.groupby(["dataset_id"])
+        self.agg_df = self._compute_aggregations(grouped)
+
+    def post_aggregate(self):
+        super().post_aggregate()
+        agg_df = self._add_delta_columns(self.agg_df)
+        self.agg_df = self._compute_delta_by_dataset(agg_df)

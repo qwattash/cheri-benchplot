@@ -118,9 +118,6 @@ class RV64PMCOverviewPlot(BenchmarkPlot):
         return required.issubset(datasets)
 
     def _make_subplots_mosaic(self):
-        """
-        Make mosaic with 2 columns: Left is the raw metric delta, right is the normalized % delta
-        """
         subplots = {}
         layout = []
         pmc_stats = self.get_dataset(DatasetName.PMC)
