@@ -24,12 +24,14 @@ def test_kstruct_size_dataset_derived(mocker, fake_simple_benchmark):
     ds.pre_merge()
     ds.init_merge()
     ds.post_merge()
+    ds.aggregate()
+    ds.post_aggregate()
 
     def s(name):
         # helper for column naming
-        return (name, "sample")
+        return (name, "-", "sample")
 
-    df = ds.merged_df
+    df = ds.agg_df
 
     baz = df.xs("baz", level="name").iloc[0]
     assert baz[s("member_count")] == 3
@@ -82,7 +84,7 @@ async def test_kstruct_size_dataset_gen(mocker, tmp_path, fake_simple_benchmark)
 
     fake_get_output_path.assert_called()
     # Check that the output file was generated as expected
-    out_path = tmp_path / f"__test__-{fake_simple_benchmark.uuid}.csv"
+    out_path = tmp_path / f"struct-stats-{fake_simple_benchmark.uuid}.csv"
     assert out_path.exists()
     df = pd.read_csv(out_path)
     assert expected_least_columns.issubset(set(df.columns))
@@ -133,18 +135,17 @@ def test_kstruct_member_pahole(fake_simple_benchmark):
 
     # Run the method under test
     result_df = ds.gen_pahole_table()
-    print(result_df)
 
     # Check the resulting pahole structure
     assert len(result_df) == 6
-    assert result_df.index.names == ["dataset_id", "name", "src_file", "src_line", "member_offset"]
+    assert result_df.index.names == ["dataset_id", "name", "src_file", "src_line", "member_index"]
 
     a = result_df.xs("a", level="dataset_id")
-    assert (a.index.get_level_values("member_offset") == [0, 8, 16]).all()
+    assert (a.index.get_level_values("member_index") == [0, 1, 2]).all()
     assert (a["member_name"] == ["foo", "baz", "bar"]).all()
     assert (a["member_size"] == [8, 8, 16]).all()
 
     b = result_df.xs("b", level="dataset_id")
-    assert (b.index.get_level_values("member_offset") == [0, 8, 16]).all()
+    assert (b.index.get_level_values("member_index") == [0, 1, 2]).all()
     assert (b["member_name"] == ["foo", "foo.pad", "bar"]).all()
     assert (b["member_size"] == [8, 8, 16]).all()

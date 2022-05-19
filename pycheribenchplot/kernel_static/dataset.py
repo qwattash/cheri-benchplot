@@ -325,21 +325,16 @@ class KernelStructSizeDataset(KernelStructDWARFInfo):
 
         # Drop duplicate names with same size that are defined in multiple files
         new_df = new_df.reset_index().drop_duplicates(["dataset_id", "name", "size"]).set_index(new_df.index.names)
-
-        # Align and compute deltas
         new_df = align_multi_index_levels(new_df, ["name", "src_file", "src_line"], fill_value=np.nan)
-        new_df = self._add_delta_columns(new_df)
-        self.merged_df = self._compute_delta_by_dataset(new_df)
 
-    def _get_aggregation_strategy(self):
-        agg = super()._get_aggregation_strategy()
-        metric_cols = self.merged_df.columns.get_level_values("metric")
-        metric_level_idx = self.merged_df.columns.names.index("metric")
-        match = metric_cols.isin(agg.keys())
-        mapped_agg = {c: agg[c[metric_level_idx]] for c in self.merged_df.columns[match]}
-        return mapped_agg
+        self.merged_df = new_df
 
     def aggregate(self):
-        super().aggregate()
-        grouped = self.merged_df.groupby(["dataset_id"])
-        self.agg_df = self._compute_aggregations(grouped)
+        # Just add identity columns
+        self.agg_df = self._add_aggregate_columns(self.merged_df)
+
+    def post_aggregate(self):
+        super().post_aggregate()
+        # Align and compute deltas
+        new_df = self._add_delta_columns(self.agg_df)
+        self.agg_df = self._compute_delta_by_dataset(new_df)

@@ -470,98 +470,89 @@ def test_bar_renderer_top_text_2col_2stacks(mocker, fake_cell, bar_renderer):
 @pytest.fixture
 def legend_info_2levels():
     index = pd.MultiIndex.from_product([["J0", "J1"], ["K0", "K1"]], names=["J", "K"])
-    legend_info = LegendInfo(index, ["L0", "L1", "L2", "L3"], colors=["C0", "C1", "C2", "C3"])
+    legend_info = LegendInfo.from_index(index, ["L0", "L1", "L2", "L3"], colors=["C0", "C1", "C2", "C3"])
     return legend_info
 
 
 def test_legend_info_simple():
-    legend_info = LegendInfo(["K0", "K1"], ["L0", "L1"], cmap_name="Greys")
+    legend_info = LegendInfo.from_index(["K0", "K1"], ["L0", "L1"], cmap_name="Greys")
 
     WHITE = [1, 1, 1, 1]
     BLACK = [0, 0, 0, 1]
 
-    assert (legend_info.color("K0") == WHITE).all()
-    assert (legend_info.color("K1") == BLACK).all()
-    assert legend_info.label("K0") == "L0"
-    assert legend_info.label("K1") == "L1"
-    assert (legend_info.index == ["K0", "K1"]).all()
-
-    expected = [("K0", WHITE), ("K1", BLACK)]
-    for entry, expect in zip(legend_info.color_items(), expected):
-        assert entry[0] == expect[0]
-        assert (entry[1] == expect[1]).all()
-    expected = [("K0", "L0"), ("K1", "L1")]
-    for entry, expect in zip(legend_info.label_items(), expected):
-        assert entry[0] == expect[0]
-        assert entry[1] == expect[1]
+    assert (legend_info.colors["K0"] == WHITE).all()
+    assert (legend_info.colors["K1"] == BLACK).all()
+    assert legend_info.labels["K0"] == "L0"
+    assert legend_info.labels["K1"] == "L1"
+    assert (legend_info.info_df.index == ["K0", "K1"]).all()
 
     new_info = legend_info.map_label(lambda l: "mapped-" + l)
-    assert (new_info.color("K0") == WHITE).all()
-    assert (new_info.color("K1") == BLACK).all()
-    assert new_info.label("K0") == "mapped-L0"
-    assert new_info.label("K1") == "mapped-L1"
+    assert (new_info.colors["K0"] == WHITE).all()
+    assert (new_info.colors["K1"] == BLACK).all()
+    assert new_info.labels["K0"] == "mapped-L0"
+    assert new_info.labels["K1"] == "mapped-L1"
 
 
 def test_legend_info_concat():
     base_index = pd.Index(["K0", "K1"], name="K")
-    legend_info_1 = LegendInfo(base_index, ["L0", "L1"], colors=["C0", "C1"])
-    legend_info_2 = LegendInfo(base_index, ["L2", "L3"], colors=["C2", "C3"])
+    legend_info_1 = LegendInfo.from_index(base_index, ["L0", "L1"], colors=["C0", "C1"])
+    legend_info_2 = LegendInfo.from_index(base_index, ["L2", "L3"], colors=["C2", "C3"])
     legend_info = LegendInfo.combine("J", {"J0": legend_info_1, "J1": legend_info_2})
 
-    assert legend_info.index.names == ["J", "K"]
-    assert legend_info.color(("J0", "K0")) == "C0"
-    assert legend_info.color(("J0", "K1")) == "C1"
-    assert legend_info.color(("J1", "K0")) == "C2"
-    assert legend_info.color(("J1", "K1")) == "C3"
-    assert legend_info.label(("J0", "K0")) == "L0"
-    assert legend_info.label(("J0", "K1")) == "L1"
-    assert legend_info.label(("J1", "K0")) == "L2"
-    assert legend_info.label(("J1", "K1")) == "L3"
+    assert legend_info.info_df.index.names == ["J", "K"]
+    assert legend_info.colors[("J0", "K0")] == "C0"
+    assert legend_info.colors[("J0", "K1")] == "C1"
+    assert legend_info.colors[("J1", "K0")] == "C2"
+    assert legend_info.colors[("J1", "K1")] == "C3"
+    assert legend_info.labels[("J0", "K0")] == "L0"
+    assert legend_info.labels[("J0", "K1")] == "L1"
+    assert legend_info.labels[("J1", "K0")] == "L2"
+    assert legend_info.labels[("J1", "K1")] == "L3"
 
 
 def test_legend_info_map_colors(legend_info_2levels):
     # By default, map_color maps each value separately
     new_info = legend_info_2levels.map_color(lambda c: c + [f"-mapped-{i}" for i in np.arange(len(c))])
-    assert new_info.color(("J0", "K0")) == "C0-mapped-0"
-    assert new_info.color(("J0", "K1")) == "C1-mapped-0"
-    assert new_info.color(("J1", "K0")) == "C2-mapped-0"
-    assert new_info.color(("J1", "K1")) == "C3-mapped-0"
+    assert new_info.colors[("J0", "K0")] == "C0-mapped-0"
+    assert new_info.colors[("J0", "K1")] == "C1-mapped-0"
+    assert new_info.colors[("J1", "K0")] == "C2-mapped-0"
+    assert new_info.colors[("J1", "K1")] == "C3-mapped-0"
 
     # Check grouping with a level
     new_info = legend_info_2levels.map_color(lambda c: c + [f"-mapped-{i}" for i in np.arange(len(c))], group_by="J")
-    assert new_info.color(("J0", "K0")) == "C0-mapped-0"
-    assert new_info.color(("J0", "K1")) == "C1-mapped-1"
-    assert new_info.color(("J1", "K0")) == "C2-mapped-0"
-    assert new_info.color(("J1", "K1")) == "C3-mapped-1"
+    assert new_info.colors[("J0", "K0")] == "C0-mapped-0"
+    assert new_info.colors[("J0", "K1")] == "C1-mapped-1"
+    assert new_info.colors[("J1", "K0")] == "C2-mapped-0"
+    assert new_info.colors[("J1", "K1")] == "C3-mapped-1"
 
     # Check grouping with a level
     new_info = legend_info_2levels.map_color(lambda c: c + [f"-mapped-{i}" for i in np.arange(len(c))], group_by="K")
-    assert new_info.color(("J0", "K0")) == "C0-mapped-0"
-    assert new_info.color(("J0", "K1")) == "C1-mapped-0"
-    assert new_info.color(("J1", "K0")) == "C2-mapped-1"
-    assert new_info.color(("J1", "K1")) == "C3-mapped-1"
+    assert new_info.colors[("J0", "K0")] == "C0-mapped-0"
+    assert new_info.colors[("J0", "K1")] == "C1-mapped-0"
+    assert new_info.colors[("J1", "K0")] == "C2-mapped-1"
+    assert new_info.colors[("J1", "K1")] == "C3-mapped-1"
 
 
 def test_legend_info_remap_colors():
-    legend_info = LegendInfo(["K0", "K1"], ["L0", "L1"], colors=["C0", "C1"])
+    legend_info = LegendInfo.from_index(["K0", "K1"], ["L0", "L1"], colors=["C0", "C1"])
 
-    new_info = legend_info.remap_colors("Greys", inplace=False)
+    new_info = legend_info.remap_colors("Greys")
 
     WHITE = [1, 1, 1, 1]
     BLACK = [0, 0, 0, 1]
-    assert (new_info.color("K0") == WHITE).all()
-    assert (new_info.color("K1") == BLACK).all()
+    assert (new_info.colors["K0"] == WHITE).all()
+    assert (new_info.colors["K1"] == BLACK).all()
 
 
 def test_legend_info_remap_group_colors(legend_info_2levels):
-    new_info = legend_info_2levels.remap_colors("Greys", group_by="J", inplace=False)
+    new_info = legend_info_2levels.remap_colors("Greys", groupby="K")
 
     WHITE = [1, 1, 1, 1]
     BLACK = [0, 0, 0, 1]
-    assert (new_info.color(("J0", "K0")) == WHITE).all()
-    assert (new_info.color(("J0", "K1")) == BLACK).all()
-    assert (new_info.color(("J1", "K0")) == WHITE).all()
-    assert (new_info.color(("J1", "K1")) == BLACK).all()
+    assert (new_info.colors[("J0", "K0")] == WHITE).all()
+    assert (new_info.colors[("J0", "K1")] == BLACK).all()
+    assert (new_info.colors[("J1", "K0")] == WHITE).all()
+    assert (new_info.colors[("J1", "K1")] == BLACK).all()
 
 
 def test_legend_info_assign_colors(legend_info_2levels):
@@ -584,37 +575,16 @@ def test_legend_info_assign_colors(legend_info_2levels):
     # Not valid colors, just for checking the result of the map
     NEW_WHITE = [2, 2, 2, 2]
     NEW_BLACK = [1, 1, 1, 2]
-    assert (new_info.color(("J0", "K0")) == NEW_WHITE).all()
-    assert (new_info.color(("J0", "K1")) == NEW_WHITE).all()
-    assert (new_info.color(("J1", "K0")) == NEW_BLACK).all()
-    assert (new_info.color(("J1", "K1")) == NEW_BLACK).all()
+    assert (new_info.colors[("J0", "K0")] == NEW_WHITE).all()
+    assert (new_info.colors[("J0", "K1")] == NEW_WHITE).all()
+    assert (new_info.colors[("J1", "K0")] == NEW_BLACK).all()
+    assert (new_info.colors[("J1", "K1")] == NEW_BLACK).all()
 
 
 @pytest.mark.skip
 def test_legend_info_assign_hsv(legend_info_2levels):
     legend = legend_info_2levels.assign_colors_hsv("J", h=(0.3, 1), s=(0.5, 1), v=(0.4, 0.9))
     ## XXX todo
-
-
-def test_legend_info_lookup_single():
-    index = pd.Index(["K0", "K1"], name="K")
-    legend_info = LegendInfo(index, ["L0", "L1"], colors=["C0", "C1"])
-
-    Key = legend_info.build_key()
-    key = Key(K="K0")
-    color, label = legend_info.find(key)
-
-    assert color == "C0"
-    assert label == "L0"
-
-
-def test_legend_info_lookup_multi(legend_info_2levels):
-    Key = legend_info_2levels.build_key()
-    key = Key(J="J0", K="K1")
-    color, label = legend_info_2levels.find(key)
-
-    assert color == "C1"
-    assert label == "L1"
 
 
 def test_data_view_col():

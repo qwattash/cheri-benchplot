@@ -306,6 +306,9 @@ class BenchmarkManager(TemplateConfigContext):
         # Ensure that the plot subdir exists
         self.plot_output_path.mkdir(exist_ok=True)
 
+        # Resolve benchmark matrix
+        # XXX this requires rewriting the records format to represent the benchmark structure.
+
         for record in self.benchmark_records.records:
             bench = self.create_benchmark(record.run, record.instance, record.uuid)
             if record.instance.baseline:
