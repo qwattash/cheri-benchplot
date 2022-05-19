@@ -426,6 +426,25 @@ class BenchmarkBase(TemplateConfigContext):
     def _dataset_generators_sorted(self, reverse=False) -> typing.List[DataSetContainer]:
         return sorted(self.datasets_gen.values(), key=lambda ds: ds.dataset_run_order, reverse=reverse)
 
+    def _collect_analysers(self, cross_analysis: bool):
+        analysers = []
+        datasets = set(self.datasets.keys())
+        for handler_class in BenchmarkAnalysisRegistry.analysis_steps.values():
+            if handler_class.cross_analysis != cross_analysis:
+                continue
+            # First check if we have the minimal requirements
+            if callable(handler_class.require):
+                checker = handler_class.require
+            else:
+                checker = lambda dss, conf: handler_class.require.issubset(dss)
+            if not checker(datasets, self.manager.analysis_config):
+                continue
+            # Check for config enable
+            if (handler_class.name in self.manager.analysis_config.enable
+                    or handler_class.tags.issubset(self.manager.analysis_config.enable_tags)):
+                analysers.append(handler_class(self))
+        return analysers
+
     def get_output_path(self):
         """
         Get base output path for the current benchmark instance.
@@ -689,12 +708,34 @@ class BenchmarkBase(TemplateConfigContext):
         Note that this is called only on the baseline benchmark instance
         """
         self.logger.debug("Analise %s", self.config.name)
-        analysers = []
-        datasets = set(self.datasets.keys())
-        for handler_class in BenchmarkAnalysisRegistry.analysis_steps:
-            if handler_class.check_enabled(datasets, self.manager.analysis_config):
-                analysers.append(handler_class(self))
-        self.logger.debug("Resolved analysys steps %s", [str(a) for a in analysers])
+        analysers = self._collect_analysers(cross_analysis=False)
+        self.logger.debug("Resolved analysis steps %s", [str(a) for a in analysers])
+        for handler in analysers:
+            handler.process_datasets()
+
+    def cross_merge(self, others: typing.List["BenchmarkBase"]):
+        """
+        Merge the aggregated frames from all other benchmark parametrized variants.
+        """
+        self.logger.debug("Cross merge parameterized variants %s onto %s", [b for b in others], self.uuid)
+        for dset in self.datasets.values():
+            dset.init_cross_merge()
+        for bench in others:
+            self.logger.debug("Merge %s(%s) param-set: %s", bench.config.name, bench.uuid, bench.config.parameters)
+            self.cross_merged[bench.uuid] = bench
+            for parser_id, dset in bench.datasets.items():
+                self.datasets[parser_id].cross_merge(dset)
+        for dset in self.datasets.values():
+            dset.post_cross_merge()
+
+    def cross_analysis(self):
+        """
+        Perform any analysis steps on the merged frame with all the parameterized
+        benchmark variants.
+        """
+        self.logger.debug("Cross-analise")
+        analysers = self._collect_analysers(cross_analysis=False)
+        self.logger.debug("Resolved cross analysis steps %s", [str(a) for a in analysers])
         for handler in analysers:
             handler.process_datasets()
 

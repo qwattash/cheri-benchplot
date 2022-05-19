@@ -13,12 +13,6 @@ class SetBoundsDistribution(BenchmarkSubPlot):
     """
     Draw kernel (static) csetbounds distribution by size of enforced bounds.
     """
-    @classmethod
-    def get_required_datasets(cls):
-        dsets = super().get_required_datasets()
-        dsets += [DatasetName.KERNEL_CSETBOUNDS_STATS]
-        return dsets
-
     def __init__(self, plot):
         super().__init__(plot)
         self.bounds_stats = self.get_dataset(DatasetName.KERNEL_CSETBOUNDS_STATS)
@@ -129,12 +123,6 @@ class KernelStructStatsPlot(BenchmarkSubPlot):
     """
     Base class for kernel struct size plots
     """
-    @classmethod
-    def get_required_datasets(cls):
-        dsets = super().get_required_datasets()
-        dsets += [DatasetName.KERNEL_STRUCT_STATS]
-        return dsets
-
     def __init__(self, plot):
         super().__init__(plot)
         self.struct_stat = self.get_dataset(DatasetName.KERNEL_STRUCT_STATS)
@@ -515,6 +503,8 @@ class KernelStaticInfoPlot(BenchmarkPlot):
     """
     Report subobject bounds and struct statistics for the kernel
     """
+    require = {DatasetName.KERNEL_CSETBOUNDS_STATS, DatasetName.KERNEL_STRUCT_STATS}
+    name = "kernel-static-stats"
 
     subplots = [
         KernelBoundsDistribution,
@@ -534,9 +524,6 @@ class KernelStaticInfoPlot(BenchmarkPlot):
 
     def get_plot_name(self):
         return "Kernel compile-time stats"
-
-    def get_plot_file(self):
-        return self.benchmark.get_plot_path() / "kernel-static-stats"
 
 
 class KernelStructSizeLargeOverhead(KernelStructStatsPlot):
@@ -601,12 +588,6 @@ class PAHoleTable(BenchmarkSubPlot):
     Produce tabular output to provide information similar to what pahole generates.
     Struct members are on the Y axis. Datasets are pivoted to the columns axis.
     """
-    @classmethod
-    def get_required_datasets(cls):
-        dsets = super().get_required_datasets()
-        dsets += [DatasetName.KERNEL_STRUCT_STATS, DatasetName.KERNEL_STRUCT_MEMBER_STATS]
-        return dsets
-
     def __init__(self, plot):
         super().__init__(plot)
         self.struct_stats = self.get_dataset(DatasetName.KERNEL_STRUCT_STATS)
@@ -671,7 +652,8 @@ class KernelStaticInfoTables(BenchmarkTable):
     """
     Report tables of struct statistics with large deltas for the kernel
     """
-
+    require = {DatasetName.KERNEL_STRUCT_STATS, DatasetName.KERNEL_STRUCT_MEMBER_STATS}
+    name = "kernel-static-tables"
     subplots = [
         KernelStructSizeLargeRelOverhead,
         KernelStructSizeLargeAbsOverhead,
@@ -680,6 +662,3 @@ class KernelStaticInfoTables(BenchmarkTable):
 
     def get_plot_name(self):
         return "Kernel compile-time detailed stats"
-
-    def get_plot_file(self):
-        return self.benchmark.get_plot_path() / "kernel-static-tables"

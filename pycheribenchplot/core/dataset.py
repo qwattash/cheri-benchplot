@@ -226,6 +226,7 @@ class DataSetContainer(metaclass=DatasetRegistry):
         self.df = None
         self.merged_df = None
         self.agg_df = None
+        self.cross_merged_df = None
 
     @property
     def bench_config(self):
@@ -679,6 +680,29 @@ class DataSetContainer(metaclass=DatasetRegistry):
         Generate composite metrics or relative metrics after aggregation.
         """
         self.logger.debug("Post-aggregate")
+
+    def init_cross_merge(self):
+        """
+        Initialize cross-benchmark merge.
+        This creates the initial merged dataframe to accumulate all aggregated
+        frames from all the different benchmark parameterizations.
+        """
+        if self.cross_merged_df is None:
+            self.cross_merged_df = self.agg_df
+
+    def cross_merge(self, other: "DataSetContainer"):
+        """
+        Merge another aggregated dataframe from a different benchmark parameterization.
+        """
+        self.logger.debug("Cross-merge")
+        assert self.cross_merged_df is not None, "forgot to call init_cross_merge()?"
+        self.cross_merged_df = pd.concat([self.cross_merged_df, other.agg_df])
+
+    def post_cross_merge(self):
+        """
+        Perform any extra operation after cross merge.
+        """
+        self.logger.debug("Post-cross-merge")
 
 
 @contextmanager

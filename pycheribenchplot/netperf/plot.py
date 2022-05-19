@@ -62,9 +62,8 @@ class NetperfStats(BenchmarkPlot):
     """
     Interesting netperf reported statistics
     """
-    @classmethod
-    def check_enabled(cls, datasets, config):
-        return DatasetName.NETPERF_DATA in datasets
+    require = {DatasetName.NETPERF_DATA}
+    name = "netperf-stats"
 
     def _make_subplots_mosaic(self):
         subplots = {}
@@ -82,6 +81,3 @@ class NetperfStats(BenchmarkPlot):
 
     def get_plot_name(self):
         return "Netperf stats"
-
-    def get_plot_file(self):
-        return self.benchmark.get_plot_path() / "netperf-stats"

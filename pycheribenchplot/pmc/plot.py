@@ -112,10 +112,8 @@ class RV64PMCOverviewPlot(BenchmarkPlot):
     """
     Overview of all PMC data we have for this benchmark
     """
-    @classmethod
-    def check_enabled(cls, datasets, config):
-        required = {DatasetName.PMC}
-        return required.issubset(datasets)
+    require = {DatasetName.PMC}
+    name = "pmc-overview"
 
     def _make_subplots_mosaic(self):
         subplots = {}
@@ -131,9 +129,6 @@ class RV64PMCOverviewPlot(BenchmarkPlot):
 
     def get_plot_name(self):
         return "PMC data overview"
-
-    def get_plot_file(self):
-        return self.benchmark.get_plot_path() / "pmc-overview"
 
 
 class PMCDeltaAll(BenchmarkSubPlot):
@@ -192,10 +187,8 @@ class RV64PMCDeltaOverviewPlot(BenchmarkPlot):
     """
     Overview of all PMC data we have for this benchmark
     """
-    @classmethod
-    def check_enabled(cls, datasets, config):
-        required = {DatasetName.PMC}
-        return required.issubset(datasets)
+    require = {DatasetName.PMC}
+    name = "pmc-delta-overview"
 
     def _make_subplots_mosaic(self):
         """
@@ -218,6 +211,3 @@ class RV64PMCDeltaOverviewPlot(BenchmarkPlot):
 
     def get_plot_name(self):
         return "PMC delta overview"
-
-    def get_plot_file(self):
-        return self.benchmark.get_plot_path() / "pmc-delta-overview"

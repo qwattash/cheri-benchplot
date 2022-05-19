@@ -329,10 +329,8 @@ class UMAStaticMetricsDistribution(BenchmarkPlot):
     Static UMA metrics distributions. These only change with the underlying kernel,
     or by manually tuning sysctls.
     """
-    @classmethod
-    def check_enabled(cls, datasets, config):
-        required = {DatasetName.VMSTAT_UMA, DatasetName.VMSTAT_UMA_INFO}
-        return required.issubset(datasets)
+    require = {DatasetName.VMSTAT_UMA, DatasetName.VMSTAT_UMA_INFO}
+    name = "vmstat-uma-static-histograms"
 
     def _make_subplots_mosaic(self):
         """
@@ -352,20 +350,13 @@ class UMAStaticMetricsDistribution(BenchmarkPlot):
     def get_plot_name(self):
         return "VMStat static UMA metrics distribution"
 
-    def get_plot_file(self):
-        return self.benchmark.get_plot_path() / "vmstat-uma-static-histograms"
-
 
 class UMADynamicMetricDistribution(BenchmarkPlot):
     """
     Dynamic UMA metrics distributions. These actually depend on the workload.
     """
-    @classmethod
-    def check_enabled(cls, datasets, config):
-        required = {
-            DatasetName.VMSTAT_UMA,
-        }
-        return required.issubset(datasets)
+    require = {DatasetName.VMSTAT_UMA}
+    name = "vmstat-uma-dynamic-histograms"
 
     def _make_subplots_mosaic(self):
         """
@@ -387,6 +378,3 @@ class UMADynamicMetricDistribution(BenchmarkPlot):
 
     def get_plot_name(self):
         return "VMStat dynamic UMA metrics distribution"
-
-    def get_plot_file(self):
-        return self.benchmark.get_plot_path() / "vmstat-uma-dynamic-histograms"

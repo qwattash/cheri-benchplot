@@ -44,15 +44,6 @@ class BenchmarkPlotBase(BenchmarkAnalysis):
     # List of subplot classes that we attempt to draw
     subplots = []
 
-    @classmethod
-    def check_enabled(cls, datasets, config):
-        """Check if any of the subplots we have can be generated"""
-        for plot_klass in cls.subplots:
-            dset_req = set(plot_klass.get_required_datasets())
-            if dset_req.issubset(datasets):
-                return True
-        return False
-
     def __init__(self, benchmark: "BenchmarkBase"):
         super().__init__(benchmark)
         self.logger = new_logger(self.get_plot_name(), benchmark.logger)
@@ -63,7 +54,7 @@ class BenchmarkPlotBase(BenchmarkAnalysis):
         """
         Main title for the plot.
         """
-        return self.__class__.__name__
+        return self.name
 
     def get_plot_file(self):
         """
@@ -71,7 +62,7 @@ class BenchmarkPlotBase(BenchmarkAnalysis):
         Note that the filename should not have an extension as the surface will
         append it later.
         """
-        return self.benchmark.manager.plot_ouput_path / self.__class__.__name__
+        return self.benchmark.get_plot_path() / self.name
 
     def _make_figure_manager(self):
         """

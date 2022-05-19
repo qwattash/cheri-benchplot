@@ -350,7 +350,7 @@ class BenchmarkManager(TemplateConfigContext):
                 index = index.unique()
         else:
             # If there is no parameterization, there should only be one benchmark run
-            index = pd.MultiIndex([0], names=["index"])
+            index = pd.MultiIndex.from_tuples([(0, )], names=["index"])
         # Second pass, fill the matrix
         bench_matrix = pd.DataFrame(index=index, columns=instances)
         BenchParams = namedtuple("BenchParams", bench_matrix.index.names)
@@ -398,6 +398,11 @@ class BenchmarkManager(TemplateConfigContext):
         for params, row in bench_matrix.iterrows():
             self.logger.debug("Analyse param set %s", params)
             row[baseline].analyse()
+
+        # Now merge the individual results for the parmeter sets
+        # Note that we accumulate on one of the baseline instances from before
+        reference = bench_matrix[baseline].iloc[0]
+        reference.cross_merge(bench_matrix[baseline].iloc[1:])
 
     def _handle_run_command(self, args: ap.Namespace):
         self.session_output_path.mkdir(parents=True)

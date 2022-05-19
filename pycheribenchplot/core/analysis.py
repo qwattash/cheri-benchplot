@@ -6,15 +6,21 @@ from .dataset import DatasetName
 
 
 class BenchmarkAnalysisRegistry(type):
-    analysis_steps = set()
+    analysis_steps = {}
 
     def __init__(self, name, bases, kdict):
         super().__init__(name, bases, kdict)
-        BenchmarkAnalysisRegistry.analysis_steps.add(self)
+        if self.name is None:
+            return
+        if self.name in BenchmarkAnalysisRegistry.analysis_steps:
+            raise ValueError(f"Duplicate analysis step {self.name}")
+        BenchmarkAnalysisRegistry.analysis_steps[self.name] = self
 
 
 @dataclass
 class AnalysisConfig(Config):
+    enable: typing.List[str] = field(default_factory=list)
+    enable_tags: typing.Set[str] = field(default_factory=set)
     split_subplots: bool = False
     plot_output_format: typing.List[str] = field(default_factory=lambda: ["pdf"])
 
@@ -35,9 +41,16 @@ class BenchmarkAnalysis(metaclass=BenchmarkAnalysisRegistry):
     Note that the dataframe manipulation logic may be shared between plot analysis and other
     presentation methods.
     """
-    @classmethod
-    def check_enabled(cls, datasets: typing.Set[DatasetName], config: AnalysisConfig):
-        return False
+    # Required datasets to be present for this analysis step to work correctly
+    # The callable provides more granular filtering, it is passed the set of datasets loaded
+    # and the analysis configuration.
+    require: set[DatasetName] | typing.Callable = []
+    # Unique name of the analysis step, to be used to enable it in the configuration
+    name: str = None
+    # Analysis step tags for group selection
+    tags: set[str] = set()
+    # Cross benchmark variant analysis step
+    cross_analysis: bool = False
 
     def __init__(self, benchmark: "BenchmarkBase", **kwargs):
         self.benchmark = benchmark
@@ -56,4 +69,4 @@ class BenchmarkAnalysis(metaclass=BenchmarkAnalysisRegistry):
         pass
 
     def __str__(self):
-        return self.__class__.__name__
+        return self.name

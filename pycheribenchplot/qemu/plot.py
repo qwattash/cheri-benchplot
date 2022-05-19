@@ -36,12 +36,6 @@ class QEMUHistSubPlot(BenchmarkSubPlot):
 
 class QEMUHistTable(QEMUHistSubPlot):
     """Common base class for stat histogram filtered plots"""
-    @classmethod
-    def get_required_datasets(cls):
-        dsets = super().get_required_datasets()
-        dsets += [DatasetName.QEMU_STATS_BB_HIST, DatasetName.QEMU_STATS_CALL_HIST]
-        return dsets
-
     def _get_filtered_df(self):
         return self.get_all_stats_df()
 
@@ -128,15 +122,11 @@ class QEMUTables(BenchmarkTable):
     """
     Show QEMU datasets as tabular output for inspection.
     """
+    require = {DatasetName.QEMU_STATS_BB_HIST, DatasetName.QEMU_STATS_CALL_HIST}
+    name = "qemu-stats-tables"
     subplots = [
         QEMUContextHistTable,
     ]
-
-    @classmethod
-    def check_enabled(cls, datasets, config):
-        """Check dataset list against qemu stats dataset names"""
-        required = {DatasetName.QEMU_STATS_BB_HIST, DatasetName.QEMU_STATS_CALL_HIST}
-        return required.issubset(datasets)
 
     def _make_subplots_mosaic(self):
         """
@@ -157,6 +147,3 @@ class QEMUTables(BenchmarkTable):
 
     def get_plot_name(self):
         return "QEMU Stats Tables"
-
-    def get_plot_file(self):
-        return self.benchmark.get_plot_path() / "qemu_stats_tables"
