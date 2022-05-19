@@ -8,14 +8,15 @@ import multiprocessing
 import shutil
 import typing
 import uuid
-from collections import OrderedDict, defaultdict
+from collections import OrderedDict, defaultdict, namedtuple
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 
 import asyncssh
-import pandas
+import numpy as np
+import pandas as pd
 import termcolor
 from git import Repo
 
@@ -290,6 +291,26 @@ class BenchmarkManager(TemplateConfigContext):
         for next_dir in self._iter_output_session_dirs():
             shutil.rmtree(next_dir)
 
+    async def _load_recorded_benchmarks(self, benchmarks: np.array, interactive=False):
+        loading_tasks = []
+        self.logger.info("Loading datasets")
+        try:
+            for bench in benchmarks:
+                if interactive:
+                    executor_fn = bench.load
+                else:
+                    executor_fn = bench.load_and_pre_merge
+                bench.task = self.loop.run_in_executor(None, executor_fn)
+                loading_tasks.append(bench.task)
+                # Wait for everything to have loaded
+            await aio.gather(*loading_tasks)
+        except Exception as ex:
+            # Cancel any pending loading
+            for task in loading_tasks:
+                task.cancel()
+            await aio.gather(*loading_tasks, return_exceptions=True)
+            raise ex
+
     async def _analysis_task(self, interactive_step=None, config_path: Path = None):
         # Find all benchmark variants we were supposed to run
         # Note: this assumes that we aggregate to compare the same benchmark across OS configs,
@@ -307,73 +328,82 @@ class BenchmarkManager(TemplateConfigContext):
         self.plot_output_path.mkdir(exist_ok=True)
 
         # Resolve benchmark matrix
-        # XXX this requires rewriting the records format to represent the benchmark structure.
-
+        # Rows are different instances, columns are different parameterizations
+        # First pass, just collect instances and parameters
+        instances = set()
+        # XXX only an instance can be marked as baseline for now
+        baseline = None
+        parameters = defaultdict(list)
         for record in self.benchmark_records.records:
-            bench = self.create_benchmark(record.run, record.instance, record.uuid)
+            instances.add(record.instance.name)
             if record.instance.baseline:
-                if record.run.name in aggregate_baseline:
+                if baseline and baseline != record.instance.name:
                     self.logger.error("Multiple baseline instances?")
                     raise Exception("Too many baseline specifiers")
-                aggregate_baseline[record.run.name] = bench
+                baseline = record.instance.name
+            for k, p in record.run.parameters.items():
+                parameters[k].append(p)
+        if parameters:
+            index_frame = pd.DataFrame(parameters)
+            index = pd.MultiIndex.from_frame(index_frame)
+            if not index.is_unique:
+                index = index.unique()
+        else:
+            # If there is no parameterization, there should only be one benchmark run
+            index = pd.MultiIndex([0], names=["index"])
+        # Second pass, fill the matrix
+        bench_matrix = pd.DataFrame(index=index, columns=instances)
+        BenchParams = namedtuple("BenchParams", bench_matrix.index.names)
+        for record in self.benchmark_records.records:
+            bench = self.create_benchmark(record.run, record.instance, record.uuid)
+            if bench.config.is_parameterized:
+                # Note: config.parameters is unordered, use namedtuple to ensure
+                # the key ordering
+                i = BenchParams(**bench.config.parameters)
+                bench_matrix.loc[i, record.instance.name] = bench
             else:
-                # Must belong to a group
-                aggregate_groups[record.run.name].append(bench)
-        # Check that every aggregate group has an associated baseline
-        for group_key in aggregate_groups.keys():
-            if group_key not in aggregate_baseline:
-                self.logger.error("Missing baseline instance for benchmark %s", group_key)
-                raise Exception("Missing baseline")
-        self.logger.debug("Benchmark baseline groups: %s", {k: b.uuid for k, b in aggregate_baseline.items()})
-        self.logger.debug("Benchmark aggregation groups: %s",
-                          {k: list(map(lambda b: b.uuid, v))
-                           for k, v in aggregate_groups.items()})
-        # Load datasets concurrently
-        loading_tasks = []
-        self.logger.info("Loading datasets")
-        try:
-            for bench in it.chain(aggregate_baseline.values(), it.chain.from_iterable(aggregate_groups.values())):
-                if interactive_step == "load":
-                    executor_fn = bench.load
-                else:
-                    executor_fn = bench.load_and_pre_merge
-                bench.task = self.loop.run_in_executor(None, executor_fn)
-                loading_tasks.append(bench.task)
-                # Wait for everything to have loaded
-            await aio.gather(*loading_tasks)
-            if interactive_step == "load" or interactive_step == "pre-merge":
-                self._interactive_analysis()
-                return
-        except aio.CancelledError as ex:
-            # Cancel any pending loading
-            for task in loading_tasks:
-                task.cancel()
-            await aio.gather(*loading_tasks, return_exceptions=True)
-            raise ex
-        self.logger.info("Merge datasets")
-        self.logger.debug("Benchmark aggregation baselines: %s", {k: b.uuid for k, b in aggregate_baseline.items()})
+                bench_matrix[record.instance.name] = bench
+
+        assert not bench_matrix.isna().any().any(), "Incomplete benchmark matrix"
+        if not baseline:
+            self.logger.error("Missing baseline instance")
+            raise Exception("Missing baseline")
+        self.logger.debug("Benchmark baseline %s", baseline)
+        for i, row in bench_matrix.iterrows():
+            self.logger.debug("Benchmark matrix %s = %s", BenchParams(*i), row.values)
+
+        # Now we can load datasets concurrently
+        await self._load_recorded_benchmarks(bench_matrix.values.ravel(), interactive_step == "load")
+        if interactive_step == "load" or interactive_step == "pre-merge":
+            self._interactive_analysis()
+            return
+        self.logger.info("Merge datasets by param set")
         # Merge compatible benchmark datasets into the baseline instance
-        for name, baseline_bench in aggregate_baseline.items():
-            baseline_bench.merge(aggregate_groups[name])
+        to_merge = bench_matrix.columns.difference([baseline])
+        for params, row in bench_matrix.iterrows():
+            self.logger.debug("Merge param set %s", params)
+            row[baseline].merge(row[to_merge])
         if interactive_step == "merge":
             self._interactive_analysis()
             return
         # From now on we ony operate on the merged data
         self.logger.info("Aggregate datasets")
-        for bench in aggregate_baseline.values():
-            bench.aggregate()
+        for params, row in bench_matrix.iterrows():
+            self.logger.debug("Aggregate param set %s", params)
+            row[baseline].aggregate()
         if interactive_step == "aggregate":
             self._interactive_analysis()
             return
         self.logger.info("Run analysis steps")
-        for bench in aggregate_baseline.values():
-            bench.analyse()
+        for params, row in bench_matrix.iterrows():
+            self.logger.debug("Analyse param set %s", params)
+            row[baseline].analyse()
 
     def _handle_run_command(self, args: ap.Namespace):
         self.session_output_path.mkdir(parents=True)
         self.logger.info("Start benchplot session %s", self.session)
         for conf in self.config.benchmarks:
-            if conf.is_parameterized:
+            if conf.parameterize:
                 self.logger.debug("Found parameterized benchmark %s", conf.name)
                 params = OrderedDict(conf.parameterize)
                 combinations = []

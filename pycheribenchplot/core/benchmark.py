@@ -81,7 +81,11 @@ class BenchmarkRunConfig(TemplateConfig):
 
     @property
     def is_parameterized(self):
-        return len(self.parameterize) > 0
+        """
+        Note: check for parameters, so that benchmark parameter tags can also be added manually
+        instead of having the generator produce them via the `parameterize` config key.
+        """
+        return len(self.parameters) > 0
 
 
 @dataclass
@@ -631,8 +635,11 @@ class BenchmarkBase(TemplateConfigContext):
         for dset in self.datasets.values():
             self.logger.info("Loading %s data, dropping first %d iterations", dset.name, self.config.drop_iterations)
             for i in range(self.config.iterations):
-                if i >= self.config.drop_iterations:
-                    dset.load_iteration(i)
+                try:
+                    if i >= self.config.drop_iterations:
+                        dset.load_iteration(i)
+                except Exception:
+                    self.logger.exception("Failed to load data for %s iteration %d", dset.name, i)
             dset.load()
 
     def pre_merge(self):
@@ -693,3 +700,6 @@ class BenchmarkBase(TemplateConfigContext):
 
     def __str__(self):
         return f"{self.config.name}({self.uuid})"
+
+    def __repr__(self):
+        return str(self)
