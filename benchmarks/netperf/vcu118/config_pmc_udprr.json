@@ -1,5 +1,5 @@
 {
-    "output_path": "benchmarks/netperf/vcu118/pmc",
+    "output_path": "benchmarks/netperf/vcu118/pmc_udprr",
     "ssh_key": "extra_files/freebsd_test_id_rsa",
     "concurrent_instances": 1,
     "reuse_instances": true,
@@ -72,7 +72,7 @@
 	    "drop_iterations": 2,
 	    "remote_output_dir": "/tmp/benchmark-output",
         "parameterize": {
-            "param_nbytes": [1, 8, 64, 128, 256, 512, 1024, 4096, 8192, 16384, 32768, 65536],
+            "param_nbytes": [1, 8, 64, 128, 256, 512, 1024, 4096, 8192, 16384, 32768, 65536]
         },
         "benchmark_dataset": {
 		    "type": "netperf-data",
