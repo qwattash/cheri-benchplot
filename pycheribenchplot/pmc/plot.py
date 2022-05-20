@@ -1,5 +1,6 @@
 from ..core.dataset import DatasetName, scale_to_std_notation
-from ..core.plot import (BarPlotDataView, BenchmarkPlot, BenchmarkSubPlot, LegendInfo, Mosaic, Symbols)
+from ..core.plot import (BarPlotDataView, BenchmarkPlot, BenchmarkSubPlot, LegendInfo, LinePlotDataView, Mosaic,
+                         Symbols)
 
 
 class PMCMetricBar(BenchmarkSubPlot):
@@ -108,12 +109,13 @@ class PMCDeltaBar(BenchmarkSubPlot):
         cell.yleft_config.label = f"% {Symbols.DELTA}{self.metric}"
 
 
-class RV64PMCOverviewPlot(BenchmarkPlot):
+class PMCOverviewPlot(BenchmarkPlot):
     """
     Overview of all PMC data we have for this benchmark
     """
     require = {DatasetName.PMC}
     name = "pmc-overview"
+    description = "PMC data overview"
 
     def _make_subplots_mosaic(self):
         subplots = {}
@@ -126,9 +128,6 @@ class RV64PMCOverviewPlot(BenchmarkPlot):
             subplots[name] = PMCMetricBar(self, pmc_stats, metric)
             layout.append([name])
         return Mosaic(layout, subplots)
-
-    def get_plot_name(self):
-        return "PMC data overview"
 
 
 class PMCDeltaAll(BenchmarkSubPlot):
@@ -183,12 +182,13 @@ class PMCDeltaAll(BenchmarkSubPlot):
         cell.yleft_config.label = f"% {Symbols.DELTA}metric"
 
 
-class RV64PMCDeltaOverviewPlot(BenchmarkPlot):
+class PMCDeltaOverviewPlot(BenchmarkPlot):
     """
     Overview of all PMC data we have for this benchmark
     """
     require = {DatasetName.PMC}
     name = "pmc-delta-overview"
+    description = "PMC delta overview"
 
     def _make_subplots_mosaic(self):
         """
@@ -209,5 +209,71 @@ class RV64PMCDeltaOverviewPlot(BenchmarkPlot):
 
         return Mosaic(layout, subplots)
 
-    def get_plot_name(self):
-        return "PMC delta overview"
+
+class PMCParamScalingView(BenchmarkSubPlot):
+    """
+    Generate line plot to show PMC variation along a parameterisation axis.
+    """
+    def __init__(self, plot, pmc_metric, param):
+        super().__init__(plot)
+        self.pmc = pmc_metric
+        self.param = param
+        self.col = (self.pmc, "median", "sample")
+        self.err_hi = (self.pmc, "q75", "sample")
+        self.err_lo = (self.pmc, "q25", "sample")
+
+    def get_cell_title(self):
+        return f"PMC {self.pmc} trend w.r.t. {self.param}"
+
+    def get_df(self):
+        ds = self.get_dataset(DatasetName.PMC)
+        return ds.cross_merged_df.copy()
+
+    def generate(self, fm, cell):
+        df = self.get_df()
+        self.logger.debug("Extract XPMC %s along %s", self.pmc, self.param)
+
+        df[self.err_hi] = df[self.err_hi] - df[self.col]
+        df[self.err_lo] = df[self.col] - df[self.err_lo]
+
+        view = LinePlotDataView(df, x=self.param, yleft=self.col, err_hi=self.err_hi, err_lo=self.err_lo)
+        view.line_group = ["dataset_gid"]
+        view.legend_info = self.build_legend_by_gid()
+        view.legend_level = ["dataset_gid"]
+        cell.add_view(view)
+
+        cell.x_config.label = self.param
+        cell.x_config.ticks = sorted(df.index.unique(self.param))
+        cell.yleft_config.label = self.pmc
+
+
+class PMCParamScaling(BenchmarkPlot):
+    """
+    Generate plot to show PMC variation for each benchmark parameterisation.
+    """
+    require = {DatasetName.PMC}
+    name = "pmc-param-scaling"
+    description = "PMC parameterisation scaling"
+    cross_analysis = True
+
+    def _make_subplots_mosaic(self):
+        """
+        We create a matrix of plots. Rows are PMC, columns are benchmark
+        parameters.
+        """
+        ds = self.get_dataset(DatasetName.PMC)
+        layout = []
+        subplots = {}
+
+        for p in ds.parameter_index_columns():
+            for j, pmc in enumerate(ds.data_columns()):
+                if ds.agg_df[(pmc, "median", "sample")].isna().all():
+                    # Skip missing metrics
+                    continue
+                name = f"pmc-param-{p}-{pmc}"
+                subplots[name] = PMCParamScalingView(self, pmc, p)
+                if j < len(layout):
+                    layout[j].append(name)
+                else:
+                    layout.append([name])
+        return Mosaic(layout, subplots)

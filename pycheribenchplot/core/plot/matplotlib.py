@@ -470,10 +470,15 @@ class LinePlotRenderer(ViewRenderer):
             color = colors[0]
             label = labels[0]
 
-            x = view.get_col(view.x, df)
+            x = get_col_or_idx(df, view.x)
             for ycol in view.yleft:
-                y = view.get_col(ycol, df)
+                y = get_col_or_idx(df, ycol)
                 cell.ax.plot(x, y, color=color)
+                if view.err_hi and view.err_lo:
+                    # Draw errorbars
+                    err_hi = get_col_or_idx(df, view.err_hi)
+                    err_lo = get_col_or_idx(df, view.err_lo)
+                    cell.ax.errorbar(x, y, yerr=[err_lo, err_hi], color="black", capsize=5)
                 # Need to use a proxy artist due to matplotlib limitation
                 cell.legend.set_item(label, Line2D([], [], color=color))
 

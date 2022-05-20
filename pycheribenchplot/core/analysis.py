@@ -47,6 +47,8 @@ class BenchmarkAnalysis(metaclass=BenchmarkAnalysisRegistry):
     require: set[DatasetName] | typing.Callable = []
     # Unique name of the analysis step, to be used to enable it in the configuration
     name: str = None
+    # Description of the analysis step
+    description: str = None
     # Analysis step tags for group selection
     tags: set[str] = set()
     # Cross benchmark variant analysis step

@@ -326,7 +326,7 @@ class NetperfData(CSVDataSetContainer):
 
     def aggregate(self):
         super().aggregate()
-        grouped = self.merged_df.groupby(["dataset_id"])
+        grouped = self.merged_df.groupby(self.dataset_id_columns())
         self.agg_df = self._compute_aggregations(grouped)
 
     def post_aggregate(self):

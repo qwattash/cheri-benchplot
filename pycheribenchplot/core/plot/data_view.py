@@ -466,6 +466,8 @@ class LinePlotDataView(XYPlotDataView):
     Parameters for simple line plots
     """
     line_group: typing.List[str] = None
+    err_hi: str = None
+    err_lo: str = None
 
     def __post_init__(self):
         super().__post_init__()

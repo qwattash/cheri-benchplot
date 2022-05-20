@@ -96,6 +96,7 @@ class BenchmarkRunRecord:
     fully resolved.
     """
     uuid: uuid.UUID
+    g_uuid: uuid.UUID
     instance: InstanceConfig
     run: BenchmarkRunConfig
 
@@ -308,12 +309,11 @@ class BenchmarkBase(TemplateConfigContext):
                  manager: "BenchmarkManager",
                  config: BenchmarkRunConfig,
                  instance_config: InstanceConfig,
-                 run_id=None):
+                 group_id: uuid.UUID,
+                 run_id: uuid.UUID = None):
         super().__init__()
-        if run_id:
-            self.uuid = run_id
-        else:
-            self.uuid = uuid.uuid4()
+        self.uuid = run_id if run_id is not None else uuid.uuid4()
+        self.g_uuid = group_id
         self.manager = manager
         self.instance_manager = manager.instance_manager
         self.manager_config = manager.config
@@ -333,6 +333,8 @@ class BenchmarkBase(TemplateConfigContext):
         # Map uuids to benchmarks that have been merged into the current instance (which is the baseline)
         # so that we can look them up if necessary
         self.merged_benchmarks = {}
+        # Cross-benchmark parameterisation merged instances
+        self.cross_merged = {}
         # Symbol mapping handler for this benchmark instance
         self.sym_resolver = Symbolizer(self)
         # Dwarf information extraction helper
@@ -489,7 +491,7 @@ class BenchmarkBase(TemplateConfigContext):
         return self._script
 
     def _record_benchmark_run(self):
-        record = BenchmarkRunRecord(uuid=self.uuid, instance=self.instance_config, run=self.config)
+        record = BenchmarkRunRecord(uuid=self.uuid, g_uuid=self.g_uuid, instance=self.instance_config, run=self.config)
         self.manager.record_benchmark(record)
 
     def _build_remote_script(self) -> Path:
@@ -635,9 +637,9 @@ class BenchmarkBase(TemplateConfigContext):
         self.sym_resolver.register_sym_source(map_addr, addrspace, path)
         self.dwarf_helper.register_object(path.name, path)
 
-    def get_benchmark_group(self):
+    def get_merged_benchmarks(self):
         """
-        Return dictionary of the baseline and merged benchmarks in this group
+        Return dictionary of the baseline and merged benchmarks in this parameterisation group
         Note: Only sensible after the merge step on the baseline instance.
         """
         assert self.instance_config.baseline
@@ -734,7 +736,7 @@ class BenchmarkBase(TemplateConfigContext):
         benchmark variants.
         """
         self.logger.debug("Cross-analise")
-        analysers = self._collect_analysers(cross_analysis=False)
+        analysers = self._collect_analysers(cross_analysis=True)
         self.logger.debug("Resolved cross analysis steps %s", [str(a) for a in analysers])
         for handler in analysers:
             handler.process_datasets()

@@ -194,7 +194,7 @@ class FluteStatcountersData(PMCStatData):
 
     def aggregate(self):
         # Median and quartiles
-        group_index = ["dataset_id", "progname", "archname"]
+        group_index = self.dataset_id_columns() + ["progname", "archname"]
         grouped = self.merged_df[self.valid_data_columns()].groupby(group_index)
         self.agg_df = self._compute_aggregations(grouped)
 

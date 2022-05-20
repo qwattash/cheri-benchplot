@@ -228,11 +228,12 @@ class ContextStatsHistogramBase(QEMUTraceDataset):
         aggregation metrics for these, instead we use the "meta" column name
         """
         super().aggregate()
-        grouped = self.merged_df.groupby(["dataset_id", "iteration"] + self.get_aggregate_index())
+        common_agg_index = self.dataset_id_columns() + self.get_aggregate_index()
+        grouped = self.merged_df.groupby(common_agg_index + ["iteration"])
         # Cache the context grouping for later inspection if needed
         self.ctx_agg_df = grouped.aggregate(self._get_context_agg_strategy())
         # Now that we aggregated contexts within the same iteration, aggregate over iterations
-        grouped = self.ctx_agg_df.groupby(["dataset_id"] + self.get_aggregate_index())
+        grouped = self.ctx_agg_df.groupby(common_agg_index)
         self.agg_df = self._compute_aggregations(grouped)
 
     def post_aggregate(self):

@@ -54,6 +54,8 @@ class BenchmarkPlotBase(BenchmarkAnalysis):
         """
         Main title for the plot.
         """
+        if self.description is not None:
+            return self.description
         return self.name
 
     def get_plot_file(self):
@@ -62,7 +64,10 @@ class BenchmarkPlotBase(BenchmarkAnalysis):
         Note that the filename should not have an extension as the surface will
         append it later.
         """
-        return self.benchmark.get_plot_path() / self.name
+        if self.cross_analysis:
+            return self.benchmark.manager.plot_output_path / self.name
+        else:
+            return self.benchmark.get_plot_path() / self.name
 
     def _make_figure_manager(self):
         """
@@ -112,9 +117,7 @@ class BenchmarkSubPlot(ABC):
     A subplot is responsible for generating the data view for a cell of
     the plot surface layout.
     """
-    @classmethod
-    def get_required_datasets(cls):
-        return []
+    description: str = None
 
     def __init__(self, plot: BenchmarkPlot):
         self.plot = plot
@@ -122,6 +125,13 @@ class BenchmarkSubPlot(ABC):
         self.benchmark = self.plot.benchmark
         # Cell assigned for rendering
         self.cell = None
+
+    def get_cell_title(self) -> str:
+        """Generate the title for this subplot, uses the description property by default"""
+        if self.description is not None:
+            return self.description
+        else:
+            raise ValueError("Missing subplot description")
 
     def get_mosaic_extent(self) -> typing.Tuple[int, int]:
         """
@@ -142,10 +152,22 @@ class BenchmarkSubPlot(ABC):
         Build a legend map that allocates colors and labels to the datasets merged
         in the current benchmark instance.
         """
-        bench_group = self.benchmark.get_benchmark_group()
+        bench_group = self.benchmark.get_merged_benchmarks()
         legend = {uuid: str(bench.instance_config.name) for uuid, bench in bench_group.items()}
         legend[self.benchmark.uuid] += "(*)"
         index = pd.Index(legend.keys(), name="dataset_id")
+        legend_info = LegendInfo.from_index(index, legend.values())
+        return legend_info
+
+    def build_legend_by_gid(self):
+        """
+        Build a legend map that allocates colors and labels by dataset group ID. This operates on
+        the datasets merged in the current cross-benchmark accumulator instance.
+        """
+        bench_groups = self.benchmark.manager.get_benchmark_groups()
+        legend = {uuid: str(group[0].instance_config.name) for uuid, group in bench_groups.items()}
+        legend[self.benchmark.g_uuid] += "(*)"
+        index = pd.Index(legend.keys(), name="dataset_gid")
         legend_info = LegendInfo.from_index(index, legend.values())
         return legend_info
 

@@ -43,7 +43,7 @@ class Mosaic:
 
     def allocate(self, name: str, nrows: int, ncols: int):
         """
-        Assing nrows,ncols of space to the given plot name.
+        Assign nrows,ncols of space to the given plot name.
         """
         if self._layout is None:
             self._layout = np.full((nrows, ncols), name)

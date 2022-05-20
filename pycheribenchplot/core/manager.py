@@ -119,6 +119,7 @@ class BenchmarkManager(TemplateConfigContext):
         self.loop = aio.get_event_loop()
         self.instance_manager = InstanceManager(self.loop, manager_config)
         self.benchmark_instances = {}
+        self.benchmark_groups = defaultdict(list)
         self.failed_benchmarks = []
         # Task queue for the operations that the manager should run
         self.queued_tasks = []
@@ -139,6 +140,14 @@ class BenchmarkManager(TemplateConfigContext):
 
     def record_benchmark(self, record: BenchmarkRunRecord):
         self.benchmark_records.records.append(record)
+
+    def get_benchmark_groups(self):
+        """
+        Return a dictionary mapping the benchmark group UUIDs to the set of benchmark instances in
+        the given group. Note that by definition of the group UUID, these benchmarks share the same
+        runner instance configuration.
+        """
+        return self.benchmark_groups
 
     def _get_repo_head(self, path):
         repo = Repo(path)
@@ -215,6 +224,22 @@ class BenchmarkManager(TemplateConfigContext):
         # Overwrite benchmark records with the resolved data
         self.benchmark_records = resolved
 
+    def _gen_parameterised_conf(self, base_conf: BenchmarkRunConfig) -> typing.List[BenchmarkRunConfig]:
+        """
+        Generate parameterised configurations from a base configuration with the parameterize option.
+        """
+        assert base_conf.parameterize, "Missing parameter sets"
+
+        params = OrderedDict(base_conf.parameterize)
+        combinations = []
+        for param_set in it.product(*params.values()):
+            combinations.append(dict(zip(params.keys(), param_set)))
+        self.logger.debug("Parameter combinations: %s", combinations)
+        benchmark_variants = []
+        for param_dict in combinations:
+            benchmark_variants.append(replace(base_conf, parameters=param_dict))
+        return benchmark_variants
+
     def _iter_output_session_dirs(self):
         if not self.config.output_path.is_dir():
             self.logger.error("Output directory %s does not exist", self.config.output_path)
@@ -229,10 +254,15 @@ class BenchmarkManager(TemplateConfigContext):
         with open(self.benchmark_records_path, "w") as record_file:
             record_file.write(self.benchmark_records.emit_json())
 
-    def create_benchmark(self, bench_config: BenchmarkRunConfig, instance: InstanceConfig, uid: uuid.UUID = None):
+    def create_benchmark(self,
+                         bench_config: BenchmarkRunConfig,
+                         instance: InstanceConfig,
+                         gid: uuid.UUID,
+                         run_id: uuid.UUID = None):
         """Create a benchmark run on an instance"""
-        bench = BenchmarkBase(self, bench_config, instance, run_id=uid)
+        bench = BenchmarkBase(self, bench_config, instance, gid, run_id=run_id)
         self.benchmark_instances[bench.uuid] = bench
+        self.benchmark_groups[bench.g_uuid].append(bench)
         self.logger.debug("Created benchmark run %s on %s id=%s", bench_config.name, instance.name, bench.uuid)
         return bench
 
@@ -355,7 +385,7 @@ class BenchmarkManager(TemplateConfigContext):
         bench_matrix = pd.DataFrame(index=index, columns=instances)
         BenchParams = namedtuple("BenchParams", bench_matrix.index.names)
         for record in self.benchmark_records.records:
-            bench = self.create_benchmark(record.run, record.instance, record.uuid)
+            bench = self.create_benchmark(record.run, record.instance, record.g_uuid, run_id=record.uuid)
             if bench.config.is_parameterized:
                 # Note: config.parameters is unordered, use namedtuple to ensure
                 # the key ordering
@@ -403,29 +433,56 @@ class BenchmarkManager(TemplateConfigContext):
         # Note that we accumulate on one of the baseline instances from before
         reference = bench_matrix[baseline].iloc[0]
         reference.cross_merge(bench_matrix[baseline].iloc[1:])
+        reference.cross_analysis()
 
     def _handle_run_command(self, args: ap.Namespace):
+        """
+        Note: If there is more than one benchmark variant in the configuration,
+        one of the following conditions must hold:
+        1. There is a single benchmark run config entry but it is set to generate
+        a parameterised set of runs.
+        2. The parameters field is set with the same keys in all entries.
+        The above conditions are checked before running anything.
+        """
         self.session_output_path.mkdir(parents=True)
         self.logger.info("Start benchplot session %s", self.session)
+
+        # Collect benchmarks to run
+        param_keys = None
+        all_conf = []
         for conf in self.config.benchmarks:
-            if conf.parameterize:
+            if conf.parameters:
+                self.logger.debug("Found benchmark %s with parameters %s", conf.name, conf.parameters)
+                keys = set(conf.parameters.keys())
+                all_conf.append(conf)
+            elif conf.parameterize:
                 self.logger.debug("Found parameterized benchmark %s", conf.name)
-                params = OrderedDict(conf.parameterize)
-                combinations = []
-                for param_set in it.product(*params.values()):
-                    combinations.append(dict(zip(params.keys(), param_set)))
-                self.logger.debug("Parameter combinations: %s", combinations)
-                benchmark_group = []
-                for param_dict in combinations:
-                    benchmark_group.append(replace(conf, parameters=param_dict))
+                keys = set(conf.parameterize.keys())
+                all_conf += self._gen_parameterised_conf(conf)
             else:
+                # Only allow no parameterisation if there is a single config
+                if len(self.config.benchmarks) > 1:
+                    self.logger.error("Missing benchmark parameters or parameterisation, " +
+                                      "this is only allowed when there is only one benchmark " + "configuration entry")
+                    raise ValueError("Invalid configuration")
                 self.logger.debug("Found benchmark %s", conf.name)
-                benchmark_group = [conf]
-            for sub_conf in benchmark_group:
-                for inst_conf in self.config.instances:
-                    bench = self.create_benchmark(sub_conf, inst_conf)
-                    bench.task = self.loop.create_task(bench.run())
-                    self.queued_tasks.append(bench.task)
+                all_conf = self.config.benchmarks
+                break
+            if not param_keys:
+                param_keys = keys
+            elif param_keys != keys:
+                self.logger.error("Benchmark parameter sets must be the same: expected %s found %s", param_keys, keys)
+                raise ValueError("Invalid configuration")
+
+        # Map instances to dataset group IDs
+        dataset_gid = [uuid.uuid4() for _ in self.config.instances]
+
+        # Now create the instances and schedule for running
+        for conf in all_conf:
+            for gid, inst_conf in zip(dataset_gid, self.config.instances):
+                bench = self.create_benchmark(conf, inst_conf, gid)
+                bench.task = self.loop.create_task(bench.run())
+                self.queued_tasks.append(bench.task)
 
     def _handle_analysis_command(self, args: ap.Namespace):
         self._resolve_recorded_session(args.session)

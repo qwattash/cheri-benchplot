@@ -277,14 +277,27 @@ class DataSetContainer(metaclass=DatasetRegistry):
         return self.implicit_index_columns() + [f.name for f in self.input_index_fields()]
 
     def implicit_index_columns(self):
-        cols = ["dataset_id", "iteration"]
+        cols = ["dataset_gid", "dataset_id", "iteration"]
         cols += self.parameter_index_columns()
         return cols
+
+    def dataset_id_columns(self) -> typing.Sequence[str]:
+        """
+        Return the columns needed to identify a datase, these should be retained in all
+        dataframes (except when intentionally aggregating them away).
+        """
+        return ["dataset_gid", "dataset_id"] + self.parameter_index_columns()
 
     def parameter_index_columns(self):
         if self.benchmark.config.is_parameterized:
             return list(self.benchmark.config.parameters.keys())
         return []
+
+    def dataset_id_values(self):
+        """
+        Values for the dataset_id_columns for the current benchmark instance.
+        """
+        return [self.benchmark.g_uuid, self.benchmark.uuid] + list(self.benchmark.config.parameters.values())
 
     def index_columns(self) -> typing.Sequence[str]:
         """
@@ -303,7 +316,7 @@ class DataSetContainer(metaclass=DatasetRegistry):
     def data_columns(self) -> typing.Sequence[str]:
         """
         All data column names in the container dataframe.
-        This, by default, does not include synthetic data columns that are generated after importing the dataframe.
+        This, by default, includes derived data columns that are generated after importing the dataframe.
         """
         return [f.name for f in self._all_fields if f.isdata and not f.isindex]
 
@@ -344,6 +357,9 @@ class DataSetContainer(metaclass=DatasetRegistry):
         if "iteration" not in df.columns:
             self.logger.debug("No iteration column, using default (-1)")
             df["iteration"] = -1
+        if "dataset_gid" not in df.columns:
+            self.logger.debug("No dataset group, using default")
+            df["dataset_gid"] = self.benchmark.g_uuid
         for pcol in self.parameter_index_columns():
             if pcol not in df.columns:
                 param = self.benchmark.config.parameters[pcol]
@@ -458,10 +474,10 @@ class DataSetContainer(metaclass=DatasetRegistry):
         # baseline median.
         bs_median = baseline.xs(("median", "sample"), level=["aggregate", "delta"], axis=1)
         # align the indexes by broadcasting the median cross section with the frames we divide
-        bs_median = broadcast_xs(q75_delta, bs_median)
-        q75_norm = q75_delta.divide(bs_median)
-        bs_median = broadcast_xs(q25_delta, bs_median)
-        q25_norm = q25_delta.divide(bs_median)
+        tmp = broadcast_xs(q75_delta, bs_median)
+        q75_norm = q75_delta.divide(tmp)
+        tmp = broadcast_xs(q25_delta, bs_median)
+        q25_norm = q25_delta.divide(tmp)
         result += [
             self._set_delta_columns_name("norm_delta_baseline", q75_norm),
             self._set_delta_columns_name("norm_delta_baseline", q25_norm)
@@ -475,11 +491,15 @@ class DataSetContainer(metaclass=DatasetRegistry):
         This will add the delta columns in the delta index level.
         It is assumed that the current benchmark instance is the baseline instance,
         this is the case if called from post_aggregate().
+        Note: this is intended to be called only on the baseline benchmark instances.
         """
-        assert check_multi_index_aligned(df, "dataset_id")
+        assert self.benchmark.instance_config.baseline, "computing delta columns on non-baseline benchmark"
+        assert check_multi_index_aligned(df, self.dataset_id_columns())
         assert "metric" in df.columns.names, "Missing column metric level"
         assert "aggregate" in df.columns.names, "Missing column aggregate level"
         assert "delta" in df.columns.names, "Missing column delta level"
+        assert df.index.is_unique, "Input dataframe index must be unique"
+        assert df.columns.is_unique, "Input dataframe columns must be unique"
 
         result = []
         # Find valid data columns that we have in the dataframe
@@ -487,8 +507,9 @@ class DataSetContainer(metaclass=DatasetRegistry):
         valid_metrics = set(self.data_columns()).intersection(metric_cols)
         df = df.loc[:, df.columns.get_level_values("metric").isin(valid_metrics)]
 
-        datasets = df.index.get_level_values("dataset_id").unique()
-        baseline = generalized_xs(df, [self.benchmark.uuid], levels=["dataset_id"], droplevels=True)
+        dataset_id_levels = self.dataset_id_columns()
+        dataset_id_baseline = self.dataset_id_values()
+        baseline = generalized_xs(df, dataset_id_baseline, levels=dataset_id_levels, droplevels=True)
 
         # For each existing column (metric, <x>, sample) we decide the action to take
         # based on the value of x.
@@ -518,7 +539,12 @@ class DataSetContainer(metaclass=DatasetRegistry):
             self.logger.debug("No 'mean' agg value, skip deltas")
 
         delta_df = pd.concat([df] + result, axis=1)
-        return delta_df.sort_index(axis=1)
+        delta_df = delta_df.sort_index(axis=1)
+
+        # Sanity check on the results
+        assert delta_df.index.is_unique, "Index not unique"
+        assert delta_df.columns.is_unique, "Columns not unique"
+        return delta_df
 
     def _get_aggregation_strategy(self) -> dict:
         """
@@ -866,7 +892,9 @@ def broadcast_xs(df: pd.DataFrame, chunk: pd.DataFrame) -> pd.DataFrame:
     This is useful to perform an intermediate operations on a subset (e.g. the baseline frame)
     and then replicate the values for the rest of the datasets.
     """
-    if df.index.nlevels > 1:
+    if df.index.nlevels > 1 and set(chunk.index.names).issubset(df.index.names):
+        # First reorder the levels so that the shared levels between df and chunk are at the
+        # front of df index names lis
         _, r = df.align(chunk, axis=0)
         return r.reorder_levels(df.index.names)
     else:
