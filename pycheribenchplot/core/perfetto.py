@@ -87,10 +87,10 @@ class PerfettoDataSetContainer(DataSetContainer):
             query = query.where(ts < ts_end)
         return query
 
-    def _query_to_df(self, tp: TraceProcessor, query_str: str):
+    def _query_to_df(self, tp: TraceProcessor, query: Query):
         # XXX-AM: This is unreasonably slow, build the dataframe manually for now
         # df = result.as_pandas_dataframe()
-        assert query_str is not None, "No query string?"
+        query_str = query.get_sql(quote_char=None)
         assert len(query_str), "Empty query string?"
         with timing(query_str, logging.DEBUG, self.logger):
             result = tp.query(query_str)
@@ -102,7 +102,7 @@ class PerfettoDataSetContainer(DataSetContainer):
         self._integrity_check(tp)
         return tp
 
-    def _extract_iteration_markers(self, tp: TraceProcessor):
+    def extract_iteration_markers(self, tp: TraceProcessor):
         """
         Return a list of time stamps representing the marker for the start
         of a new benchmark iteration.
@@ -115,7 +115,7 @@ class PerfettoDataSetContainer(DataSetContainer):
         query = query.where((self.t_slice.category == "marker") & (self.t_slice.name == "guest")
                             & (self.t_args.flat_key == "qemu.marker")
                             & (self.t_args.int_value == self.BENCHMARK_ITERATION_MARKER))
-        result_df = self._query_to_df(tp, query.get_sql(quote_char=None))
+        result_df = self._query_to_df(tp, query)
         if len(result_df) == 0:
             self.logger.warning("No benchmark iteration markers in trace, assume infinite interval")
             return [[0, np.inf]]

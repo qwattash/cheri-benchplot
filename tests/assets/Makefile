@@ -16,8 +16,8 @@ all: $(TARGETS) $(CROSS_TARGETS)
 %: %.c
 	gcc -gdwarf-4 -o $@ $<
 
-riscv_%: %.c
-	$(CHERI_CC) $(CHERI_CFLAGS) -o $@ $<
+riscv_%: %.c %.S
+	$(CHERI_CC) $(CHERI_CFLAGS) -o $@ $^
 
 benchplot-assets:
 	python gen_benchplot_assets.py

@@ -6,7 +6,8 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from pypika import Order, Query
+from pypika import Order, Query, Table
+from sortedcontainers import SortedList
 
 from ..core.dataset import (DatasetArtefact, DatasetName, DatasetProcessingError, Field, align_multi_index_levels,
                             check_multi_index_aligned, rotate_multi_index_level, subset_xs)
@@ -39,7 +40,6 @@ class ContextStatsHistogramBase(QEMUTraceDataset):
     """
     dataset_source_id = DatasetArtefact.QEMU_STATS
     fields = [
-        Field.index_field("histogram", dtype=int),
         Field.index_field("bucket", dtype=int),
         Field.index_field("file", dtype=str, isderived=True),
         Field.index_field("symbol", dtype=str, isderived=True),
@@ -53,83 +53,32 @@ class ContextStatsHistogramBase(QEMUTraceDataset):
         Field.derived_field("valid_symbol", dtype=object, isdata=False)
     ]
 
-    def _get_slice_name(self) -> str:
-        """Get the name of the slices containing histogram data for this dataset"""
-        raise NotImplementedError("Must override")
+    def extract_context_tracks(self, tp: "TraceProcessor", query: Query = None):
+        """
+        Extract all CHERI context tracks from the trace into a temporary dataframe.
+        """
+        t_process = Table("process")
+        t_thread = Table("thread")
+        t_comp = Table("compartment")
+        t_cheri_context_track = Table("cheri_context_track")
+        if query is None:
+            query = Query.from_(t_cheri_context_track).join(t_process).on_field("upid")
+        query = query.join(self.t_thread).on_field("utid")
+        query = query.join(self.t_compartment).on_field("ucid")
+        query = query.select(self.t_process.pid, self.t_thread.tid, self.t_compartment.cid, self.t_compartment.el,
+                             self.t_cheri_context_track.id)
+        df = self._query_to_df(tp, query)
+        return df
 
-    def _get_arg_key_map(self) -> typing.Dict[str, str]:
-        """Get mapping of argument flat_key to destination column in the imported dataframe"""
-        raise NotImplementedError("Must override")
+    def extract_counters(self, tp: "TraceProcessor", track: int, ts_start: float, ts_end: float):
+        pass
 
-    def _get_symbol_column(self):
-        """Return the colum to use to populate the file/symbol indexes"""
-        raise NotImplementedError("Must override")
+    def extract_slices(self):
+        pass
 
     def delta_columns(self):
         """Return columns for which to compute derived delta columns"""
         raise NotImplementedError("Must override")
-
-    def _decode_track_name(self, track_name: str):
-        """
-        XXX-AM: we should have a table for contexts as we have one for processes and threads.
-        """
-        track_info = {"pid": -1, "tid": -1, "cid": -1, "EL": -1}
-        if track_name.startswith("CTX"):
-            parts = track_name.split(":")
-            assert len(parts) == 4, "Malformed context track name"
-            pid = int(parts[0][len("CTX "):])
-            track_info.update({"pid": pid, "tid": int(parts[1]), "cid": int(parts[2]), "EL": int(parts[3])})
-        return track_info
-
-    def _extract_track_stats(self, tp, track, ts_start, ts_end):
-        """
-        Build subsection of the dataframe pertaining to a given track.
-        Note that we are expected to return a dataframe with a flat index as this happens before
-        assigning the final index.
-        """
-        slice_name = self._get_slice_name()
-        track_info = self._decode_track_name(track["name"])
-        data_cols = {}
-        for query_col, mapped_col in self._get_arg_key_map().items():
-            query = self._query_slice_ts(ts_start, ts_end)
-            query = query.select(self.t_slice.id, self.t_args.int_value)
-            query = query.where((self.t_slice.category == "stats") & (self.t_slice.name == slice_name)
-                                & (self.t_args.flat_key == query_col) & (self.t_slice.track_id == track.id)).orderby(
-                                    self.t_args.id, order=Order.asc)
-            mapped_col_data = self._query_to_df(tp, query.get_sql(quote_char=None))
-            mapped_col_data.rename(columns={"id": "histogram"}, inplace=True)
-            mapped_col_data.index.name = "bucket"  # Current index in just row count ordered by args.id
-            mapped_col_data.set_index("histogram", append=True, inplace=True)
-            # Note it is important that the data_cols are Series objects otherwise we will end up
-            # with a multi-level column index in the concatenation result
-            data_cols[mapped_col] = mapped_col_data["int_value"]
-        df = pd.concat(data_cols, axis=1)
-        for key, value in track_info.items():
-            df[key] = value
-        return df.reset_index(drop=False)
-
-    def _extract_events(self, tp: "TraceProcessor", i: int, ts_start: int, ts_end: int):
-        """
-        Extract events from an iteration of the benchmark.
-        i: iteration index
-        ts_start: iteration start timestamp
-        ts_end: iteration end timestamp
-        """
-        slice_name = self._get_slice_name()
-        # Look up tracks in the datasets that have data slices we are interested in
-        query = self._query_slice_ts(ts_start, ts_end).join(self.t_track).on(self.t_track.id == self.t_slice.track_id)
-        query = query.where(
-            self.t_args.flat_key.like("qemu%") & (self.t_slice.category == "stats")
-            & (self.t_slice.name == slice_name)).select(self.t_track.id, self.t_track.name).distinct()
-        tracks = self._query_to_df(tp, query.get_sql(quote_char=None))
-        # Dataframe skeleton with all non-derived columns (no index)
-        df = pd.DataFrame(columns=self.all_columns())
-        for idx, track in tracks.iterrows():
-            self.logger.debug("Detected track %s: extracting stats", track["name"])
-            track_df = self._extract_track_stats(tp, track, ts_start, ts_end)
-            track_df["dataset_id"] = self.benchmark.uuid
-            track_df["iteration"] = i
-            self._append_df(track_df)
 
     def _resolve_pid_tid(self):
         """
@@ -156,13 +105,14 @@ class ContextStatsHistogramBase(QEMUTraceDataset):
 
     def _resolve_sym_column(self, col: str, addrspace_key: str) -> pd.DataFrame:
         """
-        Resolve symbols given a column containing addresses.
+        Resolve symbols/source-level information given a column containing addresses.
         The addrspace_key is the column providing the address-space name for the symbol resolver.
         This will not change the dataframe, instead returns a dataframe with the same index as
         the main dataframe, with columns "file", "symbol", "valid_symbol" containing the mapped file/symbol
         and the status result of the mapping process
         """
         resolver = self.benchmark.sym_resolver
+        dwarf = self.benchmark.dwarf_helper
         # XXX-AM: the symbol size does not appear to be reliable?
         # otherwise we should check also the resolved syminfo size as in:
         # sym_end = resolved.map(lambda syminfo: syminfo.addr + syminfo.size if syminfo else np.nan)
@@ -194,7 +144,7 @@ class ContextStatsHistogramBase(QEMUTraceDataset):
 
     def load(self):
         tp = self._get_trace_processor(self.output_file())
-        iterations = self._extract_iteration_markers(tp)
+        iterations = self.extract_iteration_markers(tp)
         # Verify that the iteration markers agree with the configured number of iterations
         if len(iterations) != self.benchmark.config.iterations:
             self.logger.error("QEMU trace does not have the expected iteration markers: %d configured %d",
@@ -202,20 +152,20 @@ class ContextStatsHistogramBase(QEMUTraceDataset):
             raise DatasetProcessingError("QEMU trace has invalid iteration markers")
         for i, interval in enumerate(iterations):
             start, end = interval
-            self._extract_events(tp, i, start, end)
+            self._extract_iteration(tp, i, start, end)
 
-    def pre_merge(self):
-        """
-        Common pre-merge resolves the file/symbol and valid symbol column based on
-        the column name given by _get_symbol_column()
-        """
-        super().pre_merge()
-        self._resolve_pid_tid()
-        self.df["process_name"] = self.df["process"].map(lambda p: Path(p).name)
-        sym_col = self._get_symbol_column()
-        resolved = self._resolve_sym_column(sym_col, "process_name")
-        # Populate the file, symbol and valid_symbol columns
-        self.df = pd.concat([self.df, resolved], axis=1)
+    # def pre_merge(self):
+    #     """
+    #     Common pre-merge resolves the file/symbol and valid symbol column based on
+    #     the column name given by _get_symbol_column()
+    #     """
+    #     super().pre_merge()
+    #     self._resolve_pid_tid()
+    #     self.df["process_name"] = self.df["process"].map(lambda p: Path(p).name)
+    #     sym_col = self._get_symbol_column()
+    #     resolved = self._resolve_sym_column(sym_col, "process_name")
+    #     # Populate the file, symbol and valid_symbol columns
+    #     self.df = pd.concat([self.df, resolved], axis=1)
 
     def aggregate(self):
         """
@@ -255,26 +205,70 @@ class ContextStatsHistogramBase(QEMUTraceDataset):
 class QEMUStatsBBHistogramDataset(ContextStatsHistogramBase):
     """Basic-block hit count histogram"""
     dataset_config_name = DatasetName.QEMU_STATS_BB_HIST
-    fields = [Field("start", dtype=np.uint), Field("end", dtype=np.uint), Field.data_field("icount", dtype=int)]
+    fields = [Field("start", dtype=np.uint), Field("end", dtype=np.uint), Field.data_field("hit_count", dtype=int)]
 
-    def _get_slice_name(self):
-        return "bb_hist"
+    def extract_intervals(self, tp: "TraceProcessor", ts_start: float, ts_end: float):
+        """
+        Extract intervals associated to a given track from the intervals table, within a
+        timestamp interval.
+        """
+        t_interval = Table("interval")
+        t_track = Table("cheri_context_interval_track")
+        t_process = Table("process")
+        t_thread = Table("thread")
+        t_comp = Table("compartment")
+        query = Query.from_(t_track).join(t_interval).on(t_interval.track_id == t_track.id)
+        query = query.join(t_process).on_field("upid")
+        query = query.join(t_thread).on_field("utid")
+        query = query.join(t_comp).on_field("ucid")
+        query = query.select(t_process.pid, t_thread.tid, t_comp.cid, t_comp.el, t_interval.ts, t_interval.start,
+                             t_interval.end, t_interval.value)
+        query = self._query_filter_ts(query, t_interval.ts, ts_start, ts_end)
+        df = self._query_to_df(tp, query)
+        # Merge overlapping intervals for each context
+        grouped = df.groupby(["pid", "tid", "cid", "el"])
+        df = grouped.apply(lambda g: self._merge_intervals(g))
+        return df[df["value"] != 0].reset_index()
 
-    def _get_arg_key_map(self):
-        mapping = {
-            "qemu.histogram.bb_bucket.start": "start",
-            "qemu.histogram.bb_bucket.end": "end",
-            "qemu.histogram.bb_bucket.value": "icount"
-        }
-        return mapping
+    def _merge_intervals(self, df):
+        points = np.concatenate((df["start"], df["end"]))
+        limits = sorted(np.unique(points))
+        intervals = []
+        for i in range(len(limits) - 1):
+            start = limits[i]
+            end = limits[i + 1]
+            # select intervals that fully contain interval #i
+            sel = (df["start"] <= start) & (df["end"] >= end)
+            value = df[sel]["value"].sum()
+            intervals.append((start, end, value))
+        return pd.DataFrame.from_records(intervals, columns=["start", "end", "value"])
 
-    def _get_symbol_column(self):
-        return "start"
+    def pre_merge(self):
+        """
+        Common pre-merge resolves the file/symbol/line and valid symbol column based on
+        the PID and DWARF information
+        """
+        super().pre_merge()
+        self._resolve_pid_tid()
+        self.df["process_name"] = self.df["process"].map(lambda p: Path(p).name)
+        resolved = self._resolve_sym_column("start", "process_name")
+        # Populate the file, symbol and valid_symbol columns
+        self.df = pd.concat([self.df, resolved], axis=1)
 
     def _get_context_agg_strategy(self):
         agg = super()._get_context_agg_strategy()
-        agg.update({"start": "min", "end": "max", "icount": "sum"})
+        agg.update({"start": "min", "end": "max", "hit_count": "sum"})
         return agg
+
+    def _extract_iteration(self, tp, i, start, end):
+        """
+        Extract events from an iteration of the benchmark.
+        """
+        intervals_df = self.extract_intervals(tp, start, end)
+        intervals_df.rename(columns={"value": "hit_count", "el": "EL"}, inplace=True)
+        intervals_df["iteration"] = i
+        # Append and add ID columns
+        self._append_df(intervals_df)
 
 
 class QEMUStatsBranchHistogramDataset(ContextStatsHistogramBase):
@@ -352,7 +346,7 @@ class QEMUGuestCountersDataset(QEMUTraceDataset):
             self.t_counter).on(self.t_counter_track.id == self.t_counter.track_id)
         cnt_query = cnt_query.select(self.t_counter_track.name, self.t_counter.ts, self.t_counter.value)
         cnt_query = self._query_filter_ts(cnt_query, self.t_counter.ts, ts_start, ts_end)
-        cnt_df = self._query_to_df(tp, cnt_query.get_sql(quote_char=None))
+        cnt_df = self._query_to_df(tp, cnt_query)
 
         name_split = cnt_df["name"].str.split(":")
         name = name_split.map(lambda v: v[0])
@@ -367,7 +361,7 @@ class QEMUGuestCountersDataset(QEMUTraceDataset):
 
     def load(self):
         tp = self._get_trace_processor(self.output_file())
-        iterations = self._extract_iteration_markers(tp)
+        iterations = self.extract_iteration_markers(tp)
         if len(iterations) != self.benchmark.config.iterations:
             self.logger.error("QEMU trace does not have the expected iteration markers: %d configured %d",
                               len(iterations), self.benchmark.config.iterations)
