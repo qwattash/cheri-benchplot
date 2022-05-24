@@ -12,6 +12,7 @@ from enum import Enum
 from pathlib import Path
 
 import asyncssh
+import numpy as np
 from multi_await import multi_await
 
 from .config import TemplateConfig, path_field
