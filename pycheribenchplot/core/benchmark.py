@@ -187,9 +187,9 @@ class BenchmarkScript:
         This makes it easier to share file paths by just using directories relative to the benchmark
         output_path.
         """
-        self._add_command("mkdir", [self._guest_output])
+        self._add_command("mkdir", ["-p", self._guest_output])
         for i in range(self.benchmark.config.iterations):
-            self._add_command("mkdir", [self._guest_output / str(i)])
+            self._add_command("mkdir", ["-p", self._guest_output / str(i)])
 
     def local_to_remote_path(self, host_path: Path) -> Path:
         base_path = self.benchmark.get_output_path()
