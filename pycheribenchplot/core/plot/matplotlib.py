@@ -462,13 +462,12 @@ class LinePlotRenderer(ViewRenderer):
         else:
             raise NotImplementedError("Need to special-case the legend handling")
 
+        # Only one color/label per group allowed, can try to relax this but not needed for now
+        assert view.line_group == view.legend_level
+
         for group_key, df in grouped:
-            df_with_legend = df.join(legend_df)
-            colors = df_with_legend["colors"]
-            labels = df_with_legend["labels"]
-            # Only one color/label per group allowed, can try to relax this but not needed
-            color = colors[0]
-            label = labels[0]
+            color = legend_df.loc[group_key, "colors"][0]
+            label = legend_df.loc[group_key, "labels"][0]
 
             x = get_col_or_idx(df, view.x)
             for ycol in view.yleft:
@@ -478,7 +477,7 @@ class LinePlotRenderer(ViewRenderer):
                     # Draw errorbars
                     err_hi = get_col_or_idx(df, view.err_hi)
                     err_lo = get_col_or_idx(df, view.err_lo)
-                    cell.ax.errorbar(x, y, yerr=[err_lo, err_hi], color="black", capsize=5)
+                    cell.ax.errorbar(x, y, yerr=[err_lo, err_hi], fmt='none', color="black", capsize=5)
                 # Need to use a proxy artist due to matplotlib limitation
                 cell.legend.set_item(label, Line2D([], [], color=color))
 
