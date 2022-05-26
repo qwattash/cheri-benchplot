@@ -25,7 +25,8 @@ class NetperfBar(BenchmarkSubPlot):
         if metric == "Throughput":
             # Fetch the thoughput scale
             if self.ds.merged_df.groupby("Throughput Units").ngroups > 1:
-                self.logger.warning("netperf throughput units differ")
+                self.logger.warning("netperf throughput units differ: %s",
+                                    self.ds.merged_df["Throughput Units"].unique())
             else:
                 self.y_unit = self.ds.merged_df["Throughput Units"].unique()[0]
 
