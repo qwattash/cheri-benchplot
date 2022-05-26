@@ -1,6 +1,8 @@
+import numpy as np
+
 from ..core.dataset import DatasetName, scale_to_std_notation
-from ..core.plot import (BarPlotDataView, BenchmarkPlot, BenchmarkSubPlot, LegendInfo, LinePlotDataView, Mosaic,
-                         Symbols)
+from ..core.plot import (BarPlotDataView, BenchmarkPlot, BenchmarkSubPlot, LegendInfo, LinePlotDataView, Mosaic, Scale,
+                         Symbols, get_col_or_idx)
 
 
 class PMCMetricBar(BenchmarkSubPlot):
@@ -236,6 +238,14 @@ class PMCParamScalingView(BenchmarkSubPlot):
         df[self.err_hi] = df[self.err_hi] - df[self.col]
         df[self.err_lo] = df[self.col] - df[self.err_lo]
 
+        # Detect whether we should use a log scale for the X axis
+        x_values = get_col_or_idx(df, self.param).unique()
+        x_values = map(lambda x: int(np.log2(x)) == np.log2(x), x_values)
+        if np.all(x_values):
+            scale = Scale("log", base=2)
+        else:
+            scale = None
+
         view = LinePlotDataView(df, x=self.param, yleft=self.col, err_hi=self.err_hi, err_lo=self.err_lo)
         view.line_group = ["dataset_gid"]
         view.legend_info = self.build_legend_by_gid()
@@ -244,6 +254,7 @@ class PMCParamScalingView(BenchmarkSubPlot):
 
         cell.x_config.label = self.param
         cell.x_config.ticks = sorted(df.index.unique(self.param))
+        cell.x_config.scale = scale
         cell.yleft_config.label = self.pmc
 
 
