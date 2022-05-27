@@ -68,7 +68,7 @@
         "desc": "UDP RR 5k transactions {param_nbytes}",
         "type": "netperf",
         "reuse_instance": true,
-        "iterations": 12,
+        "iterations": 22,
 	    "drop_iterations": 2,
 	    "remote_output_dir": "/tmp/benchmark-output",
         "parameterize": {

@@ -68,11 +68,11 @@
         "desc": "TCP {param_nbytes}",
         "type": "netperf",
         "reuse_instance": true,
-        "iterations": 12,
+        "iterations": 22,
 	    "drop_iterations": 2,
 	    "remote_output_dir": "/tmp/benchmark-output",
         "parameterize": {
-            "param_nbytes": [1, 8, 64, 128, 256, 512, 1024, 4096, 8192, 16384, 32768, 65536, 131072, 1049000, 4194000]
+            "param_nbytes": [1, 8, 64, 128, 256, 512, 1024, 4096, 8192, 16384, 32768, 65536, 131072, 1048576, 4194304]
         },
         "benchmark_dataset": {
 		    "type": "netperf-data",

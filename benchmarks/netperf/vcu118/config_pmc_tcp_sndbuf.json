@@ -64,7 +64,7 @@
 	}],
     "benchmarks": [
         {
-        "name": "tcp_stream_64M_{param_sndbuf}",
+        "name": "tcp_stream_4M_{param_sndbuf}",
         "desc": "TCP buf={param_sndbuf}",
         "type": "netperf",
         "reuse_instance": true,
@@ -72,7 +72,7 @@
 	    "drop_iterations": 2,
 	    "remote_output_dir": "/tmp/benchmark-output",
         "parameterize": {
-            "param_sndbuf": [8, 64, 128, 256, 512, 1024, 4096, 8192, 16384, 32768, 65536, 131072, 1049000, 4194000]
+            "param_sndbuf": [8, 64, 128, 256, 512, 1024, 4096, 8192, 16384, 32768, 65536, 131072, 1048576, 4194304]
         },
         "benchmark_dataset": {
 		    "type": "netperf-data",
@@ -80,7 +80,7 @@
                 "netperf_options": [
 			        "-P", "1",
 			        "-T", "0,1",
-			        "-l", "-4194000",
+			        "-l", "-4194304",
 			        "-t", "TCP_STREAM", "--",
 			        "-o", "SOCKET_TYPE,PROTOCOL,DIRECTION,ELAPSED_TIME,THROUGHPUT,THROUGHPUT_UNITS,REQUEST_SIZE,RESPONSE_SIZE,TRANSPORT_MSS,CONFIDENCE_ITERATION,UUID,NETPERF_ABI,KERNEL_ABI,COMMAND_LINE",
 			        "-m", "{param_sndbuf}",
