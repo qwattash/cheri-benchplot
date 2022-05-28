@@ -2,6 +2,7 @@ import asyncio as aio
 import io
 import json
 import re
+import shlex
 import typing
 import uuid
 from dataclasses import dataclass, field
@@ -54,20 +55,23 @@ class BenchmarkRunConfig(TemplateConfig):
     for running the benchmark.
     Note that dataset names generate template replacements for each dataset file.
 
-    Attributes
-    name: display name for the benchmark setup
+    Attributes:
+    - name: display name for the benchmark setup
     iterations: the number of iterations of the benchmark to run
-    desc: human-readable benchmark setup description
-    benchmark_dataset: Configuration for the dataset handler that runs the actual benchmark
-    datasets: Additional datasets configuration. Each entry describes a dataset handler that
+    - desc: human-readable benchmark setup description
+    - benchmark_dataset: Configuration for the dataset handler that runs the actual benchmark
+    - datasets: Additional datasets configuration. Each entry describes a dataset handler that
       is used to generate additional information about the benchmark and process it.
-    drop_iterations: Number of iterations to drop from the beginning. These are considered
+    - drop_iterations: Number of iterations to drop from the beginning. These are considered
     unreliable as the benchmark is priming the system caches/buffers.
-    parameterize: Generate a parameterized benchmark using a range of values associated to a name.
+    - parameterize: Generate a parameterized benchmark using a range of values associated to a name.
     The name is used to resolve names in template strings of benchmark commands.
-    parameters: Set of parameters assigned to a benchmark run, from the `parameterize` dictionary,
+    - parameters: Set of parameters assigned to a benchmark run, from the `parameterize` dictionary,
     this is only valid for benchmark records and should not be used in the main configuration.
-    remote_output_dir: The root output file directory on the remote instance.
+    - remote_output_dir: The root output file directory on the remote instance.
+    - command_hooks: Extra commands to run in the benchmark script. Keys in the dictionary are
+    benchmark setup steps 'pre_benchmark', 'pre_benchmark_iter', 'post_benchmark_iter',
+    'post_benchmark'.
     """
     name: str
     iterations: int
@@ -78,6 +82,7 @@ class BenchmarkRunConfig(TemplateConfig):
     parameters: typing.Dict[str, any] = field(default_factory=dict)
     drop_iterations: int = 0
     remote_output_dir: Path = path_field("benchmark-output")
+    command_hooks: typing.Dict[str, typing.List[str]] = field(default_factory=dict)
 
     @property
     def is_parameterized(self):
@@ -494,6 +499,16 @@ class BenchmarkBase(TemplateConfigContext):
         record = BenchmarkRunRecord(uuid=self.uuid, g_uuid=self.g_uuid, instance=self.instance_config, run=self.config)
         self.manager.record_benchmark(record)
 
+    def _gen_hooks(self, name: str):
+        """
+        Generate script commands from configured hooks. The given name is the
+        hook key in the configuration dictionary.
+        """
+        commands = self.config.command_hooks.get(name, [])
+        for cmd in commands:
+            cmd_args = shlex.split(cmd)
+            self._script.gen_cmd(cmd_args[0], cmd_args[1:])
+
     def _build_remote_script(self) -> Path:
         """
         Build the remote benchmark script to run
@@ -504,6 +519,7 @@ class BenchmarkBase(TemplateConfigContext):
         post_generators = self._dataset_generators_sorted(reverse=True)
         self.logger.info("Generate benchmark script")
 
+        self._gen_hooks("pre_benchmark")
         for dset in pre_generators:
             dset.gen_pre_benchmark()
 
@@ -511,13 +527,16 @@ class BenchmarkBase(TemplateConfigContext):
             self.logger.info("Generate benchmark iteration %d", i)
             for dset in pre_generators:
                 dset.configure_iteration(i)
+            self._gen_hooks("pre_benchmark_iter")
             for dset in pre_generators:
                 dset.gen_pre_benchmark_iter(i)
             # Only run the benchmark step for the given benchmark_dataset
             bench_dset.gen_benchmark(i)
+            self._gen_hooks("post_benchmark_iter")
             for dset in post_generators:
                 dset.gen_post_benchmark_iter(i)
 
+        self._gen_hooks("post_benchmark")
         for dset in post_generators:
             dset.gen_post_benchmark()
 
