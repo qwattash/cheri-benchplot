@@ -81,13 +81,6 @@ class LegendInfo:
             points = np.linspace(color_range[0], color_range[1], len(values))
             return pd.Series(list(cmap(points)), index=values.index, dtype=object)
 
-    @classmethod
-    def color_hsv_transform(cls):
-        """
-        Generate a function to alter colors, suitable to use in a dataframe map() or apply()
-        """
-        pass
-
     def __init__(self, df: pd.DataFrame):
         """
         Note that the constructor allows the use of keys as a list of values or a more comples
@@ -360,15 +353,21 @@ class TableDataView(DataView):
     depend on the dataframe column index.
 
     The associated legend_info can have the usual per-row coloring using
-    legend_levels. Column indexes can also be used, these should be set in the
-    special "column" legend frame index and must contain the column names.
-    This allows to implement single-cell coloring if required.
+    legend_levels.
+    Row/column coloring can be selected by changing the legend_axis, accepted
+    values are "index", "columns", "cell". Index means that the legend_info
+    frame maps index values to label/colors and is joinable on the index
+    legend_level. Columns is analogous to the "index" axis, but for columns.
+    Cell specifies that the legend_info maps rows and columns to cell colors.
     """
     columns: list = field(default_factory=list)
+    legend_axis: str = "index"
 
     def __post_init__(self):
         super().__post_init__()
         self.key = "table"
+        if self.legend_axis not in ["index", "column", "cell"]:
+            raise ValueError("Invalid legend_axis, must be one of 'index', 'column', 'cell'")
 
 
 @dataclass

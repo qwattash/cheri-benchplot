@@ -75,22 +75,25 @@ class SpreadsheetTableRenderer(ViewRenderer):
             fmt = book.add_format({"fg_color": mcolors.to_hex(color)})
             fmt.set_border(1)  # solid
             color_fmt[tuple(color)] = fmt
-        if view.legend_level:
-            assert "column" not in legend_df.index.names
-            tmp_df = view.df.copy()
-            if len(tmp_df.columns.names) > 1:
-                tmp_df.columns = tmp_df.columns.droplevel(tmp_df.columns.names[1:])
-            joined = tmp_df.join(legend_df, on=view.legend_level)
-            if joined["colors"].isna().any():
+
+        if view.legend_axis == "index":
+            # Align the legend to the data frame on the legend levels present in the legend index
+            tmp_df, _ = legend_df.align(view.df, axis=0, join="inner")
+            if tmp_df["colors"].isna().any():
                 raise RuntimeError("Something went wrong with the legend join operation")
-            joined["colors"] = joined["colors"].map(lambda c: color_fmt[tuple(c)])
-            cell_fmt.loc[:, :] = np.repeat(joined["colors"].values, len(cell_fmt.columns)).reshape(cell_fmt.shape)
-        else:
-            # Just columns, assign those
-            for i, col in enumerate(legend_df.index.get_level_values("column")):
-                color = legend_df["colors"].iloc[0]
+            tmp_df["colors"] = tmp_df["colors"].map(lambda c: color_fmt[tuple(c)])
+            cell_fmt.loc[:, :] = np.repeat(tmp_df["colors"].values, len(cell_fmt.columns)).reshape(cell_fmt.shape)
+        elif view.legend_axis == "column":
+            # Just assign the columns
+            tmp_df, _ = legend_df.T.align(view.df, axis=1, join="inner")
+            for col in tmp_df.columns:
+                color = tmp_df[col]["colors"]
                 fmt = color_fmt[tuple(color)]
                 cell_fmt.loc[:, col] = fmt
+        elif view.legend_axis == "cell":
+            raise NotImplementedError("Cell coloring not yet supported")
+        else:
+            raise ValueError(f"Invalid legend_axis {view.legend_axis}")
         return cell_fmt
 
     def _set_cell_styles(self, view, book, sheet):

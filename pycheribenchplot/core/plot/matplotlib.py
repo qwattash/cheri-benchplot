@@ -453,7 +453,7 @@ class LinePlotRenderer(ViewRenderer):
     """
     def _resolve_legend(self, view) -> pd.DataFrame:
         df = view.legend_info.resolve(view.df, view.legend_level)
-        return df
+        return df.sort_index()
 
     def render(self, view, cell):
         legend_df = self._resolve_legend(view)
