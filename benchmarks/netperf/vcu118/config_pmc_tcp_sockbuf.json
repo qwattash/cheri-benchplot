@@ -83,8 +83,6 @@
 			        "-l", "-4194304",
 			        "-t", "TCP_STREAM", "--",
 			        "-o", "SOCKET_TYPE,PROTOCOL,DIRECTION,ELAPSED_TIME,THROUGHPUT,THROUGHPUT_UNITS,REQUEST_SIZE,RESPONSE_SIZE,TRANSPORT_MSS,CONFIDENCE_ITERATION,UUID,NETPERF_ABI,KERNEL_ABI,COMMAND_LINE",
-			        "-m", "64K",
-                    "-M", "64K",
                     "-s", "{param_nbytes}",
                     "-S", "{param_nbytes}",
 			        "-u", "{uuid}"],
