@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 
 from ..analysis import BenchmarkAnalysis
-from ..dataset import DatasetArtefact
+from ..dataset import DatasetArtefact, DataSetContainer
 from ..util import new_logger
 from .backend import FigureManager, Mosaic
 from .data_view import CellData, LegendInfo
@@ -80,17 +80,81 @@ class BenchmarkPlotBase(BenchmarkAnalysis):
         Mosaic layout for matplotlib-like setup.
         By default generate a single columns with subplots.
         """
-        dset_avail = set(self.benchmark.datasets.keys())
+        return self._make_mosaic_from_subplots_list()
+
+    def _make_mosaic_from_subplots_list(self):
+        """
+        Basic layouting function that generates a single column from all the
+        subplots in the declared BenchmarkPlotBase::subplots
+        """
         layout = Mosaic()
         for idx, plot_klass in enumerate(self.subplots):
-            dset_req = set(plot_klass.get_required_datasets())
-            if dset_req.issubset(dset_avail):
-                name = f"subplot-{idx}"
-                subplot = plot_klass(self)
-                layout.subplots[name] = subplot
-                nrows, ncols = subplot.get_mosaic_extent()
-                layout.allocate(name, nrows, ncols)
+            name = f"subplot-{idx}"
+            subplot = plot_klass(self)
+            layout.subplots[name] = subplot
+            nrows, ncols = subplot.get_mosaic_extent()
+            layout.allocate(name, nrows, ncols)
         return layout
+
+    def _make_mosaic_from_dataset_columns(self,
+                                          plot_ctor: typing.Callable,
+                                          ds: DataSetContainer,
+                                          include_overhead=False):
+        """
+        Layouting strategy that generates a column of plots for each (valid)
+        data column in the given dataset frame.
+
+        plot_ctor: subplots constructor, must accept the following (plot, column_name, overhead=<True|False>)
+        ds: The dataset to show
+        include_overhead: Generate extra column of plots showing the relative overhead
+        """
+        subplots = {}
+        layout = []
+        for idx, metric in enumerate(ds.data_columns()):
+            name_abs = f"subplot-{idx}-abs"
+            name_delta = f"subplot-{idx}-delta"
+            if ds.merged_df[metric].isna().all():
+                continue
+            subplots[name_abs] = plot_ctor(self, metric, overhead=False)
+            row = [name_abs]
+            if include_overhead:
+                subplots[name_delta] = plot_ctor(self, metric, overhead=True)
+                row.append(name_delta)
+            layout.append(row)
+        return Mosaic(layout, subplots)
+
+    def _make_mosaic_from_cross_merged_dataset(self,
+                                               plot_ctor: typing.Callable,
+                                               ds: DataSetContainer,
+                                               include_overhead=False):
+        """
+        Layouting strategy that generates a column of plots for each valid data column in the cross-benchmark
+        merged dataframe. A new column is added for each benchmark parameterisation key. Another extra column
+        showing relative overhead is added for each existing one if include_overhead is True.
+
+        plot_ctor: subplots constructor, must accept the following (plot, column_name, param_name, overhead=<True|False>)
+        ds: The dataset to show
+        include_overhead: Generate extra column of plots showing the relative overhead
+        """
+        layout = []
+        subplots = {}
+        for p in ds.parameter_index_columns():
+            for j, metric in enumerate(ds.data_columns()):
+                if ds.cross_merged_df[(metric, "median", "sample")].isna().all():
+                    # Skip missing metrics
+                    continue
+                name = f"subplot-param-{p}-{metric}"
+                name_delta = f"subplot-param-{p}-{metric}-delta"
+                subplots[name] = plot_ctor(self, metric, p, overhead=False)
+                row = [name]
+                if include_overhead:
+                    subplots[name_delta] = plot_ctor(self, metric, p, overhead=True)
+                    row.append(name_delta)
+                if j < len(layout):
+                    layout[j].extend(row)
+                else:
+                    layout.append(row)
+        return Mosaic(layout, subplots)
 
     def process_datasets(self):
         """Populate the plot axes and draw everything."""

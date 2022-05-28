@@ -65,9 +65,9 @@ class PMCDeltaBar(BenchmarkSubPlot):
     """
     Draw a set of bar for each PMC delta metric
     """
-    def __init__(self, plot, dataset, metric: str):
+    def __init__(self, plot, metric: str, overhead=False):
         super().__init__(plot)
-        self.ds = dataset
+        self.ds = self.get_dataset(DatasetName.PMC)
         self.metric = metric
         self.col = (self.metric, "median", "norm_delta_baseline")
         self.err_hi_col = (self.metric, "q75", "norm_delta_baseline")
@@ -193,43 +193,41 @@ class PMCDeltaOverviewPlot(BenchmarkPlot):
     description = "PMC delta overview"
 
     def _make_subplots_mosaic(self):
-        """
-        Make mosaic with 2 columns: Left is the raw metric delta, right is the normalized % delta
-        """
-        subplots = {}
-        layout = []
-        subplots["pmc-delta-all"] = PMCDeltaAll(self)
-        layout.append(["pmc-delta-all"])
-
-        pmc_stats = self.get_dataset(DatasetName.PMC)
-        for idx, metric in enumerate(pmc_stats.data_columns()):
-            name = f"subplot-pmc-stats-{idx}"
-            if pmc_stats.agg_df[(metric, "median", "sample")].isna().all():
-                continue
-            subplots[name] = PMCDeltaBar(self, pmc_stats, metric)
-            layout.append([name])
-
-        return Mosaic(layout, subplots)
+        pmc = self.get_dataset(DatasetName.PMC)
+        m = self._make_mosaic_from_dataset_columns(PMCDeltaBar, pmc, include_overhead=False)
+        m.subplots["pmc-delta-all"] = PMCDeltaAll(self)
+        m.allocate("pmc-delta-all", 1, 1)
+        return m
 
 
-class PMCParamScalingView(BenchmarkSubPlot):
+class PMCParamScalingPlot(BenchmarkSubPlot):
     """
     Generate line plot to show PMC variation along a parameterisation axis.
     """
-    def __init__(self, plot, pmc_metric, param):
+    def __init__(self, plot, pmc_metric, param, overhead=False):
         super().__init__(plot)
         self.pmc = pmc_metric
         self.param = param
-        self.col = (self.pmc, "median", "sample")
-        self.err_hi = (self.pmc, "q75", "sample")
-        self.err_lo = (self.pmc, "q25", "sample")
+        self.is_overhead = overhead
+        if overhead:
+            delta = "norm_delta_baseline"
+        else:
+            delta = "sample"
+        self.col = (self.pmc, "median", delta)
+        self.err_hi = (self.pmc, "q75", delta)
+        self.err_lo = (self.pmc, "q25", delta)
 
     def get_cell_title(self):
         return f"PMC {self.pmc} trend w.r.t. {self.param}"
 
     def get_df(self):
         ds = self.get_dataset(DatasetName.PMC)
-        return ds.cross_merged_df.copy()
+        df = ds.cross_merged_df
+        if self.is_overhead:
+            # Drop the baseline as it would show zero
+            baseline = df.index.get_level_values("dataset_gid") == self.benchmark.g_uuid
+            df = df[~baseline]
+        return df.copy()
 
     def generate(self, fm, cell):
         df = self.get_df()
@@ -237,10 +235,14 @@ class PMCParamScalingView(BenchmarkSubPlot):
 
         df[self.err_hi] = df[self.err_hi] - df[self.col]
         df[self.err_lo] = df[self.col] - df[self.err_lo]
+        if self.is_overhead:
+            df.loc[:, self.col] *= 100
+            df.loc[:, self.err_hi] *= 100
+            df.loc[:, self.err_lo] *= 100
 
         # Detect whether we should use a log scale for the X axis
         x_values = get_col_or_idx(df, self.param).unique()
-        x_values = map(lambda x: int(np.log2(x)) == np.log2(x), x_values)
+        x_values = [int(np.log2(x)) == np.log2(x) for x in x_values]
         if np.all(x_values):
             scale = Scale("log", base=2)
         else:
@@ -255,7 +257,10 @@ class PMCParamScalingView(BenchmarkSubPlot):
         cell.x_config.label = self.param
         cell.x_config.ticks = sorted(df.index.unique(self.param))
         cell.x_config.scale = scale
-        cell.yleft_config.label = self.pmc
+        if self.is_overhead:
+            cell.yleft_config.label = f"% {Symbols.DELTA}{self.pmc}"
+        else:
+            cell.yleft_config.label = self.pmc
 
 
 class PMCParamScaling(BenchmarkPlot):
@@ -268,23 +273,6 @@ class PMCParamScaling(BenchmarkPlot):
     cross_analysis = True
 
     def _make_subplots_mosaic(self):
-        """
-        We create a matrix of plots. Rows are PMC, columns are benchmark
-        parameters.
-        """
         ds = self.get_dataset(DatasetName.PMC)
-        layout = []
-        subplots = {}
-
-        for p in ds.parameter_index_columns():
-            for j, pmc in enumerate(ds.data_columns()):
-                if ds.agg_df[(pmc, "median", "sample")].isna().all():
-                    # Skip missing metrics
-                    continue
-                name = f"pmc-param-{p}-{pmc}"
-                subplots[name] = PMCParamScalingView(self, pmc, p)
-                if j < len(layout):
-                    layout[j].append(name)
-                else:
-                    layout.append([name])
-        return Mosaic(layout, subplots)
+        m = self._make_mosaic_from_cross_merged_dataset(PMCParamScalingPlot, ds, include_overhead=True)
+        return m
