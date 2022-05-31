@@ -229,6 +229,10 @@ class PMCParamScalingPlot(BenchmarkSubPlot):
             df = df[~baseline]
         return df.copy()
 
+    def get_legend_info(self):
+        base = self.build_legend_by_gid()
+        return base.assign_colors_hsv("dataset_gid", h=(0.2, 1), s=(0.7, 0.7), v=(0.6, 0.9))
+
     def generate(self, fm, cell):
         df = self.get_df()
         self.logger.debug("Extract XPMC %s along %s", self.pmc, self.param)
@@ -250,7 +254,7 @@ class PMCParamScalingPlot(BenchmarkSubPlot):
 
         view = LinePlotDataView(df, x=self.param, yleft=self.col, err_hi=self.err_hi, err_lo=self.err_lo)
         view.line_group = ["dataset_gid"]
-        view.legend_info = self.build_legend_by_gid()
+        view.legend_info = self.get_legend_info()
         view.legend_level = ["dataset_gid"]
         cell.add_view(view)
 
