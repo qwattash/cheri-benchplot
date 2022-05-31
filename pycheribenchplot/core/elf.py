@@ -1,4 +1,5 @@
 import itertools as it
+import subprocess
 import typing
 from collections import defaultdict
 from dataclasses import dataclass, field, fields, replace
@@ -182,6 +183,32 @@ class Symbolizer:
         if syminfo is None or addr != syminfo.addr:
             return None
         return syminfo
+
+    def lookup_fn_to_df(self, df: pd.DataFrame, addr_column: str, as_key_column: str):
+        """
+        Resolve function file/symbol for each entry of the given dataframe
+        addr_column. A new dataframe is returned with the same index and the
+        columns ["file", "symbol", "valid_symbol"]
+        """
+        # XXX-AM: the symbol size does not appear to be reliable?
+        # otherwise we should check also the resolved syminfo size as in:
+        # sym_end = resolved.map(lambda syminfo: syminfo.addr + syminfo.size if syminfo else np.nan)
+        # size_mismatch = (~sym_end.isna()) & (self.df["start"] > sym_end)
+        # self.df.loc[size_mismatch, "valid_symbol"] = "size-mismatch"
+        resolved = df.apply(lambda row: self.lookup_fn(row[addr_column], row[as_key_column]), axis=1)
+        # Now fill the resolved parameters from the symbol information objects
+        out_df = pd.DataFrame(None, index=resolved.index)
+        out_df["valid_symbol"] = resolved.mask(resolved.isna(), "no-match")
+        out_df["valid_symbol"].where(resolved.isna(), "ok", inplace=True)
+        out_df["symbol"] = resolved.map(lambda si: si.name, na_action="ignore")
+        out_df["symbol"].mask(resolved.isna(), df[addr_column].transform(lambda addr: f"0x{addr:x}"), inplace=True)
+        # Note: For the file name, we omit the directory part as otherwise the same executable
+        # in different directories will be picked up as a completely different file. This is
+        # not useful when comparing different compilations that have different paths e.g. the kernel
+        # TODO: We also have to handle rtld manually to map its name.
+        out_df["file"] = resolved.map(lambda si: si.filepath.name, na_action="ignore")
+        out_df["file"].mask(resolved.isna(), "unknown", inplace=True)
+        return out_df
 
 
 def extract_at_str(die, at_name, default=None):
@@ -767,6 +794,56 @@ class StructInfoVisitor(DWARFVisitor):
                 target.apply_typedef(typedef)
 
 
+@dataclass
+class Addr2lineInfo:
+    path: Path
+    line: int
+    symbol: str
+
+    def __str__(self):
+        return f"{self.path}:{self.line} {self.symbol}"
+
+
+class Addr2lineResolver:
+    def __init__(self, sdk_path: Path, obj_path: Path):
+        self.addr2line_bin = sdk_path / "sdk" / "bin" / "llvm-addr2line"
+        self.path = obj_path
+        self.addr2line = None
+
+    def __enter__(self):
+        self.addr2line = subprocess.Popen([self.addr2line_bin, "-obj", str(self.path), "-f"],
+                                          stdin=subprocess.PIPE,
+                                          stdout=subprocess.PIPE,
+                                          text=True,
+                                          encoding="utf-8")
+        return self
+
+    def map_addr(self, addr: int) -> Addr2lineInfo:
+        self.addr2line.stdin.write(f"0x{addr:x}\n")
+        self.addr2line.stdin.flush()
+        symbol = self.addr2line.stdout.readline().strip()
+        line_info = self.addr2line.stdout.readline()
+        file_, line = line_info.split(":")
+        return Addr2lineInfo(file_, line, symbol)
+
+    def map_addr_range(self, start: int, end: int) -> typing.Sequence[Addr2lineInfo]:
+        addr_line_info = []
+        for addr in range(start, end + 1):
+            self.addr2line.stdin.write(f"0x{addr:x}\n")
+        self.addr2line.stdin.flush()
+        for i in range(start, end + 1):
+            symbol = self.addr2line.stdout.readline().strip()
+            line_info = self.addr2line.stdout.readline()
+            file_, line = line_info.split(":")
+            addr_line_info.append(Addr2lineInfo(file_, line, symbol))
+        return addr_line_info
+
+    def __exit__(self, type_, value, traceback):
+        self.addr2line.stdin.close()
+        self.addr2line.terminate()
+        self.addr2line.wait()
+
+
 class DWARFInfoSource:
     """
     Helper to access DWARF debug information for an ELF file.
@@ -774,14 +851,15 @@ class DWARFInfoSource:
     does not support DWARF-5.
     This is part of the main interface exposed to clients of this module.
     """
-    def __init__(self, logger, path: Path, arch_pointer_size: int):
-        self.logger = logger
+    def __init__(self, benchmark, path: Path, arch_pointer_size: int):
+        self.benchmark = benchmark
+        self.logger = benchmark.logger
         self.path = path
         self._fd = open(path, "rb")
         self._ef = ELFFile(self._fd)
         self._dw = self._ef.get_dwarf_info()
         self._arch_pointer_size = arch_pointer_size
-        self._ctx = DWARFDataRegistry(self._ef, self._dw, logger, arch_pointer_size)
+        self._ctx = DWARFDataRegistry(self._ef, self._dw, self.logger, arch_pointer_size)
 
     def _handle_die(self, die, visitor):
         if die.tag == "DW_TAG_structure_type":
@@ -809,6 +887,29 @@ class DWARFInfoSource:
         """Once parse_dwarf has completed, this can be used to retrieve the data registry"""
         return self._ctx
 
+    def addr2line(self, addr_list: typing.Sequence[int]) -> typing.Sequence[typing.Tuple[Path, int]]:
+        """
+        Perform an addr2line lookup for now. It should be possible to do a fast lookup of the
+        .debug_line information but not sure how to do it yet. TODO
+        """
+        with Addr2lineResolver(self.benchmark.manager_config.sdk_path, self.path) as resolver:
+            lines = [resolver.map_addr(addr) for addr in addr_list]
+        return lines
+
+    def addr2line_range(self, df: pd.DataFrame, start_col: str, end_col: str) -> pd.DataFrame:
+        with Addr2lineResolver(self.benchmark.manager_config.sdk_path, self.path) as resolver:
+            line_start = []
+            line_end = []
+            for (start, end) in zip(df[start_col], df[end_col]):
+                line_start.append(resolver.map_addr(start))
+                line_end.append(resolver.map_addr(end))
+                # lines.append(resolver.map_addr_range(start, end))
+            # lines = df.apply(lambda r: resolver.map_addr_range(r[start_col], r[end_col]), axis=1)
+        resolved = pd.DataFrame({"line_start": line_start, "line_end": line_end}, index=df.index)
+        assert len(df) == len(resolved)
+        assert df.index.equals(resolved.index)
+        return resolved
+
 
 class DWARFHelper:
     """
@@ -820,11 +921,37 @@ class DWARFHelper:
     """
     def __init__(self, benchmark: "BenchmarkBase"):
         self.logger = new_logger(f"{benchmark.uuid}.DWARFHelper")
+        self.benchmark = benchmark
         self.objects = {}
 
     def register_object(self, obj_key: str, path: Path, arch_pointer_size=8):
         assert obj_key not in self.objects, "Duplicate DWARF object source"
-        self.objects[obj_key] = DWARFInfoSource(self.logger, path, arch_pointer_size=arch_pointer_size)
+        self.objects[obj_key] = DWARFInfoSource(self.benchmark, path, arch_pointer_size=arch_pointer_size)
 
     def get_object(self, obj_key: str) -> typing.Optional[DWARFInfoSource]:
         return self.objects.get(obj_key, None)
+
+    def addr2line_range_to_df(self, df: pd.DataFrame, addr_start_column: str, addr_end_column: str, as_key_column: str):
+        """
+        Create a new dataframe with the same index as the given one, populated with the line numbers
+        associated to the addresses in the given column.
+        """
+        assert as_key_column not in df.index.names
+        assert as_key_column in df.columns
+        resolved = []
+        grouped = df.groupby(as_key_column)
+        for as_key, chunk in grouped:
+            self.logger.debug("Resolving line numbers for %s: %d ranges", as_key, len(chunk))
+            info_source = self.get_object(as_key)
+            if not info_source:
+                self.logger.debug("DWARF data for %s not found, use kernel", as_key)
+                info_source = self.get_object("kernel.full")
+            if not info_source:
+                self.logger.warning("Missing DWARF data for %s", as_key)
+                continue
+            line_info = info_source.addr2line_range(chunk, addr_start_column, addr_end_column)
+            assert line_info.index.equals(chunk.index)
+            resolved.append(line_info)
+        out_df = pd.concat(resolved, axis=0).sort_index()
+        assert out_df.index.equals(df.index)
+        return out_df

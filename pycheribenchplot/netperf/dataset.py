@@ -39,6 +39,7 @@ class NetperfProcstat(ProcstatDataset):
         self._script.gen_sleep(5)
         self._gen_run_procstat(netperf_stopped)
         self._script.gen_stop_bg_cmd(netperf_stopped)
+        # self._gen_run_procstat()
 
 
 class NetperfData(CSVDataSetContainer):
@@ -201,8 +202,9 @@ class NetperfData(CSVDataSetContainer):
 
     @property
     def has_qemu(self):
-        if (self.benchmark.get_dataset(DatasetName.QEMU_STATS_BB_HIST) is not None
-                or self.benchmark.get_dataset(DatasetName.QEMU_STATS_CALL_HIST) is not None
+        if (self.benchmark.get_dataset(DatasetName.QEMU_STATS_BB_HIT) is not None
+                or self.benchmark.get_dataset(DatasetName.QEMU_STATS_BB_ICOUNT) is not None
+                or self.benchmark.get_dataset(DatasetName.QEMU_STATS_CALL_HIT) is not None
                 or self.benchmark.get_dataset(DatasetName.QEMU_UMA_COUNTERS) is not None):
             return True
         return False

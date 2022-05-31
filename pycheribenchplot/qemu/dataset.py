@@ -2,6 +2,7 @@ import logging
 import re
 import typing
 from functools import reduce
+from itertools import chain
 from pathlib import Path
 
 import numpy as np
@@ -32,17 +33,14 @@ class QEMUTraceDataset(PerfettoDataSetContainer):
         return opts
 
 
-class ContextStatsHistogramBase(QEMUTraceDataset):
+class ContextIntervalStatsBase(QEMUTraceDataset):
     """
-    Base class that handles loading QEMU stats tracks from the perfetto backend, and attempts to resolve
-    the context to which data records are associated.
-    This delegates the actual data aggregation strategy to subclasses.
+    Base class for generating and loading interval-based statistics from the perfetto backend.
+    Each interval track is associated to a CHERI context, we attempt to resolve pid and tid
+    from the context to a process name and thread name.
     """
-    dataset_source_id = DatasetArtefact.QEMU_STATS
     fields = [
         Field.index_field("bucket", dtype=int),
-        Field.index_field("file", dtype=str, isderived=True),
-        Field.index_field("symbol", dtype=str, isderived=True),
         Field.index_field("process", dtype=str, isderived=True),
         Field.index_field("thread", dtype=str, isderived=True),
         Field.index_field("pid", dtype=int),
@@ -50,162 +48,11 @@ class ContextStatsHistogramBase(QEMUTraceDataset):
         Field.index_field("cid", dtype=int),
         Field.index_field("EL", dtype=int),
         # Field.index_field("AS", dtype=int),
-        Field.derived_field("valid_symbol", dtype=object, isdata=False)
     ]
-
-    def extract_context_tracks(self, tp: "TraceProcessor", query: Query = None):
-        """
-        Extract all CHERI context tracks from the trace into a temporary dataframe.
-        """
-        t_process = Table("process")
-        t_thread = Table("thread")
-        t_comp = Table("compartment")
-        t_cheri_context_track = Table("cheri_context_track")
-        if query is None:
-            query = Query.from_(t_cheri_context_track).join(t_process).on_field("upid")
-        query = query.join(self.t_thread).on_field("utid")
-        query = query.join(self.t_compartment).on_field("ucid")
-        query = query.select(self.t_process.pid, self.t_thread.tid, self.t_compartment.cid, self.t_compartment.el,
-                             self.t_cheri_context_track.id)
-        df = self._query_to_df(tp, query)
-        return df
-
-    def extract_counters(self, tp: "TraceProcessor", track: int, ts_start: float, ts_end: float):
-        pass
-
-    def extract_slices(self):
-        pass
 
     def delta_columns(self):
         """Return columns for which to compute derived delta columns"""
         raise NotImplementedError("Must override")
-
-    def _resolve_pid_tid(self):
-        """
-        Resolve process and thread names
-        """
-        pidmap = self.benchmark.get_dataset_by_artefact(DatasetArtefact.PIDMAP)
-        assert pidmap is not None, "The pidmap dataset is required for qemu stats"
-        # Find missing TIDs in pidmap and attempt to match them with the QEMU data
-        detected = self.df.groupby(["pid", "tid"]).size().reset_index()[["pid", "tid"]]
-        # Suffix is added to avoid clash during join
-        pid_df = pidmap.fixup_missing_tid(detected)
-        pid_df = pid_df.set_index(["pid", "tid"]).add_suffix("_pidmap")
-        join_df = self.df.join(pid_df, how="left", on=["pid", "tid"])
-        # There may be some NaN due to PID that were running during the benchmark but have since been terminated
-        # We mark these as undetected
-        na_cmd = join_df["command_pidmap"].isna()
-        na_thr = join_df["thread_name_pidmap"].isna()
-        join_df.loc[na_cmd, "command_pidmap"] = join_df.index.get_level_values("pid")[na_cmd].map(
-            lambda pid: f"undetected:{pid}")
-        join_df.loc[na_thr, "thread_name_pidmap"] = join_df.index.get_level_values("tid")[na_thr].map(
-            lambda tid: f"unknown:{tid}")
-        self.df["process"] = join_df["command_pidmap"]
-        self.df["thread"] = join_df["thread_name_pidmap"]
-
-    def _resolve_sym_column(self, col: str, addrspace_key: str) -> pd.DataFrame:
-        """
-        Resolve symbols/source-level information given a column containing addresses.
-        The addrspace_key is the column providing the address-space name for the symbol resolver.
-        This will not change the dataframe, instead returns a dataframe with the same index as
-        the main dataframe, with columns "file", "symbol", "valid_symbol" containing the mapped file/symbol
-        and the status result of the mapping process
-        """
-        resolver = self.benchmark.sym_resolver
-        dwarf = self.benchmark.dwarf_helper
-        # XXX-AM: the symbol size does not appear to be reliable?
-        # otherwise we should check also the resolved syminfo size as in:
-        # sym_end = resolved.map(lambda syminfo: syminfo.addr + syminfo.size if syminfo else np.nan)
-        # size_mismatch = (~sym_end.isna()) & (self.df["start"] > sym_end)
-        # self.df.loc[size_mismatch, "valid_symbol"] = "size-mismatch"
-        resolved = self.df.apply(lambda row: resolver.lookup_fn(row[col], row[addrspace_key]), axis=1)
-        resolved_df = pd.DataFrame(None, index=resolved.index)
-        resolved_df["valid_symbol"] = resolved.mask(resolved.isna(), "no-match")
-        resolved_df["valid_symbol"].where(resolved.isna(), "ok", inplace=True)
-
-        resolved_df["symbol"] = resolved.map(lambda si: si.name, na_action="ignore")
-        resolved_df["symbol"].mask(resolved.isna(), self.df[col].transform(lambda addr: f"0x{addr:x}"), inplace=True)
-        # Note: For the file name, we omit the directory part as otherwise the same executable
-        # in different directories will be picked up as a completely different file. This is
-        # not useful when comparing different compilations that have different paths e.g. the kernel
-        # TODO: We also have to handle rtld manually to map its name.
-        resolved_df["file"] = resolved.map(lambda si: si.filepath.name, na_action="ignore")
-        resolved_df["file"].mask(resolved.isna(), "unknown", inplace=True)
-        return resolved_df
-
-    def _get_context_agg_strategy(self):
-        """Return mapping of column-name => aggregation function for the context data aggregation"""
-        agg = {"valid_symbol": lambda vec: ",".join(vec.unique())}
-        return agg
-
-    def get_aggregate_index(self):
-        """Index levels on which we aggregate"""
-        return ["process", "thread", "EL", "file", "symbol"]
-
-    def load(self):
-        tp = self._get_trace_processor(self.output_file())
-        iterations = self.extract_iteration_markers(tp)
-        # Verify that the iteration markers agree with the configured number of iterations
-        if len(iterations) != self.benchmark.config.iterations:
-            self.logger.error("QEMU trace does not have the expected iteration markers: %d configured %d",
-                              len(iterations), self.benchmark.config.iterations)
-            raise DatasetProcessingError("QEMU trace has invalid iteration markers")
-        for i, interval in enumerate(iterations):
-            start, end = interval
-            self._extract_iteration(tp, i, start, end)
-
-    # def pre_merge(self):
-    #     """
-    #     Common pre-merge resolves the file/symbol and valid symbol column based on
-    #     the column name given by _get_symbol_column()
-    #     """
-    #     super().pre_merge()
-    #     self._resolve_pid_tid()
-    #     self.df["process_name"] = self.df["process"].map(lambda p: Path(p).name)
-    #     sym_col = self._get_symbol_column()
-    #     resolved = self._resolve_sym_column(sym_col, "process_name")
-    #     # Populate the file, symbol and valid_symbol columns
-    #     self.df = pd.concat([self.df, resolved], axis=1)
-
-    def aggregate(self):
-        """
-        Aggregation occurs in two steps:
-        The first step aggregates per-context data for each iteration.
-        The second step aggregates data across iterations.
-        Customization should occur via get_aggregate_index(), _get_context_agg_strategy()
-        and _get_aggregation_stragety().
-        Note that we propagate some metadata fields to agg_df, we do not compute the
-        aggregation metrics for these, instead we use the "meta" column name
-        """
-        super().aggregate()
-        common_agg_index = self.dataset_id_columns() + self.get_aggregate_index()
-        grouped = self.merged_df.groupby(common_agg_index + ["iteration"])
-        # Cache the context grouping for later inspection if needed
-        self.ctx_agg_df = grouped.aggregate(self._get_context_agg_strategy())
-        # Now that we aggregated contexts within the same iteration, aggregate over iterations
-        grouped = self.ctx_agg_df.groupby(common_agg_index)
-        self.agg_df = self._compute_aggregations(grouped)
-
-    def post_aggregate(self):
-        super().post_aggregate()
-        # Align dataframe on the (file, symbol) pairs where we want to get an union of
-        # the symbols set for each file, repeated for each dataset_id.
-        align_levels = self.get_aggregate_index()
-        new_df = align_multi_index_levels(self.agg_df, align_levels, fill_value=0)
-        agg_df = self._add_delta_columns(new_df)
-        self.agg_df = self._compute_delta_by_dataset(agg_df)
-
-    def configure(self, opts: PlatformOptions) -> PlatformOptions:
-        opts = super().configure(opts)
-        opts.qemu_trace_categories.add("stats")
-        opts.qemu_trace_categories.add("marker")
-        return opts
-
-
-class QEMUStatsBBHistogramDataset(ContextStatsHistogramBase):
-    """Basic-block hit count histogram"""
-    dataset_config_name = DatasetName.QEMU_STATS_BB_HIST
-    fields = [Field("start", dtype=np.uint), Field("end", dtype=np.uint), Field.data_field("hit_count", dtype=int)]
 
     def extract_intervals(self, tp: "TraceProcessor", ts_start: float, ts_end: float):
         """
@@ -231,6 +78,13 @@ class QEMUStatsBBHistogramDataset(ContextStatsHistogramBase):
         return df[df["value"] != 0].reset_index()
 
     def _merge_intervals(self, df):
+        """
+        Merge intervals belonging to the same context.
+        Assume that the dataframe contains all the intervals from a context. We accumulate
+        the value of the overlapping intervals, in case there are multiple snapshots in the
+        trace. This can happen if the internal interval container in QEMU is flushed multiple
+        times during the same iteration.
+        """
         points = np.concatenate((df["start"], df["end"]))
         limits = sorted(np.unique(points))
         intervals = []
@@ -243,37 +97,172 @@ class QEMUStatsBBHistogramDataset(ContextStatsHistogramBase):
             intervals.append((start, end, value))
         return pd.DataFrame.from_records(intervals, columns=["start", "end", "value"])
 
-    def pre_merge(self):
+    def _resolve_pid_tid(self):
         """
-        Common pre-merge resolves the file/symbol/line and valid symbol column based on
-        the PID and DWARF information
+        Resolve process and thread names for the current loaded data frame.
         """
-        super().pre_merge()
-        self._resolve_pid_tid()
-        self.df["process_name"] = self.df["process"].map(lambda p: Path(p).name)
-        resolved = self._resolve_sym_column("start", "process_name")
-        # Populate the file, symbol and valid_symbol columns
-        self.df = pd.concat([self.df, resolved], axis=1)
+        pidmap = self.benchmark.get_dataset_by_artefact(DatasetArtefact.PIDMAP)
+        resolver = self.benchmark.sym_resolver
+        assert pidmap is not None, "The pidmap dataset is required for qemu stats"
 
-    def _get_context_agg_strategy(self):
-        agg = super()._get_context_agg_strategy()
-        agg.update({"start": "min", "end": "max", "hit_count": "sum"})
-        return agg
+        # Find missing TIDs in pidmap and attempt to match them with the QEMU data
+        detected = self.df.groupby(["pid", "tid"]).size().reset_index()[["pid", "tid"]]
+        # Suffix is added to avoid clash during join
+        pid_df = pidmap.fixup_missing_tid(detected)
+        pid_df = pid_df.set_index(["pid", "tid"]).add_suffix("_pidmap")
+        join_df = self.df.join(pid_df, how="left", on=["pid", "tid"])
+        # There may be some NaN due to PID that were running during the benchmark but have since been terminated
+        # We mark these as undetected
+        na_cmd = join_df["command_pidmap"].isna()
+        na_thr = join_df["thread_name_pidmap"].isna()
+        join_df.loc[na_cmd, "command_pidmap"] = join_df.index.get_level_values("pid")[na_cmd].map(
+            lambda pid: f"undetected:{pid}")
+        join_df.loc[na_thr, "thread_name_pidmap"] = join_df.index.get_level_values("tid")[na_thr].map(
+            lambda tid: f"unknown:{tid}")
+        self.df["process"] = join_df["command_pidmap"]
+        self.df["thread"] = join_df["thread_name_pidmap"]
 
-    def _extract_iteration(self, tp, i, start, end):
+    def configure(self, opts: PlatformOptions) -> PlatformOptions:
+        opts = super().configure(opts)
+        opts.qemu_trace_categories.add("marker")
+        return opts
+
+    def _extract_iteration(self, tp: "TraceProcessor", i: int, start: int, end: int):
         """
         Extract events from an iteration of the benchmark.
         """
+        raise NotImplementedError("Must override")
+
+    def load(self):
+        tp = self._get_trace_processor(self.output_file())
+        iterations = self.extract_iteration_markers(tp)
+        # Verify that the iteration markers agree with the configured number of iterations
+        if len(iterations) != self.benchmark.config.iterations:
+            self.logger.error("QEMU trace does not have the expected iteration markers: %d configured %d",
+                              len(iterations), self.benchmark.config.iterations)
+            raise DatasetProcessingError("QEMU trace has invalid iteration markers")
+        for i, interval in enumerate(iterations):
+            start, end = interval
+            self._extract_iteration(tp, i, start, end)
+
+    def pre_merge(self):
+        """
+        Common pre-merge resolves the file/symbol and valid_symbol.
+        This uses a combination of the PID map and the benchmark symbolizer.
+        """
+        super().pre_merge()
+        self._resolve_pid_tid()
+
+    def _pre_aggregate(self):
+        self.agg_df = self.merged_df
+
+    def aggregate(self):
+        """
+        Aggregation occurs in two steps:
+        The first step gives the chanche to subclasses to aggregate per-context data for each iteration.
+        This happens in the _pre_aggregate() hook.
+        The second step aggregates data across iterations.
+        """
+        super().aggregate()
+        self._pre_aggregate()
+        agg_levels = self.agg_df.index.names.difference(["iteration"])
+        grouped = self.agg_df.groupby(agg_levels)
+        self.agg_df = self._compute_aggregations(grouped)
+
+    def post_aggregate(self):
+        """
+        Make sure the frame is aligned on the correct index levels, so that we can produce a meaningful delta
+        even with different sets of function calls/line numbers etc.
+        """
+        super().post_aggregate()
+        align_levels = self._delta_align_levels()
+        tmp_df = align_multi_index_levels(self.agg_df, align_levels, fill_value=0)
+        tmp_df = self._add_delta_columns(tmp_df)
+        self.agg_df = self._compute_delta_by_dataset(tmp_df)
+
+
+class QEMUStatsBBHitDataset(ContextIntervalStatsBase):
+    dataset_source_id = DatasetArtefact.QEMU_STATS_BB_HIT
+    dataset_config_name = DatasetName.QEMU_STATS_BB_HIT
+    fields = [Field("start", dtype=np.uint), Field("end", dtype=np.uint), Field.data_field("hit_count", dtype=int)]
+
+    def configure(self, opts: PlatformOptions) -> PlatformOptions:
+        opts = super().configure(opts)
+        opts.qemu_trace_categories.add("bb_hit")
+        return opts
+
+    def _extract_iteration(self, tp, i, start, end):
         intervals_df = self.extract_intervals(tp, start, end)
         intervals_df.rename(columns={"value": "hit_count", "el": "EL"}, inplace=True)
         intervals_df["iteration"] = i
         # Append and add ID columns
         self._append_df(intervals_df)
 
+    def pre_merge(self):
+        super().pre_merge()
+        # Temporary as_key column
+        self.df["as_key"] = self.df["process"].map(lambda p: Path(p).name)
+        resolved = self.benchmark.dwarf_helper.addr2line_range_to_df(self.df, "start", "end", "as_key")
+        # Melt the line info column into file/line/symbol columns and use them as index levels
+        print(resolved)
+        self.df = self.df.drop(columns=["as_key"])
 
-class QEMUStatsBranchHistogramDataset(ContextStatsHistogramBase):
-    """Branch instruction target hit count histogram"""
-    dataset_config_name = DatasetName.QEMU_STATS_CALL_HIST
+
+class QEMUStatsBBICountDataset(ContextIntervalStatsBase):
+    dataset_source_id = DatasetArtefact.QEMU_STATS_BB_ICOUNT
+    dataset_config_name = DatasetName.QEMU_STATS_BB_ICOUNT
+    fields = [
+        Field.index_field("file", dtype=str, isderived=True),
+        Field.index_field("symbol", dtype=str, isderived=True),
+        Field("start", dtype=np.uint),
+        Field("end", dtype=np.uint),
+        Field.data_field("instr_count", dtype=int),
+        Field.derived_field("valid_symbol", dtype=object, isdata=False)
+    ]
+
+    def configure(self, opts: PlatformOptions) -> PlatformOptions:
+        opts = super().configure(opts)
+        opts.qemu_trace_categories.add("bb_icount")
+        return opts
+
+    def _extract_iteration(self, tp, i, start, end):
+        intervals_df = self.extract_intervals(tp, start, end)
+        intervals_df.rename(columns={"value": "instr_count", "el": "EL"}, inplace=True)
+        intervals_df["iteration"] = i
+        # Append and add ID columns
+        self._append_df(intervals_df)
+
+    def pre_merge(self):
+        """
+        Common pre-merge resolves the file/symbol/line and valid symbol column based on
+        the PID and DWARF information
+        """
+        super().pre_merge()
+        # Temporary as_key column
+        self.df["as_key"] = self.df["process"].map(lambda p: Path(p).name)
+        resolved = self.benchmark.sym_resolver.lookup_fn_to_df(self.df, "start", "as_key")
+        self.df = self.df.drop(columns=["as_key"])
+        self.df = pd.concat([self.df, resolved], axis=1)
+
+    def _pre_aggregate(self):
+        """
+        For each iteration, collapse the icount for each file/function in the index.
+        Then aggregate the iterations normally.
+        """
+        icount_agg_levels = self.dataset_id_columns() + ["process", "thread", "EL", "file", "symbol", "iteration"]
+        grouped = self.merged_df.groupby(icount_agg_levels)
+        self.agg_df = grouped.aggregate({"start": "min", "end": "max", "instr_count": "sum"})
+
+    def _delta_align_levels(self):
+        """
+        Return the levels that need to be aligned across all datasets before computing deltas.
+        """
+        return ["process", "thread", "EL", "file", "symbol"]
+
+
+class QEMUStatsCallHitDataset(ContextIntervalStatsBase):
+    dataset_source_id = DatasetArtefact.QEMU_STATS_CALL_HIT
+    dataset_config_name = DatasetName.QEMU_STATS_CALL_HIT
     fields = [
         Field.index_field("source_file", dtype=str, isderived=True),
         Field.index_field("source_symbol", dtype=str, isderived=True),
@@ -283,46 +272,38 @@ class QEMUStatsBranchHistogramDataset(ContextStatsHistogramBase):
         Field.derived_field("call_count", dtype=int)
     ]
 
-    def _get_slice_name(self):
-        return "branch_hist"
+    def configure(self, opts: PlatformOptions) -> PlatformOptions:
+        opts = super().configure(opts)
+        opts.qemu_trace_categories.add("br_hit")
+        return opts
 
-    def _get_arg_key_map(self):
-        mapping = {
-            "qemu.histogram.branch_bucket.source": "source",
-            "qemu.histogram.branch_bucket.target": "target",
-            "qemu.histogram.branch_bucket.value": "branch_count"
-        }
-        return mapping
-
-    def _get_symbol_column(self):
-        return "target"
-
-    def _get_context_agg_strategy(self):
-        agg = super()._get_context_agg_strategy()
-        agg.update({"source": "min", "target": "min", "call_count": "sum"})
-        return agg
-
-    def get_aggregate_index(self):
-        cols = super().get_aggregate_index()
-        return cols + ["source_file", "source_symbol"]
+    def _extract_iteration(self, tp, i, start, end):
+        intervals_df = self.extract_intervals(tp, start, end)
+        intervals_df.rename(columns={"value": "branch_count", "el": "EL"}, inplace=True)
+        intervals_df["iteration"] = i
+        # Append and add ID columns
+        self._append_df(intervals_df)
 
     def pre_merge(self):
-        """
-        Resolve symbols to mach each entry to the function containing it.
-        We update the raw-data dataframe with a new column accordingly.
-        """
         super().pre_merge()
-        # Resolve the secondary file/symbol index for the source address
-        resolved = self._resolve_sym_column("source", "process_name")
-        resolved = resolved.add_prefix("source_")
-        self.df = pd.concat((self.df, resolved), axis=1)
-        # Generate now a new column only for entries that exactly match symbols, meaning that
-        # these are function calls is the first basic-block of the function and is considered as an individual call
-        # to that function
-        resolver = self.benchmark.sym_resolver
-        match = self.df.apply(lambda row: resolver.match_fn(row["target"], row["process_name"]), axis=1)
-        is_call = ~match.isna()
-        self.df["call_count"] = self.df["branch_count"].where(is_call, 0).astype(int)
+        self.df["as_key"] = self.df["process"].map(lambda p: Path(p).name)
+        src_resolved = self.benchmark.sym_resolver.lookup_fn_to_df(tmp_df, "source", "as_key")
+        tgt_resolved = self.benchmark.sym_resolver.lookup_fn_to_df(tmp_df, "target", "as_key")
+        self.df = self.df.drop(columns=["as_key"])
+        self.df = pd.concat([self.df, tgt_resolved, src_resolved.add_prefix("source_")], axis=1)
+
+
+#         # Resolve the secondary file/symbol index for the source address
+#         resolved = self._resolve_sym_column("source", "process_name")
+#         resolved = resolved.add_prefix("source_")
+#         self.df = pd.concat((self.df, resolved), axis=1)
+#         # Generate now a new column only for entries that exactly match symbols, meaning that
+#         # these are function calls is the first basic-block of the function and is considered as an individual call
+#         # to that function
+#         resolver = self.benchmark.sym_resolver
+#         match = self.df.apply(lambda row: resolver.match_fn(row["target"], row["process_name"]), axis=1)
+#         is_call = ~match.isna()
+#         self.df["call_count"] = self.df["branch_count"].where(is_call, 0).astype(int)
 
 
 class QEMUGuestCountersDataset(QEMUTraceDataset):

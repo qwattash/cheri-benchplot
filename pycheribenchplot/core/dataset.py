@@ -24,8 +24,9 @@ class DatasetName(Enum):
     PMC = "pmc"
     NETPERF_DATA = "netperf-data"
     PROCSTAT_NETPERF = "procstat-netperf"
-    QEMU_STATS_BB_HIST = "qemu-stats-bb"
-    QEMU_STATS_CALL_HIST = "qemu-stats-call"
+    QEMU_STATS_BB_HIT = "qemu-stats-bb-hit"
+    QEMU_STATS_BB_ICOUNT = "qemu-stats-bb-icount"
+    QEMU_STATS_CALL_HIT = "qemu-stats-call"
     QEMU_UMA_COUNTERS = "qemu-glob-uma-counters"
     QEMU_VM_KERN_COUNTERS = "qemu-glob-vm-kern-counters"
     PIDMAP = "pidmap"
@@ -54,7 +55,9 @@ class DatasetArtefact(Enum):
     UMA_ZONE_INFO = auto()
     PROCSTAT = auto()
     PIDMAP = auto()
-    QEMU_STATS = auto()
+    QEMU_STATS_BB_HIT = auto()
+    QEMU_STATS_BB_ICOUNT = auto()
+    QEMU_STATS_CALL_HIT = auto()
     QEMU_COUNTERS = auto()
     NETSTAT = auto()
     KERNEL_CSETBOUNDS_STATS = auto()
