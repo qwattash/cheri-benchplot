@@ -98,6 +98,8 @@ class BenchmarkManagerConfig(BenchplotUserConfig, BenchmarkSessionConfig):
 @dataclass
 class BenchmarkManagerRecord(Config):
     session: uuid.UUID
+    # Keep optional for now for compatibility
+    timestamp: typing.Optional[datetime] = None
     cheribsd_head: typing.Optional[str] = None
     qemu_head: typing.Optional[str] = None
     llvm_head: typing.Optional[str] = None
@@ -209,9 +211,11 @@ class BenchmarkManager(TemplateConfigContext):
             if session is not None and session == record.session:
                 resolved = record
                 break
-            fstat = record_file.stat()
-            mtime = datetime.fromtimestamp(fstat.st_mtime, tz=timezone.utc)
-            sessions.append((mtime, record))
+            if record.timestamp is None:
+                # Deprecated, use internal UTC timestamp
+                fstat = record_file.stat()
+                record.timestamp = datetime.fromtimestamp(fstat.st_mtime, tz=timezone.utc)
+            sessions.append((record.timestamp, record))
         if resolved is None and len(sessions):
             recent_session = sorted(sessions, key=lambda tup: tup[0], reverse=True)[0]
             resolved = recent_session[1]
@@ -251,6 +255,7 @@ class BenchmarkManager(TemplateConfigContext):
 
     def _emit_records(self):
         self.logger.debug("Emit benchmark records")
+        self.benchmark_records.timestamp = datetime.now(timezone.utc)
         with open(self.benchmark_records_path, "w") as record_file:
             record_file.write(self.benchmark_records.emit_json())
 
@@ -302,9 +307,11 @@ class BenchmarkManager(TemplateConfigContext):
             if not record_file.exists():
                 continue
             records = BenchmarkManagerRecord.load_json(record_file)
-            fstat = record_file.stat()
-            mtime = datetime.fromtimestamp(fstat.st_mtime, tz=timezone.utc)
-            sessions.append((mtime, records))
+            if records.timestamp is None:
+                # Deprecated, use internal UTC timestamp
+                fstat = record_file.stat()
+                records.timestamp = datetime.fromtimestamp(fstat.st_mtime, tz=timezone.utc)
+            sessions.append((records.timestamp, records))
         sessions = sorted(sessions, key=lambda tup: tup[0], reverse=True)
         for mtime, records in sessions:
             if records == sessions[0][1]:
