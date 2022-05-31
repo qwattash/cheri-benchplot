@@ -493,7 +493,8 @@ class DataSetContainer(metaclass=DatasetRegistry):
         this is the case if called from post_aggregate().
         Note: this is intended to be called only on the baseline benchmark instances.
         """
-        assert self.benchmark.instance_config.baseline, "computing delta columns on non-baseline benchmark"
+        assert self.benchmark.g_uuid == self.benchmark.manager.benchmark_baseline_group,\
+            "computing delta columns on non-baseline benchmark"
         assert check_multi_index_aligned(df, self.dataset_id_columns())
         assert "metric" in df.columns.names, "Missing column metric level"
         assert "aggregate" in df.columns.names, "Missing column aggregate level"

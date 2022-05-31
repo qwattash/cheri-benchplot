@@ -661,7 +661,8 @@ class BenchmarkBase(TemplateConfigContext):
         Return dictionary of the baseline and merged benchmarks in this parameterisation group
         Note: Only sensible after the merge step on the baseline instance.
         """
-        assert self.instance_config.baseline
+        assert self.g_uuid == self.manager.benchmark_baseline_group,\
+            "Fetching merged benchmarks makes sense only on the baseline object"
         group = {self.uuid: self}
         group.update(self.merged_benchmarks)
         return group

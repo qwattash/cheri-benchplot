@@ -122,6 +122,7 @@ class BenchmarkManager(TemplateConfigContext):
         self.instance_manager = InstanceManager(self.loop, manager_config)
         self.benchmark_instances = {}
         self.benchmark_groups = defaultdict(list)
+        self.benchmark_baseline_group = None
         self.failed_benchmarks = []
         # Task queue for the operations that the manager should run
         self.queued_tasks = []
@@ -259,6 +260,16 @@ class BenchmarkManager(TemplateConfigContext):
         with open(self.benchmark_records_path, "w") as record_file:
             record_file.write(self.benchmark_records.emit_json())
 
+    def _is_baseline_record(self, record: BenchmarkRunRecord):
+        """
+        Check whether a given benchmark record is to be considered the baseline for a group.
+        This uses the analysis configuration, so it must be finalized before calling this.
+        """
+        if self.analysis_config.baseline_gid:
+            return record.g_uuid == self.analysis_config.baseline_gid
+        else:
+            return record.instance.baseline
+
     def create_benchmark(self,
                          bench_config: BenchmarkRunConfig,
                          instance: InstanceConfig,
@@ -355,9 +366,6 @@ class BenchmarkManager(TemplateConfigContext):
         # the same instance configuration if needed.
         # Load all datasets and for each benchmark and find the baseline instance for
         # each benchmark variant
-        aggregate_baseline = {}
-        aggregate_groups = defaultdict(list)
-
         if config_path:
             self.analysis_config = AnalysisConfig.load_json(config_path)
 
@@ -365,19 +373,20 @@ class BenchmarkManager(TemplateConfigContext):
         self.plot_output_path.mkdir(exist_ok=True)
 
         # Resolve benchmark matrix
-        # Rows are different instances, columns are different parameterizations
+        # Rows are different parameterizations of the benchmark. Indexed by param keys.
+        # Columns are different instances on which the benchmark is run. Indexed by dataset_gid.
         # First pass, just collect instances and parameters
-        instances = set()
+        instances = {}
         # XXX only an instance can be marked as baseline for now
         baseline = None
         parameters = defaultdict(list)
         for record in self.benchmark_records.records:
-            instances.add(record.instance.name)
-            if record.instance.baseline:
-                if baseline and baseline != record.instance.name:
+            instances[record.g_uuid] = record.instance.name
+            if self._is_baseline_record(record):
+                if baseline and baseline != record.g_uuid:
                     self.logger.error("Multiple baseline instances?")
                     raise Exception("Too many baseline specifiers")
-                baseline = record.instance.name
+                baseline = record.g_uuid
             for k, p in record.run.parameters.items():
                 parameters[k].append(p)
         if parameters:
@@ -389,7 +398,7 @@ class BenchmarkManager(TemplateConfigContext):
             # If there is no parameterization, there should only be one benchmark run
             index = pd.MultiIndex.from_tuples([(0, )], names=["index"])
         # Second pass, fill the matrix
-        bench_matrix = pd.DataFrame(index=index, columns=instances)
+        bench_matrix = pd.DataFrame(index=index, columns=instances.keys())
         BenchParams = namedtuple("BenchParams", bench_matrix.index.names)
         for record in self.benchmark_records.records:
             bench = self.create_benchmark(record.run, record.instance, record.g_uuid, run_id=record.uuid)
@@ -397,17 +406,19 @@ class BenchmarkManager(TemplateConfigContext):
                 # Note: config.parameters is unordered, use namedtuple to ensure
                 # the key ordering
                 i = BenchParams(**bench.config.parameters)
-                bench_matrix.loc[i, record.instance.name] = bench
+                bench_matrix.loc[i, record.g_uuid] = bench
             else:
-                bench_matrix[record.instance.name] = bench
+                bench_matrix[record.g_uuid] = bench
 
         assert not bench_matrix.isna().any().any(), "Incomplete benchmark matrix"
         if not baseline:
             self.logger.error("Missing baseline instance")
             raise Exception("Missing baseline")
-        self.logger.debug("Benchmark baseline %s", baseline)
+        self.logger.debug("Benchmark baseline %s (%s)", instances[baseline], baseline)
         for i, row in bench_matrix.iterrows():
             self.logger.debug("Benchmark matrix %s = %s", BenchParams(*i), row.values)
+        # Set the baseline group ID for later inspection, if required
+        self.benchmark_baseline_group = baseline
 
         # Now we can load datasets concurrently
         await self._load_recorded_benchmarks(bench_matrix.values.ravel(), interactive_step == "load")
