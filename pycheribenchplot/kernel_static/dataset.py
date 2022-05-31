@@ -163,7 +163,6 @@ class KernelStructDWARFInfo(CSVDataSetContainer):
             if kern_mtime < out_mtime:
                 return
 
-        self.benchmark.dwarf_helper.register_object("kernel.full", kern_path)
         dw = self.benchmark.dwarf_helper.get_object("kernel.full")
         # This will take a while, so keep async things moving forward
         await aio.to_thread(dw.parse_dwarf)
