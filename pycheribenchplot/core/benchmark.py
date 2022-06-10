@@ -149,7 +149,7 @@ class BenchmarkScriptCommand:
         else:
             cmdline = f"{cmdargs} {output_redirect}"
             if self.collect_pid:
-                cmdline = f"PID_{cmd_index}=`{cpuset} sh -c \"echo \\$\\$; {envstr} exec {cmdline}\"`"
+                cmdline = f"PID_{cmd_index}=`{cpuset} sh -c \"echo \\\$\\\$; {envstr} exec {cmdline}\"`"
             else:
                 cmdline = f"{envstr} {cpuset} {cmdline}"
         return cmdline
