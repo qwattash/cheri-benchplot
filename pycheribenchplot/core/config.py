@@ -5,6 +5,7 @@ import json
 import typing
 import uuid
 from dataclasses import (MISSING, Field, dataclass, field, fields, is_dataclass, replace)
+from datetime import date, datetime
 from enum import Enum
 from pathlib import Path
 
@@ -31,6 +32,8 @@ class ConfigEncoder(json.JSONEncoder):
             return str(o)
         elif isinstance(o, Enum):
             return o.value
+        elif isinstance(o, datetime):
+            return o.timestamp()
         return super().default(o)
 
 
