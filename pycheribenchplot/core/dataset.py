@@ -788,7 +788,7 @@ def align_multi_index_levels(df: pd.DataFrame, align_levels: typing.List[str], f
     align_cols_rep = align_cols.iloc[align_cols.index.repeat(len(other_sets))].reset_index(drop=True)
     other_cols_rep = other_cols.iloc[np.tile(other_cols.index, len(align_sets))].reset_index(drop=True)
     new_index = pd.concat([other_cols_rep, align_cols_rep], axis=1)
-    new_index = pd.MultiIndex.from_frame(new_index)
+    new_index = pd.MultiIndex.from_frame(new_index).reorder_levels(df.index.names)
     return df.reindex(new_index, fill_value=fill_value).sort_index()
 
 
