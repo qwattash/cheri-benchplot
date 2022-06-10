@@ -646,14 +646,26 @@ class BenchmarkBase(TemplateConfigContext):
         arch_pointer_size = self.instance_config.kernel_pointer_size
         self.dwarf_helper.register_object("kernel.full", kernel, arch_pointer_size)
 
-    def register_mapped_binary(self, map_addr: int, path: Path):
+    def register_mapped_binary(self, map_addr: int, path: Path, pid: int):
         """
         Add a binary to the symbolizer for this benchmark.
-        The symbols will be associated with the current benchmark address-space.
+        The symbols will be associated with the given PID address space
         """
-        bench_dset = self.get_dataset(self.config.benchmark_dataset.type)
-        addrspace = bench_dset.get_addrspace_key()
-        self.sym_resolver.register_sym_source(map_addr, addrspace, path)
+        # bench_dset = self.get_dataset(self.config.benchmark_dataset.type)
+        # addrspace = bench_dset.get_addrspace_key()
+        pidmap = self.get_dataset_by_artefact(DatasetArtefact.PIDMAP)
+        assert pidmap is not None
+        cmd = pidmap.df[pidmap.df["pid"] == pid]
+        if len(cmd) > 1:
+            self.logger.warning("Multiple commands for pid %d, can not register binary", pid)
+            return
+        elif len(cmd) == 0:
+            self.logger.warning("No commands for pid %d, can not register binary", pid)
+            return
+        cmd = Path(cmd["command"][0])
+        addrspace_key = cmd.name
+        self.logger.debug("Register binary mapping %s at 0x%x for %s", path, map_addr, addrspace_key)
+        self.sym_resolver.register_sym_source(map_addr, addrspace_key, path)
         self.dwarf_helper.register_object(path.name, path)
 
     def get_merged_benchmarks(self):
@@ -673,7 +685,13 @@ class BenchmarkBase(TemplateConfigContext):
         Note: this runs in the aio loop executor asyncronously
         """
         self._load_kernel_symbols()
+        # Always load the pidmap dataset first
+        self.logger.info("Loading pidmap data")
+        self.datasets[DatasetArtefact.PIDMAP].load()
         for dset in self.datasets.values():
+            if dset.dataset_source_id == DatasetArtefact.PIDMAP:
+                # We loaded it before
+                continue
             self.logger.info("Loading %s data, dropping first %d iterations", dset.name, self.config.drop_iterations)
             for i in range(self.config.iterations):
                 try:

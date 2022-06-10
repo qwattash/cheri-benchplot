@@ -12,7 +12,7 @@ from .dataset import DatasetArtefact, Field
 class ProcstatDataset(CSVDataSetContainer):
     dataset_source_id = DatasetArtefact.PROCSTAT
     fields = [
-        Field("PID", dtype=int),
+        Field.index_field("PID", dtype=int),
         Field.data_field("START", dtype=int, importfn=lambda x: int(x, 16)),
         Field.data_field("END", dtype=int, importfn=lambda x: int(x, 16)),
         Field.str_field("PRT"),
@@ -34,9 +34,9 @@ class ProcstatDataset(CSVDataSetContainer):
         csv_df = self._load_csv(path)
         self._append_df(csv_df)
         # Register the mapped binaries to the benchmark symbolizer
-        for base, guest_path in self.mapped_binaries(self.benchmark.uuid):
+        for pid, base, guest_path in self.mapped_binaries(self.benchmark.uuid):
             local_path = self.benchmark.rootfs / guest_path.relative_to("/")
-            self.benchmark.register_mapped_binary(base, local_path)
+            self.benchmark.register_mapped_binary(base, local_path, pid)
 
     def mapped_binaries(self, dataset_id) -> typing.Iterator[typing.Tuple[int, str]]:
         """
@@ -44,19 +44,25 @@ class ProcstatDataset(CSVDataSetContainer):
         given dataset id.
         """
         xsection = self.df.xs(dataset_id, level="dataset_id")
-        binaries = xsection["PATH"][xsection["PATH"] != ""].unique()
-        for name in binaries:
-            addr = xsection.loc[xsection["PATH"] == name]["START"].min()
-            yield (addr, Path(name))
+        grouped = xsection.groupby("PID")
+        for pid, chunk in grouped:
+            path_addr = chunk.groupby("PATH")["START"].min()
+            for path, addr in path_addr.items():
+                if path == "":
+                    continue
+                yield (pid, addr, Path(path))
 
     def output_file(self):
         return super().output_file().with_suffix(".csv")
 
-    def _gen_run_procstat(self, proc_handle: "VariableRef"):
+    def _gen_run_procstat(self, proc_handle: "VariableRef", header=True):
         """
         This should be used in subclasses to implement gen_pre_benchmark().
         Running procstat requires knowledge of the way to stop the benchmark at the correct time,
         unless we can use a generic way to stop at main() or exit()
         """
-        self._script.gen_cmd("procstat", ["-v", proc_handle], outfile=self.output_file())
+        args = ["-v", proc_handle]
+        if not header:
+            args = ["-h"] + args
+        self._script.gen_cmd("procstat", args, outfile=self.output_file())
         self.logger.debug("Collected procstat info")

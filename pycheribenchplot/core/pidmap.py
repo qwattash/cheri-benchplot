@@ -74,7 +74,8 @@ class PidMapDataset(JSONDataSetContainer):
     def load_from_kdump(self, kdump_fd):
         """
         Add a system PID sample to the dataset from the output of kdump
-        We inspect the output for fork() syscalls
+        We inspect the output for fork() syscalls. The dollarpath must point
+        to the directory where the forked executables can be found.
         """
         cols = ["pid", "command", "op", "args"]
         rows = []

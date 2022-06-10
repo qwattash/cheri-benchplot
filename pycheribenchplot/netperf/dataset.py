@@ -34,12 +34,14 @@ class NetperfProcstat(ProcstatDataset):
     def gen_pre_benchmark(self):
         netperf = self.benchmark.get_dataset(DatasetName.NETPERF_DATA)
         assert netperf, "Netperf dataset is missing"
+        netserver = self._script.gen_bg_cmd(netperf.netserver_bin, ["-p", "9999", "-D"], env=netperf.run_env)
         netperf_stopped = self._script.gen_bg_cmd(netperf.netperf_bin, ["-z"], env=netperf.run_env)
         # Sleep to give some time to netperf to settle in the background
         self._script.gen_sleep(5)
         self._gen_run_procstat(netperf_stopped)
+        self._gen_run_procstat(netserver, header=False)
         self._script.gen_stop_bg_cmd(netperf_stopped)
-        # self._gen_run_procstat()
+        self._script.gen_stop_bg_cmd(netserver)
 
 
 class NetperfData(CSVDataSetContainer):
