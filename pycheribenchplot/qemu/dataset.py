@@ -260,6 +260,21 @@ class QEMUStatsBBICountDataset(ContextIntervalStatsBase):
         """
         return ["process", "thread", "EL", "file", "symbol"]
 
+    def get_icount_per_function(self):
+        """
+        Return a dataframe similar to the aggregated frame but where the instruction count is accumulated for
+        all matching symbols, regardless of the context.
+        """
+        # Aggregate ignoring the context instead of preserving it
+        grouped = self.merged_df.groupby(self.dataset_id_columns() + ["symbol", "iteration"])
+        df = grouped.aggregate({"start": "min", "end": "max", "instr_count": "sum"})
+        grouped = df.groupby(self.dataset_id_columns() + ["symbol"])
+        df = self._compute_aggregations(grouped)
+        df = align_multi_index_levels(df, ["dataset_id", "dataset_gid"])
+        df = self._add_delta_columns(df)
+        df = self._compute_delta_by_dataset(df)
+        return df
+
 
 class QEMUStatsCallHitDataset(ContextIntervalStatsBase):
     dataset_source_id = DatasetArtefact.QEMU_STATS_CALL_HIT

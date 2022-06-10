@@ -39,7 +39,7 @@ def build_scale_args(scale: Scale) -> typing.Tuple[list, dict]:
     kwargs = {}
     if scale.name == "log" or scale.name == "symlog":
         kwargs["base"] = scale.base
-    if scale.name == "symlog":
+    if scale.name == "symlog" and scale.lintresh:
         kwargs["linthresh"] = scale.lintresh
         kwargs["linscale"] = scale.linscale
     return (args, kwargs)
