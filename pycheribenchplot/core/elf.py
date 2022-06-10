@@ -925,6 +925,10 @@ class DWARFHelper:
         self.objects = {}
 
     def register_object(self, obj_key: str, path: Path, arch_pointer_size=8):
+        if obj_key in self.objects:
+            # Check that the path also matches
+            if self.objects[obj_key].path == path:
+                return
         assert obj_key not in self.objects, "Duplicate DWARF object source"
         self.objects[obj_key] = DWARFInfoSource(self.benchmark, path, arch_pointer_size=arch_pointer_size)
 
