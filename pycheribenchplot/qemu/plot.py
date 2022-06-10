@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from ..core.dataset import (DatasetName, check_multi_index_aligned, pivot_multi_index_level)
+from ..core.dataset import (DatasetName, align_multi_index_levels, check_multi_index_aligned, pivot_multi_index_level)
 from ..core.plot import (BenchmarkSubPlot, BenchmarkTable, CellData, LegendInfo, Mosaic, TableDataView)
 
 
@@ -228,12 +228,12 @@ class QEMUBBHitTable(BenchmarkSubPlot):
         cell.add_view(view)
 
 
-class QEMUBBFnTable(BenchmarkSubPlot):
-    description = "QEMU icount per function"
-
+class QEMUBBICountTableBase(BenchmarkSubPlot):
+    """
+    Base class for ICount tables
+    """
     def get_df(self):
-        ds = self.get_dataset(DatasetName.QEMU_STATS_BB_ICOUNT)
-        return ds.agg_df.droplevel("dataset_id")
+        raise NotImplementedError("Must override")
 
     def get_legend_info(self):
         legend = self.build_legend_by_gid()
@@ -303,6 +303,30 @@ class QEMUBBFnTable(BenchmarkSubPlot):
         cell.add_view(view)
 
 
+class QEMUBBFnTable(QEMUBBICountTableBase):
+    description = "QEMU icount per function"
+
+    def get_df(self):
+        ds = self.get_dataset(DatasetName.QEMU_STATS_BB_ICOUNT)
+        # Aggregate ignoring the context instead of preserving it
+        grouped = ds.merged_df.groupby(ds.dataset_id_columns() + ["symbol", "iteration"])
+        df = grouped.aggregate({"start": "min", "end": "max", "instr_count": "sum"})
+        grouped = df.groupby(ds.dataset_id_columns() + ["symbol"])
+        df = ds._compute_aggregations(grouped)
+        df = align_multi_index_levels(df, ["dataset_id", "dataset_gid"])
+        df = ds._add_delta_columns(df)
+        df = ds._compute_delta_by_dataset(df)
+        return df.droplevel("dataset_id")
+
+
+class QEMUBBCtxFnTable(QEMUBBICountTableBase):
+    description = "QEMU icount per function by context"
+
+    def get_df(self):
+        ds = self.get_dataset(DatasetName.QEMU_STATS_BB_ICOUNT)
+        return ds.agg_df.droplevel("dataset_id")
+
+
 class QEMUBBTable(BenchmarkTable):
     require = {DatasetName.QEMU_STATS_BB_HIT}
     name = "qemu-bb-hit-tables"
@@ -314,4 +338,4 @@ class QEMUFnIcountTable(BenchmarkTable):
     require = {DatasetName.QEMU_STATS_BB_ICOUNT}
     name = "qemu-bb-icount-tables"
     description = "QEMU icount tables"
-    subplots = [QEMUBBFnTable]
+    subplots = [QEMUBBFnTable, QEMUBBCtxFnTable]

@@ -115,6 +115,7 @@ class ContextIntervalStatsBase(QEMUTraceDataset):
         # We mark these as undetected
         na_cmd = join_df["command_pidmap"].isna()
         na_thr = join_df["thread_name_pidmap"].isna()
+
         join_df.loc[na_cmd, "command_pidmap"] = join_df.index.get_level_values("pid")[na_cmd].map(
             lambda pid: f"undetected:{pid}")
         join_df.loc[na_thr, "thread_name_pidmap"] = join_df.index.get_level_values("tid")[na_thr].map(
