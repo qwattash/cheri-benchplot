@@ -897,6 +897,8 @@ class MplCellData(CellData):
         fig_pad, _ = ax.transAxes.transform([padding, 0]) - ax.transAxes.transform([0, 0])
         inv_tx = ax.transData.inverted()
         x_pad, _ = inv_tx.transform([fig_pad, 0]) - inv_tx.transform([0, 0])
+        if np.isnan(x_pad) or np.isinf(x_pad):
+            return
         ax.set_xlim(xmin - x_pad, xmax + x_pad)
 
     def draw(self):
@@ -942,9 +944,9 @@ class MplCellData(CellData):
             self.ax.axhline(0, linestyle="--", linewidth=0.5, color="black")
 
         # Pad the viewport
-        if self.yleft_config:
+        if self.yleft_config and self.yleft_config.padding:
             self._pad_y_axis(self.ax, self.yleft_config.padding)
-        if self.yright_config:
+        if self.yright_config and self.yright_config.padding:
             self._pad_y_axis(self.rax, self.yright_config.padding)
         self._pad_x_axis(self.ax, self.x_config.padding)
 
