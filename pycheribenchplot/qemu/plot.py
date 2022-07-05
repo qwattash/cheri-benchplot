@@ -1,7 +1,8 @@
 import numpy as np
 import pandas as pd
 
-from ..core.dataset import (DatasetName, align_multi_index_levels, check_multi_index_aligned, pivot_multi_index_level)
+from ..core.dataset import (DatasetName, align_multi_index_levels, broadcast_xs, check_multi_index_aligned,
+                            generalized_xs, pivot_multi_index_level)
 from ..core.plot import (BenchmarkPlot, BenchmarkSubPlot, BenchmarkTable, LegendInfo, Scale, ScatterPlotDataView, Style,
                          Symbols, TableDataView)
 
@@ -200,7 +201,55 @@ class QEMUFnIcountTable(BenchmarkTable):
     subplots = [QEMUBBFnTable, QEMUBBCtxFnTable]
 
 
-class QEMUIcountFnPlot(QEMUSortedSubPlotBase):
+class QEMUFnPlotBase(QEMUSortedSubPlotBase):
+    """
+    Common rendering for a scattr plot of the delta in per-function instruction an call counts.
+    This is used to find the most interesting functions with high delta wrt the baseline
+    """
+    def get_legend_info(self):
+        legend = super().get_legend_info()
+        return legend.assign_colors_hsv("dataset_gid", h=(0.2, 1), s=(0.7, 0.7), v=(0.6, 0.9))
+
+    def get_show_col(self):
+        raise NotImplementedError("Must override")
+
+    def get_sort_col(self):
+        raise NotImplementedError("Must override")
+
+    def get_metric_label(self):
+        raise NotImplementedError("Must override")
+
+    def generate(self, fm, cell):
+        df = self.get_df()
+        if not check_multi_index_aligned(df, ["dataset_gid"]):
+            self.logger.error("Unaligned index, skipping plot")
+            return
+        show_col = self.get_show_col()
+        sort_col = self.get_sort_col()
+        self.compute_sort_metric(df, sort_col)
+
+        legend_info = self.get_legend_info()
+        sort_cols = self.get_sort_columns(df)
+        view_df = df.sort_values(by=sort_cols, ascending=False, na_position="last")
+        view_df = view_df.iloc[:40].dropna(subset=sort_cols)
+        view_df["x"] = range(40)
+
+        view = ScatterPlotDataView(view_df, x="x", yleft=show_col)
+        view.style = Style(marker_width=10)
+        view.legend_info = legend_info
+        view.legend_level = ["dataset_gid"]
+        view.group_by = ["dataset_gid"]
+        cell.add_view(view)
+        cell.x_config.label = "Function"
+        cell.x_config.tick_rotation = 90
+        cell.x_config.ticks = list(range(40))
+        cell.x_config.tick_labels = view_df.index.get_level_values("symbol")
+        cell.yleft_config.padding = None
+        cell.yleft_config.label = self.get_metric_label()
+        cell.yleft_config.scale = Scale("symlog", base=10)
+
+
+class QEMUIcountFnPlot(QEMUFnPlotBase):
     """
     Generate a scatter plot of the delta in per-function instruciton count
     w.r.t. the baseline forthe top 20 functions.
@@ -219,35 +268,73 @@ class QEMUIcountFnPlot(QEMUSortedSubPlotBase):
         legend = super().get_legend_info()
         return legend.assign_colors_hsv("dataset_gid", h=(0.2, 1), s=(0.7, 0.7), v=(0.6, 0.9))
 
-    def generate(self, fm, cell):
-        df = self.get_df()
-        if not check_multi_index_aligned(df, ["dataset_gid"]):
-            self.logger.error("Unaligned index, skipping plot")
-            return
-        show_col = ("instr_count", "median", "delta_baseline")
-        sort_col = ("instr_count", "median", "delta_baseline")
-        self.compute_sort_metric(df, sort_col)
+    def get_show_col(self):
+        return ("instr_count", "median", "delta_baseline")
 
-        legend_info = self.get_legend_info()
-        sort_cols = self.get_sort_columns(df)
-        view_df = df.sort_values(by=sort_cols, ascending=False)
-        view_df = view_df.iloc[:40]
+    def get_sort_col(self):
+        return ("instr_count", "median", "delta_baseline")
 
-        view = ScatterPlotDataView(view_df, x="symbol", yleft=show_col)
-        view.style = Style(marker_width=10)
-        view.legend_info = legend_info
-        view.legend_level = ["dataset_gid"]
-        view.group_by = ["dataset_gid"]
-        cell.add_view(view)
-        cell.x_config.label = "Function"
-        cell.x_config.tick_rotation = 90
-        cell.x_config.tick_labels = view_df.index.get_level_values("symbol")
-        cell.yleft_config.label = f"{Symbols.DELTA} Instructions"
-        cell.yleft_config.scale = Scale("symlog", base=10)
+    def get_metric_label(self):
+        return f"{Symbols.DELTA} Instructions"
+
+
+class QEMUCallFnPlot(QEMUFnPlotBase):
+    """
+    Generate a scatter plot of the delta in #calls per symbol
+    """
+    description = "QEMU call_count per function"
+
+    def get_df(self):
+        call_ds = self.get_dataset(DatasetName.QEMU_STATS_CALL_HIT)
+        df = call_ds.get_call_per_function()
+        baseline = (df.index.get_level_values("dataset_gid") == self.benchmark.g_uuid)
+        return df[~baseline].droplevel("dataset_id")
+
+    def get_show_col(self):
+        return ("call_count", "median", "delta_baseline")
+
+    def get_sort_col(self):
+        return ("call_count", "median", "delta_baseline")
+
+    def get_metric_label(self):
+        return f"{Symbols.DELTA} Call"
+
+
+class QEMUIcountCallFnPlot(QEMUFnPlotBase):
+    """
+    Generate a scatter plot of the delta in per-function instruciton per call
+    w.r.t. the baseline.
+    """
+    description = "QEMU icount/call_count per function"
+
+    def get_df(self):
+        call_ds = self.get_dataset(DatasetName.QEMU_STATS_CALL_HIT)
+        icount_ds = self.get_dataset(DatasetName.QEMU_STATS_BB_ICOUNT)
+        icount_df = icount_ds.get_icount_per_function()
+        call_df = call_ds.get_call_per_function()
+        df = call_df.merge(icount_df, on=["dataset_gid", "symbol"])
+
+        insn_col = ("instr_count", "median", "sample")
+        call_col = ("call_count", "median", "sample")
+        insn_per_call = df[insn_col] / df[call_col]
+        baseline = (df.index.get_level_values("dataset_gid") == self.benchmark.g_uuid)
+        xs = generalized_xs(insn_per_call, [self.benchmark.g_uuid], levels=["dataset_gid"], droplevels=True)
+        aligned_xs = broadcast_xs(insn_per_call, xs)
+        df["delta_insn_per_call"] = insn_per_call - aligned_xs
+        return df[~baseline].copy()
+
+    def get_show_col(self):
+        return "delta_insn_per_call"
+
+    def get_sort_col(self):
+        return "delta_insn_per_call"
+
+    def get_metric_label(self):
+        return f"{Symbols.DELTA} instructions/call"
 
 
 class QEMUICountPlot(BenchmarkPlot):
-    require = {DatasetName.QEMU_STATS_BB_ICOUNT}
+    require = {DatasetName.QEMU_STATS_BB_ICOUNT, DatasetName.QEMU_STATS_CALL_HIT}
     name = "qemu-bb-icount-plot"
     description = "QEMU per-function icount plots"
-    subplots = [QEMUIcountFnPlot]
+    subplots = [QEMUIcountFnPlot, QEMUIcountCallFnPlot, QEMUCallFnPlot]

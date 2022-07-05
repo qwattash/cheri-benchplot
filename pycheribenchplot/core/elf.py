@@ -184,7 +184,7 @@ class Symbolizer:
             return None
         return syminfo
 
-    def lookup_fn_to_df(self, df: pd.DataFrame, addr_column: str, as_key_column: str):
+    def lookup_fn_to_df(self, df: pd.DataFrame, addr_column: str, as_key_column: str, exact: bool = False):
         """
         Resolve function file/symbol for each entry of the given dataframe
         addr_column. A new dataframe is returned with the same index and the
@@ -195,7 +195,10 @@ class Symbolizer:
         # sym_end = resolved.map(lambda syminfo: syminfo.addr + syminfo.size if syminfo else np.nan)
         # size_mismatch = (~sym_end.isna()) & (self.df["start"] > sym_end)
         # self.df.loc[size_mismatch, "valid_symbol"] = "size-mismatch"
-        resolved = df.apply(lambda row: self.lookup_fn(row[addr_column], row[as_key_column]), axis=1)
+        if exact:
+            resolved = df.apply(lambda row: self.match_fn(row[addr_column], row[as_key_column]), axis=1)
+        else:
+            resolved = df.apply(lambda row: self.lookup_fn(row[addr_column], row[as_key_column]), axis=1)
         # Now fill the resolved parameters from the symbol information objects
         out_df = pd.DataFrame(None, index=resolved.index)
         out_df["valid_symbol"] = resolved.mask(resolved.isna(), "no-match")
