@@ -10,9 +10,9 @@ import pandas as pd
 from pypika import Order, Query, Table
 from sortedcontainers import SortedList
 
-from ..core.dataset import (DatasetArtefact, DatasetName, DatasetProcessingError, Field, align_multi_index_levels,
-                            check_multi_index_aligned, rotate_multi_index_level, subset_xs)
-from ..core.instance import PlatformOptions
+from ..core.config import DatasetArtefact, DatasetName, PlatformOptions
+from ..core.dataset import (DatasetProcessingError, Field, align_multi_index_levels, check_multi_index_aligned,
+                            rotate_multi_index_level, subset_xs)
 from ..core.perfetto import PerfettoDataSetContainer
 
 
@@ -23,7 +23,7 @@ class QEMUTraceDataset(PerfettoDataSetContainer):
     the same qemu output file. Subclasses should enable their own trace categories.
     """
     def output_file(self):
-        return self.benchmark.get_output_path() / f"qemu-perfetto-{self.benchmark.uuid}.pb"
+        return self.benchmark.get_benchmark_data_path() / f"qemu-perfetto-{self.benchmark.uuid}.pb"
 
     def configure(self, opts: PlatformOptions) -> PlatformOptions:
         opts = super().configure(opts)

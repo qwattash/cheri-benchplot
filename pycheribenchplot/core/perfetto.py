@@ -12,26 +12,27 @@ from .dataset import DataSetContainer
 from .util import new_logger, timing
 
 
-class _TraceProcessorCache:
+class TraceProcessorCache:
     """
     Cache trace processor instances for later access so that we only load traces once.
     """
     instance = None
 
     @classmethod
-    def get_instance(cls, manager: "BenchmarkManager"):
+    def get_instance(cls, session: "PipelineSession"):
+        # XXX the singleton choice is sub-optimal, it should be propagated
+        # from the current run context
         if cls.instance is None:
-            cls.instance = _TraceProcessorCache(manager)
+            cls.instance = TraceProcessorCache(session)
         return cls.instance
 
-    def __init__(self, manager: "BenchmarkManager"):
-        self._manager = manager
+    def __init__(self, session: "PipelineSession"):
+        self._session = session
         self._instances = {}
         self.logger = new_logger("perfetto-trace-processor-cache")
-        self._manager.cleanup_callbacks.append(lambda: self._shutdown())
 
     def _trace_processor_path(self):
-        return self._manager.config.perfetto_path / "trace_processor_shell"
+        return self._session.user_config.perfetto_path / "trace_processor_shell"
 
     def get_trace_processor(self, trace_path: Path) -> TraceProcessor:
         if trace_path in self._instances:
@@ -41,7 +42,7 @@ class _TraceProcessorCache:
         self._instances[trace_path] = processor
         return processor
 
-    def _shutdown(self):
+    def shutdown(self):
         self.logger.debug("Shutdown perfetto instances %s", self._instances)
         for tp in self._instances.values():
             tp.close()
@@ -60,9 +61,9 @@ class PerfettoDataSetContainer(DataSetContainer):
     t_counter = Table("counter")
     t_counter_track = Table("counter_track")
 
-    def __init__(self, benchmark, dset_key, config):
-        super().__init__(benchmark, dset_key, config)
-        self._tp_cache = _TraceProcessorCache.get_instance(benchmark.manager)
+    def __init__(self, benchmark, config):
+        super().__init__(benchmark, config)
+        self._tp_cache = TraceProcessorCache.get_instance(benchmark.session)
 
     def _integrity_check(self, tp: TraceProcessor):
         query = Query.from_(self.t_stats).select(

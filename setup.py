@@ -2,9 +2,9 @@ from setuptools import setup, find_packages
 
 setup(
     name="pycheribenchplot",
-    version="1.0",
+    version="1.1",
     packages=find_packages(),
-    scripts=["benchplot.py"],
+    scripts=["benchplot-cli.py"],
     install_requires=[
         "asyncssh>=2.7.2",
         "dataclasses-json>=0.5.6",

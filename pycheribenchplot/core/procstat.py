@@ -35,7 +35,7 @@ class ProcstatDataset(CSVDataSetContainer):
         self._append_df(csv_df)
         # Register the mapped binaries to the benchmark symbolizer
         for pid, base, guest_path in self.mapped_binaries(self.benchmark.uuid):
-            local_path = self.benchmark.rootfs / guest_path.relative_to("/")
+            local_path = self.benchmark.cheribsd_rootfs_path / guest_path.relative_to("/")
             self.benchmark.register_mapped_binary(base, local_path, pid)
 
     def mapped_binaries(self, dataset_id) -> typing.Iterator[typing.Tuple[int, str]]:
@@ -55,7 +55,7 @@ class ProcstatDataset(CSVDataSetContainer):
     def output_file(self):
         return super().output_file().with_suffix(".csv")
 
-    def _gen_run_procstat(self, proc_handle: "VariableRef", header=True):
+    def _gen_run_procstat(self, script, proc_handle: "VariableRef", header=True):
         """
         This should be used in subclasses to implement gen_pre_benchmark().
         Running procstat requires knowledge of the way to stop the benchmark at the correct time,
@@ -64,5 +64,5 @@ class ProcstatDataset(CSVDataSetContainer):
         args = ["-v", proc_handle]
         if not header:
             args = ["-h"] + args
-        self._script.gen_cmd("procstat", args, outfile=self.output_file())
+        script.gen_cmd("procstat", args, outfile=self.output_file())
         self.logger.debug("Collected procstat info")

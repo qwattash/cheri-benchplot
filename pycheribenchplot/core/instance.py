@@ -4,136 +4,23 @@ import os
 import re
 import signal
 import typing
-import uuid
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from uuid import UUID, uuid4
 
 import asyncssh
 import numpy as np
 from multi_await import multi_await
 
-from .config import TemplateConfig, path_field
+from .config import (InstanceCheriBSD, InstanceConfig, InstanceKernelABI, InstancePlatform)
 from .util import new_logger
 
 
 class InstanceManagerError(Exception):
     pass
-
-
-class InstancePlatform(Enum):
-    QEMU = "qemu"
-    VCU118 = "vcu118"
-
-    def __str__(self):
-        return self.value
-
-
-class InstanceCheriBSD(Enum):
-    RISCV64_PURECAP = "riscv64-purecap"
-    RISCV64_HYBRID = "riscv64-hybrid"
-    MORELLO_PURECAP = "morello-purecap"
-    MORELLO_HYBRID = "morello-hybrid"
-
-    def is_riscv(self):
-        return (self == InstanceCheriBSD.RISCV64_PURECAP or self == InstanceCheriBSD.RISCV64_HYBRID)
-
-    def is_morello(self):
-        return (self == InstanceCheriBSD.MORELLO_PURECAP or self == InstanceCheriBSD.MORELLO_HYBRID)
-
-    def freebsd_kconf_dir(self):
-        if self.is_riscv():
-            arch = "riscv"
-        elif self.is_morello():
-            arch = "arm64"
-        else:
-            assert False, "Unknown arch"
-        return Path("sys") / arch / "conf"
-
-    def __str__(self):
-        return self.value
-
-
-class InstanceKernelABI(Enum):
-    NOCHERI = "nocheri"
-    HYBRID = "hybrid"
-    PURECAP = "purecap"
-
-    def __str__(self):
-        return self.value
-
-
-@dataclass
-class PlatformOptions(TemplateConfig):
-    """
-    Base class for platform-specific options.
-    This is internally used during benchmark dataset collection to
-    set options for the instance that is to be run.
-    """
-    # Number of cores in the system
-    cores: int = 1
-    # The trace file used by default unless one of the datasets overrides it
-    qemu_trace_file: typing.Optional[Path] = None
-    # Run qemu with tracing enabled
-    qemu_trace: bool = False
-    # Trace categories to enable for qemu-perfetto
-    qemu_trace_categories: typing.Set[str] = field(default_factory=set)
-    # VCU118 bios
-    vcu118_bios: Path = None
-    # IP to use for the VCU118 board
-    vcu118_ip: str = "10.88.88.2"
-
-
-@dataclass
-class InstanceConfig(TemplateConfig):
-    """
-    Configuration for a CheriBSD instance to run benchmarks on.
-    XXX-AM May need a custom __eq__() if iterable members are added
-    """
-    kernel: str
-    baseline: bool = False
-    name: typing.Optional[str] = None
-    platform: InstancePlatform = InstancePlatform.QEMU
-    cheri_target: InstanceCheriBSD = InstanceCheriBSD.RISCV64_PURECAP
-    kernelabi: InstanceKernelABI = InstanceKernelABI.HYBRID
-    # Is the kernel config name managed by cheribuild or is it an extra one
-    # specified via --cheribsd/extra-kernel-configs?
-    cheribuild_kernel: bool = True
-    # Internal fields, should not appear in the config file and are missing by default
-    platform_options: PlatformOptions = field(default_factory=PlatformOptions)
-
-    @property
-    def user_pointer_size(self):
-        if (self.cheri_target == InstanceCheriBSD.RISCV64_PURECAP
-                or self.cheri_target == InstanceCheriBSD.MORELLO_PURECAP):
-            return 16
-        elif (self.cheri_target == InstanceCheriBSD.RISCV64_HYBRID
-              or self.cheri_target == InstanceCheriBSD.MORELLO_HYBRID):
-            return 8
-        assert False, "Not reached"
-
-    @property
-    def kernel_pointer_size(self):
-        if (self.cheri_target == InstanceCheriBSD.RISCV64_PURECAP
-                or self.cheri_target == InstanceCheriBSD.MORELLO_PURECAP):
-            if self.kernelabi == InstanceKernelABI.PURECAP:
-                return self.user_pointer_size
-            else:
-                return 8
-        elif (self.cheri_target == InstanceCheriBSD.RISCV64_HYBRID
-              or self.cheri_target == InstanceCheriBSD.MORELLO_HYBRID):
-            if self.kernelabi == InstanceKernelABI.PURECAP:
-                return 16
-            else:
-                return self.user_pointer_size
-        assert False, "Not reached"
-
-    def __post_init__(self):
-        super().__post_init__()
-        if self.name is None:
-            self.name = f"{self.platform}-{self.cheri_target}-{self.kernelabi}-{self.kernel}"
 
 
 class InstanceStatus(Enum):
@@ -165,6 +52,10 @@ class InstanceInfo:
         self.ssh_key = ssh_key
         self.conn = None
 
+    def is_connected(self) -> bool:
+        """Check whether the instance is connected"""
+        return self.conn is not None
+
     async def connect(self):
         """
         Create new connection to the instance.
@@ -173,7 +64,7 @@ class InstanceInfo:
         if self.conn is not None:
             await self.disconnect()
             self.conn = None
-        self.logger.debug("Attempt to connect to %s:%d", self.ssh_host, self.ssh_port)
+        self.logger.debug("Attempt to connect to root@%s:%d keyfile=%s", self.ssh_host, self.ssh_port, self.ssh_key)
         self.conn = await asyncssh.connect(self.ssh_host,
                                            port=self.ssh_port,
                                            known_hosts=None,
@@ -197,31 +88,54 @@ class InstanceInfo:
         dst = (self.conn, guest_dst)
         await asyncssh.scp(host_src, dst, **kwargs)
 
-    async def run_cmd(self, command: str, args: list = [], env: dict = {}):
+    async def run_cmd(self, command: str, args: list = [], env: dict = {}, verbose=False):
         """Run command on the remote instance"""
         self.logger.debug("SH exec: %s %s", command, args)
         cmdline = f"{command} " + " ".join(map(str, args))
-        result = await self.conn.run(cmdline)
-        if result.returncode != 0:
-            self.logger.error("Failed to run %s: %s", command, result.stderr)
+
+        if verbose:
+            result = await self.conn.create_process(cmdline)
+            async with multi_await() as select:
+                select.add(result.stdout.readline)
+                select.add(result.stderr.readline)
+                select.add(result.wait)
+                while result.exit_status is None:
+                    complete, failures = await select.get()
+                    stdout, stderr, exited = complete
+                    if exited:
+                        break
+                    if stdout:
+                        self.logger.debug(stdout)
+                    if stderr:
+                        self.logger.warning(stderr)
         else:
-            self.logger.debug("%s done: %s", command, result.stdout)
-        return result
+            result = await self.conn.run(cmdline)
+            if result.returncode != 0:
+                self.logger.error("Failed to run %s: %s", command, result.stderr)
+            else:
+                self.logger.debug("%s done", command)
 
 
 class Instance(ABC):
+    """
+    Base instance implementation.
+    Manages a virtual machine/FPGA or other guest OS connectable via SSH.
+
+    :ivar manager: The instance manager owning the instance
+    :ivar event_loop: The current event loop
+    """
     last_ssh_port = 12000
 
-    def __init__(self, inst_manager: "InstanceManager", config: InstanceConfig):
-        self.manager = inst_manager
+    def __init__(self, manager: "InstanceManager", config: InstanceConfig):
+        self.manager = manager
+        # Unique ID of the instance, not to be confused with g_uuid which
+        # identifies an unique instance configuration
+        self.uuid = uuid4()
         # Main event loop
-        self.event_loop = inst_manager.loop
-        # Top level configuration
-        self.manager_config: "BenchmarkManagerConfig" = inst_manager.manager_config
+        self.event_loop = aio.get_event_loop()
         # Instance configuration
         self.config = config
-        # Unique ID of the instance
-        self.uuid = uuid.uuid4()
+        # Instance logger
         self.logger = new_logger(f"instance[{self.config.name}]")
         # SSH port allocated for the benchmarks to connect to the instance
         self.ssh_port = self._get_ssh_port()
@@ -242,56 +156,9 @@ class Instance(ABC):
         # Events used to wait on instance output
         self._io_loop_observers = []
 
-    def set_status(self, next_status):
-        self.logger.debug("STATUS %s -> %s", self.status, next_status)
-        self.status = next_status
-        self.status_update_event.set()
-
-    def get_info(self) -> InstanceInfo:
-        """
-        Get instance information needed by benchmarks to connect and run on the instance
-        """
-        info = InstanceInfo(self.logger, self.uuid, "localhost", self.ssh_port,
-                            self.manager_config.ssh_key.expanduser())
-        return info
-
-    def start(self):
-        """Create the runner task that will boot the instance"""
-        self.logger.info("Created instance with UUID=%s", self.uuid)
-        self.task = self.event_loop.create_task(self._run_instance())
-
-    def boot(self):
-        """Signal instance that it can start booting"""
-        self.boot_event.set()
-
-    def release(self):
-        """
-        Release instance from the current benchmark. This indicates that the benchmark
-        is done running and we can trigger the instance reset before advancing to the
-        next benchmark in the run_queue.
-        """
-        self.logger.info("Release instance")
-        self.release_event.set()
-
-    def stop(self):
-        """Forcibly kill the instance"""
-        self.logger.info("Stopping instance")
-        if self.task:
-            self.task.cancel()
-
     def __str__(self):
         return (f"Instance {self.config.name}({self.uuid}) {self.config.platform}-{self.config.cheri_target}-" +
                 f"{self.config.kernel}")
-
-    async def wait(self, status: InstanceStatus):
-        while self.status != status:
-            await self.status_update_event.wait()
-            self.status_update_event.clear()
-            if (self.status == InstanceStatus.DEAD and status != InstanceStatus.DEAD):
-                # If the instance died but we are not waiting the DEAD status
-                # we die so that the waiting task is unblocked
-                self.logger.error("Instance %s died while waiting for %s", self.uuid, status)
-                raise InstanceManagerError("Instance died unexpectedly")
 
     def _get_ssh_port(self):
         port = Instance.last_ssh_port
@@ -355,11 +222,11 @@ class Instance(ABC):
             self.set_status(InstanceStatus.SHUTDOWN)
             await self._shutdown()
         except aio.CancelledError as ex:
-            self.logger.debug("Instance run cancelled")
+            self.logger.debug("Instance run cancelled - shutdown")
             await self._shutdown()
             raise ex
         except Exception as ex:
-            self.logger.exception("Fatal error: %s - shutdown instance", ex)
+            self.logger.exception("Fatal error: %s - shutdown", ex)
             await self._shutdown()
         finally:
             self.set_status(InstanceStatus.DEAD)
@@ -377,8 +244,7 @@ class Instance(ABC):
             if not raw_out:
                 continue
             out = raw_out.decode("ascii")
-            if self.manager_config.verbose:
-                self.logger.debug(out.rstrip())
+            self.logger.debug(out.rstrip())
             for evt, matcher in self._io_loop_observers:
                 if matcher(out, False):
                     evt.set()
@@ -390,8 +256,7 @@ class Instance(ABC):
             if not raw_out:
                 continue
             out = raw_out.decode("ascii")
-            if self.manager_config.verbose:
-                self.logger.warning(out.rstrip())
+            self.logger.warning(out.rstrip())
             for evt, matcher in self._io_loop_observers:
                 if matcher(out, True):
                     evt.set()
@@ -415,11 +280,72 @@ class Instance(ABC):
                 waiter.cancel()
                 await waiter
 
+    @property
+    def user_config(self):
+        return self.manager.session.user_config
+
+    @property
+    def session_config(self):
+        return self.manager.session.config
+
+    def set_status(self, next_status):
+        self.logger.debug("STATUS %s -> %s", self.status, next_status)
+        self.status = next_status
+        self.status_update_event.set()
+
+    def get_info(self) -> InstanceInfo:
+        """
+        Get instance information needed by benchmarks to connect and run on the instance
+        """
+        info = InstanceInfo(self.logger, self.uuid, "localhost", self.ssh_port,
+                            self.session_config.ssh_key.expanduser())
+        return info
+
+    def start(self):
+        """Create the runner task that will boot the instance"""
+        self.logger.info("Created instance with UUID=%s", self.uuid)
+        self.task = self.event_loop.create_task(self._run_instance())
+
+    def boot(self):
+        """Signal instance that it can start booting"""
+        self.boot_event.set()
+
+    def release(self):
+        """
+        Release instance from the current benchmark. This indicates that the benchmark
+        is done running and we can trigger the instance reset before advancing to the
+        next benchmark in the run_queue.
+        """
+        self.logger.info("Release instance")
+        self.release_event.set()
+
+    def stop(self):
+        """Forcibly kill the instance"""
+        self.logger.info("Stopping instance")
+        if self.task:
+            self.task.cancel()
+
+    async def wait(self, status: InstanceStatus):
+        while self.status != status:
+            await self.status_update_event.wait()
+            self.status_update_event.clear()
+            if (self.status == InstanceStatus.DEAD and status != InstanceStatus.DEAD):
+                # If the instance died but we are not waiting the DEAD status
+                # we die so that the waiting task is unblocked
+                self.logger.error("Instance %s died while waiting for %s", self.uuid, status)
+                raise InstanceManagerError("Instance died unexpectedly")
+
 
 class CheribuildInstance(Instance):
-    def __init__(self, inst_manager: "InstanceManager", config: InstanceConfig):
-        super().__init__(inst_manager, config)
-        self.cheribuild = self.manager_config.cheribuild_path / "cheribuild.py"
+    """
+    A virtual machine instance managed by cheribuild.
+
+    :param manager: The instance manager that created the instance
+    :param config: The instance configuration
+    """
+    def __init__(self, manager: "InstanceManager", config: InstanceConfig):
+        super().__init__(manager, config)
+        self.cheribuild = self.user_config.cheribuild_path / "cheribuild.py"
         # The cheribuild process task
         self._cheribuild_task = None
 
@@ -470,7 +396,6 @@ class CheribuildInstance(Instance):
             run_cmd += [self._run_option("extra-options"), " ".join(qemu_options)]
 
         self.logger.debug("%s %s", self.cheribuild, run_cmd)
-
         self._cheribuild_task = await aio.create_subprocess_exec(str(self.cheribuild),
                                                                  *run_cmd,
                                                                  stdin=aio.subprocess.PIPE,
@@ -492,30 +417,36 @@ class CheribuildInstance(Instance):
         If we have an active connection, send the poweroff command and wait for
         cheribuild to finish. Otherwise kill cheribuild with SIGINT.
         """
-        if self._ssh_ctrl_conn:
-            await self._run_cmd("poweroff")
-            await self._ssh_ctrl_conn.disconnect()
-            # Add timeout and force kill?
-            await self._cheribuild_task.wait()
-        elif self._cheribuild_task and self._cheribuild_task.returncode is None:
-            # Kill with SIGINT so that cheribuild will cleanly kill childrens
-            self.logger.debug("Sending SIGINT to cheribuild")
-            os.killpg(os.getpgid(self._cheribuild_task.pid), signal.SIGINT)
-        if len(self._io_tasks):
-            await aio.gather(*self._io_tasks, return_exceptions=True)
-        # Cleanup to avoid accidental reuse
-        self._cheribuild_task = None
-        self._ssh_ctrl_conn = None
+        try:
+            if self._ssh_ctrl_conn and self._ssh_ctrl_conn.is_connected():
+                await self._run_cmd("poweroff")
+                await self._ssh_ctrl_conn.disconnect()
+                # Add timeout and force kill?
+                await self._cheribuild_task.wait()
+            elif self._cheribuild_task and self._cheribuild_task.returncode is None:
+                # Kill with SIGINT so that cheribuild will cleanly kill childrens
+                self.logger.debug("Sending SIGINT to cheribuild")
+                os.killpg(os.getpgid(self._cheribuild_task.pid), signal.SIGINT)
+            if len(self._io_tasks):
+                await aio.gather(*self._io_tasks, return_exceptions=True)
+            # Cleanup to avoid accidental reuse
+            self._cheribuild_task = None
+            self._ssh_ctrl_conn = None
+        except Exception as ex:
+            self.logger.critical("Critical error during instance shutdown %s", ex)
 
 
 class VCU118Instance(Instance):
     """
     Runner for VCU 118 boards, using the vcu118-run script in cheribuild.
+
+    :param manager: The instance manager that created the instance
+    :param config: The instance configuration
     """
-    def __init__(self, inst_manager: "InstanceManager", config: InstanceConfig):
-        super().__init__(inst_manager, config)
-        self.runner_script = self.manager_config.cheribuild_path / "vcu118-run.py"
-        if inst_manager.manager_config.concurrent_instances != 1:
+    def __init__(self, manager: "InstanceManager", config: InstanceConfig):
+        super().__init__(manager, config)
+        self.runner_script = self.user_config.cheribuild_path / "vcu118-run.py"
+        if inst_manager.session_config.concurrent_instances != 1:
             self.logger.error("VCU118 MUST use concurrent_instances = 1")
             raise InstanceManagerError("Too many concurrent instances")
 
@@ -525,16 +456,16 @@ class VCU118Instance(Instance):
         if self.config.platform_options.vcu118_bios:
             return self.config.platform_options.vcu118_bios
         else:
-            return self.manager_config.sdk_path / "sdk" / "bbl-gfe" / self.config.cheri_target / "bbl"
+            return self.user_config.sdk_path / "sdk" / "bbl-gfe" / self.config.cheri_target / "bbl"
 
     def _get_fpga_kernel(self):
-        sdk = self.manager_config.sdk_path
+        sdk = self.user_config.sdk_path
         kernel = sdk / f"kernel-{self.config.cheri_target}.{self.config.kernel}"
         assert kernel.exists(), f"Missing kernel {kernel}"
         return kernel
 
     def _get_fpga_gdb(self):
-        gdb = self.manager_config.sdk_path / "sdk" / "bin" / "gdb"
+        gdb = self.user_config.sdk_path / "sdk" / "bin" / "gdb"
         gdb = Path("/homes/jrtc4/out/criscv-gdb")
         assert gdb.exists()
         return gdb
@@ -543,7 +474,7 @@ class VCU118Instance(Instance):
         return str(self.config.platform_options.cores)
 
     def _get_fpga_pubkey(self):
-        ssh_privkey = self.manager_config.ssh_key
+        ssh_privkey = self.session_config.ssh_key
         ssh_pubkey = ssh_privkey.with_suffix(".pub")
         with open(ssh_pubkey, "r") as fd:
             pubkey_str = fd.read()
@@ -562,7 +493,7 @@ class VCU118Instance(Instance):
             "--bios",
             self._get_fpga_bios(), "--kernel",
             self._get_fpga_kernel(), "--gdb",
-            self._get_fpga_gdb(), "--openocd", self.manager_config.openocd_path, "--num-cores",
+            self._get_fpga_gdb(), "--openocd", self.user_config.openocd_path, "--num-cores",
             self._get_fpga_cores(), "--benchmark-config"
         ]
         ip_addr = self.config.platform_options.vcu118_ip
@@ -588,7 +519,7 @@ class VCU118Instance(Instance):
         await aio.sleep(2)
 
     async def _shutdown(self):
-        if self._ssh_ctrl_conn:
+        if self._ssh_ctrl_conn.is_connected():
             await self._run_cmd("poweroff")
             await self._ssh_ctrl_conn.disconnect()
             await self._run_task.wait()
@@ -602,7 +533,7 @@ class VCU118Instance(Instance):
 
 
 class InstanceRequest:
-    def __init__(self, loop: aio.AbstractEventLoop, owner: uuid.UUID, config: InstanceConfig):
+    def __init__(self, loop: aio.AbstractEventLoop, owner: UUID, config: InstanceConfig):
         self.instance = loop.create_future()
         self.owner = owner
         self.config = config
@@ -619,26 +550,29 @@ class InstanceManager:
     """
     Helper object used to manage the lifetime of instances we run things on
     """
-    def __init__(self, loop: aio.AbstractEventLoop, manager_config: "BenchmarkManagerConfig"):
+    def __init__(self, session: "PipelineSession"):
         self.logger = new_logger("instance-manager")
-        self.loop = loop
-        self.manager_config = manager_config
+        self.loop = aio.get_event_loop()
+        self.session = session
+
         # Max concurrent instances
-        if self.manager_config.concurrent_instances == 0:
+        if self.session.config.concurrent_instances == 0:
             self.concurrent_instances = np.inf
         else:
-            self.concurrent_instances = self.manager_config.concurrent_instances
-        self._sched_task = loop.create_task(self._schedule())
-        self._shutdown_drain = loop.create_task(self._shutdown_drain())
+            self.concurrent_instances = self.session.config.concurrent_instances
+        self._sched_task = self.loop.create_task(self._schedule())
+        self._shutdown_drain = self.loop.create_task(self._shutdown_drain())
         # Cleanup event triggering shutdown
         self._sched_shutdown = aio.Event()
 
         # internal instance request queues that are waiting for active instances to be done
         self._instance_request_queues = defaultdict(list)
         # done instance queue to the scheduler
-        self._done_queue = aio.Queue()
+        self._done_queue = []  # aio.Queue()
         # requests to the scheduler
-        self._request_queue = aio.Queue()
+        self._request_queue = []  #aio.Queue()
+        # signal the scheduler loop that there is data in the queues
+        self._sched_data_avail = aio.Event()
         # internale idle instance list
         self._idle_instances = []
         # instances pending shutdown
@@ -650,9 +584,12 @@ class InstanceManager:
         self._active_instances = {}
 
         self.logger.info("Instance manager: instance_reuse=%s max_concurrent=%s",
-                         "Enabled" if self.manager_config.reuse_instances else "Disabled", self.concurrent_instances)
+                         "Enabled" if self.session.config.reuse_instances else "Disabled", self.concurrent_instances)
 
-    def _create_instance(self, config: InstanceConfig):
+    def _create_instance(self, config: InstanceConfig) -> Instance:
+        """
+        Create a new instance for the given configuration
+        """
         if config.platform == InstancePlatform.QEMU:
             instance = CheribuildInstance(self, config)
         elif config.platform == InstancePlatform.VCU118:
@@ -666,7 +603,7 @@ class InstanceManager:
         self.logger.debug("Created instance %s", instance.uuid)
         return instance
 
-    def _alloc_instance(self, owner: uuid.UUID, instance: Instance):
+    def _alloc_instance(self, owner: UUID, instance: Instance):
         self._active_instances[owner] = instance
         if instance.status == InstanceStatus.INIT:
             instance.boot()
@@ -676,7 +613,7 @@ class InstanceManager:
         """
         Dispose of an instance that has finished running a benchmark
         """
-        if self.manager_config.reuse_instances:
+        if self.session.config.reuse_instances:
             # check to see whether we have queued request for this instance
             self.logger.debug("Sched: new idle instance %s(%s)", instance.uuid, instance.config.name)
             self._idle_instances.append(instance)
@@ -726,9 +663,9 @@ class InstanceManager:
         try to allocate a new instance. If this would exceed the concurrent instances limit,
         first we grab an idle instance and shut it down.
         """
-        # If manager_config.reuse_instances is False the idle list will always be empty.
+        # If session.config.reuse_instances is False the idle list will always be empty.
         assert len(
-            self._idle_instances) == 0 or self.manager_config.reuse_instances, "Idle instance but reuse is forbidden"
+            self._idle_instances) == 0 or self.session.config.reuse_instances, "Idle instance but reuse is forbidden"
         found_instance = None
         for instance in self._idle_instances:
             if request.name == instance.config.name:
@@ -762,8 +699,7 @@ class InstanceManager:
         Instance scheduler loop
         """
         async with multi_await() as select:
-            select.add(self._request_queue.get)
-            select.add(self._done_queue.get)
+            select.add(self._sched_data_avail.wait)
             select.add(self._sched_shutdown.wait)
 
             while True:
@@ -771,25 +707,28 @@ class InstanceManager:
                 for err in failures:
                     if err is not None:
                         self.logger.error("Error while waiting on queue %s", err)
-                request, instance, sched_shutdown = complete
-                # First try to serve the done queue
-                if instance is not None:
-                    self.logger.debug("Instance %s returned to scheduler", instance.uuid)
-                    self._sched_dispose(instance)
-                    self._done_queue.task_done()
-                if request is not None:
-                    handled = self._schedule_request(request)
-                    if not handled:
-                        self._instance_request_queues[request.name].append(request)
-                    self._request_queue.task_done()
+                data_avail, sched_shutdown = complete
+                if data_avail:
+                    # First try to serve the done queue
+                    for instance in self._done_queue:
+                        self.logger.debug("Instance %s returned to scheduler", instance.uuid)
+                        self._sched_dispose(instance)
+                    for request in self._request_queue:
+                        handled = self._schedule_request(request)
+                        if not handled:
+                            self._instance_request_queues[request.name].append(request)
+                    self._done_queue.clear()
+                    self._request_queue.clear()
+                    self._sched_data_avail.clear()
                 if sched_shutdown:
                     break
             self._drain_done_queue()
 
     def _drain_done_queue(self):
         # move any instance from the done queue into the idle list to be destroyed
-        while not self._done_queue.empty():
-            instance = self._done_queue.get_nowait()
+        self.logger.debug("Drain done queue %s", self._done_queue)
+        while self._done_queue:
+            instance = self._done_queue.pop(0)
             self.logger.debug("Drain %s from sched done queue", instance)
             self._idle_instances.append(instance)
 
@@ -822,21 +761,23 @@ class InstanceManager:
             except aio.CancelledError:
                 break
 
-    async def request_instance(self, owner: uuid.UUID, config: InstanceConfig) -> InstanceInfo:
+    async def request_instance(self, owner: UUID, config: InstanceConfig) -> InstanceInfo:
         request = InstanceRequest(self.loop, owner, config)
         self.logger.debug("Enqueue instance request for %s benchmark=%s", config.name, owner)
-        self._request_queue.put_nowait(request)
+        self._request_queue.append(request)
+        self._sched_data_avail.set()
         instance = await request.instance
         self.logger.debug("Wait for %s to boot", instance)
         await instance.wait(InstanceStatus.READY)
         # Here we are guaranteed that the instance is booted and ready to use
         return instance.get_info()
 
-    async def release_instance(self, owner: uuid.UUID):
+    async def release_instance(self, owner: UUID):
         instance = self._active_instances[owner]
         self.logger.debug("Release %s benchmark=%s", instance, owner)
         del self._active_instances[owner]
-        self._done_queue.put_nowait(instance)
+        self._done_queue.append(instance)
+        self._sched_data_avail.set()
 
     async def shutdown(self):
         # Stop the scheduler and shutdown drain
@@ -865,6 +806,8 @@ class InstanceManager:
         await self._sched_task
         await self._shutdown_drain
         # Force kill all instances
+        self.logger.debug("Kill active=%s idle=%s shutdown=%s", [str(v) for v in self._active_instances.values()],
+                          [str(v) for v in self._idle_instances], [str(v) for v in self._shutdown_instances])
         for instance in self._active_instances.values():
             instance.stop()
         for instance in self._idle_instances:

@@ -25,10 +25,6 @@ class PidMapDataset(JSONDataSetContainer):
         Field.str_field("thread_name")
     ]
 
-    def __init__(self, benchmark, dset_key, config):
-        super().__init__(benchmark, dset_key, config)
-        self._pid_snapshot = {}
-
     def resolve_user_binaries(self, dataset_id) -> pd.DataFrame:
         df = self.df.xs(dataset_id)
         P_KPROC_MASK = 0x4
@@ -55,19 +51,7 @@ class PidMapDataset(JSONDataSetContainer):
         return super().output_file().with_suffix(".json")
 
     def load(self):
-        path = self.output_file()
-        with open(path, "r") as fd:
-            data_map = json.load(fd)
-        # normalize records in the json first to use lists instead of dicts
-        data = list(data_map.values())
-        for proc_desc in data:
-            proc_desc["threads"] = list(proc_desc["threads"].values())
-        # generate the normalized dataframe from hierarchical data
-        pid_info = pd.json_normalize(data)
-        tid_info = pd.json_normalize(data, "threads", ["process_id"])
-        df = pid_info.merge(tid_info, how="left", left_on="process_id", right_on="process_id")
-        df.rename(columns={"process_id": "pid", "thread_id": "tid"}, inplace=True)
-        df["tid"].fillna(-1, inplace=True)
+        df = self._load_json(self.output_file())
         df["dataset_id"] = self.benchmark.uuid
         self._append_df(df)
 
@@ -109,72 +93,90 @@ class PidMapDataset(JSONDataSetContainer):
         fixup_df = pd.concat((matched_tid, guess_tid[self.input_non_index_columns()]))
         return fixup_df
 
-    def _merge_procstat_entry(self, entry: dict):
+    def _merge_procstat_entry(self, pidmap: dict, entry: dict):
         pid = entry["process_id"]
-        if str(pid) in self._pid_snapshot:
-            snap_entry = self._pid_snapshot[pid]
+        if str(pid) in pidmap:
+            map_entry = pidmap[pid]
             # Currently, do not support PID/TID reuse
-            if snap_entry["command"] != entry["command"]:
+            if map_entry["command"] != entry["command"]:
                 self.logger.error("System PID snapshot repeated PID conflict %d: %s != %s", entry["process_id"],
-                                  entry["command"], snap_entry["command"])
+                                  entry["command"], map_entry["command"])
                 return
             for tid, thr_entry in entry["threads"].items():
-                if tid in snap_entry["threads"]:
-                    snap_thr_entry = snap_entry["threads"][tid]
+                if tid in map_entry["threads"]:
+                    snap_thr_entry = map_entry["threads"][tid]
                     if snap_thr_entry["thread_name"] != thr_entry["thread_name"]:
                         self.logger.error("System PID snapshot repeated TID conflict for %s %d: %s != %s",
                                           entry["command"], thr_entry["thread_id"], thr_entry["thread_name"],
                                           snap_thr_entry["thread_name"])
                         continue
                 else:
-                    snap_entry["threads"][tid] = thr_entry
+                    map_entry["threads"][tid] = thr_entry
         else:
-            self._pid_snapshot[pid] = entry
+            pidmap[pid] = entry
 
-    def sample_system_pids(self):
+    def sample_system_pids(self, script):
         """
         Add a system PID sample to the output data.
         This is exposed to other datasets so that snapshots can be taken at interesting
         times.
         """
         self.logger.debug("Generate system PIDs sampling command")
-        self._script.gen_cmd("procstat", ["-a", "-t", "--libxo", "json"],
-                             outfile=self.output_file(),
-                             extractfn=self._extract_pid_sample)
+        script.gen_cmd("procstat", ["-a", "-t", "--libxo", "json"], outfile=self.output_file())
 
-    async def _extract_pid_sample(self, remote_path, local_path):
-        # Merge the PIDs with any existing sample.
-        self.logger.info("Extract system PIDs")
-        pid_raw_data = io.StringIO()
-        await self.benchmark.read_remote_file(remote_path, pid_raw_data)
-        self.logger.debug(pid_raw_data.getvalue())
-        raw_data = json.loads(pid_raw_data.getvalue())
-        proc_map = raw_data["procstat"]["threads"]
+    async def after_extract_results(self, script, instance):
+        """
+        Merge all pid information sources and normalize the procstat output in a format easily loadable by pandas.
+        """
+        await super().after_extract_results(script, instance)
+
+        pidmap = {}
+        # Read in the output file
+        with open(self.output_file(), "r") as fd:
+            raw_data = json.load(fd)
+        # The procstat output has useless dictionary levels, drop them
+        try:
+            proc_map = raw_data["procstat"]["threads"]
+        except KeyError:
+            self.logger.error("Malformed procstat output missing procstat.threads %s", raw_data)
+            raise
         for pid, info in proc_map.items():
-            self._merge_procstat_entry(info)
+            self._merge_procstat_entry(pidmap, info)
 
-    async def after_extract_results(self):
-        await super().after_extract_results()
         # Grab the command history and merge it as well
-        cmd_pids = pd.read_csv(self._script.command_history_path(), index_col=False, names=["pid"])
-        cmd_pids["command"] = self._script.get_commands_with_pid()
+        cmd_pids = pd.read_csv(script.command_history_path(), dtype=int, index_col=False, names=["pid"])
+        cmd_pids["command"] = script.get_commands_with_pid()
         for _, row in cmd_pids.iterrows():
+            self.logger.debug("Recording command PID %s => %s", row["pid"], row["command"])
             entry = {
                 "process_id": row["pid"],
                 "command": str(row["command"]),
                 # We do not have thread info for these, should really use a different method
                 "threads": {}
             }
-            self._merge_procstat_entry(entry)
+            self._merge_procstat_entry(pidmap, entry)
 
-        with open(self.output_file(), "w+") as pid_fd:
-            json.dump(self._pid_snapshot, pid_fd)
+        # Now we have the final pidmap, normalize the json records to use lists instead of dicts
+        # as this will make it easier to load into a dataframe
+        for entry in pidmap.values():
+            entry["threads"] = list(entry["threads"].values())
+        pidmap_records = list(pidmap.values())
+        # generate a normalized dataframe from hierarchical data
+        pid_info = pd.json_normalize(pidmap_records)
+        tid_info = pd.json_normalize(pidmap_records, "threads", ["process_id"])
+        df = pid_info.merge(tid_info, how="left", left_on="process_id", right_on="process_id")
+        df.rename(columns={"process_id": "pid", "thread_id": "tid"}, inplace=True)
+        df["tid"].fillna(-1, inplace=True)
 
-    def gen_post_benchmark(self):
+        with open(self.output_file(), "w+") as fd:
+            fd.truncate(0)
+            df.to_json(fd)
+
+    def gen_post_benchmark(self, script):
         """
         Post-benchmark hook to extract PID mappings.
         Note: we also use the command history from the benchmark runner to resolve any
         extra processes we have been running and that have since terminated.
         """
-        super().gen_post_benchmark()
-        self.sample_system_pids()
+        super().gen_post_benchmark(script)
+        self.sample_system_pids(script)

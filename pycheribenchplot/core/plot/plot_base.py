@@ -65,7 +65,7 @@ class BenchmarkPlotBase(BenchmarkAnalysis):
         append it later.
         """
         if self.cross_analysis:
-            return self.benchmark.manager.plot_output_path / self.name
+            return self.benchmark.session.get_plot_root_path() / self.name
         else:
             return self.benchmark.get_plot_path() / self.name
 
@@ -217,7 +217,7 @@ class BenchmarkSubPlot(ABC):
         in the current benchmark instance.
         """
         bench_group = self.benchmark.get_merged_benchmarks()
-        legend = {uuid: str(bench.instance_config.name) for uuid, bench in bench_group.items()}
+        legend = {uuid: str(bench.config.instance.name) for uuid, bench in bench_group.items()}
         legend[self.benchmark.uuid] += "(*)"
         index = pd.Index(legend.keys(), name="dataset_id")
         legend_info = LegendInfo.from_index(index, legend.values())
@@ -228,8 +228,8 @@ class BenchmarkSubPlot(ABC):
         Build a legend map that allocates colors and labels by dataset group ID. This operates on
         the datasets merged in the current cross-benchmark accumulator instance.
         """
-        bench_groups = self.benchmark.manager.get_benchmark_groups()
-        legend = {uuid: str(group[0].instance_config.name) for uuid, group in bench_groups.items()}
+        bench_groups = self.benchmark.get_benchmark_groups()
+        legend = {uuid: str(group[0].config.instance.name) for uuid, group in bench_groups.items()}
         legend[self.benchmark.g_uuid] += "(*)"
         index = pd.Index(legend.keys(), name="dataset_gid")
         legend_info = LegendInfo.from_index(index, legend.values())

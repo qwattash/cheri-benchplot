@@ -2,7 +2,6 @@ import typing
 import uuid
 from dataclasses import dataclass, field
 
-from .config import Config
 from .dataset import DatasetName
 
 
@@ -16,28 +15,6 @@ class BenchmarkAnalysisRegistry(type):
         if self.name in BenchmarkAnalysisRegistry.analysis_steps:
             raise ValueError(f"Duplicate analysis step {self.name}")
         BenchmarkAnalysisRegistry.analysis_steps[self.name] = self
-
-
-@dataclass
-class AnalysisConfig(Config):
-    # List of plots/analysis steps to enable
-    enable: typing.List[str] = field(default_factory=list)
-    # Tags for group enable
-    enable_tags: typing.Set[str] = field(default_factory=set)
-    # Generate multiple split plots instead of combining
-    split_subplots: bool = False
-    # Output formats
-    plot_output_format: typing.List[str] = field(default_factory=lambda: ["pdf"])
-    # Constants to show in various plots, depending on the X and Y axes.
-    # The dictionary maps parameters of the benchmark parameterisation to a dict
-    # mapping description -> constant value
-    parameter_constants: typing.Dict[str, dict] = field(default_factory=dict)
-    # Baseline dataset group id, defaults to the baseline instance uuid
-    baseline_gid: uuid.UUID = None
-
-    def __post_init__(self):
-        super().__post_init__()
-        assert isinstance(self.plot_output_format, list)
 
 
 class BenchmarkAnalysis(metaclass=BenchmarkAnalysisRegistry):
@@ -65,10 +42,10 @@ class BenchmarkAnalysis(metaclass=BenchmarkAnalysisRegistry):
     # Cross benchmark variant analysis step
     cross_analysis: bool = False
 
-    def __init__(self, benchmark: "BenchmarkBase", **kwargs):
+    def __init__(self, benchmark: "Benchmark", **kwargs):
         self.benchmark = benchmark
         self.logger = benchmark.logger
-        self.config = benchmark.manager.analysis_config
+        self.config = benchmark.session.analysis_config
 
     def get_dataset(self, dset_id: DatasetName):
         """Helper to access datasets in the benchmark"""

@@ -53,10 +53,10 @@ class NetstatDataset(JSONDataSetContainer):
             post.close()
         self._append_df(df)
 
-    def gen_pre_benchmark(self):
+    def gen_pre_benchmark(self, script):
         netstat_out = self.output_file().with_suffix(".pre")
-        self._script.gen_cmd("netstat", ["--libxo", "json", "-Q"], outfile=netstat_out)
+        script.gen_cmd("netstat", ["--libxo", "json", "-Q"], outfile=netstat_out)
 
-    def gen_post_benchmark(self):
+    def gen_post_benchmark(self, script):
         netstat_out = self.output_file().with_suffix(".post")
-        self._script.gen_cmd("netstat", ["--libxo", "json", "-Q"], outfile=netstat_out)
+        script.gen_cmd("netstat", ["--libxo", "json", "-Q"], outfile=netstat_out)

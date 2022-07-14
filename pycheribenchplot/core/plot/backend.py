@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ..analysis import AnalysisConfig
+from ..config import AnalysisConfig
 from ..util import new_logger
 from .data_view import *
 
