@@ -47,7 +47,7 @@ class PipelineSession:
         session_path.mkdir()
         with open(session_path / SESSION_RUN_FILE, "w") as runfile:
             runfile.write(run_config.emit_json())
-        return PipelineSession(mgr, run_config)
+        return PipelineSession(mgr, run_config, session_path=session_path)
 
     @classmethod
     def is_session(cls, path: Path) -> bool:
@@ -75,15 +75,18 @@ class PipelineSession:
         assert cls.is_session(path)
 
         config = SessionRunConfig.load_json(path / SESSION_RUN_FILE)
-        return PipelineSession(mgr, config)
+        return PipelineSession(mgr, config, session_path=path)
 
-    def __init__(self, manager: "PipelineManager", config: SessionRunConfig):
+    def __init__(self, manager: "PipelineManager", config: SessionRunConfig, session_path: Path = None):
         super().__init__()
         self.manager = manager
         # Now resolve the configuration templates, before doing anything in the session
         self.config = self._resolve_config_template(config)
         self.logger = new_logger(f"session-{self.config.name}")
-        self.session_root_path = self.manager.user_config.session_path / self.config.name
+        if session_path is None:
+            self.session_root_path = self.manager.user_config.session_path / self.config.name
+        else:
+            self.session_root_path = session_path
         # Analysis step configuration, only set when running analysis
         self.analysis_config = None
         # Benchmark baseline instance group UUID
