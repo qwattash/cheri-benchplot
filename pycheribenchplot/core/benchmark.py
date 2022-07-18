@@ -170,6 +170,8 @@ class Benchmark:
         self._gen_hooks(script, "post_benchmark")
         for dset in post_generators:
             dset.gen_post_benchmark(script)
+        for dset in post_generators:
+            dset.gen_pre_extract_results(script)
 
         script_path = self.get_run_script_path()
         with open(script_path, "w+") as script_file:

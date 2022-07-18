@@ -619,6 +619,15 @@ class DataSetContainer(metaclass=DatasetRegistry):
         """
         self.logger.debug("Gen post-benchmark")
 
+    def gen_pre_extract_results(self, script: ShellScriptBuilder):
+        """
+        Generate runner script content after everything else, but before
+        the data files are extracted.
+
+        :param script: The shell script builder
+        """
+        self.logger.debug("Gen pre-extract")
+
     async def after_extract_results(self, script: ShellScriptBuilder, instance: InstanceInfo):
         """
         Give a chance to run commands on the live instance after the benchmark has
