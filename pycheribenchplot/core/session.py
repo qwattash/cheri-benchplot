@@ -30,7 +30,7 @@ class PipelineSession:
     to run and how.
     """
     @classmethod
-    def make_new(cls, mgr: "PipelineManager", name: str, config: PipelineConfig) -> "PipelineSession":
+    def make_new(cls, mgr: "PipelineManager", session_path: Path, config: PipelineConfig) -> "PipelineSession":
         """
         Create a new session and initialize the directory hierarchy
 
@@ -39,13 +39,12 @@ class PipelineSession:
         :param config: The session configuration
         :return: A new session instance
         """
-        session_path = mgr.user_config.session_path / name
         if session_path.exists():
             mgr.logger.error("Session directory already exists for session %s at %s", name, session_path)
             raise ValueError("New session path already exists")
-        session_path.mkdir()
         run_config = SessionRunConfig.generate(mgr, config)
         run_config.name = name
+        session_path.mkdir()
         with open(session_path / SESSION_RUN_FILE, "w") as runfile:
             runfile.write(run_config.emit_json())
         return PipelineSession(mgr, run_config)

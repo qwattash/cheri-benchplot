@@ -22,7 +22,7 @@ class PipelineManager:
         self.user_config = user_config
         self.logger = new_logger("manager")
 
-    def make_session(self, name: str, pipeline_config: PipelineConfig) -> uuid.UUID:
+    def make_session(self, name: Path, pipeline_config: PipelineConfig) -> uuid.UUID:
         """
         Create a new session. The pipeline configuration specifies the path.
 
@@ -43,29 +43,17 @@ class PipelineManager:
         self.logger.info("Remove session %s (%s)", session.name, session.uuid)
         shutil.rmtree(self.user_config.session_path / session.name)
 
-    def resolve_session(self, name=None, uuid=None) -> typing.Optional[PipelineSession]:
+    def resolve_session(self, path: Path) -> typing.Optional[PipelineSession]:
         """
         Find a matching session and load it. One of name or uuid must be given.
 
-        :param name: Name of the session
-        :param uuid: Session UUID
+        :param name: Name or path of the session
         """
+        self.logger.debug("Scanning %s for valid session", path)
         found = None
-        if name:
-            path = self.user_config.session_path / name
-            self.logger.debug("Scanning %s for valid session", path)
-            if path.exists() and PipelineSession.is_session(path):
-                found = PipelineSession.from_path(self, path)
-        elif uuid:
-            for dirname in self.user_config.session_path.iterdir():
-                path = self.user_config.session_path / dirname
-                self.logger.debug("Scanning %s for valid session", path)
-                if not PipelineSession.is_session(path):
-                    continue
-                session = PipelineSession.from_path(self, path)
-                if session.uuid == uuid:
-                    found = session
-                    break
+        if path.exists() and PipelineSession.is_session(path):
+            found = PipelineSession.from_path(self, path)
+
         if found:
             self.logger.debug("Resolved session %s => %s", path, found)
         else:

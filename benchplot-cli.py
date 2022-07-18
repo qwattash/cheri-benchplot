@@ -15,26 +15,16 @@ def add_session_spec_options(parser):
     """
     Helper to add options to identify a session
     """
-    session_spec = parser.add_mutually_exclusive_group(required=True)
-    session_spec.add_argument("--session-name", type=Path, help="Name of an existing session")
-    session_spec.add_argument("--session-id", type=uuid.UUID, help="Session identifier")
+    session_name = parser.add_argument("session_path", type=Path, help="Path or name of the target session")
 
 
 def resolve_session(args, manager, logger):
     """
     Helper to resolve a session depending on the argument passed
     """
-    if args.session_name:
-        session = manager.resolve_session(name=args.session_name)
-        session_spec = args.session_name
-    elif args.session_id:
-        session = manager.resolve_session(uuid=args.session_id)
-        session_spec = args.session_id
-    else:
-        logger.error("Invalid session specifier")
-        exit(1)
+    session = manager.resolve_session(args.session_path)
     if session is None:
-        logger.error("Session %s does not exist", session_spec)
+        logger.error("Session %s does not exist", args.session_path)
         exit(1)
     return session
 
@@ -48,8 +38,7 @@ def main():
     sub = parser.add_subparsers(help="command", dest="command")
 
     sub_session = sub.add_parser("session", help="create a new session from the given configuration")
-    sub_session.add_argument("session_name", type=str,
-                             help="New session name, used for the session directory and other user-facing output")
+    add_session_spec_options(sub_session)
     sub_session.add_argument("pipeline_config", type=Path, help="New analysis pipeline configuration file")
     sub_session.add_argument("-f", "--force", action="store_true", help="Force rebuild if existing")
 
@@ -97,14 +86,14 @@ def main():
 
         if args.command == "session":
             config = PipelineConfig.load_json(args.pipeline_config)
-            existing = manager.resolve_session(name=args.session_name)
+            existing = manager.resolve_session(args.session_path)
             if existing:
                 if args.force:
                     manager.delete_session(existing)
                 else:
-                    logger.error("Session %s already exists", args.session_name)
+                    logger.error("Session %s already exists", args.session_path)
                     exit(1)
-            manager.make_session(args.session_name, config)
+            manager.make_session(args.session_path, config)
         elif args.command == "run":
             session = resolve_session(args, manager, logger)
             manager.run_session(session)
