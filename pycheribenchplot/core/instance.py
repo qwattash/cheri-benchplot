@@ -519,7 +519,7 @@ class VCU118Instance(Instance):
         await aio.sleep(2)
 
     async def _shutdown(self):
-        if self._ssh_ctrl_conn.is_connected():
+        if self._ssh_ctrl_conn and self._ssh_ctrl_conn.is_connected():
             await self._run_cmd("poweroff")
             await self._ssh_ctrl_conn.disconnect()
             await self._run_task.wait()
