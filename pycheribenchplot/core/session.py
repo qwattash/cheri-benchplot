@@ -226,9 +226,8 @@ class PipelineSession:
             if not index.is_unique:
                 index = index.unique()
         else:
-            # If there is no parameterization, there should only be one benchmark run
-            assert len(self.config.configurations) == 1, "Inconsistent configuration"
-            index = pd.MultiIndex.from_tuples([(0, )], names=["index"])
+            # If there is no parameterization, just use a flat index
+            index = pd.Index(range(0, len(self.config.configurations)), name="index")
 
         # Second pass, fill the matrix
         bench_matrix = pd.DataFrame(index=index, columns=instances.keys())
@@ -250,7 +249,9 @@ class PipelineSession:
             raise Exception("Missing baseline")
         self.logger.debug("Benchmark baseline %s (%s)", instances[baseline], baseline)
         for i, row in bench_matrix.iterrows():
-            self.logger.debug("Benchmark matrix %s = %s", BenchParams(*i), row.values)
+            if isinstance(i, tuple):
+                i = BenchParams(*i)
+            self.logger.debug("Benchmark matrix %s = %s", i, row.values)
 
         self.benchmark_matrix = bench_matrix
         self.baseline_g_uuid = baseline
