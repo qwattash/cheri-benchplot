@@ -126,7 +126,7 @@ class ShellScriptBuilder:
 
     def local_to_remote_path(self, host_path: Path) -> Path:
         base_path = self.benchmark.get_benchmark_data_path()
-        assert host_path.is_absolute(), "Ensure host_path is absolute"
+        assert host_path.is_absolute(), f"Ensure host_path is absolute {host_path}"
         assert str(host_path).startswith(str(base_path)), "Ensure host_path is in benchmark output"
         return self._guest_output / host_path.relative_to(base_path)
 

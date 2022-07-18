@@ -664,9 +664,9 @@ class BenchplotUserConfig(Config):
 
     def __post_init__(self):
         super().__post_init__()
-        self.sdk_path = self.sdk_path.expanduser()
-        self.build_path = self.build_path.expanduser()
-        self.src_path = self.src_path.expanduser()
+        self.sdk_path = self.sdk_path.expanduser().absolute()
+        self.build_path = self.build_path.expanduser().absolute()
+        self.src_path = self.src_path.expanduser().absolute()
         self.cheribuild_path = self.src_path / "cheribuild"
         self.cheribsd_path = self.src_path / "cheribsd"
         self.qemu_path = self.src_path / "qemu"
@@ -674,6 +674,7 @@ class BenchplotUserConfig(Config):
         if self.openocd_path is None:
             self.openocd_path = shutil.which("openocd")
 
+        self.session_path = self.session_path.expanduser().absolute()
         if not self.session_path.is_dir():
             raise ValueError("Session path must be a directory")
 
