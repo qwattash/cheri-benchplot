@@ -167,7 +167,7 @@ class DataSetContainer(metaclass=DatasetRegistry):
     # Data class for the dataset-specific run options in the configuration file
     run_options_class = None
 
-    def __init__(self, benchmark: "Benchmarkbase", config: "BenchmarkDataSetConfig"):
+    def __init__(self, benchmark: "Benchmark", config: "BenchmarkDataSetConfig"):
         """
         Arguments:
         benchmark: the benchmark instance this dataset belongs to
@@ -674,7 +674,7 @@ class DataSetContainer(metaclass=DatasetRegistry):
         Note that the merged dataset will be associated with the baseline run, so the
         benchmark.uuid on the merge and post-merge operations will refer to the baseline implicitly.
         """
-        self.logger.debug("Merge")
+        self.logger.debug("Merge %s", other)
         assert self.merged_df is not None, "forgot to call init_merge()?"
         self.merged_df = pd.concat([self.merged_df, other.df])
 

@@ -229,8 +229,9 @@ class PipelineSession:
             if not index.is_unique:
                 index = index.unique()
         else:
-            # If there is no parameterization, just use a flat index
-            index = pd.Index(range(0, len(self.config.configurations)), name="index")
+            # If there is no parameterization, just use a flat index, there will be only
+            # one row in the benchmark matrix.
+            index = pd.Index([0], name="index")
 
         # Second pass, fill the matrix
         bench_matrix = pd.DataFrame(index=index, columns=instances.keys())
@@ -249,12 +250,15 @@ class PipelineSession:
         assert not bench_matrix.isna().any().any(), "Incomplete benchmark matrix"
         if not baseline:
             self.logger.error("Missing baseline instance")
-            raise Exception("Missing baseline")
+            raise RuntimeError("Missing baseline")
         self.logger.debug("Benchmark baseline %s (%s)", instances[baseline], baseline)
         for i, row in bench_matrix.iterrows():
             if isinstance(i, tuple):
                 i = BenchParams(*i)
             self.logger.debug("Benchmark matrix %s = %s", i, row.values)
+        if bench_matrix.shape[0] * bench_matrix.shape[1] != len(self.config.configurations):
+            self.logger.error("Malformed benchmark matrix")
+            raise RuntimeError("Malformed benchmark matrix")
 
         self.benchmark_matrix = bench_matrix
         self.baseline_g_uuid = baseline

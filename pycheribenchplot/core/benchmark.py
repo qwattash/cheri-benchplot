@@ -82,7 +82,7 @@ class Benchmark:
         # XXX we should mark these somehow, to avoid confusion
         modules[self.config.benchmark.handler] = self._find_dataset_module(self.config.benchmark)
         # Implicit auxiliary datasets
-        modules[DatasetArtefact.PIDMAP] = self._find_dataset_module(DatasetConfig(handler=DatasetName.PIDMAP))
+        modules[DatasetName.PIDMAP] = self._find_dataset_module(DatasetConfig(handler=DatasetName.PIDMAP))
         # Extra datasets configured
         for aux_config in self.config.aux_dataset_handlers:
             assert aux_config.handler not in modules, "Duplicate AUX dataset handler"
@@ -330,7 +330,8 @@ class Benchmark:
         assert pidmap is not None
         cmd = pidmap.df[pidmap.df["pid"] == pid]
         if len(cmd) > 1:
-            self.logger.warning("Multiple commands for pid %d, can not register binary", pid)
+            # XXX PID reuse is not supported yet
+            self.logger.warning("Multiple commands for pid %d (%s), PID reuse not yet supported", pid, cmd)
             return
         elif len(cmd) == 0:
             self.logger.warning("No commands for pid %d, can not register binary", pid)
@@ -393,7 +394,7 @@ class Benchmark:
         self._load_kernel_symbols()
         # Always load the pidmap dataset first
         self.logger.info("Loading pidmap data")
-        self._dataset_modules[DatasetArtefact.PIDMAP].load()
+        self._dataset_modules[DatasetName.PIDMAP].load()
         for dset in self._dataset_modules.values():
             if dset.dataset_source_id == DatasetArtefact.PIDMAP:
                 # We loaded it before

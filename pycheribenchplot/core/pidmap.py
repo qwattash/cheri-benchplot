@@ -53,6 +53,9 @@ class PidMapDataset(JSONDataSetContainer):
     def load(self):
         df = self._load_json(self.output_file())
         df["dataset_id"] = self.benchmark.uuid
+        # Drop duplicate (pid, command) pairs, under the assumption that the same process will be mapped
+        # in the same way upon multiple runs.
+        df = df.drop_duplicates(subset=["pid", "command"], keep="first")
         self._append_df(df)
 
     def load_from_kdump(self, kdump_fd):
