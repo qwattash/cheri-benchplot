@@ -22,6 +22,10 @@ class SymInfo:
     size: int
     addr: int
 
+    @classmethod
+    def unknown(cls, addr):
+        return SymInfo(name=f"0x{addr:x}", filepath=None, size=0, addr=addr)
+
 
 class SymbolizerMapping:
     """
@@ -149,6 +153,9 @@ class Symbolizer:
             shared_addrspace.add_sym_source(mapbase, path)
         addrspace = self._get_or_create_addrspace(as_key)
         addrspace.add_sym_source(mapbase, path)
+
+    def add_sym_source_alias(self, as_key: str, alias: str):
+        self.addrspace[alias] = self.addrspace[as_key]
 
     def _lookup_fn_shared(self, addr):
         addrspace = self.addrspace.get(None, None)

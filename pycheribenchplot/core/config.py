@@ -342,6 +342,7 @@ class DatasetName(Enum):
     in the configuration file.
     """
     PMC = "pmc"
+    PMC_PROFCLOCK_STACKSAMPLE = "pmc-profclock-stack"
     NETPERF_DATA = "netperf-data"
     PROCSTAT_NETPERF = "procstat-netperf"
     QEMU_STATS_BB_HIT = "qemu-stats-bb-hit"
@@ -371,6 +372,7 @@ class DatasetArtefact(Enum):
     """
     NETPERF = auto()
     PMC = auto()
+    PMC_PROFCLOCK_STACKSAMPLE = auto()
     VMSTAT = auto()
     UMA_ZONE_INFO = auto()
     PROCSTAT = auto()

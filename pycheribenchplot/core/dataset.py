@@ -1,5 +1,5 @@
 import typing
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import IntEnum
@@ -729,6 +729,17 @@ def dataframe_debug():
     """Helper context manager to print whole dataframes"""
     with pd.option_context('display.max_rows', None, 'display.max_columns', None):
         yield
+
+
+def make_index_key(df: pd.DataFrame) -> namedtuple:
+    """
+    Given a dataframe, generate a namedtuple to easily access index tuples without
+    resorting to having to lookup the index level index in the dataframe names.
+    Note: this is only as stable as your index, if you change the index level order,
+    the tuple will not match correctly.
+    """
+    IndexKey = namedtuple("IndexKey", df.index.names)
+    return IndexKey
 
 
 def check_multi_index_aligned(df: pd.DataFrame, level: typing.List[str]):

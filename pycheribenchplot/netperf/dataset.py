@@ -216,6 +216,12 @@ class NetperfData(CSVDataSetContainer):
             return True
         return False
 
+    @property
+    def has_pmc_profclock(self):
+        if self.benchmark.get_dataset(DatasetName.PMC_PROFCLOCK_STACKSAMPLE) is not None:
+            return True
+        return False
+
     def _load_csv(self, path: Path, **kwargs):
         kwargs["skiprows"] = 1
         return super()._load_csv(path, **kwargs)
@@ -265,6 +271,10 @@ class NetperfData(CSVDataSetContainer):
 
     def configure(self, opts):
         opts = super().configure(opts)
+        if self.has_pmc and self.has_pmc_profclock:
+            self.logger.error("PMC and PMC_PROFCLOCK_STACKSAMPLE can not be used at the same time")
+            raise ValueError("Configuration error")
+
         # Resolve binaries here as the configuration is stable at this point
         rootfs_netperf_base = self.benchmark.cheribsd_rootfs_path / self.config.netperf_path
         rootfs_netperf_bin = rootfs_netperf_base / "netperf"
@@ -277,6 +287,8 @@ class NetperfData(CSVDataSetContainer):
             self._set_netperf_option("-g", "all")
         elif self.has_qemu:
             self._set_netperf_option("-g", "qemu")
+        elif self.has_pmc_profclock:
+            self._set_netperf_option("-g", "profclock")
         return opts
 
     def configure_iteration(self, script, iteration):
@@ -286,6 +298,11 @@ class NetperfData(CSVDataSetContainer):
             pmc_output = pmc.iteration_output_file(iteration)
             pmc_remote_output = script.local_to_remote_path(pmc_output)
             self._set_netperf_option("-G", pmc_remote_output, replace=True)
+        if self.has_pmc_profclock:
+            pmc = self.benchmark.get_dataset(DatasetName.PMC_PROFCLOCK_STACKSAMPLE)
+            pmc_output = pmc.iteration_output_guestfile(iteration)
+            pmc_output_path = script.local_to_remote_path(pmc_output)
+            self._set_netperf_option("-G", pmc_output_path, replace=True)
 
     def gen_pre_benchmark(self, script):
         super().gen_pre_benchmark(script)

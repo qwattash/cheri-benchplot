@@ -1,10 +1,13 @@
+import json
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 from ..core.csv import CSVDataSetContainer
-from ..core.dataset import DatasetArtefact, DatasetName, Field
+from ..core.dataset import (DatasetArtefact, DatasetName, Field, align_multi_index_levels, make_index_key)
+from ..core.elf import SymInfo
+from ..core.json import JSONDataSetContainer
 
 
 class PMCStatData(CSVDataSetContainer):
@@ -20,10 +23,6 @@ class PMCStatData(CSVDataSetContainer):
         # self._gen_extra_index = lambda df: self.benchmark.pmc_map_index(df)
         # extra = self._gen_extra_index(pd.DataFrame(columns=["progname", "archname"]))
         # self._extra_index = list(extra.columns)
-
-    def process(self):
-        self._gen_composite_metrics()
-        self._gen_stats()
 
     def add_aggregate_col(self, new_df: pd.DataFrame, prefix: str):
         new_df = new_df.add_prefix(prefix + "_")
@@ -50,9 +49,9 @@ class PMCStatData(CSVDataSetContainer):
         self._append_df(csv_df)
 
 
-class FluteStatcountersData(PMCStatData):
+class TooobaStatcountersData(PMCStatData):
     """
-    Statcounters description and processing for CHERI Flute/Toooba (RISC-V)
+    Statcounters description and processing for CHERI Toooba (RISC-V)
     """
     dataset_config_name = DatasetName.PMC
     dataset_source_id = DatasetArtefact.PMC
@@ -206,3 +205,147 @@ class FluteStatcountersData(PMCStatData):
 
     def iteration_output_file(self, iteration):
         return super().iteration_output_file(iteration).with_suffix(".csv")
+
+
+class StackTrace:
+    """
+    Helper class to contain stacktraces in the dataframe index.
+    """
+    def __init__(self, stacktrace: list[int], syminfo: list[SymInfo]):
+        self.addr = tuple(stacktrace)
+        self.syms = syminfo
+        self.key = ";".join([si.name for si in syminfo])
+
+    def __str__(self):
+        return self.key
+
+    def __repr__(self):
+        return self.key
+
+    def __eq__(self, other):
+        return self.key == other.key
+
+    def __lt__(self, other):
+        return self.key < other.key
+
+    def __hash__(self):
+        return hash(self.key)
+
+
+class ProfclockStackSamples(JSONDataSetContainer):
+    """
+    Handle libpmc/pmcstat output for profclock-based system sampling.
+
+    When running, we expect the main benchmark to produce a file with pmcstat
+    compatible contents. We invoke pmcstat to dump the data as json and later
+    process it on the host machine.
+
+    # XXX In order to make structured observations about callchains we build an interal representation
+    # containing a tree for each iteration. We then combine the trees across iterations in the aggregation
+    # phase and later to produce deltas.
+    """
+    dataset_config_name = DatasetName.PMC_PROFCLOCK_STACKSAMPLE
+    dataset_source_id = DatasetArtefact.PMC_PROFCLOCK_STACKSAMPLE
+    fields = [
+        Field.index_field("seq", desc="Callchain sample sequence ID", dtype=int),
+        Field.index_field("cpu", dtype=int),
+        Field.index_field("pid", dtype=int),
+        Field.index_field("mode", dtype=str),
+        Field("stacktrace", dtype=object),
+        Field.index_field("st", isderived=True, dtype=StackTrace),
+        Field.derived_field("nsamples", dtype=int),
+    ]
+
+    def _build_stacktrace(self, idx: "namedtuple", row: pd.Series) -> StackTrace:
+        stacktrace = map(lambda addr: int(addr, base=16), row["stacktrace"])
+        if idx.mode == "s":
+            resolver = self.benchmark.sym_resolver
+
+            annotated = [resolver.lookup_fn(addr, as_key="kernel.full") or SymInfo.unknown(addr) for addr in stacktrace]
+        else:
+            annotated = [SymInfo.unknown(addr) for addr in stacktrace]
+        return StackTrace(row["stacktrace"], annotated)
+
+    def _resolve_pids(self):
+        """
+        Resolve PIDs to process names. In case of failure, use the pid as a string.
+        """
+        pidmap = self.benchmark.get_dataset_by_artefact(DatasetArtefact.PIDMAP)
+        assert pidmap is not None, "The pidmap dataset is required for pmc sampling"
+        join_df = self.df.merge(pidmap.df, how="left", left_on="pid", right_on="pid")
+        self.df["process"] = join_df["command"]
+
+    def _delta_align_levels(self):
+        """
+        Return the levels that need to be aligned across all datasets before computing deltas.
+        """
+        return ["pid", "mode", "st"]
+
+    def iteration_output_guestfile(self, iteration):
+        return super().iteration_output_file(iteration).with_suffix(".pmc")
+
+    def iteration_output_file(self, iteration):
+        return super().iteration_output_file(iteration).with_suffix(".json")
+
+    def gen_pre_extract_results(self, script):
+        super().gen_pre_extract_results(script)
+        # Expect the benchmark to have generated the output guestfiles
+        # for each iteration. We now dump them with pmcstat to the "real"
+        # json output file
+        for i in range(self.benchmark.config.iterations):
+            pmc_output_path = self.iteration_output_guestfile(i)
+            pmc_json_path = self.iteration_output_file(i)
+            guest_pmc_output = script.local_to_remote_path(pmc_output_path)
+            guest_json_output = script.local_to_remote_path(pmc_json_path)
+            script.gen_cmd("pmcstat", ["--libxo", "json", "-R", guest_pmc_output, "-o", guest_json_output])
+
+    async def after_extract_results(self, script, instance):
+        await super().after_extract_results(script, instance)
+        # Extract the profclock output files
+        for i in range(self.benchmark.config.iterations):
+            output_path = self.iteration_output_file(i)
+            guest_json_path = script.local_to_remote_path(output_path)
+            self.logger.debug("Extract %s -> %s", guest_json_path, output_path)
+            await instance.extract_file(guest_json_path, output_path)
+
+    def load_iteration(self, iteration):
+        super().load_iteration(iteration)
+        path = self.iteration_output_file(iteration)
+        with open(path, "r") as fd:
+            data = json.load(fd, strict=False)
+        pmc_data = data["pmcstat"]["pmc-log-entry"]
+        json_df = pd.DataFrame.from_records(pmc_data)
+        json_df["iteration"] = iteration
+        # Filter by type, we are only interested in callchain events
+        # We may separately process the others to help with PID/process mapping
+        callchain_df = json_df[json_df["type"] == "callchain"].reset_index()
+        callchain_df["seq"] = callchain_df.index
+        self._append_df(callchain_df)
+
+    def pre_merge(self):
+        super().pre_merge()
+        IndexKey = make_index_key(self.df)
+        # Resolve PID mappings
+        self._resolve_pids()
+        # Annotate callchains
+        self.df["st"] = self.df.apply(lambda row: self._build_stacktrace(IndexKey(*row.name), row), axis="columns")
+        self.df.set_index("st", append=True, inplace=True)
+        # XXX could now drop the "stacktrace field if we care about its size"
+
+        # Aggregate within each iteration to determine the number of samples for each callchain
+        self.df = self.df.groupby(self.df.index.names.difference(["seq"])).count()
+        self.df = self.df.rename(columns={"stacktrace": "nsamples"})
+
+    def aggregate(self):
+        super().aggregate()
+        # Aggregate across iterations to sum common callchains
+        grouped = self.merged_df.groupby(self.merged_df.index.names.difference(["iteration", "cpu"]))
+        self.agg_df = self._compute_aggregations(grouped)
+
+    def post_aggregate(self):
+        super().post_aggregate()
+        print(self.agg_df.index.names)
+        align_levels = self._delta_align_levels()
+        tmp_df = align_multi_index_levels(self.agg_df, align_levels, fill_value=0)
+        tmp_df = self._add_delta_columns(tmp_df)
+        self.agg_df = self._compute_delta_by_dataset(tmp_df)
