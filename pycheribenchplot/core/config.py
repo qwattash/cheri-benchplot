@@ -359,6 +359,9 @@ class DatasetName(Enum):
     KERNEL_STRUCT_STATS = "kernel-struct-stats"
     KERNEL_STRUCT_MEMBER_STATS = "kernel-struct-member-stats"
 
+    # Test only name
+    TEST_FAKE = "test-fake"
+
     def __str__(self):
         return self.value
 
@@ -384,6 +387,9 @@ class DatasetArtefact(Enum):
     NETSTAT = auto()
     KERNEL_CSETBOUNDS_STATS = auto()
     KERNEL_STRUCT_STATS = auto()
+
+    # Test only ID
+    TEST_FAKE = auto()
 
     def __str__(self):
         return self.name
@@ -650,7 +656,10 @@ class BenchplotUserConfig(Config):
     perfetto_path: Path = path_field("~/cheri/cheri-perfetto/build")
 
     #: Path to openocd, will be inferred if missing (only relevant when running FPGA)
-    openocd_path: typing.Optional[Path] = None
+    openocd_path: typing.Optional[Path] = path_field("/usr/bin/openocd")
+
+    #: Path to flamegraph.pl flamegraph generator
+    flamegraph_path: typing.Optional[Path] = path_field("flamegraph.pl")
 
     #: Path to cheribuild, inferred from :attr:`src_path` if missing
     cheribuild_path: Path = field(init=False, default=None)

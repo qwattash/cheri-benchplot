@@ -200,6 +200,34 @@ class PMCDeltaOverviewPlot(BenchmarkPlot):
         return m
 
 
+# class PMCStacksSimple(BenchmarkSubplot):
+#     """
+#     Simple subplot showing high deltas in hierarchical stack samples.
+#     To do this, we extract the highest
+#     """
+#     def __init__(self, plot):
+#         super().__init__(plot)
+#         self.ds = self.get_dataset(DatasetName.PMC_PROFCLOCK_STACKSAMPLE)
+
+#     def generate(self, fm, cell):
+#         # XXX hack a new figure for use with plotly
+#         # import plotly.graph_object as go
+#         # import plogly.io as pio
+#         # fig = go.Figure()
+#         flame = FlameGraph(self.ds.agg_callchain, "test", "test")
+#         flame.gen(fig)
+#         pio.write_image(fig, self.plot.get_plot_file().with_name("pmc-stacks-overview-plotly").with_suffix(".pdf"), "pdf")
+
+# class PMCStacksPlot(BenchmarkPlot):
+#     """
+#     Overview of extracted stack samples from hwpmc.
+#     """
+#     require = {DatasetName.PMC_PROFCLOCK_STACKSAMPLE}
+#     name = "pmc-stacks-overview"
+#     description = "Overview of stack sample hits delta"
+#     subplots = [PMCStacksSimple]
+
+
 class PMCParamScalingPlot(BenchmarkSubPlot):
     """
     Generate line plot to show PMC variation along a parameterisation axis.

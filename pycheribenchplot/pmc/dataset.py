@@ -1,13 +1,19 @@
 import json
+import typing
+from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 
+import networkx as nx
 import numpy as np
 import pandas as pd
 
 from ..core.csv import CSVDataSetContainer
-from ..core.dataset import (DatasetArtefact, DatasetName, Field, align_multi_index_levels, make_index_key)
-from ..core.elf import SymInfo
+from ..core.dataset import (DatasetArtefact, DatasetName, Field, align_multi_index_levels, generalized_xs,
+                            make_index_key)
+from ..core.elf import Symbolizer, SymInfo
 from ..core.json import JSONDataSetContainer
+from ..core.util import timing
 
 
 class PMCStatData(CSVDataSetContainer):
@@ -207,29 +213,205 @@ class TooobaStatcountersData(PMCStatData):
         return super().iteration_output_file(iteration).with_suffix(".csv")
 
 
-class StackTrace:
-    """
-    Helper class to contain stacktraces in the dataframe index.
-    """
-    def __init__(self, stacktrace: list[int], syminfo: list[SymInfo]):
-        self.addr = tuple(stacktrace)
-        self.syms = syminfo
-        self.key = ";".join([si.name for si in syminfo])
-
-    def __str__(self):
-        return self.key
-
-    def __repr__(self):
-        return self.key
-
-    def __eq__(self, other):
-        return self.key == other.key
-
-    def __lt__(self, other):
-        return self.key < other.key
+class CallChainItem:
+    def __init__(self, node_id: int, addr: int, sym: SymInfo, df: pd.DataFrame):
+        self.node_id = node_id
+        # Address
+        self.addr = addr
+        # Pandas DataFrame containing samples.
+        # The shape depends on the aggregation steps performed on the tree,
+        # initially a single value Series will be present
+        self.df = df
+        # Symbol information
+        self.sym = sym
 
     def __hash__(self):
-        return hash(self.key)
+        return hash(self.node_id)
+
+    def __str__(self):
+        return f"[id:{self.node_id} {self.sym.name}@{self.addr:x}]"
+
+    def __repr__(self):
+        return str(self)
+
+
+CallTreeType = typing.TypeVar("CallTree", bound="CallTree")
+
+
+class CallTree:
+    """
+    Helper class to build and maintain the datastructure for stack samples
+    """
+    def __init__(self, df_factory: typing.Callable):
+        """
+        :param df_factory: Builder for the inner dataframe
+        :param levels: Index levels associated to call chain items
+        :param keys: Index keys for the current call tree
+        """
+        self.ct = nx.DiGraph()
+        self.df_factory = df_factory
+        self.root = self._make_node(-1, SymInfo.unknown(-1))
+        self.ct.add_node(self.root)
+
+    def _make_node(self, addr, sym):
+        node = CallChainItem(len(self.ct), addr, sym, self.df_factory())
+        return node
+
+    def _combine_subtree(self, target: CallTreeType, to_merge: CallTreeType, node: CallChainItem,
+                         node_to_merge: CallChainItem):
+        """
+        Combine step for two subtrees, this is designed to be a recursive combine operation.
+        Tree depth should be in the order of 10s, as the callchain depth is no much larger.
+        Very naive and slow implementation.
+        """
+        node.df.loc[node_to_merge.df.index, :] = node_to_merge.df
+        for succ in to_merge.ct.successors(node_to_merge):
+            for matching in target.ct.successors(node):
+                if succ.sym.name == matching.sym.name:
+                    break
+            else:
+                # The root will contain all the indexes that we will see
+                # Every node will be readded when combining and go through this path
+                matching = target._make_node(succ.addr, succ.sym)
+                target.ct.add_node(matching)
+                target.ct.add_edge(node, matching)
+            matching.df.loc[succ.df.index, :] = succ.df
+            self._combine_subtree(target, to_merge, matching, succ)
+
+    def _map_subtree(self, target: CallTreeType | None, node: CallChainItem | None, local_node: CallChainItem,
+                     fn: typing.Callable):
+        """
+        Apply function to the inner frame of the successors of local_node and store the result in
+        the corresponding node successors. local_node is assumed to belong to the current tree.
+
+        :param target: The target calltree where to generate nodes for the results, if None the results are replaced in place
+        :param node: The current node in the target calltree we are inspecting, it is ignored if target is None
+        :param local_node: The current node in the local calltree we are inspecting
+        :param fn: The function to apply
+        """
+        if target is None:
+            fn(local_node, local_node)
+        else:
+            fn(node, local_node)
+
+        for succ in self.ct.successors(local_node):
+            if target is None:
+                mapped_node = succ
+            else:
+                mapped_node = target._make_node(succ.addr, succ.sym)
+                target.ct.add_node(mapped_node)
+                target.ct.add_edge(node, mapped_node)
+            self._map_subtree(target, mapped_node, succ, fn)
+
+    def _visit_subtree(self, node: CallChainItem, fn: typing.Callable, level: int = 0, parent: CallChainItem = None):
+        fn(node, level, parent)
+        for succ in self.ct.successors(node):
+            self._visit_subtree(succ, fn, level + 1, node)
+
+    def _insert_subtree(self, node: CallChainItem, cc: list[str | int], symbolizer_fn, insert_fn):
+        """
+        Recursive implementation for insert_callchain()
+        """
+        addr = cc.pop()
+        if isinstance(addr, str):
+            addr = int(addr, 16)
+        # Resolve the symbol
+        sym = symbolizer_fn(addr) or SymInfo.unknown(addr)
+        # Find out whether we need to add a node
+        for succ in self.ct.successors(node):
+            if succ.sym.name == sym.name:
+                # Continue down the path
+                break
+        else:
+            succ = self._make_node(addr, sym)
+            self.ct.add_node(succ)
+            self.ct.add_edge(node, succ)
+        assert succ is not None
+        insert_fn(succ, isleaf=(len(cc) == 0))
+        if cc:
+            self._insert_subtree(succ, cc, symbolizer_fn, insert_fn)
+
+    @property
+    def index(self):
+        """
+        Return the current index for all inner dataframes.
+        Note that the index is kept aligned, so the root node will contain the same index as the other nodes
+        """
+        return self.root.df.index
+
+    @property
+    def columns(self):
+        """
+        Return the current column index for all inner dataframes.
+        Note that the index is kept aligned, so the root node will contain the same columns as the other nodes
+        """
+        return self.root.df.columns
+
+    def insert_callchain(self, cc: list[str | int], symbolizer_fn: typing.Callable[[int], SymInfo],
+                         insert_fn: typing.Callable[[pd.DataFrame], None]):
+        """
+        Add a callchain sample to the tree.
+
+        For each node on the callchain, the insert_fn is called on the node dataframe.
+        """
+        if cc:
+            insert_fn(self.root)
+        self._insert_subtree(self.root, cc, symbolizer_fn, insert_fn)
+
+    def combine(self, to_merge: list[CallTreeType]) -> CallTreeType:
+        """
+        Combine calltrees and store data needed to show median and quartiles
+        of the samples for each node. Missing nodes will be assumed to have 0-filled frames.
+
+        :param to_merge: Input calltree collection. Note that the index levels must
+        be the same as the current calltree.
+        """
+        union_index = self.index
+        for ct in to_merge:
+            assert ct.index.names == union_index.names, f"Invalid index levels {ct.index.names} != {union_index.names}"
+            union_index = union_index.union(ct.index)
+
+        # First we create a new empty calltree for the union
+        # Take care to retain the indexes correctly
+        def df_factory():
+            return pd.DataFrame(0, index=union_index, columns=self.columns)
+
+        union_ct = CallTree(df_factory)
+
+        # Now generate the tree union using the current tree and the others
+        for ct in [self] + to_merge:
+            self._combine_subtree(union_ct, ct, union_ct.root, ct.root)
+        return union_ct
+
+    def map(self, fn: typing.Callable, inplace=False) -> CallTreeType:
+        """
+        Execute an aggregation or transformation function on each internal frame.
+        This cam be used to compute deltas and error bars.
+        """
+        if inplace:
+            mapped_ct = None
+            mapped_root = None
+        else:
+            mapped_ct = CallTree(self.df_factory)
+            mapped_root = mapped_ct.root
+
+        # Now populate the new tree
+        def mapper(dst_node, src_node):
+            dst_node.df = fn(src_node.df)
+
+        self._map_subtree(mapped_ct, mapped_root, self.root, mapper)
+        if inplace:
+            return self
+        else:
+            return mapped_ct
+
+    def visit(self, fn: typing.Callable[[CallChainItem, int, CallChainItem], None]):
+        """
+        Execute a function on each node, giving the current layer index and parent.
+
+        :param fn: Callable invoked on each visit as fn(node, layer_index, parent)
+        """
+        self._visit_subtree(self.root, fn)
 
 
 class ProfclockStackSamples(JSONDataSetContainer):
@@ -252,19 +434,17 @@ class ProfclockStackSamples(JSONDataSetContainer):
         Field.index_field("pid", dtype=int),
         Field.index_field("mode", dtype=str),
         Field("stacktrace", dtype=object),
-        Field.index_field("st", isderived=True, dtype=StackTrace),
         Field.derived_field("nsamples", dtype=int),
     ]
 
-    def _build_stacktrace(self, idx: "namedtuple", row: pd.Series) -> StackTrace:
-        stacktrace = map(lambda addr: int(addr, base=16), row["stacktrace"])
-        if idx.mode == "s":
-            resolver = self.benchmark.sym_resolver
-
-            annotated = [resolver.lookup_fn(addr, as_key="kernel.full") or SymInfo.unknown(addr) for addr in stacktrace]
-        else:
-            annotated = [SymInfo.unknown(addr) for addr in stacktrace]
-        return StackTrace(row["stacktrace"], annotated)
+    def __init__(self, benchmark, config):
+        super().__init__(benchmark, config)
+        # Callchain for this benchmark, containing the union of the data for each iteration (mirror df)
+        self.callchain = None
+        # Merged callchains (mirror merged_df)
+        self.merged_callchain = None
+        # Aggregated callchain (mirror agg_df)
+        self.agg_callchain = None
 
     def _resolve_pids(self):
         """
@@ -274,12 +454,6 @@ class ProfclockStackSamples(JSONDataSetContainer):
         assert pidmap is not None, "The pidmap dataset is required for pmc sampling"
         join_df = self.df.merge(pidmap.df, how="left", left_on="pid", right_on="pid")
         self.df["process"] = join_df["command"]
-
-    def _delta_align_levels(self):
-        """
-        Return the levels that need to be aligned across all datasets before computing deltas.
-        """
-        return ["pid", "mode", "st"]
 
     def iteration_output_guestfile(self, iteration):
         return super().iteration_output_file(iteration).with_suffix(".pmc")
@@ -324,28 +498,77 @@ class ProfclockStackSamples(JSONDataSetContainer):
 
     def pre_merge(self):
         super().pre_merge()
-        IndexKey = make_index_key(self.df)
         # Resolve PID mappings
         self._resolve_pids()
-        # Annotate callchains
-        self.df["st"] = self.df.apply(lambda row: self._build_stacktrace(IndexKey(*row.name), row), axis="columns")
-        self.df.set_index("st", append=True, inplace=True)
-        # XXX could now drop the "stacktrace field if we care about its size"
 
-        # Aggregate within each iteration to determine the number of samples for each callchain
-        self.df = self.df.groupby(self.df.index.names.difference(["seq"])).count()
-        self.df = self.df.rename(columns={"stacktrace": "nsamples"})
+        tree_index_columns = self.dataset_id_columns() + ["iteration"]
+
+        def tree_df_factory():
+            index_frame = self.df.index.to_frame()[tree_index_columns].drop_duplicates()
+            df = pd.DataFrame(0, index=pd.MultiIndex.from_frame(index_frame), columns=["nsamples"])
+            df.columns.name = "metric"
+            return df
+
+        ct = CallTree(tree_df_factory)
+
+        IndexKey = make_index_key(self.df)
+        with timing("Add callchains", logger=self.logger):
+            for name, row in self.df.iterrows():
+                ik = IndexKey(*name)
+                if ik.mode == "s":
+                    as_key = "kernel.full"
+                else:
+                    # Find user PID
+                    as_key = None
+                # get ik fields in the correct order (just to be sure)
+                tree_sample_key = tuple(getattr(ik, level) for level in tree_index_columns)
+
+                def tree_insert_cc(node, isleaf=False, **kwargs):
+                    if isleaf:
+                        try:
+                            node.df.loc[tree_sample_key, "nsamples"] += 1
+                        except KeyError:
+                            node.df.loc[tree_sample_key, "nsamples"] = 1
+                    else:
+                        try:
+                            node.df.loc[tree_sample_key, "allsamples"] += 1
+                        except KeyError:
+                            node.df.loc[tree_sample_key, "allsamples"] = 1
+
+                ct.insert_callchain(row["stacktrace"],
+                                    lambda addr: self.benchmark.sym_resolver.lookup_fn(addr, as_key=as_key),
+                                    tree_insert_cc)
+        self.callchain = ct
+
+    def merge(self, other):
+        super().merge(other)
+        # Generate the merged callchain with all the data from all iterations of other benchmarks
+        with timing("Combine merge callchains", logger=self.logger):
+            self.merged_callchain = self.callchain.combine([other.callchain])
 
     def aggregate(self):
         super().aggregate()
-        # Aggregate across iterations to sum common callchains
-        grouped = self.merged_df.groupby(self.merged_df.index.names.difference(["iteration", "cpu"]))
-        self.agg_df = self._compute_aggregations(grouped)
+
+        def aggregator(df):
+            # Compute median and quartiles for each inner dataframe in the merged callchain
+            # across iterations. For now ignore pids and aggregate everything.
+            # We can use the standard aggregator helper as the frame should mirror the df
+            # shape.
+            grouped = df.groupby(self.dataset_id_columns())
+            agg_df = self._compute_aggregations(grouped)
+            return agg_df
+
+        with timing("Agg callchains", logger=self.logger):
+            self.agg_callchain = self.merged_callchain.map(aggregator)
 
     def post_aggregate(self):
         super().post_aggregate()
-        print(self.agg_df.index.names)
-        align_levels = self._delta_align_levels()
-        tmp_df = align_multi_index_levels(self.agg_df, align_levels, fill_value=0)
-        tmp_df = self._add_delta_columns(tmp_df)
-        self.agg_df = self._compute_delta_by_dataset(tmp_df)
+
+        def calc_delta(df):
+            # Compute delta w.r.t baseline
+            # We can use the standard delta helpers as the frame should mirror the df shape
+            delta_df = self._add_delta_columns(df)
+            delta_df = self._compute_delta_by_dataset(delta_df)
+            return delta_df
+
+        self.agg_callchain.map(calc_delta, inplace=True)
