@@ -41,7 +41,7 @@ class PipelineManager:
         :param session: A session instance
         """
         self.logger.info("Remove session %s (%s)", session.name, session.uuid)
-        shutil.rmtree(self.user_config.session_path / session.name)
+        shutil.rmtree(session.session_root_path)
 
     def resolve_session(self, path: Path) -> typing.Optional[PipelineSession]:
         """
