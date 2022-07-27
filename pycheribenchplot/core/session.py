@@ -35,12 +35,12 @@ class PipelineSession:
         Create a new session and initialize the directory hierarchy
 
         :param mgr: The parent pipeline manager
-        :param name: The name of the new session
+        :param session_path: The session_path of the new session
         :param config: The session configuration
         :return: A new session instance
         """
         if session_path.exists():
-            mgr.logger.error("Session directory already exists for session %s at %s", name, session_path)
+            mgr.logger.error("Session directory already exists for session %s", session_path)
             raise ValueError("New session path already exists")
         run_config = SessionRunConfig.generate(mgr, config)
         run_config.name = name

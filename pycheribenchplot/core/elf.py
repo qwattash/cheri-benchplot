@@ -120,7 +120,7 @@ class Symbolizer:
     by a custom string (generally the name of the process owning the address space).
     Shared address spaces are used to match all symbols.
     """
-    def __init__(self, benchmark: "BenchmarkBase"):
+    def __init__(self, benchmark: "Benchmark"):
         self.logger = new_logger(f"{benchmark.uuid}.symbolizer")
         self.addrspace = {}
 
