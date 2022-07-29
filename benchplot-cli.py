@@ -4,7 +4,7 @@ import logging
 import argparse as ap
 import traceback
 import uuid
-
+from json.decoder import JSONDecodeError
 from pathlib import Path
 
 from pycheribenchplot.core.config import PipelineConfig, BenchplotUserConfig, AnalysisConfig
@@ -72,8 +72,8 @@ def main():
         else:
             logger.debug("Missing user config, using defaults")
         user_config.verbose = args.verbose
-    except Exception as ex:
-        logger.error("Malformed user configuration: %s", ex)
+    except JSONDecodeError as ex:
+        logger.error("Malformed user configuration %s: %s", args.config, ex)
         if args.verbose:
             traceback.print_exception(ex)
             exit(1)
@@ -85,7 +85,11 @@ def main():
         manager = PipelineManager(user_config)
 
         if args.command == "session":
-            config = PipelineConfig.load_json(args.pipeline_config)
+            try:
+                config = PipelineConfig.load_json(args.pipeline_config)
+            except JSONDecodeError as ex:
+                logger.error("Malformed pipeline configuration %s: %s", args.pipeline_config, ex)
+                raise
             existing = manager.resolve_session(args.session_path)
             if existing:
                 if args.force:
