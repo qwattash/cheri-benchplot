@@ -43,7 +43,7 @@ class PipelineSession:
             mgr.logger.error("Session directory already exists for session %s", session_path)
             raise ValueError("New session path already exists")
         run_config = SessionRunConfig.generate(mgr, config)
-        run_config.name = name
+        run_config.name = session_path.name
         session_path.mkdir()
         with open(session_path / SESSION_RUN_FILE, "w") as runfile:
             runfile.write(run_config.emit_json())
