@@ -446,7 +446,7 @@ class VCU118Instance(Instance):
     def __init__(self, manager: "InstanceManager", config: InstanceConfig):
         super().__init__(manager, config)
         self.runner_script = self.user_config.cheribuild_path / "vcu118-run.py"
-        if inst_manager.session_config.concurrent_instances != 1:
+        if self.session_config.concurrent_instances != 1:
             self.logger.error("VCU118 MUST use concurrent_instances = 1")
             raise InstanceManagerError("Too many concurrent instances")
 
@@ -456,7 +456,7 @@ class VCU118Instance(Instance):
         if self.config.platform_options.vcu118_bios:
             return self.config.platform_options.vcu118_bios
         else:
-            return self.user_config.sdk_path / "sdk" / "bbl-gfe" / self.config.cheri_target / "bbl"
+            return self.user_config.sdk_path / "sdk" / "bbl-gfe" / str(self.config.cheri_target) / "bbl"
 
     def _get_fpga_kernel(self):
         sdk = self.user_config.sdk_path
@@ -739,6 +739,8 @@ class InstanceManager:
         except aio.CancelledError:
             self.logger.warning("Scheduler loop killed")
             self._drain_done_queue()
+        except:
+            self.logger.exception("Scheduler looop died")
         finally:
             self.logger.debug("Scheduler loop exited")
 

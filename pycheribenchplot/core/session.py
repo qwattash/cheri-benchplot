@@ -84,9 +84,10 @@ class PipelineSession:
         self.config = self._resolve_config_template(config)
         self.logger = new_logger(f"session-{self.config.name}")
         if session_path is None:
-            self.session_root_path = self.manager.user_config.session_path / self.config.name
+            session_root_path = self.manager.user_config.session_path / self.config.name
         else:
-            self.session_root_path = session_path
+            session_root_path = session_path
+        self.session_root_path = session_root_path.expanduser().absolute()
         # Analysis step configuration, only set when running analysis
         self.analysis_config = None
         # Benchmark baseline instance group UUID
