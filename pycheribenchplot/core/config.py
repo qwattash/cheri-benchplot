@@ -278,6 +278,7 @@ class InstanceKernelABI(Enum):
         return self.value
 
 
+
 @dc.dataclass
 class InstanceConfig(TemplateConfig):
     """
@@ -345,6 +346,7 @@ class DatasetName(Enum):
     QEMU_STATS_CALL_HIT = "qemu-stats-call"
     QEMU_UMA_COUNTERS = "qemu-glob-uma-counters"
     QEMU_VM_KERN_COUNTERS = "qemu-glob-vm-kern-counters"
+    QEMU_DYNAMORIO = "qemu-dynamorio"
     PIDMAP = "pidmap"
     VMSTAT_UMA_INFO = "vmstat-uma-info"
     VMSTAT_MALLOC = "vmstat-malloc"
@@ -353,6 +355,7 @@ class DatasetName(Enum):
     KERNEL_CSETBOUNDS_STATS = "kernel-csetbounds-stats"
     KERNEL_STRUCT_STATS = "kernel-struct-stats"
     KERNEL_STRUCT_MEMBER_STATS = "kernel-struct-member-stats"
+    SPEC = "spec"
 
     # Test only name
     TEST_FAKE = "test-fake"
@@ -379,9 +382,11 @@ class DatasetArtefact(Enum):
     QEMU_STATS_BB_ICOUNT = auto()
     QEMU_STATS_CALL_HIT = auto()
     QEMU_COUNTERS = auto()
+    QEMU_DYNAMORIO = auto()
     NETSTAT = auto()
     KERNEL_CSETBOUNDS_STATS = auto()
     KERNEL_STRUCT_STATS = auto()
+    SPEC = auto()
 
     # Test only ID
     TEST_FAKE = auto()

@@ -386,14 +386,24 @@ class CheribuildInstance(Instance):
             # cheribuild that it exists
             run_cmd += [self._cheribsd_option("extra-kernel-configs"), self.config.kernel]
         # Extra qemu options and tracing tags?
-        if (self.config.platform_options.qemu_trace):
-            # Other backends are not as powerful, so focus on this one
+        if self.config.platform_options.qemu_trace == "perfetto":
             qemu_options = [
                 "--cheri-trace-backend", "perfetto", "--cheri-trace-perfetto-logfile",
                 str(self._get_qemu_trace_sink()), "--cheri-trace-perfetto-categories",
                 ",".join(self.config.platform_options.qemu_trace_categories)
             ]
             run_cmd += [self._run_option("extra-options"), " ".join(qemu_options)]
+        elif self.config.platform_options.qemu_trace == "perfetto-dynamorio":
+            qemu_options = [
+                "--cheri-trace-backend", "perfetto", "--cheri-trace-perfetto-logfile",
+                str(self._get_qemu_trace_sink().with_suffix(".pb")), "--cheri-trace-perfetto-enable-interceptor",
+                "--cheri-trace-perfetto-interceptor-logfile",
+                str(self._get_qemu_trace_sink()), "--cheri-trace-perfetto-categories",
+                ",".join(self.config.platform_options.qemu_trace_categories)
+            ]
+            run_cmd += [self._run_option("extra-options"), " ".join(qemu_options)]
+        else:
+            assert self.config.platform_options.qemu_trace == "no"
 
         self.logger.debug("%s %s", self.cheribuild, run_cmd)
         self._cheribuild_task = await aio.create_subprocess_exec(str(self.cheribuild),

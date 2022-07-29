@@ -1,5 +1,3 @@
-import asyncio as aio
-import io
 import typing
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -7,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from ..core.config import TemplateConfig, path_field
+from ..core.config import ConfigPath, TemplateConfig
 from ..core.csv import CSVDataSetContainer
 from ..core.dataset import DatasetArtefact, DatasetName, Field
 from ..core.procstat import ProcstatDataset
@@ -15,13 +13,16 @@ from ..core.procstat import ProcstatDataset
 
 @dataclass
 class NetperfRunConfig(TemplateConfig):
-    # Path to netperf/netserver in the guest
-    netperf_path: Path = path_field("opt/{cheri_target}/netperf/bin")
-    # Actual benchmark options
+    #: Path to netperf/netserver in the guest
+    netperf_path: ConfigPath = Path("opt/{cheri_target}/netperf/bin")
+
+    #: Actual benchmark options
     netperf_options: typing.List[str] = field(default_factory=list)
-    # Netserver options (used for both priming and the actual benchmark)
+
+    #: Netserver options (used for both priming and the actual benchmark)
     netserver_options: typing.List[str] = field(default_factory=list)
-    # use KTRACE netserver to resolve forked netserver PIDs?
+
+    #: use KTRACE netserver to resolve forked netserver PIDs?
     netserver_resolve_forks: bool = False
 
 

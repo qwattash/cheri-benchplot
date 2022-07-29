@@ -15,5 +15,6 @@ import pycheribenchplot.qemu.cheribsd_counters
 import pycheribenchplot.qemu.cheribsd_counters_plot
 import pycheribenchplot.qemu.dataset
 import pycheribenchplot.qemu.plot
+import pycheribenchplot.spec.dataset
 import pycheribenchplot.vmstat.dataset
 import pycheribenchplot.vmstat.plot

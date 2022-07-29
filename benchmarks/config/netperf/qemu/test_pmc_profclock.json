@@ -1,7 +1,7 @@
 {
     "ssh_key": "extra_files/freebsd_test_id_rsa",
     "concurrent_instances": 2,
-    "reuse_intances": false,
+    "reuse_instances": false,
     "instance_config": {
         "instances": [{
             "name": "hybrid",
@@ -22,7 +22,6 @@
     "benchmark_config": [{
         "name": "udp_rr_5k_1b",
         "desc": "UDP RR 5000 transactions 1-byte",
-        "type": "netperf",
         "iterations": 5,
         "command_hooks": {
             "pre_benchmark": [

@@ -446,8 +446,22 @@ class DataSetContainer(metaclass=DatasetRegistry):
 
     @property
     def bench_config(self):
-        # This needs to be dynamic to grab the up-to-date configuration of the benchmark
+        """
+        This needs to be dynamic to grab the up-to-date configuration of the benchmark.
+        """
         return self.benchmark.config
+
+    @property
+    def has_qemu(self) -> bool:
+        """
+        Check whether we are using an auxiliary dataset that requires qemu tracing output
+        """
+        if (self.benchmark.get_dataset(DatasetName.QEMU_STATS_BB_HIT) is not None
+                or self.benchmark.get_dataset(DatasetName.QEMU_STATS_BB_ICOUNT) is not None
+                or self.benchmark.get_dataset(DatasetName.QEMU_STATS_CALL_HIT) is not None
+                or self.benchmark.get_dataset(DatasetName.QEMU_UMA_COUNTERS) is not None):
+            return True
+        return False
 
     def input_fields(self) -> typing.Sequence[Field]:
         """

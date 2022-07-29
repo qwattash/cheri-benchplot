@@ -11,8 +11,8 @@ from pypika import Order, Query, Table
 from sortedcontainers import SortedList
 
 from ..core.config import DatasetArtefact, DatasetName, PlatformOptions
-from ..core.dataset import (DatasetProcessingError, Field, align_multi_index_levels, check_multi_index_aligned,
-                            rotate_multi_index_level, subset_xs)
+from ..core.dataset import (DataSetContainer, DatasetProcessingError, Field, align_multi_index_levels,
+                            check_multi_index_aligned, rotate_multi_index_level, subset_xs)
 from ..core.perfetto import PerfettoDataSetContainer
 
 
@@ -27,7 +27,7 @@ class QEMUTraceDataset(PerfettoDataSetContainer):
 
     def configure(self, opts: PlatformOptions) -> PlatformOptions:
         opts = super().configure(opts)
-        opts.qemu_trace = True
+        opts.qemu_trace = "perfetto"
         opts.qemu_trace_file = self.output_file()
         opts.qemu_trace_categories.add("ctrl")
         return opts
@@ -413,4 +413,22 @@ class QEMUGuestCountersDataset(QEMUTraceDataset):
         opts = super().configure(opts)
         opts.qemu_trace_categories.add("counter")
         opts.qemu_trace_categories.add("marker")
+        return opts
+
+
+class QEMUDynamorioInterceptor(DataSetContainer):
+    """
+    Dynamorio cache model trace generation.
+    """
+    dataset_config_name = DatasetName.QEMU_DYNAMORIO
+    dataset_source_id = DatasetArtefact.QEMU_DYNAMORIO
+
+    def output_file(self):
+        return self.benchmark.get_benchmark_data_path() / f"qemu-trace-{self.benchmark.uuid}.bin"
+
+    def configure(self, opts: PlatformOptions) -> PlatformOptions:
+        opts = super().configure(opts)
+        opts.qemu_trace = "perfetto-dynamorio"
+        opts.qemu_trace_file = self.output_file()
+        opts.qemu_trace_categories.add("instructions")
         return opts
