@@ -13,7 +13,7 @@ from .analysis import BenchmarkAnalysisRegistry
 from .config import (AnalysisConfig, DatasetArtefact, DatasetConfig, DatasetName, TemplateConfig, TemplateConfigContext,
                      path_field)
 from .dataset import DataSetContainer, DatasetRegistry
-from .elf import DWARFHelper, AddressSpaceManager
+from .elf import AddressSpaceManager, DWARFHelper
 from .instance import InstanceConfig, InstanceInfo, InstanceManager
 from .shellgen import ShellScriptBuilder
 from .util import new_logger, timing

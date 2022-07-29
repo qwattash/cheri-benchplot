@@ -8,13 +8,14 @@ from sortedcontainers import SortedDict
 
 from ..util import new_logger
 
+
 @dataclass
 class SymInfo:
     name: str
     filepath: Path
     size: int
     addr: int
-    unknown: bool=False
+    unknown: bool = False
 
     @classmethod
     def unknown(cls, addr):
@@ -28,7 +29,6 @@ class SymbolizerMapping(ABC):
     """
     Represent a single file mapped in an address space.
     """
-
     def __init__(self, logger, path: Path):
         self.logger = logger
         self.path = path
@@ -62,7 +62,6 @@ class ELFToolsMapping(SymbolizerMapping):
     """
     Handle fetching symbol information for a binary using elftools.
     """
-
     def __init__(self, logger, path):
         super().__init__(logger, path)
         self.symbols = SortedDict()
@@ -94,7 +93,6 @@ class LLVMToolsMapping(SymbolizerMapping):
     """
     Handle fetching symbol information for a binary using addr2line
     """
-
     def __init__(self, sdk_path, logger, path):
         super().__init__(logger, path)
         self.addr2line_bin = sdk_path / "sdk" / "bin" / "llvm-addr2line"
@@ -111,12 +109,11 @@ class LLVMToolsMapping(SymbolizerMapping):
         Startup the internal addr2line process
         """
         assert self.addr2line is None
-        self.addr2line = subprocess.Popen(
-            [self.addr2line_bin, "-obj", str(self.path), "-f"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            text=True,
-            encoding="utf-8")
+        self.addr2line = subprocess.Popen([self.addr2line_bin, "-obj", str(self.path), "-f"],
+                                          stdin=subprocess.PIPE,
+                                          stdout=subprocess.PIPE,
+                                          text=True,
+                                          encoding="utf-8")
 
     def lookup_function(self, addr):
         if self.addr2line is None:
@@ -138,7 +135,6 @@ class Symbolizer(ABC):
     responsible for a specific address space.
     The symbolizer will then be used to query symbols by address.
     """
-
     def __init__(self, logger):
         self.logger = logger
         # Sorted mapping of <base address> => SymbolizerMapping
@@ -183,7 +179,6 @@ def ELFToolsSymbolizer(Symbolizer):
     """
     Symbolizer that uses python elftools to load symbols from the binaries.
     """
-
     def _make_mapping(self, path):
         return ELFToolsMapping(self.logger, path)
 
@@ -207,14 +202,13 @@ class AddressSpaceManager:
     An address space may be marked as shared, this is usually the case for the
     kernel address space.
     """
-
     def __init__(self, benchmark: "Benchmark"):
         self.benchmark = benchmark
         self.logger = new_logger(f"{benchmark.uuid}.symbolizer")
         self.shared_addrspaces = []
         self.addrspaces = {}
 
-    def register_address_space(self, as_key: str, shared: bool=False):
+    def register_address_space(self, as_key: str, shared: bool = False):
         """
         Create a new address space.
 
@@ -249,11 +243,10 @@ class AddressSpaceManager:
         try:
             symbolizer = self.addrspaces[as_key]
         except KeyError:
-            self.logger.error("Attempted to register mapped binary for missing address space %s",
-                              as_key)
+            self.logger.error("Attempted to register mapped binary for missing address space %s", as_key)
         symbolizer.add_mapping(base, path)
 
-    def lookup_function(self, as_key: str, addr: int, exact: bool=False) -> SymInfo:
+    def lookup_function(self, as_key: str, addr: int, exact: bool = False) -> SymInfo:
         """
         Search for a function in the given address space. If exact is set, only return
         a valid symbol information if the given address matches exactly the function symbol address.
@@ -309,4 +302,3 @@ class AddressSpaceManager:
         out_df["file"] = resolved.map(lambda si: si.filepath.name, na_action="ignore")
         out_df["file"].mask(resolved, "unknown", inplace=True)
         return out_df
-
