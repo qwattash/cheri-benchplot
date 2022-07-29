@@ -263,24 +263,62 @@ class InstanceKernelABI(Enum):
 
 
 @dataclass
-class PlatformOptions(TemplateConfig):
+class CommonPlatformOptions(TemplateConfig):
     """
     Base class for platform-specific options.
     This is internally used during benchmark dataset collection to
     set options for the instance that is to be run.
     """
-    # Number of cores in the system
+    #: Number of cores in the system
     cores: int = 1
-    # The trace file used by default unless one of the datasets overrides it
+
+    #: The trace file used by default unless one of the datasets overrides it
     qemu_trace_file: typing.Optional[Path] = None
-    # Run qemu with tracing enabled
+
+    #: Run qemu with tracing enabled
     qemu_trace: bool = False
-    # Trace categories to enable for qemu-perfetto
+
+    #: Trace categories to enable for qemu-perfetto
     qemu_trace_categories: typing.Set[str] = field(default_factory=set)
-    # VCU118 bios
+
+    #: VCU118 bios
     vcu118_bios: typing.Optional[Path] = None
-    # IP to use for the VCU118 board
+
+    #: IP to use for the VCU118 board
     vcu118_ip: str = "10.88.88.2"
+
+
+@dataclass
+class PlatformOptions(TemplateConfig):
+    """
+    Platform options for an instance.
+    This accepts the same fields as :class:`CommonPlatformOptions`, but
+    will keep track of which are actively set in the configuration file,
+    so that we can go look them up in the common options before setting
+    a default value.
+    """
+    #: Number of cores in the system
+    cores: typing.Optional[int] = None
+
+    #: The trace file used by default unless one of the datasets overrides it
+    qemu_trace_file: typing.Optional[Path] = None
+
+    #: Run qemu with tracing enabled
+    qemu_trace: typing.Optional[bool] = None
+
+    #: Trace categories to enable for qemu-perfetto
+    qemu_trace_categories: typing.Optional[typing.Set[str]] = None
+
+    #: VCU118 bios
+    vcu118_bios: typing.Optional[Path] = None
+
+    #: IP to use for the VCU118 board
+    vcu118_ip: typing.Optional[str] = None
+
+    def replace_common(self, common: CommonPlatformOptions):
+        for f in fields(self):
+            if getattr(self, f.name) is None:
+                setattr(self, f.name, getattr(common, f.name))
 
 
 @dataclass
@@ -417,7 +455,7 @@ class PipelineInstanceConfig(Config):
     """
 
     #: Common platform options, depend on the platforms used in the instances
-    platform_options: PlatformOptions = field(default_factory=PlatformOptions)
+    platform_options: CommonPlatformOptions = field(default_factory=CommonPlatformOptions)
     #: Instance descriptors for each instance to run
     instances: typing.List[InstanceConfig] = field(default_factory=list)
 
@@ -620,13 +658,17 @@ class SessionRunConfig(CommonSessionConfig):
         group_uuids = [uuid4() for _ in config.instance_config.instances]
 
         # Now create all the full configurations by combining instance and benchmark configurations
+        common_platform_options = config.instance_config.platform_options
         for run_conf in all_conf:
             for gid, inst_conf in zip(group_uuids, config.instance_config.instances):
                 final_run_conf = BenchmarkRunConfig(**asdict(run_conf))
+                # Resolve merged platform options
+                final_inst_conf = InstanceConfig(**asdict(inst_conf))
+                final_inst_conf.platform_options.replace_common(common_platform_options)
                 # Generate new unique ID for the parameterized run
                 final_run_conf.uuid = uuid4()
                 final_run_conf.g_uuid = gid
-                final_run_conf.instance = InstanceConfig(**asdict(inst_conf))
+                final_run_conf.instance = final_inst_conf
                 session.configurations.append(final_run_conf)
         return session
 
@@ -713,7 +755,7 @@ class AnalysisConfig(Config):
     baseline_gid: typing.Optional[UUID] = None
 
     #: Use builtin symbolizer instead of addr2line
-    use_buitin_symbolizer: bool=False
+    use_buitin_symbolizer: bool = False
 
     def __post_init__(self):
         super().__post_init__()
