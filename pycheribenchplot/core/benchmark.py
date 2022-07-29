@@ -13,7 +13,7 @@ from .analysis import BenchmarkAnalysisRegistry
 from .config import (AnalysisConfig, DatasetArtefact, DatasetConfig, DatasetName, TemplateConfig, TemplateConfigContext,
                      path_field)
 from .dataset import DataSetContainer, DatasetRegistry
-from .elf import DWARFHelper, Symbolizer
+from .elf import DWARFHelper, AddressSpaceManager
 from .instance import InstanceConfig, InstanceInfo, InstanceManager
 from .shellgen import ShellScriptBuilder
 from .util import new_logger, timing
@@ -48,7 +48,7 @@ class Benchmark:
         # Cross-benchmark parameterisation merged instances
         self.cross_merged = {}
         # Symbol mapping handler for this benchmark instance
-        self.sym_resolver = Symbolizer(self)
+        self.sym_resolver = AddressSpaceManager(self)
         # Dwarf information extraction helper
         self.dwarf_helper = DWARFHelper(self)
 
@@ -220,7 +220,8 @@ class Benchmark:
         if not kernel.exists():
             self.logger.warning("Kernel name not found in kernel.<CONF> directories, using the default kernel")
             kernel = self.cheribsd_rootfs_path / "boot" / "kernel" / "kernel.full"
-        self.sym_resolver.register_sym_source(0, "kernel.full", kernel, shared=True)
+        self.sym_resolver.register_address_space("kernel.full", shared=True)
+        self.sym_resolver.add_mapped_binary("kernel.full", 0, kernel)
         arch_pointer_size = self.config.instance.kernel_pointer_size
         self.dwarf_helper.register_object("kernel.full", kernel, arch_pointer_size)
 
@@ -235,6 +236,10 @@ class Benchmark:
     @property
     def user_config(self):
         return self.session.user_config
+
+    @property
+    def analysis_config(self):
+        return self.session.analysis_config
 
     @property
     def cheribsd_rootfs_path(self):
@@ -339,7 +344,9 @@ class Benchmark:
         cmd = Path(cmd["command"][0])
         addrspace_key = cmd.name
         self.logger.debug("Register binary mapping %s at 0x%x for %s", path, map_addr, addrspace_key)
-        self.sym_resolver.register_sym_source(map_addr, addrspace_key, path)
+        # XXX We should use both PID and command name to distinguish between different runs?
+        self.sym_resolver.register_address_space(cmd.name)
+        self.sym_resolver.add_mapped_binary(cmd.name, map_addr, path)
         self.dwarf_helper.register_object(path.name, path)
 
     async def run(self, instance_manager: InstanceManager) -> bool:

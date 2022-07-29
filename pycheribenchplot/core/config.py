@@ -692,20 +692,28 @@ class BenchplotUserConfig(Config):
 
 @dataclass
 class AnalysisConfig(Config):
-    # List of plots/analysis steps to enable
+    #: List of plots/analysis steps to enable
     enable: typing.List[str] = field(default_factory=list)
-    # Tags for group enable
+
+    #: Tags for group enable
     enable_tags: typing.Set[str] = field(default_factory=set)
-    # Generate multiple split plots instead of combining
+
+    #: Generate multiple split plots instead of combining
     split_subplots: bool = False
-    # Output formats
+
+    #: Output formats
     plot_output_format: typing.List[str] = field(default_factory=lambda: ["pdf"])
-    # Constants to show in various plots, depending on the X and Y axes.
+
+    #: Constants to show in various plots, depending on the X and Y axes.
     # The dictionary maps parameters of the benchmark parameterisation to a dict
     # mapping description -> constant value
     parameter_constants: typing.Dict[str, dict] = field(default_factory=dict)
-    # Baseline dataset group id, defaults to the baseline instance uuid
+
+    #: Baseline dataset group id, defaults to the baseline instance uuid
     baseline_gid: typing.Optional[UUID] = None
+
+    #: Use builtin symbolizer instead of addr2line
+    use_buitin_symbolizer: bool=False
 
     def __post_init__(self):
         super().__post_init__()
