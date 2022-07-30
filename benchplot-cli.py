@@ -44,6 +44,8 @@ def main():
 
     sub_run = sub.add_parser("run", help="run benchmarks in configuration")
     add_session_spec_options(sub_run)
+    sub_run.add_argument("--shellgen-only", action="store_true",
+                         help="Only perform shell script generation and stop before running any instance")
 
     sub_analyse = sub.add_parser("analyse", help="process benchmarks and generate plots")
     add_session_spec_options(sub_analyse)
@@ -100,7 +102,7 @@ def main():
             manager.make_session(args.session_path, config)
         elif args.command == "run":
             session = resolve_session(args, manager, logger)
-            manager.run_session(session)
+            manager.run_session(session, shellgen_only=args.shellgen_only)
         elif args.command == "analyse":
             session = resolve_session(args, manager, logger)
             if args.analysis_config:

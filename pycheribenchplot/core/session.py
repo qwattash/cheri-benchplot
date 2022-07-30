@@ -4,6 +4,7 @@ import typing
 from collections import defaultdict, namedtuple
 from contextlib import AbstractContextManager
 from dataclasses import asdict, fields
+from enum import Enum
 from pathlib import Path
 from uuid import UUID
 
@@ -17,6 +18,15 @@ from .perfetto import TraceProcessorCache
 from .util import new_logger
 
 SESSION_RUN_FILE = "session-run.json"
+
+
+class SessionRunMode(Enum):
+    """
+    Run mode determines the type of run strategy to use.
+    This is currently used for partial or pretend runs.
+    """
+    FULL = "full"
+    SHELLGEN = "shellgen"
 
 
 class PipelineSession:
@@ -182,14 +192,17 @@ class PipelineSession:
             shutil.rmtree(data_root)
         data_root.mkdir()
 
-    def run(self) -> AbstractContextManager:
+    def run(self, mode: str = "full") -> AbstractContextManager:
         """
         Prepare to run the session.
 
+        :param mode: Alternate run mode for partial or pretend runs.
         :return: A context manager to wrap the main loop and manage
         the tasks for the session.
         """
-        ctx = SessionRunContext(self)
+        session_run_mode = SessionRunMode(mode)
+
+        ctx = SessionRunContext(self, session_run_mode)
         for benchmark_config in self.config.configurations:
             self.logger.debug("Found benchmark run config %s", benchmark_config)
             benchmark = Benchmark(self, benchmark_config)
@@ -384,8 +397,9 @@ class SessionRunContext(AbstractContextManager):
 
     :param session: The parent pipeline session
     """
-    def __init__(self, session: PipelineSession):
+    def __init__(self, session: PipelineSession, mode: SessionRunMode):
         self.session = session
+        self.mode = mode
         self.loop = aio.get_event_loop()
         self.logger = session.logger
         self.instance_manager = InstanceManager(self.session)
@@ -427,7 +441,10 @@ class SessionRunContext(AbstractContextManager):
         await self.instance_manager.shutdown()
 
     def schedule_benchmark(self, bench):
-        run_task = self.loop.create_task(bench.run(self.instance_manager))
+        if self.mode == SessionRunMode.FULL:
+            run_task = self.loop.create_task(bench.run(self.instance_manager))
+        elif self.mode == SessionRunMode.SHELLGEN:
+            run_task = self.loop.create_task(bench.build_run_script())
         run_task.set_name(f"Task[{bench.config.name}/{bench.config.instance.name}]")
         self._tasks.append(run_task)
 

@@ -348,6 +348,14 @@ class Benchmark:
         self.sym_resolver.add_mapped_binary(cmd.name, map_addr, path)
         self.dwarf_helper.register_object(path.name, path)
 
+    async def build_run_script(self):
+        """
+        Generate the benchmark run script for the benchmark.
+
+        This is asynchronous as it is reused as a partial run step.
+        """
+        return self._build_remote_script()
+
     async def run(self, instance_manager: InstanceManager) -> bool:
         """
         Run the benchmark and extract the results.
@@ -362,7 +370,7 @@ class Benchmark:
         """
         script_path = self.get_run_script_path()
         remote_script = Path(f"{self.config.name}-{self.uuid}.sh")
-        script = self._build_remote_script()
+        script = await self.build_run_script()
         self.logger.info("Waiting for instance")
         # instance_reservation = instance_manager.request(self.uuid, self.config.instance)
         # async with instance_reservation as reserved_instance:

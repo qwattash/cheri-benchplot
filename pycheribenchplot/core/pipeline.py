@@ -60,7 +60,7 @@ class PipelineManager:
             self.logger.debug("Session for %s not found", path)
         return found
 
-    def run_session(self, session: PipelineSession):
+    def run_session(self, session: PipelineSession, shellgen_only: bool = False):
         """
         Run the given session.
         This triggers the data generation phase for all dataset handlers
@@ -68,13 +68,18 @@ class PipelineManager:
         Note that the session runs asyncronously using asyncio.
 
         :param session: A valid session object
+        :param shellgen_only: If True, only generate run scripts and do not run anything
         """
         assert session is not None
         session.clean()
 
+        run_mode = "full"
+        if shellgen_only:
+            run_mode = "shellgen"
+
         loop = aio.get_event_loop()
         self.logger.debug("Session %s (%s) start run", session.name, session.uuid)
-        with session.run() as ctx:
+        with session.run(mode=run_mode) as ctx:
             loop.run_until_complete(ctx.main())
         loop.close()
         self.logger.info("Session %s (%s) run finished", session.name, session.uuid)
