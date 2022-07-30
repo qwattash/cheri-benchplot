@@ -459,7 +459,8 @@ class DataSetContainer(metaclass=DatasetRegistry):
         if (self.benchmark.get_dataset(DatasetName.QEMU_STATS_BB_HIT) is not None
                 or self.benchmark.get_dataset(DatasetName.QEMU_STATS_BB_ICOUNT) is not None
                 or self.benchmark.get_dataset(DatasetName.QEMU_STATS_CALL_HIT) is not None
-                or self.benchmark.get_dataset(DatasetName.QEMU_UMA_COUNTERS) is not None):
+                or self.benchmark.get_dataset(DatasetName.QEMU_UMA_COUNTERS) is not None
+                or self.benchmark.get_dataset(DatasetName.QEMU_DYNAMORIO) is not None):
             return True
         return False
 
