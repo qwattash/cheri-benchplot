@@ -43,6 +43,8 @@ class PathField(mfields.Field):
         return str(value)
 
     def _deserialize(self, value, attr, data, **kwargs):
+        if value == "":
+            return None
         try:
             return Path(value)
         except TypeError as ex:
@@ -129,6 +131,8 @@ class TemplateConfig(Config):
         if dc.is_dataclass(f.type):
             # Forward the nested bind if the dataclass is a TemplateConfig
             return self._bind_one(context, f.type, value)
+        elif f.type == ConfigPath:
+            return self._bind_one(context, f.type, value)
         elif is_lazy_nested_config(f):
             # Signals that the field contains a lazily resolved TemplateConfig, if there is one
             # recurse the binding, else skip it.
@@ -137,7 +141,7 @@ class TemplateConfig(Config):
             return value
         elif origin is typing.Union:
             args = get_args(f.type)
-            if len(args) == 2 and args[1] == None:
+            if len(args) == 2 and args[1] == type(None):
                 # If we have an optional field, bind with the type argument instead
                 return self._bind_one(context, args[0], value)
             else:
@@ -276,7 +280,6 @@ class InstanceKernelABI(Enum):
 
     def __str__(self):
         return self.value
-
 
 
 @dc.dataclass
