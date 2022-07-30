@@ -7,11 +7,12 @@ setup(
     scripts=["benchplot-cli.py"],
     install_requires=[
         "asyncssh>=2.7.2",
-        "dataclasses-json>=0.5.6",
+        "marshmallow-dataclass[enum,union]>=8.5.8",
         "isort>=5.10.0",
         "Jinja2>=3.0.2",
         "matplotlib>=3.4.3",
         "numpy>=1.21.3",
+        "networkx>=2.8.5",
         "openpyxl>=3.0.9",
         "pandas>=1.3.4",
         "pyelftools>=0.27",
@@ -23,5 +24,6 @@ setup(
         "gitpython>=3.1.27",
         "typing_inspect>=0.5.0",
         "multi-await>=1.0.0",
+        "pyserial>=3.5",
     ]
 )
