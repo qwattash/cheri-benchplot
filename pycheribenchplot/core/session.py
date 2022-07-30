@@ -110,7 +110,7 @@ class PipelineSession:
         dataset_class = DatasetRegistry.resolve_name(config.handler)
         if not dataset_class.run_options_class:
             return config.run_options
-        run_opts = dataset_class.run_options_class(**config.run_options)
+        run_opts = dataset_class.run_options_class.schema().load(config.run_options)
         return run_opts
 
     def _resolve_config_template(self, config: SessionRunConfig) -> SessionRunConfig:

@@ -123,6 +123,7 @@ class ShellScriptBuilder:
         self._add_command("mkdir", ["-p", self._guest_output])
         for i in range(self.benchmark.config.iterations):
             self._add_command("mkdir", ["-p", self._guest_output / str(i)])
+        self._add_command("touch", [self.local_to_remote_path(self.command_history_path())])
 
     def local_to_remote_path(self, host_path: Path) -> Path:
         base_path = self.benchmark.get_benchmark_data_path()

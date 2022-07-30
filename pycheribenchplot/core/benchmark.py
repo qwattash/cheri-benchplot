@@ -10,8 +10,7 @@ import asyncssh
 import pandas as pd
 
 from .analysis import BenchmarkAnalysisRegistry
-from .config import (AnalysisConfig, DatasetArtefact, DatasetConfig, DatasetName, TemplateConfig, TemplateConfigContext,
-                     path_field)
+from .config import AnalysisConfig, DatasetArtefact, DatasetConfig, DatasetName
 from .dataset import DataSetContainer, DatasetRegistry
 from .elf import AddressSpaceManager, DWARFHelper
 from .instance import InstanceConfig, InstanceInfo, InstanceManager

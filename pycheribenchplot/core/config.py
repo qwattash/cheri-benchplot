@@ -1,17 +1,20 @@
 import argparse as ap
 import collections
+import dataclasses as dc
 import itertools as it
 import json
 import shutil
 import typing
 from collections import OrderedDict
-from dataclasses import (MISSING, Field, asdict, dataclass, field, fields, is_dataclass, replace)
 from datetime import date, datetime
 from enum import Enum, auto
 from pathlib import Path
 from uuid import UUID, uuid4
 
-from dataclasses_json import DataClassJsonMixin, config
+import marshmallow.fields as mfields
+from marshmallow import Schema, ValidationError
+from marshmallow_dataclass import NewType, class_schema
+from marshmallow_enum import EnumField
 from typing_inspect import get_args, get_origin, is_generic_type
 
 
@@ -22,122 +25,70 @@ def _template_safe(temp: str, **kwargs):
         return temp
 
 
-def path_field(default=None):
-    return field(default=Path(default) if default else None, metadata=config(encoder=str, decoder=Path))
-
-
 def lazy_nested_config_field():
-    return field(default_factory=dict, metadata={"late_config_bind": True})
+    return dc.field(default_factory=dict, metadata={"late_config_bind": True})
 
 
-def is_lazy_nested_config(f: Field):
+def is_lazy_nested_config(f: dc.Field):
     return f.metadata.get("late_config_bind", False)
 
 
-class ConfigEncoder(json.JSONEncoder):
-    def default(self, o):
-        if isinstance(o, UUID):
-            return str(o)
-        elif isinstance(o, Path):
-            return str(o)
-        elif isinstance(o, Enum):
-            return o.value
-        elif isinstance(o, datetime):
-            return o.timestamp()
-        return super().default(o)
+class PathField(mfields.Field):
+    """
+    Simple wrapper for pathlib.Path fields
+    """
+    def _serialize(self, value, attr, obj, **kwargs):
+        if value is None:
+            return ""
+        return str(value)
+
+    def _deserialize(self, value, attr, data, **kwargs):
+        try:
+            return Path(value)
+        except TypeError as ex:
+            raise ValidationError(f"Invalid path {value}") from ex
 
 
-@dataclass
-class Config(DataClassJsonMixin):
+# Helper type for dataclasses to use the PathField
+ConfigPath = NewType("ConfigPath", Path, field=PathField)
+ConfigAny = NewType("ConfigAny", any, field=mfields.Raw)
+
+
+@dc.dataclass
+class Config:
     """
     Base class for JSON-based configuration file parsing.
     Each field in this dataclass is deserialized from a json file, with support to
     nested configuration dataclasses.
     Types of the fields are normalized to the type annotation given in the dataclass.
     """
+    class Meta:
+        ordered = True
+
+    @classmethod
+    def schema(cls):
+        return class_schema(cls)()
+
+    @classmethod
+    def copy(cls, other):
+        return cls.schema().load(cls.schema().dump(other))
+
     @classmethod
     def load_json(cls, jsonpath):
         with open(jsonpath, "r") as jsonfile:
-            return super().from_json(jsonfile.read())
-
-    @classmethod
-    def merge(cls, *other: typing.Tuple["Config"]):
-        """
-        Similar to dataclass replace but uses fields from another dataclass that must be
-        a parent class of the instance type we are replacing into.
-        This allows to merge separate dataclasses into a combined view.
-        Useful for merging multiple configuration files that specify different fields together.
-        """
-        init_fields = {}
-        other_fields = {}
-        for section in other:
-            assert issubclass(cls, type(section)), "Can only merge config in child classes"
-            for f in fields(section):
-                if f.init:
-                    init_fields[f.name] = getattr(section, f.name)
-                else:
-                    other_fields[f.name] = getattr(section, f.name)
-        inst = cls(**init_fields)
-        for name, val in other_fields.items():
-            setattr(inst, name, val)
-        return inst
+            data = json.load(jsonfile)
+        return cls.schema().load(data)
 
     def emit_json(self) -> str:
         """
         Custom logic to emit json.
         This is required as in older python version pathlib objects are not serializable.
         """
-        data = self.to_dict()
-        return json.dumps(data, cls=ConfigEncoder, indent=4)
-
-    def _normalize_sequence(self, f, sequence):
-        type_args = get_args(f.type)
-        item_type = type_args[0]
-        if len(sequence) == 0:
-            # Nothing to normalize
-            return sequence
-        if is_dataclass(item_type) and not is_dataclass(sequence[0]):
-            items = [item_type(**item) for item in getattr(self, f.name)]
-            setattr(self, f.name, items)
-
-    def _normalize_mapping(self, f, mapping):
-        type_args = get_args(f.type)
-        item_type = type_args[1]
-        if len(mapping) == 0:
-            # Nothing to normalize
-            return mapping
-        first_item = next(it.islice(mapping.values(), 1))
-        if is_dataclass(item_type) and not is_dataclass(first_item):
-            items = {key: item_type(**item) for key, item in mapping.items()}
-            setattr(self, f.name, items)
+        schema = self.schema()
+        return json.dumps(schema.dump(self), indent=4)
 
     def __post_init__(self):
-        for f in fields(self):
-            if not f.init:
-                continue
-            # Check for existence as this will cause issues down the line
-            assert hasattr(self, f.name), f"Missing field {f.name}, use a default value"
-            origin = get_origin(f.type)
-            type_args = get_args(f.type)
-            value = getattr(self, f.name)
-            if is_dataclass(f.type):
-                if type(value) == dict:
-                    setattr(self, f.name, f.type(**value))
-            elif is_lazy_nested_config(f):
-                if type(value) != dict and not is_dataclass(value):
-                    raise ValueError("Lazy config field must either be a dict or a dataclass instance")
-            elif type(origin) == type:
-                # standard type
-                if issubclass(origin, collections.abc.Sequence):
-                    self._normalize_sequence(f, value)
-                elif issubclass(origin, collections.abc.Mapping):
-                    self._normalize_mapping(f, value)
-                else:
-                    setattr(self, f.name, origin(value))
-            elif origin is None:
-                # Not a typing class (e.g. Union)
-                if issubclass(f.type, Path) and value is not None:
-                    setattr(self, f.name, Path(value).expanduser())
+        return
 
 
 class TemplateConfigContext:
@@ -155,33 +106,33 @@ class TemplateConfigContext:
         return dict(self._template_params)
 
 
-@dataclass
+@dc.dataclass
 class TemplateConfig(Config):
     def _bind_one(self, context, dtype, value):
         params = context.conf_template_params()
         if dtype == str:
             return _template_safe(value, **params)
-        elif is_dataclass(dtype) and issubclass(dtype, TemplateConfig):
+        elif dc.is_dataclass(dtype) and issubclass(dtype, TemplateConfig):
             return value.bind(context)
-        elif dtype == Path:
+        elif dtype == Path or dtype == ConfigPath:
             str_path = _template_safe(str(value), **params)
             return Path(str_path)
         return value
 
-    def bind_field(self, context, f: Field, value):
+    def bind_field(self, context, f: dc.Field, value):
         """
         Run the template substitution on a config field.
         If the field is a collection or a nested TemplateConfig, we recursively bind
         each value.
         """
         origin = get_origin(f.type)
-        if is_dataclass(f.type):
+        if dc.is_dataclass(f.type):
             # Forward the nested bind if the dataclass is a TemplateConfig
             return self._bind_one(context, f.type, value)
         elif is_lazy_nested_config(f):
             # Signals that the field contains a lazily resolved TemplateConfig, if there is one
             # recurse the binding, else skip it.
-            if is_dataclass(value):
+            if dc.is_dataclass(value):
                 return self._bind_one(context, type(value), value)
             return value
         elif origin is typing.Union:
@@ -211,13 +162,78 @@ class TemplateConfig(Config):
         template parameters unchanged for later passes.
         """
         changes = {}
-        for f in fields(self):
+        for f in dc.fields(self):
             if not f.init:
                 continue
             replaced = self.bind_field(context, f, getattr(self, f.name))
             if replaced:
                 changes[f.name] = replaced
-        return replace(self, **changes)
+        return dc.replace(self, **changes)
+
+
+@dc.dataclass
+class CommonPlatformOptions(TemplateConfig):
+    """
+    Base class for platform-specific options.
+    This is internally used during benchmark dataset collection to
+    set options for the instance that is to be run.
+    """
+    #: Number of cores in the system
+    cores: int = 1
+
+    #: The trace file used by default unless one of the datasets overrides it
+    qemu_trace_file: typing.Optional[ConfigPath] = None
+
+    #: Run qemu with tracing enabled ('no', "perfetto", "perfetto-dynamorio")
+    qemu_trace: str = "no"
+
+    #: Trace categories to enable for qemu-perfetto
+    qemu_trace_categories: typing.Set[str] = dc.field(default_factory=set)
+
+    #: VCU118 bios
+    vcu118_bios: typing.Optional[ConfigPath] = None
+
+    #: IP to use for the VCU118 board
+    vcu118_ip: str = "10.88.88.2"
+
+    def __post_init__(self):
+        assert self.qemu_trace in ["no", "perfetto", "perfetto-dynamorio"]
+
+
+@dc.dataclass
+class PlatformOptions(TemplateConfig):
+    """
+    Platform options for an instance.
+    This accepts the same fields as :class:`CommonPlatformOptions`, but
+    will keep track of which are actively set in the configuration file,
+    so that we can go look them up in the common options before setting
+    a default value.
+    """
+    #: Number of cores in the system
+    cores: typing.Optional[int] = None
+
+    #: The trace file used by default unless one of the datasets overrides it
+    qemu_trace_file: typing.Optional[ConfigPath] = None
+
+    #: Run qemu with tracing enabled
+    qemu_trace: typing.Optional[str] = None
+
+    #: Trace categories to enable for qemu-perfetto
+    qemu_trace_categories: typing.Optional[typing.Set[str]] = None
+
+    #: VCU118 bios
+    vcu118_bios: typing.Optional[ConfigPath] = None
+
+    #: IP to use for the VCU118 board
+    vcu118_ip: typing.Optional[str] = None
+
+    def __post_init__(self):
+        assert self.qemu_trace in [None, "no", "perfetto", "perfetto-dynamorio"]
+
+    def replace_common(self, common: CommonPlatformOptions):
+        for f in dc.fields(self):
+            if getattr(self, f.name) is None:
+                setattr(self, f.name, getattr(common, f.name))
 
 
 class InstancePlatform(Enum):
@@ -262,66 +278,7 @@ class InstanceKernelABI(Enum):
         return self.value
 
 
-@dataclass
-class CommonPlatformOptions(TemplateConfig):
-    """
-    Base class for platform-specific options.
-    This is internally used during benchmark dataset collection to
-    set options for the instance that is to be run.
-    """
-    #: Number of cores in the system
-    cores: int = 1
-
-    #: The trace file used by default unless one of the datasets overrides it
-    qemu_trace_file: typing.Optional[Path] = None
-
-    #: Run qemu with tracing enabled
-    qemu_trace: bool = False
-
-    #: Trace categories to enable for qemu-perfetto
-    qemu_trace_categories: typing.Set[str] = field(default_factory=set)
-
-    #: VCU118 bios
-    vcu118_bios: typing.Optional[Path] = None
-
-    #: IP to use for the VCU118 board
-    vcu118_ip: str = "10.88.88.2"
-
-
-@dataclass
-class PlatformOptions(TemplateConfig):
-    """
-    Platform options for an instance.
-    This accepts the same fields as :class:`CommonPlatformOptions`, but
-    will keep track of which are actively set in the configuration file,
-    so that we can go look them up in the common options before setting
-    a default value.
-    """
-    #: Number of cores in the system
-    cores: typing.Optional[int] = None
-
-    #: The trace file used by default unless one of the datasets overrides it
-    qemu_trace_file: typing.Optional[Path] = None
-
-    #: Run qemu with tracing enabled
-    qemu_trace: typing.Optional[bool] = None
-
-    #: Trace categories to enable for qemu-perfetto
-    qemu_trace_categories: typing.Optional[typing.Set[str]] = None
-
-    #: VCU118 bios
-    vcu118_bios: typing.Optional[Path] = None
-
-    #: IP to use for the VCU118 board
-    vcu118_ip: typing.Optional[str] = None
-
-    def replace_common(self, common: CommonPlatformOptions):
-        for f in fields(self):
-            if getattr(self, f.name) is None:
-                setattr(self, f.name, getattr(common, f.name))
-
-
-@dataclass
+@dc.dataclass
 class InstanceConfig(TemplateConfig):
     """
     Configuration for a CheriBSD instance to run benchmarks on.
@@ -330,14 +287,14 @@ class InstanceConfig(TemplateConfig):
     kernel: str
     baseline: bool = False
     name: typing.Optional[str] = None
-    platform: InstancePlatform = InstancePlatform.QEMU
-    cheri_target: InstanceCheriBSD = InstanceCheriBSD.RISCV64_PURECAP
-    kernelabi: InstanceKernelABI = InstanceKernelABI.HYBRID
+    platform: InstancePlatform = dc.field(default=InstancePlatform.QEMU, metadata={"by_value": True})
+    cheri_target: InstanceCheriBSD = dc.field(default=InstanceCheriBSD.RISCV64_PURECAP, metadata={"by_value": True})
+    kernelabi: InstanceKernelABI = dc.field(default=InstanceKernelABI.HYBRID, metadata={"by_value": True})
     # Is the kernel config name managed by cheribuild or is it an extra one
     # specified via --cheribsd/extra-kernel-configs?
     cheribuild_kernel: bool = True
     # Internal fields, should not appear in the config file and are missing by default
-    platform_options: PlatformOptions = field(default_factory=PlatformOptions)
+    platform_options: PlatformOptions = dc.field(default_factory=PlatformOptions)
 
     @property
     def user_pointer_size(self):
@@ -433,7 +390,7 @@ class DatasetArtefact(Enum):
         return self.name
 
 
-@dataclass
+@dc.dataclass
 class DatasetConfig(TemplateConfig):
     """
     Define the parameters to run a dataset handler for the benchmark.
@@ -441,13 +398,13 @@ class DatasetConfig(TemplateConfig):
     datasets.
     """
     #: Identifier (string) of a dataset to add to the run
-    handler: DatasetName
+    handler: DatasetName = dc.field(metadata={"by_value": True})
 
     #: Extra options for the dataset handler, depend on the handler
-    run_options: typing.Dict[str, any] = lazy_nested_config_field()
+    run_options: typing.Dict[str, ConfigAny] = lazy_nested_config_field()
 
 
-@dataclass
+@dc.dataclass
 class PipelineInstanceConfig(Config):
     """
     Describe the instances on which the benchmarks will be run.
@@ -455,9 +412,9 @@ class PipelineInstanceConfig(Config):
     """
 
     #: Common platform options, depend on the platforms used in the instances
-    platform_options: CommonPlatformOptions = field(default_factory=CommonPlatformOptions)
+    platform_options: CommonPlatformOptions = dc.field(default_factory=CommonPlatformOptions)
     #: Instance descriptors for each instance to run
-    instances: typing.List[InstanceConfig] = field(default_factory=list)
+    instances: typing.List[InstanceConfig] = dc.field(default_factory=list)
 
     def __post_init__(self):
         super().__post_init__()
@@ -465,7 +422,7 @@ class PipelineInstanceConfig(Config):
             raise ValueError("There must be at least one instance configuration")
 
 
-@dataclass
+@dc.dataclass
 class CommonBenchmarkConfig(TemplateConfig):
     """
     Common benchmark configuration parameters.
@@ -480,17 +437,21 @@ class CommonBenchmarkConfig(TemplateConfig):
     #: Benchmark configuration
     benchmark: DatasetConfig
     #: Auxiliary data generators/handlers
-    aux_dataset_handlers: typing.List[DatasetConfig] = field(default_factory=list)
+    aux_dataset_handlers: typing.List[DatasetConfig] = dc.field(default_factory=list)
     #: Number of iterations to drop to reach steady-state
     drop_iterations: int = 0
     #: Benchmark description, used for plot titles (can contain a template), defaults to :attr:`name`.
     desc: typing.Optional[str] = None
     #: Name of the benchmark output directory in the Guest instance OS filesystem
-    remote_output_dir: Path = path_field("benchmark-output")
+    remote_output_dir: ConfigPath = Path("/root/benchmark-output")
     #: Extra commands to run in the benchmark script. Keys in the dictionary are
     # benchmark setup steps 'pre_benchmark', 'pre_benchmark_iter', 'post_benchmark_iter',
     # 'post_benchmark'.
-    command_hooks: typing.Dict[str, typing.List[str]] = field(default_factory=dict)
+    command_hooks: typing.Dict[str, typing.List[str]] = dc.field(default_factory=dict)
+
+    def __post_init__(self):
+        super().__post_init__()
+        assert self.remote_output_dir.is_absolute(), f"Remote output path must be absolute {self.remote_output_dir}"
 
     @classmethod
     def from_common_conf(cls, other: "CommonBenchmarkConfig"):
@@ -498,34 +459,34 @@ class CommonBenchmarkConfig(TemplateConfig):
         Initialize a child config common fields.
         """
         initializer = {}
-        for f in fields(CommonBenchmarkConfig):
+        for f in dc.fields(CommonBenchmarkConfig):
             initializer[f.name] = getattr(other, f.name)
         return cls(**initializer)
 
 
-@dataclass
+@dc.dataclass
 class PipelineBenchmarkConfig(CommonBenchmarkConfig):
     """
     User-facing benchmark configuration.
     """
     #: Parameterized benchmark generator instructions. This should map (param_name => [values]).
-    parameterize: typing.Dict[str, typing.List[any]] = field(default_factory=dict)
+    parameterize: typing.Dict[str, typing.List[ConfigAny]] = dc.field(default_factory=dict)
 
 
-@dataclass
+@dc.dataclass
 class BenchmarkRunConfig(CommonBenchmarkConfig):
     """
     Internal benchmark configuration.
     This represents a resolved benchmark run, associated to an ID and set of parameters.
     """
     #: Unique benchmark run identifier
-    uuid: UUID = field(default_factory=uuid4)
+    uuid: UUID = dc.field(default_factory=uuid4)
 
     #: Unique benchmark group identifier, links benchmarks that run on the same instance
     g_uuid: typing.Optional[UUID] = None
 
     #: Benchmark parameters
-    parameters: typing.Dict[str, any] = field(default_factory=dict)
+    parameters: typing.Dict[str, ConfigAny] = dc.field(default_factory=dict)
 
     #: Instance configuration
     instance: typing.Optional[InstanceConfig] = None
@@ -537,7 +498,7 @@ class BenchmarkRunConfig(CommonBenchmarkConfig):
             return f"unallocated {self.name} ({self.uuid}) params={self.parameters}"
 
 
-@dataclass
+@dc.dataclass
 class CommonSessionConfig(TemplateConfig):
     """
     Common session configuration.
@@ -545,7 +506,7 @@ class CommonSessionConfig(TemplateConfig):
     internal session runfile.
     """
     #: Path to the SSH private key to use to access instances
-    ssh_key: Path = Path("~/.ssh/id_rsa")
+    ssh_key: ConfigPath = Path("~/.ssh/id_rsa")
 
     #: Maximum number of concurrent instances that can be run (0 means unlimted)
     concurrent_instances: int = 0
@@ -563,12 +524,12 @@ class CommonSessionConfig(TemplateConfig):
         Initialize a child config common fields.
         """
         initializer = {}
-        for f in fields(CommonSessionConfig):
+        for f in dc.fields(CommonSessionConfig):
             initializer[f.name] = getattr(other, f.name)
         return cls(**initializer)
 
 
-@dataclass
+@dc.dataclass
 class PipelineConfig(CommonSessionConfig):
     """
     Describe the benchmarks to run in the current benchplot session.
@@ -577,10 +538,10 @@ class PipelineConfig(CommonSessionConfig):
     the substitution can be replicated with a different user configuration every time.
     """
     #: Instances configuration, required
-    instance_config: PipelineInstanceConfig = field(default_factory=PipelineInstanceConfig)
+    instance_config: PipelineInstanceConfig = dc.field(default_factory=PipelineInstanceConfig)
 
     #: Benchmark configuration, required
-    benchmark_config: typing.List[PipelineBenchmarkConfig] = field(default_factory=list)
+    benchmark_config: typing.List[PipelineBenchmarkConfig] = dc.field(default_factory=list)
 
     def __post_init__(self):
         super().__post_init__()
@@ -591,7 +552,7 @@ class PipelineConfig(CommonSessionConfig):
             raise ValueError("Missing benchmark_config")
 
 
-@dataclass
+@dc.dataclass
 class SessionRunConfig(CommonSessionConfig):
     """
     Internal session configuration file, autogenerated from the pipeline configuration.
@@ -599,13 +560,13 @@ class SessionRunConfig(CommonSessionConfig):
     to run with the associated instance configurations.
     """
     #: Session unique ID
-    uuid: UUID = field(default_factory=uuid4)
+    uuid: UUID = dc.field(default_factory=uuid4)
 
     #: Session name, defaults to the session UUID
     name: typing.Optional[str] = None
 
     #: Benchmark run configuration, this is essentially the flattened benchmark matrix
-    configurations: typing.List[BenchmarkRunConfig] = field(default_factory=list)
+    configurations: typing.List[BenchmarkRunConfig] = dc.field(default_factory=list)
 
     def __post_init__(self):
         super().__post_init__()
@@ -661,9 +622,9 @@ class SessionRunConfig(CommonSessionConfig):
         common_platform_options = config.instance_config.platform_options
         for run_conf in all_conf:
             for gid, inst_conf in zip(group_uuids, config.instance_config.instances):
-                final_run_conf = BenchmarkRunConfig(**asdict(run_conf))
+                final_run_conf = BenchmarkRunConfig.copy(run_conf)
                 # Resolve merged platform options
-                final_inst_conf = InstanceConfig(**asdict(inst_conf))
+                final_inst_conf = InstanceConfig.copy(inst_conf)
                 final_inst_conf.platform_options.replace_common(common_platform_options)
                 # Generate new unique ID for the parameterized run
                 final_run_conf.uuid = uuid4()
@@ -673,7 +634,7 @@ class SessionRunConfig(CommonSessionConfig):
         return session
 
 
-@dataclass
+@dc.dataclass
 class BenchplotUserConfig(Config):
     """
     User-environment configuration.
@@ -683,34 +644,34 @@ class BenchplotUserConfig(Config):
     """
 
     #: Path to write the cheri-benchplot sessions to
-    session_path: Path = field(default_factory=Path.cwd)
+    session_path: ConfigPath = dc.field(default_factory=Path.cwd)
 
     #: CHERI sdk path
-    sdk_path: Path = path_field("~/cheri/cherisdk")
+    sdk_path: ConfigPath = Path("~/cheri/cherisdk")
 
     #: CHERI projects build directory, expects the format from cheribuild
-    build_path: Path = path_field("~/cheri/build")
+    build_path: ConfigPath = Path("~/cheri/build")
 
     #: git repositories path
-    src_path: Path = path_field("~/cheri")
+    src_path: ConfigPath = Path("~/cheri")
 
     #: Path to the CHERI perfetto fork build directory
-    perfetto_path: Path = path_field("~/cheri/cheri-perfetto/build")
+    perfetto_path: ConfigPath = Path("~/cheri/cheri-perfetto/build")
 
     #: Path to openocd, will be inferred if missing (only relevant when running FPGA)
-    openocd_path: typing.Optional[Path] = path_field("/usr/bin/openocd")
+    openocd_path: ConfigPath = Path("/usr/bin/openocd")
 
     #: Path to flamegraph.pl flamegraph generator
-    flamegraph_path: typing.Optional[Path] = path_field("flamegraph.pl")
+    flamegraph_path: ConfigPath = Path("flamegraph.pl")
 
     #: Path to cheribuild, inferred from :attr:`src_path` if missing
-    cheribuild_path: Path = field(init=False, default=None)
+    cheribuild_path: typing.Optional[ConfigPath] = dc.field(init=False, default=None)
 
     #: Path to the CheriBSD sources, inferred from :attr:`src_path` if missing
-    cheribsd_path: Path = field(init=False, default=None)
+    cheribsd_path: typing.Optional[ConfigPath] = dc.field(init=False, default=None)
 
     #: Path to the qemu sources, inferred from :attr:`src_path` if missing
-    qemu_path: Path = field(init=False, default=None)
+    qemu_path: typing.Optional[ConfigPath] = dc.field(init=False, default=None)
 
     #: Enable extra debug output
     verbose: bool = False
@@ -732,24 +693,24 @@ class BenchplotUserConfig(Config):
             raise ValueError("Session path must be a directory")
 
 
-@dataclass
+@dc.dataclass
 class AnalysisConfig(Config):
     #: List of plots/analysis steps to enable
-    enable: typing.List[str] = field(default_factory=list)
+    enable: typing.List[str] = dc.field(default_factory=list)
 
     #: Tags for group enable
-    enable_tags: typing.Set[str] = field(default_factory=set)
+    enable_tags: typing.Set[str] = dc.field(default_factory=set)
 
     #: Generate multiple split plots instead of combining
     split_subplots: bool = False
 
     #: Output formats
-    plot_output_format: typing.List[str] = field(default_factory=lambda: ["pdf"])
+    plot_output_format: typing.List[str] = dc.field(default_factory=lambda: ["pdf"])
 
     #: Constants to show in various plots, depending on the X and Y axes.
     # The dictionary maps parameters of the benchmark parameterisation to a dict
     # mapping description -> constant value
-    parameter_constants: typing.Dict[str, dict] = field(default_factory=dict)
+    parameter_constants: typing.Dict[str, dict] = dc.field(default_factory=dict)
 
     #: Baseline dataset group id, defaults to the baseline instance uuid
     baseline_gid: typing.Optional[UUID] = None
