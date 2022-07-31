@@ -390,7 +390,8 @@ class CheribuildInstance(Instance):
             qemu_options = [
                 "--cheri-trace-backend", "perfetto", "--cheri-trace-perfetto-logfile",
                 str(self._get_qemu_trace_sink()), "--cheri-trace-perfetto-categories",
-                ",".join(self.config.platform_options.qemu_trace_categories)
+                ",".join(self.config.platform_options.qemu_trace_categories),
+                "-icount", "shift=5,align=off"
             ]
             run_cmd += [self._run_option("extra-options"), " ".join(qemu_options)]
         elif self.config.platform_options.qemu_trace == "perfetto-dynamorio":
@@ -399,7 +400,8 @@ class CheribuildInstance(Instance):
                 str(self._get_qemu_trace_sink().with_suffix(".pb")), "--cheri-trace-perfetto-enable-interceptor",
                 "--cheri-trace-perfetto-interceptor-logfile",
                 str(self._get_qemu_trace_sink()), "--cheri-trace-perfetto-categories",
-                ",".join(self.config.platform_options.qemu_trace_categories)
+                ",".join(self.config.platform_options.qemu_trace_categories),
+                "-icount", "shift=5,align=off"
             ]
             run_cmd += [self._run_option("extra-options"), " ".join(qemu_options)]
         else:
