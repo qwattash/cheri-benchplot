@@ -1,6 +1,7 @@
 import argparse as ap
 import collections
 import dataclasses as dc
+import functools as ft
 import itertools as it
 import json
 import shutil
@@ -588,6 +589,12 @@ class SessionRunConfig(CommonSessionConfig):
         Manual benchmark parameterization is supported by specifying multiple benchmarks with
         the same set of parameterize keys and different values.
 
+        We support 3 types of parameterization:
+        1. there is a single benchmark_config and no parametrization
+        2. there is a single benchmark_config with parametrization and template substitution
+        3. there are multiple benchmark_configs with the same set of parametrization keys
+           but disjoint sets of values
+
         :param config: The :class:`PipelineConfig` to use.
         :return: A new session runfile configuration
         """
@@ -595,33 +602,36 @@ class SessionRunConfig(CommonSessionConfig):
         mgr.logger.info("Create new session %s", session.uuid)
 
         # Collect benchmarks and the instances
-        param_keys = None
         all_conf = []
-        for conf in config.benchmark_config:
-            if conf.parameterize:
-                mgr.logger.debug("Found parameterized benchmark '%s'", conf.name)
+        # Case (1)
+        if ft.reduce(lambda noparams, conf: noparams or len(conf.parameterize) == 0, config.benchmark_config, False):
+            if len(config.benchmark_config) > 1:
+                mgr.logger.error("Multiple benchmark configurations must have a parameterization key")
+                raise ValueError("Invalid configuration")
+            conf = config.benchmark_config[0]
+            mgr.logger.debug("Found benchmark %s", conf.name)
+            all_conf = [BenchmarkRunConfig.from_common_conf(conf)]
+        else:
+            param_keys = None
+            # Case (2) (3)
+            for conf in config.benchmark_config:
+                if len(conf.parameterize) == 0:
+                    mgr.logger.error("Missing benchmark parameterization?")
+                    raise ValueError("Invalid configuration")
                 sorted_params = OrderedDict(conf.parameterize)
                 keys = set(conf.parameterize.keys())
+                if param_keys and param_keys != keys:
+                    mgr.logger.error("Mismatching parameterization keys %s != %s", param_keys, keys)
+                    raise ValueError("Invalid configuration")
+                elif param_keys is None:
+                    param_keys = keys
+                # XXX TODO Ensure parameter set disjointness
+                mgr.logger.debug("Found parameterized benchmark '%s'", conf.name)
                 for param_combination in it.product(*sorted_params.values()):
                     parameters = dict(zip(sorted_params.keys(), param_combination))
                     run_conf = BenchmarkRunConfig.from_common_conf(conf)
                     run_conf.parameters = parameters
                     all_conf.append(run_conf)
-            else:
-                # Only allow no parameterisation if there is a single config
-                if len(config.benchmark_config) > 1:
-                    mgr.logger.error(
-                        "Multiple benchmark configurations must have a parameterization key to permit to distinguish them"
-                    )
-                    raise ValueError("Invalid configuration")
-                mgr.logger.debug("Found benchmark %s", conf.name)
-                all_conf = [BenchmarkRunConfig.from_common_conf(conf)]
-                break
-            if not param_keys:
-                param_keys = keys
-            elif param_keys != keys:
-                mgr.logger.error("Benchmark parameter sets must be the same: expected %s found %s", param_keys, keys)
-                raise ValueError("Invalid configuration")
 
         # Map instances to dataset group IDs
         group_uuids = [uuid4() for _ in config.instance_config.instances]
@@ -724,7 +734,7 @@ class AnalysisConfig(Config):
     baseline_gid: typing.Optional[UUID] = None
 
     #: Use builtin symbolizer instead of addr2line
-    use_buitin_symbolizer: bool = False
+    use_builtin_symbolizer: bool = True
 
     def __post_init__(self):
         super().__post_init__()

@@ -1,5 +1,6 @@
 import io
 import json
+import uuid
 from dataclasses import dataclass
 
 import pytest
@@ -85,3 +86,261 @@ def test_dataset_config(dataset):
     assert check.handler == DatasetName(dataset)
     assert isinstance(check.run_options, dict)
     assert check.run_options["foo"] == "bar"
+
+
+def test_pipeline_config_missing_benchmark():
+    data = {"instance_config": {"instances": [{"kernel": "GENERIC-FAKE-TEST"}]}, "benchmark_config": []}
+    with pytest.raises(ValueError):
+        input_config = PipelineConfig.schema().load(data)
+
+
+def test_pipeline_config_missing_instance():
+    data = {
+        "instance_config": {
+            "instances": []
+        },
+        "benchmark_config": [{
+            "name": "test-valid",
+            "iterations": 1,
+            "parameterize": {},
+            "benchmark": {
+                "handler": "test-fake"
+            }
+        }]
+    }
+    with pytest.raises(ValueError):
+        input_config = PipelineConfig.schema().load(data)
+
+
+def test_run_config_gen_without_parametrization(fake_pipeline):
+    # Setup a valid pipeline with just one benchmark
+    data = {
+        "instance_config": {
+            "instances": [{
+                "kernel": "GENERIC-FAKE-TEST"
+            }]
+        },
+        "benchmark_config": [{
+            "name": "test-valid",
+            "iterations": 1,
+            "parameterize": {},
+            "benchmark": {
+                "handler": "test-fake"
+            }
+        }]
+    }
+    input_config = PipelineConfig.schema().load(data)
+    check = SessionRunConfig.generate(fake_pipeline, input_config)
+
+    assert len(check.configurations) == 1
+    conf0 = check.configurations[0]
+    assert conf0.name == "test-valid"
+    assert conf0.iterations == 1
+    assert conf0.benchmark.handler == DatasetName.TEST_FAKE
+    assert conf0.g_uuid is not None
+    assert conf0.parameters == {}
+    assert conf0.instance.kernel == "GENERIC-FAKE-TEST"
+
+
+def test_run_config_gen_without_parametrization_fail(fake_pipeline):
+    # Setup a pipeline with two benchmark configs that should fail
+    data = {
+        "instance_config": {
+            "instances": [{
+                "kernel": "GENERIC-FAKE-TEST"
+            }]
+        },
+        "benchmark_config": [{
+            "name": "test-valid",
+            "iterations": 1,
+            "parameterize": {},
+            "benchmark": {
+                "handler": "test-fake"
+            }
+        }, {
+            "name": "test-valid2",
+            "iterations": 1,
+            "parameterize": {},
+            "benchmark": {
+                "handler": "test-fake"
+            }
+        }]
+    }
+    input_config = PipelineConfig.schema().load(data)
+    with pytest.raises(ValueError):
+        check = SessionRunConfig.generate(fake_pipeline, input_config)
+
+
+def test_run_config_gen_single_parametrization(fake_pipeline):
+    data = {
+        "instance_config": {
+            "instances": [{
+                "kernel": "GENERIC-FAKE-TEST"
+            }]
+        },
+        "benchmark_config": [{
+            "name": "test-valid-{fakeparam}",
+            "iterations": 1,
+            "parameterize": {
+                "fakeparam": ["value0", "value1"]
+            },
+            "benchmark": {
+                "handler": "test-fake",
+                "run_options": {
+                    "fake_arg": "{fakeparam}"
+                }
+            }
+        }]
+    }
+    input_config = PipelineConfig.schema().load(data)
+    check = SessionRunConfig.generate(fake_pipeline, input_config)
+
+    assert len(check.configurations) == 2
+    conf0 = check.configurations[0]
+    assert conf0.name == "test-valid-{fakeparam}"
+    assert conf0.iterations == 1
+    assert conf0.benchmark.handler == DatasetName.TEST_FAKE
+    assert conf0.benchmark.run_options["fake_arg"] == "{fakeparam}"
+    assert conf0.g_uuid is not None
+    assert conf0.parameters == {"fakeparam": "value0"}
+    assert conf0.instance.kernel == "GENERIC-FAKE-TEST"
+
+    conf1 = check.configurations[1]
+    assert conf1.name == "test-valid-{fakeparam}"
+    assert conf1.iterations == 1
+    assert conf1.benchmark.handler == DatasetName.TEST_FAKE
+    assert conf1.benchmark.run_options["fake_arg"] == "{fakeparam}"
+    assert conf1.g_uuid is not None
+    assert conf1.parameters == {"fakeparam": "value1"}
+    assert conf1.instance.kernel == "GENERIC-FAKE-TEST"
+    # Check same instance config uuid
+    assert conf1.g_uuid == conf0.g_uuid
+
+
+def test_run_config_gen_multi_parametrization(fake_pipeline):
+    data = {
+        "instance_config": {
+            "instances": [{
+                "kernel": "GENERIC-FAKE-TEST"
+            }]
+        },
+        "benchmark_config": [{
+            "name": "test-first-{fakeparam}",
+            "iterations": 1,
+            "parameterize": {
+                "fakeparam": ["value0"]
+            },
+            "benchmark": {
+                "handler": "test-fake",
+                "run_options": {
+                    "fake_arg": "{fakeparam}"
+                }
+            }
+        }, {
+            "name": "test-second-{fakeparam}",
+            "iterations": 1,
+            "parameterize": {
+                "fakeparam": ["value1"]
+            },
+            "benchmark": {
+                "handler": "test-fake",
+                "run_options": {
+                    "fake_arg": "{fakeparam}"
+                }
+            }
+        }]
+    }
+    input_config = PipelineConfig.schema().load(data)
+    check = SessionRunConfig.generate(fake_pipeline, input_config)
+
+    assert len(check.configurations) == 2
+    conf0 = check.configurations[0]
+    assert conf0.name == "test-first-{fakeparam}"
+    assert conf0.iterations == 1
+    assert conf0.benchmark.handler == DatasetName.TEST_FAKE
+    assert conf0.benchmark.run_options["fake_arg"] == "{fakeparam}"
+    assert conf0.g_uuid is not None
+    assert conf0.parameters == {"fakeparam": "value0"}
+    assert conf0.instance.kernel == "GENERIC-FAKE-TEST"
+
+    conf1 = check.configurations[1]
+    assert conf1.name == "test-second-{fakeparam}"
+    assert conf1.iterations == 1
+    assert conf1.benchmark.handler == DatasetName.TEST_FAKE
+    assert conf1.benchmark.run_options["fake_arg"] == "{fakeparam}"
+    assert conf1.g_uuid is not None
+    assert conf1.parameters == {"fakeparam": "value1"}
+    assert conf1.instance.kernel == "GENERIC-FAKE-TEST"
+    # Check same instance config uuid
+    assert conf1.g_uuid == conf0.g_uuid
+
+
+def test_run_config_gen_multi_parametrization_mismatch(fake_pipeline):
+    data = {
+        "instance_config": {
+            "instances": [{
+                "kernel": "GENERIC-FAKE-TEST"
+            }]
+        },
+        "benchmark_config": [{
+            "name": "test-first-{fakeparam}",
+            "iterations": 1,
+            "parameterize": {
+                "fakeparam": ["value0"]
+            },
+            "benchmark": {
+                "handler": "test-fake",
+                "run_options": {
+                    "fake_arg": "{fakeparam}"
+                }
+            }
+        }, {
+            "name": "test-second-{otherfakeparam}",
+            "iterations": 1,
+            "parameterize": {
+                "otherfakeparam": ["value1"]
+            },
+            "benchmark": {
+                "handler": "test-fake",
+                "run_options": {
+                    "fake_arg": "{otherfakeparam}"
+                }
+            }
+        }]
+    }
+    input_config = PipelineConfig.schema().load(data)
+    with pytest.raises(ValueError, match="Invalid configuration"):
+        SessionRunConfig.generate(fake_pipeline, input_config)
+
+
+def test_run_config_gen_multi_parametrization_missing(fake_pipeline):
+    data = {
+        "instance_config": {
+            "instances": [{
+                "kernel": "GENERIC-FAKE-TEST"
+            }]
+        },
+        "benchmark_config": [{
+            "name": "test-first-{fakeparam}",
+            "iterations": 1,
+            "parameterize": {
+                "fakeparam": ["value0"]
+            },
+            "benchmark": {
+                "handler": "test-fake",
+                "run_options": {
+                    "fake_arg": "{fakeparam}"
+                }
+            }
+        }, {
+            "name": "test-second",
+            "iterations": 1,
+            "parameterize": {},
+            "benchmark": {
+                "handler": "test-fake"
+            }
+        }]
+    }
+    input_config = PipelineConfig.schema().load(data)
+    with pytest.raises(ValueError, match="Invalid configuration"):
+        SessionRunConfig.generate(fake_pipeline, input_config)

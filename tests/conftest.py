@@ -53,6 +53,11 @@ def benchplot_user_config(pytestconfig):
 
 
 @pytest.fixture
+def fake_pipeline():
+    return PipelineManager(BenchplotUserConfig())
+
+
+@pytest.fixture
 def fake_simple_benchmark(pytestconfig, tmp_path, mocker):
     """
     A fake benchmark instance with the default user configuration
