@@ -52,7 +52,7 @@ class SpecDataset(DataSetContainer):
         outpath = self.iteration_output_file(iteration)
         if self.has_qemu:
             script.gen_cmd("qtrace",
-                           ["-u", "exec", self.spec_benchmark_bin] + self.config.spec_benchmark_options.copy(),
+                           ["-u", "exec", self.spec_benchmark_bin, "--"] + self.config.spec_benchmark_options.copy(),
                            outfile=outpath)
         else:
             script.gen_cmd(self.spec_benchmark_bin, self.config.spec_benchmark_options.copy(), outfile=outpath)
