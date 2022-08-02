@@ -111,20 +111,37 @@ class Benchmark:
         """
         analysers = []
         datasets = set(self._dataset_modules.keys())
-        for handler_class in BenchmarkAnalysisRegistry.analysis_steps.values():
-            if handler_class.cross_analysis != cross_analysis:
+
+        for conf in analysis_config.handlers:
+            try:
+                handler_class = BenchmarkAnalysisRegistry.analysis_steps[conf.name]
+            except KeyError:
+                self.logger.warn("No analysis handler with name %s, skipping", conf.name)
                 continue
-            # First check if we have the minimal requirements
-            if callable(handler_class.require):
-                checker = handler_class.require
+            if not handler_class.require.issubset(datasets):
+                self.logger.warn("analysis handler %s requires but only %s available", handler_class.require, datasets)
+                continue
+            if handler_class.analysis_options_class:
+                options = handler_class.analysis_options_class.schema().load(conf.options)
             else:
-                checker = lambda dss, conf: handler_class.require.issubset(dss)
-            if not checker(datasets, analysis_config):
-                continue
-            # Check for config enable
-            if (handler_class.name in analysis_config.enable
-                    or handler_class.tags.issubset(analysis_config.enable_tags)):
-                analysers.append(handler_class(self))
+                options = conf.options
+            analysers.append(handler_class(self, options))
+
+        if len(analysis_config.handlers) == 0:
+            for handler_class in BenchmarkAnalysisRegistry.analysis_steps.values():
+                if handler_class.cross_analysis != cross_analysis:
+                    continue
+                # First check if we have the minimal requirements
+                if callable(handler_class.require):
+                    checker = handler_class.require
+                else:
+                    checker = lambda dss, conf: handler_class.require.issubset(dss)
+                if not checker(datasets, analysis_config):
+                    continue
+                # Check for config enable
+                if (handler_class.name in analysis_config.enable
+                        or handler_class.tags.issubset(analysis_config.enable_tags)):
+                    analysers.append(handler_class(self))
         return analysers
 
     def _configure_datasets(self):

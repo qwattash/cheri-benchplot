@@ -712,6 +712,15 @@ class BenchplotUserConfig(Config):
 
 
 @dc.dataclass
+class AnalysisHandlerConfig(Config):
+    #: Identifier of the analysis pass
+    name: str
+
+    #: analysis-specific options
+    options: typing.Dict[str, ConfigAny] = dc.field(default_factory=dict)
+
+
+@dc.dataclass
 class AnalysisConfig(Config):
     #: List of plots/analysis steps to enable
     enable: typing.List[str] = dc.field(default_factory=list)
@@ -735,6 +744,9 @@ class AnalysisConfig(Config):
 
     #: Use builtin symbolizer instead of addr2line
     use_builtin_symbolizer: bool = True
+
+    #: Specify analysis passes to run
+    handlers: typing.List[AnalysisHandlerConfig] = dc.field(default_factory=list)
 
     def __post_init__(self):
         super().__post_init__()

@@ -6,6 +6,7 @@ from contextlib import AbstractContextManager
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
+from .analysis import BenchmarkAnalysis, BenchmarkAnalysisRegistry
 from .config import AnalysisConfig, BenchplotUserConfig, PipelineConfig
 from .session import PipelineSession
 from .util import new_logger
@@ -84,7 +85,7 @@ class PipelineManager:
         loop.close()
         self.logger.info("Session %s (%s) run finished", session.name, session.uuid)
 
-    def run_analysis(self, session: PipelineSession, config: AnalysisConfig, interactive: typing.Optional[str] = None):
+    def run_analysis(self, session: PipelineSession, config: AnalysisConfig, mode: str = None):
         """
         Run the analysis step for the given session.
         Note that the session must have been run before the
@@ -96,7 +97,25 @@ class PipelineManager:
 
         loop = aio.get_event_loop()
         self.logger.debug("Session %s (%s) start analysis", session.name, session.uuid)
-        with session.analyse(config, interactive) as ctx:
+        with session.analyse(config, mode) as ctx:
             loop.run_until_complete(ctx.main())
         loop.close()
         self.logger.info("Session %s (%s) analysis finished", session.name, session.uuid)
+
+    def get_analysis_handlers(self, session: PipelineSession | None) -> list[typing.Type[BenchmarkAnalysis]]:
+        """
+        Return the analysis handlers suitable for a given session.
+        If not session is given, return all analysis handlers.
+
+        :param session: Optional session to filter compatible handlers
+        :return: A list of :class:`BenchmarkAnalysis` classes.
+        """
+        handlers = [h for h in BenchmarkAnalysisRegistry.analysis_steps.values() if h.name]
+        if session:
+            available = set()
+            for c in session.config.configurations:
+                available.add(c.benchmark.handler)
+                for d in c.aux_dataset_handlers:
+                    available.add(d.handler)
+            handlers = [h for h in handlers if h in available]
+        return handlers

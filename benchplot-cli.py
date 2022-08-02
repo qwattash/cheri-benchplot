@@ -8,6 +8,7 @@ from json.decoder import JSONDecodeError
 from pathlib import Path
 
 from pycheribenchplot.core.config import PipelineConfig, BenchplotUserConfig, AnalysisConfig
+from pycheribenchplot.core.session import SessionAnalysisMode
 from pycheribenchplot.core.pipeline import PipelineManager
 from pycheribenchplot.core.util import setup_logging
 
@@ -27,6 +28,32 @@ def resolve_session(args, manager, logger):
         logger.error("Session %s does not exist", args.session_path)
         exit(1)
     return session
+
+def list_session(manager, session, logger):
+    if session is None:
+        logger.error("No session %s", args.session_path)
+        return
+
+    configurations = session.config.configurations
+    print(f"Session {session.config.name} ({session.config.uuid}):")
+    for c in session.config.configurations:
+        print("\t", c)
+
+def list_analysis(manager, session, logger):
+    """
+    Helper to display analysis handlers for a given manager
+    """
+    handlers = manager.get_analysis_handlers(session)
+    print("Analysis handlers:")
+    for h in handlers:
+        if h.cross_analysis:
+            continue
+        print("\t", h)
+
+    print("Cross-parameter analysis handlers:")
+    for h in handlers:
+        if h.cross_analysis:
+            print("\t", h)
 
 
 def main():
@@ -49,16 +76,17 @@ def main():
 
     sub_analyse = sub.add_parser("analyse", help="process benchmarks and generate plots")
     add_session_spec_options(sub_analyse)
-    sub_analyse.add_argument("--interactive",
-                             choices=["load", "pre-merge", "merge", "aggregate"],
-                             help="Interact with live datasets")
+    sub_analyse.add_argument("--mode", choices=[m.value for m in SessionAnalysisMode], help="Analysis mode")
     sub_analyse.add_argument("-a", "--analysis-config", type=Path, help="Analysis configuration file",
                              default=None)
 
     sub_clean = sub.add_parser("clean", help="clean output directory")
     add_session_spec_options(sub_clean)
 
-    sub_list = sub.add_parser("list", help="list sessions in the output directory")
+    sub_list = sub.add_parser("list", help="List sessions and other information")
+    sub_list.add_argument("what", choices=["session", "analysis"], help="What to show")
+    sub_list.add_argument("session_path", type=Path, help="Path or name of the target session",
+                          nargs='?')
 
     args = parser.parse_args()
 
@@ -109,11 +137,18 @@ def main():
                 analysis_config = AnalysisConfig.load_json(args.analysis_config)
             else:
                 analysis_config = AnalysisConfig()
-            manager.run_analysis(session, analysis_config, interactive=args.interactive)
+            manager.run_analysis(session, analysis_config, mode=args.mode)
         elif args.command == "clean":
             raise NotImplementedError("TODO")
         elif args.command == "list":
-            raise NotImplementedError("TODO")
+            if args.session_path:
+                session = resolve_session(args, manager, logger)
+            else:
+                session = None
+            if args.what == "session":
+                list_session(manager, session, logger)
+            elif args.what == "analysis":
+                list_analysis(manager, session, logger)
         else:
             # No command
             parser.print_help()

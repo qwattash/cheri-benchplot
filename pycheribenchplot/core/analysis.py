@@ -2,7 +2,7 @@ import typing
 import uuid
 from dataclasses import dataclass, field
 
-from .dataset import DatasetName
+from .config import AnalysisConfig, Config, DatasetName
 
 
 class BenchmarkAnalysisRegistry(type):
@@ -15,6 +15,11 @@ class BenchmarkAnalysisRegistry(type):
         if self.name in BenchmarkAnalysisRegistry.analysis_steps:
             raise ValueError(f"Duplicate analysis step {self.name}")
         BenchmarkAnalysisRegistry.analysis_steps[self.name] = self
+
+    def __str__(self):
+        # From BenchmarkAnalysis base class
+        required = [r.value for r in self.require]
+        return f"{self.name}: {self.description} requires {required}"
 
 
 class BenchmarkAnalysis(metaclass=BenchmarkAnalysisRegistry):
@@ -37,15 +42,25 @@ class BenchmarkAnalysis(metaclass=BenchmarkAnalysisRegistry):
     name: str = None
     # Description of the analysis step
     description: str = None
-    # Analysis step tags for group selection
-    tags: set[str] = set()
-    # Cross benchmark variant analysis step
+    #: Cross benchmark variant analysis step
     cross_analysis: bool = False
+    #: Extra options from the analysis config are parsed with this configuration
+    analysis_options_class: Config = None
 
-    def __init__(self, benchmark: "Benchmark", **kwargs):
+    def __init__(self, benchmark: "Benchmark", config: Config, **kwargs):
+        """
+        Create a new benchmark analysis handler.
+
+        :param benchmark: The parent benchmark
+        :param config: The analysis options, the type is specified by :attribute:`analysis_options_class`
+        """
         self.benchmark = benchmark
         self.logger = benchmark.logger
         self.config = benchmark.session.analysis_config
+
+    @property
+    def analysis_config(self) -> AnalysisConfig:
+        return self.benchmark.session.analysis_config
 
     def get_dataset(self, dset_id: DatasetName):
         """Helper to access datasets in the benchmark"""

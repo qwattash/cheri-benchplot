@@ -29,6 +29,20 @@ class SessionRunMode(Enum):
     SHELLGEN = "shellgen"
 
 
+class SessionAnalysisMode(Enum):
+    """
+    Analysis mode determines the type of run strategy to use for the
+    processing steps.
+    """
+    ASYNC_LOAD = "async-load"
+    SYNC = "sync"
+    INTERACTIVE_LOAD = "interactive-load"
+    INTERACTIVE_PREMERGE = "interactive-pre-merge"
+    INTERACTIVE_MERGE = "interactive-merge"
+    INTERACTIVE_AGG = "interactive-aggregate"
+    INTERACTIVE_XMERGE = "interactive-xmerge"
+
+
 class PipelineSession:
     """
     Represent a benchmarking session.
@@ -209,13 +223,16 @@ class PipelineSession:
             ctx.schedule_benchmark(benchmark)
         return ctx
 
-    def analyse(self, analysis_config: AnalysisConfig, interactive: str | None) -> AbstractContextManager:
+    def analyse(self, analysis_config: AnalysisConfig, mode: str = "async-load") -> AbstractContextManager:
         """
         Prepare data analysis.
 
+        :param analysis_config: The analysis configuration
+        :param mode: The mode to use for the analysis task scheduling.
         :return: A context manager to wrap the main loop and manage
         the analysis tasks.
         """
+        session_analysis_mode = SessionAnalysisMode(mode)
         self.get_plot_root_path().mkdir(exist_ok=True)
         self.analysis_config = analysis_config
 
@@ -276,9 +293,7 @@ class PipelineSession:
 
         self.benchmark_matrix = bench_matrix
         self.baseline_g_uuid = baseline
-        ctx = SessionAnalysisContext(self, analysis_config, bench_matrix, baseline)
-        if interactive:
-            ctx.set_interactive(interactive)
+        ctx = SessionAnalysisContext(self, analysis_config, bench_matrix, baseline, session_analysis_mode)
         return ctx
 
 
@@ -291,12 +306,12 @@ class SessionAnalysisContext(AbstractContextManager):
     :param session: The parent pipeline session
     """
     def __init__(self, session: PipelineSession, analysis_config: AnalysisConfig, benchmark_matrix: pd.DataFrame,
-                 baseline: UUID):
+                 baseline: UUID, mode: SessionAnalysisMode):
         self.session = session
         self.analysis_config = analysis_config
-        self.interactive_step = None
         self.loop = aio.get_event_loop()
         self.logger = session.logger
+        self._mode = mode
         self._tp_cache = TraceProcessorCache.get_instance(session)
         self._baseline_g_uuid = baseline
         self._benchmark_matrix = benchmark_matrix
@@ -330,10 +345,6 @@ class SessionAnalysisContext(AbstractContextManager):
             self.logger.exception("Exiting interactive analysis with error")
         self.logger.info("Interactive analysis done")
 
-    def set_interactive(self, step: str | None):
-        self.logger.info("Interactive analysis will stop at %s", step)
-        self.interactive_step = step
-
     async def main(self):
         """
         Main analysis processing steps.
@@ -347,35 +358,47 @@ class SessionAnalysisContext(AbstractContextManager):
         7. Merge the aggregated data into a single dataframe
         8. Perform analysis across all parameterizations
         """
+
         self.logger.info("Loading datasets")
-        for bench in self._benchmark_matrix.values.ravel():
-            if self.interactive_step:
-                executor_fn = bench.load
-            else:
-                executor_fn = bench.load_and_pre_merge
-            self._tasks.append(self.loop.run_in_executor(None, executor_fn))
-        await aio.gather(*self._tasks)
-        self._tasks.clear()
-        if self.interactive_step == "load" or self.interactive_step == "pre-merge":
+        if self._mode == SessionAnalysisMode.SYNC:
+            # Just load and pre_merge everything sequentially
+            # The rest is synchronous anyway
+            for bench in self._benchmark_matrix.values.ravel():
+                bench.load()
+                bench.pre_merge()
+        elif self._mode == SessionAnalysisMode.INTERACTIVE_LOAD:
+            for bench in self._benchmark_matrix.values.ravel():
+                self._tasks.append(self.loop.run_in_executor(None, bench.load))
+            await aio.gather(*self._tasks)
+            self._tasks.clear()
             self._interactive_analysis()
-            return
+            # Continue with the pre merge
+            for bench in self._benchmark_matrix.values.ravel():
+                self._tasks.append(self.loop.run_in_executor(None, bench.pre_merge))
+            await aio.gather(*self._tasks)
+            self._tasks.clear()
+        else:
+            for bench in self._benchmark_matrix.values.ravel():
+                self._tasks.append(self.loop.run_in_executor(None, bench.load_and_pre_merge))
+            await aio.gather(*self._tasks)
+            self._tasks.clear()
+            if self._mode == SessionAnalysisMode.INTERACTIVE_PREMERGE:
+                self._interactive_analysis()
 
         self.logger.info("Merge datasets by param set")
         to_merge = self._benchmark_matrix.columns.difference([self._baseline_g_uuid])
         for params, row in self._benchmark_matrix.iterrows():
             self.logger.debug("Merge param set %s", params)
             row[self._baseline_g_uuid].merge(row[to_merge])
-        if self.interactive_step == "merge":
+        if self._mode == SessionAnalysisMode.INTERACTIVE_MERGE:
             self._interactive_analysis()
-            return
         # From now on we ony operate on the baseline dataset containing the merged data
         self.logger.info("Aggregate datasets")
         for params, row in self._benchmark_matrix.iterrows():
             self.logger.debug("Aggregate param set %s", params)
             row[self._baseline_g_uuid].aggregate()
-        if self.interactive_step == "aggregate":
+        if self._mode == SessionAnalysisMode.INTERACTIVE_AGG:
             self._interactive_analysis()
-            return
         self.logger.info("Run analysis steps")
         for params, row in self._benchmark_matrix.iterrows():
             self.logger.debug("Analyse param set %s", params)
@@ -387,6 +410,8 @@ class SessionAnalysisContext(AbstractContextManager):
         to_merge = self._benchmark_matrix[self._baseline_g_uuid]
         target = to_merge.iloc[0]
         target.cross_merge(to_merge.iloc[1:])
+        if self._mode == SessionAnalysisMode.INTERACTIVE_XMERGE:
+            self._interactive_analysis()
         target.cross_analysis(self.analysis_config)
 
 
