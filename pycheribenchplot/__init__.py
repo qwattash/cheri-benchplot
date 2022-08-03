@@ -18,3 +18,5 @@ import pycheribenchplot.qemu.plot
 import pycheribenchplot.spec.dataset
 import pycheribenchplot.vmstat.dataset
 import pycheribenchplot.vmstat.plot
+import pycheribenchplot.drcachesim.analysis
+import pycheribenchplot.drcachesim.plot

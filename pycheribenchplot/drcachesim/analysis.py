@@ -1,0 +1,43 @@
+from ..core.analysis import BenchmarkAnalysis
+from ..core.dataset import DatasetName
+import subprocess, os, shutil
+
+
+class DrCacheSimRun(BenchmarkAnalysis):
+    require = {DatasetName.QEMU_DYNAMORIO}
+    name: str = "drcachesim_run"
+    description: str = "Run drcachesim"
+
+    def process_datasets(self):
+        run_args = ['-t', 'drcachesim', '-indir']
+        processes_dict = {} 
+        args = self.analysis_options_class.options
+        dset = self.get_dataset(DatasetName.QEMU_DYNAMORIO)
+        trace_file = dset.output_file()
+        self.logger.info(f"Running drcachesim on {trace_file}")
+        indir = trace_file.parent
+
+        base = os.path.basename(indir)
+        if base == "":
+            base  = os.path.basename(os.path.split(indir)[0])
+        outdir = base + '-results'
+        if args.remove_saved_results:
+            shutil.rmtree(outdir, ignore_errors=True)
+        if not os.path.exists(outdir):
+            os.makedirs(outdir)
+
+        for s in args.LL_cache_sizes:
+            if os.path.isfile(indir + "/LL_size_" + s + ".txt") and not args.rerun_sim:
+                continue
+            p = subprocess.Popen([args.bin] + run_args + [indir, '-LL_size', s], stderr=subprocess.PIPE)
+            processes_dict[p] = s
+
+        for kvp in processes_dict.items():
+            p = kvp[0]
+            size = kvp[1]
+            err = p.communicate()[1];
+            with open(outdir + "/LL_size_" + size + ".txt", "w") as f: 
+                f.write(err.decode())
+                
+
+ 

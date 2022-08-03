@@ -259,7 +259,8 @@ class Benchmark:
 
     @property
     def cheribsd_rootfs_path(self):
-        rootfs_path = self.user_config.sdk_path / f"rootfs-{self.config.instance.cheri_target}"
+        rootfs_path = self.user_config.sdk_path.parent / f"rootfs-{self.config.instance.cheri_target}"
+        # rootfs_path = self.user_config.sdk_path / f"rootfs-{self.config.instance.cheri_target}"
         if not rootfs_path.exists() or not rootfs_path.is_dir():
             raise ValueError(f"Invalid rootfs path {rootfs_path} for benchmark instance")
         return rootfs_path

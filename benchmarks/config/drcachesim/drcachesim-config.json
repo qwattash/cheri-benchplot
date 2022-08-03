@@ -1,0 +1,18 @@
+{
+    "handlers": [
+        {
+            "name": "drcachesim",
+            "options": {
+                "LL_cache_sizes": [
+                    "1M",
+                    "2M",
+                    "4M",
+                    "8M",
+                    "16M"
+                ],
+                "drrun_path": "dynamorio/bin64/drrun",
+                "remove_saved_results": false
+            }
+        }
+    ]
+}

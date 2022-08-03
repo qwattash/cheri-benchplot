@@ -424,11 +424,13 @@ class QEMUDynamorioInterceptor(DataSetContainer):
     dataset_source_id = DatasetArtefact.QEMU_DYNAMORIO
 
     def output_file(self):
-        return self.benchmark.get_benchmark_data_path() / f"qemu-trace-{self.benchmark.uuid}.trace.gz"
+        return self.benchmark.get_benchmark_data_path() / "qemu-trace-dir" / f"qemu-trace-{self.benchmark.uuid}.trace.gz"
 
     def configure(self, opts: PlatformOptions) -> PlatformOptions:
         opts = super().configure(opts)
         opts.qemu_trace = "perfetto-dynamorio"
+        trace_dir = self.benchmark.get_benchmark_data_path() / "qemu-trace-dir"
+        trace_dir.mkdir(exist_ok=True)
         opts.qemu_trace_file = self.output_file()
         opts.qemu_trace_categories.add("instructions")
         return opts
