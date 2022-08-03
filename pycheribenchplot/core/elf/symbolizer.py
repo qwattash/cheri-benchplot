@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
+from elftools.elf.elffile import ELFFile
 from sortedcontainers import SortedDict
 
 from ..util import new_logger
@@ -81,7 +82,7 @@ class ELFToolsMapping(SymbolizerMapping):
     def lookup_function(self, addr):
         idx = self.functions.bisect(addr) - 1
         if idx < 0:
-            return SymInfo.unknownd(addr)
+            return SymInfo.unknown(addr)
         syminfo = self.functions.values()[idx]
         # XXX Symbol size check seems unreliable for some reason?
         # if syminfo.addr + syminfo.size < addr:
@@ -175,7 +176,7 @@ class Symbolizer(ABC):
         return sym
 
 
-def ELFToolsSymbolizer(Symbolizer):
+class ELFToolsSymbolizer(Symbolizer):
     """
     Symbolizer that uses python elftools to load symbols from the binaries.
     """
@@ -183,7 +184,7 @@ def ELFToolsSymbolizer(Symbolizer):
         return ELFToolsMapping(self.logger, path)
 
 
-def LLVMToolsSymbolizer(Symbolizer):
+class LLVMToolsSymbolizer(Symbolizer):
     """
     Symbolizer that calls addr2line to resolve function addresses
     """
@@ -192,7 +193,7 @@ def LLVMToolsSymbolizer(Symbolizer):
         self.sdk_path = sdk_path
 
     def _make_mapping(self, path):
-        return LLVMToolsMapping(sdk_path, self.logger, path)
+        return LLVMToolsMapping(self.sdk_path, self.logger, path)
 
 
 class AddressSpaceManager:
@@ -217,8 +218,10 @@ class AddressSpaceManager:
         if symbols are not found in other address spaces.
         """
         if as_key in self.addrspaces:
-            raise ValueError(f"Attempted to register duplicate address space {as_key}")
-        if benchmark.session.analysis_config.use_builtin_symbolizer:
+            self.logger.debug(f"Attempted to register duplicate address space {as_key}")
+            # For now just reuse the one we already have
+            return
+        if self.benchmark.session.analysis_config.use_builtin_symbolizer:
             symbolizer = ELFToolsSymbolizer(self.logger)
         else:
             symbolizer = LLVMToolsSymbolizer(self.logger, self.benchmark.user_config.sdk_path)
@@ -257,7 +260,8 @@ class AddressSpaceManager:
         :return: Symbol information
         """
         if as_key not in self.addrspaces:
-            self.logger.error("Lookup function 0x%x in non-existing address space %s", addr, as_key)
+            self.logger.warn("Lookup function 0x%x in non-existing address space %s", addr, as_key)
+            return SymInfo.unknown(addr)
         target_symbolizer = self.addrspaces[as_key]
         sym = target_symbolizer.lookup_function(addr)
         if sym:
