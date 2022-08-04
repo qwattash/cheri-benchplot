@@ -7,7 +7,7 @@ class DrCacheSimRun(BenchmarkAnalysis):
     require = {DatasetName.QEMU_DYNAMORIO}
     name: str = "drcachesim_run"
     description: str = "Run drcachesim"
-
+    analysis_options_class = DrCacheSimConfig
     def process_datasets(self):
         run_args = ['-t', 'drcachesim', '-indir']
         processes_dict = {} 
