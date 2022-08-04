@@ -2,7 +2,15 @@ from ..core.analysis import BenchmarkAnalysis
 from ..core.dataset import DatasetName
 import subprocess, os, shutil
 
+from dataclasses import dataclass, field
+from ..core.config import TemplateConfig, ConfigPath
 
+@dataclass
+class DrCacheSimConfig(TemplateConfig):
+    drrun_path: ConfigPath = Path("some/default")
+    remove_saved_results: bool = False
+    LL_cache_sizes: typing.List[str] = field(default_factory=list)
+    rerun_sim: bool = True
 class DrCacheSimRun(BenchmarkAnalysis):
     require = {DatasetName.QEMU_DYNAMORIO}
     name: str = "drcachesim_run"
