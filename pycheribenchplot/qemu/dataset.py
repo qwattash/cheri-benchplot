@@ -437,3 +437,13 @@ def __init__(self, benchmark, config):
         opts.qemu_trace_file = self.output_file()
         opts.qemu_trace_categories.add("instructions")
         return opts
+        
+    def load(self):
+        trace_info = pd.DataFrame({k: v for k, v in zip (self.dataset_id_values() + [self.ouptut_file()], self.merged_tracefiles.columns)}
+        self.merged_tracefiles = pd.concat([self.merged_tracefiles, trace_info])
+            
+    def merge(self, other):
+        self.merged_tracefiles = pd.concat([self.merged_tracefiles, other.merged_tracefiles])
+            
+    def cross_merge(self, other):
+        self.merged_tracefiles = pd.concat([self.merged_tracefiles, other.merged_tracefiles])
