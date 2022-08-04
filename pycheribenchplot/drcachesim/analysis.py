@@ -11,7 +11,7 @@ class DrCacheSimRun(BenchmarkAnalysis):
     def process_datasets(self):
         run_args = ['-t', 'drcachesim', '-indir']
         processes_dict = {} 
-        args = self.analysis_options_class.options
+        args = self.config
         dset = self.get_dataset(DatasetName.QEMU_DYNAMORIO)
         trace_file = dset.output_file()
         self.logger.info(f"Running drcachesim on {trace_file}")
