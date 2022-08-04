@@ -422,7 +422,10 @@ class QEMUDynamorioInterceptor(DataSetContainer):
     """
     dataset_config_name = DatasetName.QEMU_DYNAMORIO
     dataset_source_id = DatasetArtefact.QEMU_DYNAMORIO
-
+def __init__(self, benchmark, config):
+    super().__init__(benchmark, config)
+    # Collect all the ID => trace file for this run
+    self.merged_tracefiles = pd.DataFrame(columns=self.dataset_id_columns() + ["trace_file"])
     def output_file(self):
         return self.benchmark.get_benchmark_data_path() / "qemu-trace-dir" / f"qemu-trace-{self.benchmark.uuid}.trace.gz"
 
