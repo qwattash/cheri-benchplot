@@ -10,8 +10,9 @@
                     "8M",
                     "16M"
                 ],
-                "drrun_path": "dynamorio/bin64/drrun",
-                "remove_saved_results": false
+                "drrun_path": "/local/scratch/mc2262/dynamorio/build/bin64/drrun",
+                "remove_saved_results": false,
+                "rerun_sim": false
             }
         }
     ]

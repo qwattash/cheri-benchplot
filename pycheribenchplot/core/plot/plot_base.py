@@ -156,7 +156,7 @@ class BenchmarkPlotBase(BenchmarkAnalysis):
                     layout.append(row)
         return Mosaic(layout, subplots)
 
-    def process_datasets(self):
+    async def process_datasets(self):
         """Populate the plot axes and draw everything."""
         self.logger.info("Setup plot %s on %s", self.get_plot_name(), self.fig_manager)
         self.fig_manager.allocate_cells(self.mosaic)

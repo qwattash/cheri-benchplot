@@ -66,7 +66,7 @@ class BenchmarkAnalysis(metaclass=BenchmarkAnalysisRegistry):
         """Helper to access datasets in the benchmark"""
         return self.benchmark.get_dataset(dset_id)
 
-    def process_datasets(self):
+    async def process_datasets(self):
         """
         Process the datasets to generate the intermediate data representation
         used to produce the output artifacts.

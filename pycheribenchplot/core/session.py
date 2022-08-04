@@ -344,6 +344,10 @@ class SessionAnalysisContext(AbstractContextManager):
         except Exception as ex:
             self.logger.exception("Exiting interactive analysis with error")
         self.logger.info("Interactive analysis done")
+    
+    def schedule_task(self, task):
+        self._tasks.append(aio.create_task(task))
+
 
     async def main(self):
         """
@@ -402,7 +406,9 @@ class SessionAnalysisContext(AbstractContextManager):
         self.logger.info("Run analysis steps")
         for params, row in self._benchmark_matrix.iterrows():
             self.logger.debug("Analyse param set %s", params)
-            row[self._baseline_g_uuid].analyse(self.analysis_config)
+            row[self._baseline_g_uuid].analyse(self.analysis_config, self)
+        await aio.gather(*self._tasks)
+        self._tasks.clear()
 
         self.logger.info("Run cross-param analysis")
         # Just pick a random instance to perform the cross-parameterization merge and
@@ -412,7 +418,9 @@ class SessionAnalysisContext(AbstractContextManager):
         target.cross_merge(to_merge.iloc[1:])
         if self._mode == SessionAnalysisMode.INTERACTIVE_XMERGE:
             self._interactive_analysis()
-        target.cross_analysis(self.analysis_config)
+        target.cross_analysis(self.analysis_config, self)
+        await aio.gather(*self._tasks)
+        self._tasks.clear()
 
 
 class SessionRunContext(AbstractContextManager):
