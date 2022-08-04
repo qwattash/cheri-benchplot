@@ -422,10 +422,11 @@ class QEMUDynamorioInterceptor(DataSetContainer):
     """
     dataset_config_name = DatasetName.QEMU_DYNAMORIO
     dataset_source_id = DatasetArtefact.QEMU_DYNAMORIO
-def __init__(self, benchmark, config):
-    super().__init__(benchmark, config)
-    # Collect all the ID => trace file for this run
-    self.merged_tracefiles = pd.DataFrame(columns=self.dataset_id_columns() + ["trace_file"])
+    def __init__(self, benchmark, config):
+        super().__init__(benchmark, config)
+        # Collect all the ID => trace file for this run
+        self.merged_tracefiles = pd.DataFrame(columns=self.dataset_id_columns() + ["trace_file"])
+
     def output_file(self):
         return self.benchmark.get_benchmark_data_path() / "qemu-trace-dir" / f"qemu-trace-{self.benchmark.uuid}.trace.gz"
 
@@ -439,11 +440,16 @@ def __init__(self, benchmark, config):
         return opts
         
     def load(self):
-        trace_info = pd.DataFrame({k: v for k, v in zip (self.dataset_id_values() + [self.ouptut_file()], self.merged_tracefiles.columns)}
+        self.df = pd.DataFrame() 
+        trace_info = pd.DataFrame({k: v for k, v in zip (self.dataset_id_values() + [self.output_file()], self.merged_tracefiles.columns)}, index=[0])
         self.merged_tracefiles = pd.concat([self.merged_tracefiles, trace_info])
             
     def merge(self, other):
+        self.logger.info("Mergeing QEMU trace files")
         self.merged_tracefiles = pd.concat([self.merged_tracefiles, other.merged_tracefiles])
             
     def cross_merge(self, other):
         self.merged_tracefiles = pd.concat([self.merged_tracefiles, other.merged_tracefiles])
+
+    def post_merge(self):
+        self.logger.debug("Post merge: dynamorio trace")
