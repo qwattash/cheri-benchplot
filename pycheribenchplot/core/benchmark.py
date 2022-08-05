@@ -122,6 +122,8 @@ class Benchmark:
             if not handler_class.require.issubset(datasets):
                 self.logger.warn("analysis handler %s requires but only %s available", handler_class.require, datasets)
                 continue
+            if handler_class.cross_analysis != cross_analysis:
+                continue
             if handler_class.analysis_options_class:
                 options = handler_class.analysis_options_class.schema().load(conf.options)
             else:

@@ -364,6 +364,9 @@ class CheribuildInstance(Instance):
         # This will be a binary file containing serialized perfetto protobufs.
         return self.config.platform_options.qemu_trace_file
 
+    def _get_qemu_interceptor_sink(self):
+        return self.config.platform_options.qemu_interceptor_trace_file
+
     def get_info(self) -> InstanceInfo:
         info = super().get_info()
         info.ssh_host = "localhost"
@@ -398,7 +401,7 @@ class CheribuildInstance(Instance):
                 "--cheri-trace-backend", "perfetto", "--cheri-trace-perfetto-logfile",
                 str(self._get_qemu_trace_sink().with_suffix(".pb")), "--cheri-trace-perfetto-enable-interceptor",
                 "--cheri-trace-perfetto-interceptor-logfile",
-                str(self._get_qemu_trace_sink()), "--cheri-trace-perfetto-categories",
+                str(self._get_qemu_interceptor_sink()), "--cheri-trace-perfetto-categories",
                 ",".join(self.config.platform_options.qemu_trace_categories), "-icount", "shift=5,align=off"
             ]
             run_cmd += [self._run_option("extra-options"), " ".join(qemu_options)]

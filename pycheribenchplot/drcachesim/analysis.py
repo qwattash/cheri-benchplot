@@ -29,18 +29,18 @@ class DrCacheSimRun(BenchmarkAnalysis):
         dset = self.get_dataset(DatasetName.QEMU_DYNAMORIO)
         trace_file = dset.output_file()
         indir = trace_file.parent
-        base = indir.parent / "drcachesim_results" 
+        base = dset.cachesim_output_dir()
         if self.args['remove_saved_results']:
             shutil.rmtree(str(base), ignore_errors=True)
         if not base.exists():
             base.mkdir(parents=True)
 
+        self.logger.info(f"Running drcachesim on {indir}")
         for s in self.args['LL_cache_sizes']:
             out_path = base / ("LL_size_" + s + ".txt")
             if os.path.isfile(out_path) and not self.args['rerun_sim']:
                 continue
             self.out_paths[s] = out_path
-            self.logger.info(f"Running drcachesim on {indir}")
             p = await aio.create_subprocess_exec(self.args['drrun_path'], '-t', 'drcachesim', '-indir', indir, '-LL_size', s, stderr=aio.subprocess.PIPE)
             self.processes_dict[p] = s
 
@@ -50,6 +50,7 @@ class DrCacheSimRun(BenchmarkAnalysis):
             err = (await p.communicate())[1];
             with open(self.out_paths[size], "w") as f: 
                 f.write(err.decode())
+        self.logger.info(f"Finished drcachesim on {indir}")
                 
 
  

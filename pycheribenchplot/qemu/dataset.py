@@ -425,31 +425,35 @@ class QEMUDynamorioInterceptor(DataSetContainer):
     def __init__(self, benchmark, config):
         super().__init__(benchmark, config)
         # Collect all the ID => trace file for this run
-        self.merged_tracefiles = pd.DataFrame(columns=self.dataset_id_columns() + ["trace_file"])
+        self.merged_tracefiles = pd.DataFrame(columns=self.dataset_id_columns() + ["trace_file", "cachesim_dir"])
 
     def output_file(self):
-        return self.benchmark.get_benchmark_data_path() / "qemu-trace-dir" / f"qemu-trace-{self.benchmark.uuid}.trace.gz"
+        return self.benchmark.get_benchmark_data_path() / "qemu_trace_dir" / f"qemu-trace-{self.benchmark.uuid}.trace.gz"
+    
+    def cachesim_output_dir(self):
+        return self.benchmark.get_benchmark_data_path() / "drcachesim_results"
 
     def configure(self, opts: PlatformOptions) -> PlatformOptions:
         opts = super().configure(opts)
         opts.qemu_trace = "perfetto-dynamorio"
-        trace_dir = self.benchmark.get_benchmark_data_path() / "qemu-trace-dir"
+        trace_dir = self.benchmark.get_benchmark_data_path() / "qemu_trace_dir"
         trace_dir.mkdir(exist_ok=True)
-        opts.qemu_trace_file = self.output_file()
+        opts.qemu_trace_file = self.benchmark.get_benchmark_data_path() / f"qemu-trace-{self.benchmark.uuid}.pb"
+        opts.qemu_interceptor_trace_file = self.output_file()
         opts.qemu_trace_categories.add("instructions")
         return opts
         
     def load(self):
         self.df = pd.DataFrame() 
-        trace_info = pd.DataFrame({k: v for k, v in zip (self.dataset_id_values() + [self.output_file()], self.merged_tracefiles.columns)}, index=[0])
-        self.merged_tracefiles = pd.concat([self.merged_tracefiles, trace_info])
+        trace_info = pd.DataFrame({k: [v] for k, v in zip (self.merged_tracefiles.columns, self.dataset_id_values() + [self.output_file(), self.cachesim_output_dir()])})
+        self.merged_tracefiles = pd.concat([self.merged_tracefiles, trace_info], ignore_index=True)
             
     def merge(self, other):
         self.logger.info("Mergeing QEMU trace files")
-        self.merged_tracefiles = pd.concat([self.merged_tracefiles, other.merged_tracefiles])
+        self.merged_tracefiles = pd.concat([self.merged_tracefiles, other.merged_tracefiles], ignore_index=True)
             
     def cross_merge(self, other):
-        self.merged_tracefiles = pd.concat([self.merged_tracefiles, other.merged_tracefiles])
+        self.merged_tracefiles = pd.concat([self.merged_tracefiles, other.merged_tracefiles], ignore_index=True)
 
     def post_merge(self):
         self.logger.debug("Post merge: dynamorio trace")
