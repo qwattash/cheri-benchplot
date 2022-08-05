@@ -428,15 +428,15 @@ class QEMUDynamorioInterceptor(DataSetContainer):
         self.merged_tracefiles = pd.DataFrame(columns=self.dataset_id_columns() + ["trace_file", "cachesim_dir"])
 
     def output_file(self):
-        return self.benchmark.get_benchmark_data_path() / "qemu_trace_dir" / f"qemu-trace-{self.benchmark.uuid}.trace.gz"
+        return self.benchmark.get_benchmark_data_path() / "qemu-trace-dir" / f"qemu-trace-{self.benchmark.uuid}.trace.gz"
     
     def cachesim_output_dir(self):
-        return self.benchmark.get_benchmark_data_path() / "drcachesim_results"
+        return self.benchmark.get_benchmark_data_path() / "drcachesim-results"
 
     def configure(self, opts: PlatformOptions) -> PlatformOptions:
         opts = super().configure(opts)
         opts.qemu_trace = "perfetto-dynamorio"
-        trace_dir = self.benchmark.get_benchmark_data_path() / "qemu_trace_dir"
+        trace_dir = self.benchmark.get_benchmark_data_path() / "qemu-trace-dir"
         trace_dir.mkdir(exist_ok=True)
         opts.qemu_trace_file = self.benchmark.get_benchmark_data_path() / f"qemu-trace-{self.benchmark.uuid}.pb"
         opts.qemu_interceptor_trace_file = self.output_file()
