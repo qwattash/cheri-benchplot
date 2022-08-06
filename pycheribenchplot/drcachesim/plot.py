@@ -1,14 +1,18 @@
+from dataclasses import dataclass
 from pathlib import Path
-from pycheribenchplot.core.config import DatasetName
+from pycheribenchplot.core.config import DatasetName, TemplateConfig
 from pycheribenchplot.core.plot.plot_base import BenchmarkPlot
 import os, numpy as np
 import matplotlib.pyplot as plt
 
-
+@dataclass
+class CachePlotConfig(TemplateConfig):
+    cache_level: str = "LL" 
 class CacheSizesPlot(BenchmarkPlot):
     require = {DatasetName.QEMU_DYNAMORIO}
-    name = "cache-sizes-plot"
-    description = "Plot cache sizes"
+    name = "cache-plot"
+    description = "Plot miss rate against cache sizes"
+    analysis_options_class = CachePlotConfig
     cross_analysis: bool = True
 
     def convert_prefix(self, prefix):
@@ -57,9 +61,9 @@ class CacheSizesPlot(BenchmarkPlot):
         # plt.ylim(0, 1)
         plt.title('Local miss rate vs LL cache size: ' + variant_name)
         plt.legend(loc='upper right')
-        file_path = self.get_plot_root_path() / "cache_plots" /  variant_name / self.name
+        file_path = self.get_plot_root_path() / "cache_plots" / "LL_cache_sizes" / (variant_name + '.png') 
         file_path.parent.mkdir(parents=True, exist_ok=True)
-        plt.savefig(file_path)
+        plt.savefig(file_path, format='png')
         plt.close()
 
     async def process_datasets(self):
@@ -69,4 +73,4 @@ class CacheSizesPlot(BenchmarkPlot):
         for variant, group in groups.items():
             self.logger.info(f"Plotting cache sizes for variant {variant}")
             self.plot_result({k:v for k,v in zip(trace_info.iloc[group]['cachesim_dir'], trace_info.iloc[group]['spec_variant'])}, variant)
-        pass
+        

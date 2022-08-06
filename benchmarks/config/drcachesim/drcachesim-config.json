@@ -4,11 +4,22 @@
             "name": "drcachesim",
             "options": {
                 "LL_cache_sizes": [
+                    "64K",
+                    "128K",
+                    "256K",
+                    "512K",
                     "1M",
                     "2M",
                     "4M",
                     "8M",
                     "16M"
+                ],
+                "L1D_cache_sizes": [
+                    "32K",
+                    "64K",
+                    "128K",
+                    "256K",
+                    "512K"
                 ],
                 "drrun_path": "/local/scratch/mc2262/dynamorio/build/bin64/drrun",
                 "remove_saved_results": false,
@@ -16,7 +27,10 @@
             }
         },
         {
-            "name": "cache-sizes-plot"
+            "name": "cache-plot",
+            "options": {
+                "cache_level": "L1D"
+            }
         }
     ]
 }

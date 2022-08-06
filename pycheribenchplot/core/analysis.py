@@ -56,7 +56,10 @@ class BenchmarkAnalysis(metaclass=BenchmarkAnalysisRegistry):
         """
         self.benchmark = benchmark
         self.logger = benchmark.logger
-        self.config = benchmark.session.analysis_config
+        if config:
+            self.config = config
+        else:
+            self.config = benchmark.session.analysis_config
 
     @property
     def analysis_config(self) -> AnalysisConfig:
