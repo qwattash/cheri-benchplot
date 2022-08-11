@@ -1,5 +1,6 @@
 import asyncio as aio
 import shutil
+import subprocess
 import typing
 import uuid
 from contextlib import AbstractContextManager
@@ -119,3 +120,17 @@ class PipelineManager:
                     available.add(d.handler)
             handlers = [h for h in handlers if h in available]
         return handlers
+
+    def bundle(self, session: PipelineSession):
+        """
+        Produce a compressed archive of a session
+        """
+        bundle_file = session.session_root_path.with_suffix(".tar.xz")
+        self.logger.info("Generate %s bundle", session.session_root_path)
+        if bundle_file.exists():
+            self.logger.info("Replacing old bundle %s", bundle_file)
+            bundle_file.unlink()
+        result = subprocess.run(["tar", "-J", "-c", "-f", bundle_file, session.session_root_path])
+        if result.returncode:
+            self.logger.error("Failed to produce bundle")
+        self.logger.info("Archive created at %s", bundle_file)

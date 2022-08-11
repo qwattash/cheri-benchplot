@@ -86,8 +86,11 @@ def main():
 
     sub_list = sub.add_parser("list", help="List sessions and other information")
     sub_list.add_argument("what", choices=["session", "analysis"], help="What to show")
-    sub_list.add_argument("session_path", type=Path, help="Path or name of the target session",
+    sub_list.add_argument("session_path", type=Path, help="Path of the target session",
                           nargs='?')
+
+    sub_bundle = sub.add_parser("bundle", help="create a session archive")
+    sub_bundle.add_argument("session_path", type=Path, help="Path of the target session")
 
     args = parser.parse_args()
 
@@ -150,6 +153,9 @@ def main():
                 list_session(manager, session, logger)
             elif args.what == "analysis":
                 list_analysis(manager, session, logger)
+        elif args.command == "bundle":
+            session = resolve_session(args, manager, logger)
+            manager.bundle(session)
         else:
             # No command
             parser.print_help()
