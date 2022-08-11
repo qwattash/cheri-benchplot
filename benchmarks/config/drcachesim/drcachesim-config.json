@@ -15,11 +15,27 @@
                     "16M"
                 ],
                 "L1D_cache_sizes": [
+                    "8K",
+                    "16K",
                     "32K",
                     "64K",
                     "128K",
                     "256K",
                     "512K"
+                ],
+                "L1I_cache_sizes": [
+                    "8K",
+                    "16K",
+                    "32K",
+                    "64K",
+                    "128K",
+                    "256K",
+                    "512K"
+                ],
+                "run_cache_levels": [
+                    "L1I",
+                    "L1D",
+                    "LL"
                 ],
                 "drrun_path": "/local/scratch/mc2262/dynamorio/build/bin64/drrun",
                 "remove_saved_results": false,
@@ -29,7 +45,11 @@
         {
             "name": "cache-plot",
             "options": {
-                "cache_level": "L1D"
+                "plot_cache_levels": [
+                    "L1D",
+                    "L1I",
+                    "LL"
+                ]
             }
         }
     ]
