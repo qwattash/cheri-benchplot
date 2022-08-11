@@ -43,7 +43,7 @@
             }
         },
         "aux_dataset_handlers": [
-            {"handler": "procstat-netperf"},
+            {"handler": "kernel-symbols"},
             {"handler": "pmc-profclock-stack"}
         ]
     }]

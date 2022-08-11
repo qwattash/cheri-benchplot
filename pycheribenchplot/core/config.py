@@ -362,6 +362,7 @@ class DatasetName(Enum):
     VMSTAT_MALLOC = "vmstat-malloc"
     VMSTAT_UMA = "vmstat-uma"
     NETSTAT = "netstat"
+    KERNEL_SYMBOLS = "kernel-symbols"
     KERNEL_CSETBOUNDS_STATS = "kernel-csetbounds-stats"
     KERNEL_STRUCT_STATS = "kernel-struct-stats"
     KERNEL_STRUCT_MEMBER_STATS = "kernel-struct-member-stats"
@@ -394,6 +395,7 @@ class DatasetArtefact(Enum):
     QEMU_COUNTERS = auto()
     QEMU_DYNAMORIO = auto()
     NETSTAT = auto()
+    KERNEL_SYMBOLS = auto()
     KERNEL_CSETBOUNDS_STATS = auto()
     KERNEL_STRUCT_STATS = auto()
     SPEC = auto()

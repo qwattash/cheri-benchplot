@@ -5,10 +5,65 @@ from shutil import copyfileobj
 import numpy as np
 import pandas as pd
 
+from ..core.config import DatasetArtefact, DatasetName
 from ..core.csv import CSVDataSetContainer
-from ..core.dataset import (DatasetArtefact, DatasetName, DatasetProcessingError, Field, align_multi_index_levels,
-                            check_multi_index_aligned, filter_aggregate, index_where)
+from ..core.dataset import (DatasetProcessingError, Field, align_multi_index_levels, check_multi_index_aligned,
+                            filter_aggregate, index_where)
+from ..core.elf.symbolizer import ELFSymbolReader
 from ..core.instance import InstanceKernelABI
+
+
+class KernelSymbolsDataset(CSVDataSetContainer):
+    """
+    Auxiliary dataset to load kernel symbols
+    """
+    dataset_config_name = DatasetName.KERNEL_SYMBOLS
+    dataset_source_id = DatasetArtefact.KERNEL_SYMBOLS
+
+    fields = [
+        Field.index_field("path", dtype=str),
+        Field.index_field("name", dtype=str),
+        Field.index_field("addr", dtype=np.uint64),
+        Field("dynamic", dtype=bool),
+        Field("size", dtype=int),
+        Field("type", dtype=str)
+    ]
+
+    def output_file(self):
+        return super().output_file().with_suffix(".csv")
+
+    def kernel_object_path(self):
+        kernel = self.benchmark.cheribsd_rootfs_path / "boot" / f"kernel.{self.benchmark.config.instance.kernel}" / "kernel.full"
+        if not kernel.exists():
+            self.logger.debug("Kernel %s not found, fallback to FPGA kernel dir", kernel)
+            # FPGA kernels fallback location
+            kernel = self.benchmark.user_config.sdk_path / f"kernel-{self.benchmark.config.instance.cheri_target}.{self.benchmark.config.instance.kernel}.full"
+        if not kernel.exists():
+            self.logger.warning("Kernel %s not found in kernel.<CONF> directories, fallback to default kernel", kernel)
+            kernel = self.benchmark.cheribsd_rootfs_path / "boot" / "kernel" / "kernel.full"
+        return kernel
+
+    async def after_extract_results(self, script, instance):
+        """
+        After benchmarks completed on the instance we generate
+        the kernel symbols extract.
+        XXX-AM: This could run in parallel with the instance running,
+        if we *really* cared.
+        """
+        sym_loader = ELFSymbolReader(self.kernel_object_path(), self.logger)
+        df = sym_loader.load_to_df()
+        df.to_csv(self.output_file(), index=False)
+
+    def load(self):
+        df = self._load_csv(self.output_file())
+        self._append_df(df)
+        # Fill the symbols into the current address-space mappings manager
+        addrspace = self.benchmark.sym_resolver.register_address_space("kernel.full", shared=True)
+        addrspace.add_symbols(self.df)
+        self.benchmark.sym_resolver.register_address_space_alias("kernel.full", "kernel")
+        # Load the dwarf information for the kernel as well
+        arch_pointer_size = self.benchmark.config.instance.kernel_pointer_size
+        self.benchmark.dwarf_helper.register_object("kernel.full", self.kernel_object_path(), arch_pointer_size)
 
 
 class SetboundsKind(Enum):
