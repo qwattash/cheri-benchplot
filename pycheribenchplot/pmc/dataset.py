@@ -432,34 +432,44 @@ class ProfclockStackSamples(JSONDataSetContainer):
         Field.index_field("seq", desc="Callchain sample sequence ID", dtype=int),
         Field.index_field("cpu", dtype=int),
         Field.index_field("pid", dtype=int),
-        Field.index_field("mode", dtype=str),
+        Field.index_field("tid", dtype=float),  # Replace to int when we don't have NaN
+        Field("mode", dtype=str),
         Field("stacktrace", dtype=object),
         Field.derived_field("nsamples", dtype=int),
     ]
 
     def __init__(self, benchmark, config):
         super().__init__(benchmark, config)
-        # Callchain for this benchmark, containing the union of the data for each iteration (mirror df)
-        self.callchain = None
-        # Merged callchains (mirror merged_df)
-        self.merged_callchain = None
-        # Aggregated callchain (mirror agg_df)
-        self.agg_callchain = None
+        # Maximum stack depth for this dataset
+        self.max_stacktrace_depth = None
 
-    def _resolve_pids(self):
+    def _resolve_pids(self, df):
         """
         Resolve PIDs to process names. In case of failure, use the pid as a string.
         """
-        pidmap = self.benchmark.get_dataset_by_artefact(DatasetArtefact.PIDMAP)
+        pidmap = self.benchmark.pidmap  #get_dataset_by_artefact(DatasetArtefact.PIDMAP)
         assert pidmap is not None, "The pidmap dataset is required for pmc sampling"
-        join_df = self.df.merge(pidmap.df, how="left", left_on="pid", right_on="pid")
-        self.df["process"] = join_df["command"]
+
+        cmd_notid = pidmap.df.groupby(pidmap.dataset_id_columns() + ["iteration", "pid"]).first()["command"]
+        join_df = df.join(cmd_notid)
+        assert len(join_df) == len(df)
+        df["process"] = join_df["command"]
+        df = join_df.rename(columns={"command": "process"})
+        if df["process"].isna().any():
+            missing = df["process"].isna()
+            self.logger.warning("Missing pids %s", df.loc[df["process"].isna()].index.get_level_values("pid").unique())
+            df["process"] = df.loc[:, "process"].mask(df["process"].isna(), None)
+        return df
 
     def iteration_output_guestfile(self, iteration):
         return super().iteration_output_file(iteration).with_suffix(".pmc")
 
     def iteration_output_file(self, iteration):
         return super().iteration_output_file(iteration).with_suffix(".json")
+
+    def stacktrace_columns(self):
+        assert self.max_stacktrace_depth is not None
+        return [f"stacktrace_{i}" for i in range(self.max_stacktrace_depth)]
 
     def gen_pre_extract_results(self, script):
         super().gen_pre_extract_results(script)
@@ -495,80 +505,69 @@ class ProfclockStackSamples(JSONDataSetContainer):
         callchain_df = json_df[json_df["type"] == "callchain"].reset_index()
         callchain_df["seq"] = callchain_df.index
         self._append_df(callchain_df)
+        # Update max depth
+        self.max_stacktrace_depth = self.df["stacktrace"].map(len).max()
 
     def pre_merge(self):
         super().pre_merge()
+        sym_columns = self.stacktrace_columns()
+
+        # Flatten stacks into the dataframe
+        df_stacks = self.df.copy()
+
+        def normalize_value(v):
+            if type(v) == str:
+                return int(v, 16)
+            elif type(v) == int:
+                return v
+            else:
+                return np.nan
+
+        for i in range(self.max_stacktrace_depth):
+            df_stacks[f"stacktrace_{i}"] = self.df["stacktrace"].map(lambda st: normalize_value(st[-(i + 1)])
+                                                                     if len(st) > i else np.nan)
         # Resolve PID mappings
-        self._resolve_pids()
+        df_stacks = self._resolve_pids(df_stacks)
+        # Translate addresses in-place, this could be done faster with a join()
+        with timing("Symbolize stacks", logger=self.logger):
+            grouped = df_stacks.groupby(["dataset_id", "process"])
 
-        tree_index_columns = self.dataset_id_columns() + ["iteration"]
+            def resolve_syms(group):
+                as_key = group.name[1]  # process
+                # int_group = group.applymap(lambda v: int(v, 16) if type(v) == str else np.nan)
+                return group.applymap(lambda v: self.benchmark.sym_resolver.lookup_function(as_key, int(v))
+                                      if not np.isnan(v) else v)
 
-        def tree_df_factory():
-            index_frame = self.df.index.to_frame()[tree_index_columns].drop_duplicates()
-            df = pd.DataFrame(0, index=pd.MultiIndex.from_frame(index_frame), columns=["nsamples"])
-            df.columns.name = "metric"
-            return df
-
-        ct = CallTree(tree_df_factory)
-
-        IndexKey = make_index_key(self.df)
-        with timing("Add callchains", logger=self.logger):
-            for name, row in self.df.iterrows():
-                ik = IndexKey(*name)
-                if ik.mode == "s":
-                    as_key = "kernel.full"
-                else:
-                    # Find user PID
-                    as_key = None
-                # get ik fields in the correct order (just to be sure)
-                tree_sample_key = tuple(getattr(ik, level) for level in tree_index_columns)
-
-                def tree_insert_cc(node, isleaf=False, **kwargs):
-                    if isleaf:
-                        try:
-                            node.df.loc[tree_sample_key, "nsamples"] += 1
-                        except KeyError:
-                            node.df.loc[tree_sample_key, "nsamples"] = 1
-                    else:
-                        try:
-                            node.df.loc[tree_sample_key, "allsamples"] += 1
-                        except KeyError:
-                            node.df.loc[tree_sample_key, "allsamples"] = 1
-
-                ct.insert_callchain(row["stacktrace"],
-                                    lambda addr: self.benchmark.sym_resolver.lookup_fn(addr, as_key=as_key),
-                                    tree_insert_cc)
-        self.callchain = ct
+            result = grouped[sym_columns].apply(resolve_syms)
+            df_stacks[sym_columns] = result
+        # XXX remove support older traces that lack tid
+        if df_stacks.index.unique("tid").isna().all():
+            df_stacks = df_stacks.droplevel("tid")
+        # This operation should not have resulted into a frame resize
+        assert len(df_stacks) == len(self.df), "Call stacks dataframe size changed"
+        # Count number of samples for each stack trace
+        df_stacks = df_stacks.fillna(SymInfo.unknown(-1))  # Would be better to use a proper NULL entry
+        stacks_nsamples = df_stacks.groupby(df_stacks.index.names + sym_columns).size()
+        stacks_nsamples.name = "nsamples"
+        self.df = stacks_nsamples.reset_index(sym_columns)
+        # Check frame structure before continuing
+        assert "nsamples" in self.df.columns, "Missing nsamples column"
 
     def merge(self, other):
         super().merge(other)
-        # Generate the merged callchain with all the data from all iterations of other benchmarks
-        with timing("Combine merge callchains", logger=self.logger):
-            self.merged_callchain = self.callchain.combine([other.callchain])
+        self.max_stacktrace_depth = max(self.max_stacktrace_depth, other.max_stacktrace_depth)
 
     def aggregate(self):
         super().aggregate()
-
-        def aggregator(df):
-            # Compute median and quartiles for each inner dataframe in the merged callchain
-            # across iterations. For now ignore pids and aggregate everything.
-            # We can use the standard aggregator helper as the frame should mirror the df
-            # shape.
-            grouped = df.groupby(self.dataset_id_columns())
-            agg_df = self._compute_aggregations(grouped)
-            return agg_df
-
-        with timing("Agg callchains", logger=self.logger):
-            self.agg_callchain = self.merged_callchain.map(aggregator)
+        # Ensure that we don't have NaN in the stack columns
+        clean_df = self.merged_df.fillna(SymInfo.unknown(-1))
+        grouped = clean_df.groupby(self.dataset_id_columns() + self.stacktrace_columns())
+        self.agg_df = self._compute_aggregations(grouped)
 
     def post_aggregate(self):
         super().post_aggregate()
-
-        def calc_delta(df):
-            # Compute delta w.r.t baseline
-            # We can use the standard delta helpers as the frame should mirror the df shape
-            delta_df = self._add_delta_columns(df)
-            delta_df = self._compute_delta_by_dataset(delta_df)
-            return delta_df
-
-        self.agg_callchain.map(calc_delta, inplace=True)
+        # align the aggregated stack counts
+        aligned_df = align_multi_index_levels(self.agg_df, self.stacktrace_columns(), fill_value=0)
+        delta_df = self._add_delta_columns(aligned_df)
+        delta_df = self._compute_delta_by_dataset(delta_df)
+        self.agg_df = delta_df
