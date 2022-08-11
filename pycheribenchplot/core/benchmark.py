@@ -56,6 +56,8 @@ class Benchmark:
         self._dataset_modules = self._collect_dataset_modules()
         self._dataset_runner_modules = self._collect_runner_modules()
         self._configure_datasets()
+        # PID/TID mapper XXX this should be a separate thing like sym_resolver
+        self.pidmap = self.get_dataset_by_artefact(DatasetArtefact.PIDMAP)
 
     def __str__(self):
         return f"{self.config.name}({self.uuid})"
@@ -230,20 +232,6 @@ class Benchmark:
         self.logger.debug("Extract %s -> %s", remote_cmd_history, cmd_history)
         await instance.extract_file(remote_cmd_history, cmd_history)
 
-    def _load_kernel_symbols(self):
-        # Boot kernel location
-        kernel = self.cheribsd_rootfs_path / "boot" / f"kernel.{self.config.instance.kernel}" / "kernel.full"
-        if not kernel.exists():
-            # FPGA kernels fallback location
-            kernel = self.cheribsd_rootfs_path / f"kernel.{self.config.instance.kernel}.full"
-        if not kernel.exists():
-            self.logger.warning("Kernel name not found in kernel.<CONF> directories, using the default kernel")
-            kernel = self.cheribsd_rootfs_path / "boot" / "kernel" / "kernel.full"
-        self.sym_resolver.register_address_space("kernel.full", shared=True)
-        self.sym_resolver.add_mapped_binary("kernel.full", 0, kernel)
-        arch_pointer_size = self.config.instance.kernel_pointer_size
-        self.dwarf_helper.register_object("kernel.full", kernel, arch_pointer_size)
-
     @property
     def uuid(self):
         return self.config.uuid
@@ -262,8 +250,7 @@ class Benchmark:
 
     @property
     def cheribsd_rootfs_path(self):
-        rootfs_path = self.user_config.sdk_path.parent / f"rootfs-{self.config.instance.cheri_target}"
-        # rootfs_path = self.user_config.sdk_path / f"rootfs-{self.config.instance.cheri_target}"
+        rootfs_path = self.user_config.rootfs_path / f"rootfs-{self.config.instance.cheri_target}"
         if not rootfs_path.exists() or not rootfs_path.is_dir():
             raise ValueError(f"Invalid rootfs path {rootfs_path} for benchmark instance")
         return rootfs_path
@@ -426,12 +413,14 @@ class Benchmark:
         Setup benchmark metadata and load results into datasets from the currently assigned run configuration.
         Note: this runs in the aio loop executor asyncronously
         """
-        # self._load_kernel_symbols()
+        # XXX move this to a pluggable dataset
         # Always load the pidmap dataset first
         self.logger.info("Loading pidmap data")
         self._dataset_modules[DatasetName.PIDMAP].load()
+        for i in range(self.config.iterations):
+            self._dataset_modules[DatasetName.PIDMAP].load_iteration(i)
         for dset in self._dataset_modules.values():
-            if dset.dataset_source_id == DatasetArtefact.PIDMAP:
+            if dset.dataset_config_name == DatasetName.PIDMAP:
                 # We loaded it before
                 continue
             self.logger.info("Loading %s data, dropping first %d iterations", dset.name, self.config.drop_iterations)

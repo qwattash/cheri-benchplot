@@ -688,6 +688,9 @@ class BenchplotUserConfig(Config):
     #: Path to flamegraph.pl flamegraph generator
     flamegraph_path: ConfigPath = Path("flamegraph.pl")
 
+    #: CHERI rootfs path
+    rootfs_path: typing.Optional[ConfigPath] = None
+
     #: Path to cheribuild, inferred from :attr:`src_path` if missing
     cheribuild_path: typing.Optional[ConfigPath] = dc.field(init=False, default=None)
 
@@ -705,6 +708,8 @@ class BenchplotUserConfig(Config):
         self.sdk_path = self.sdk_path.expanduser().absolute()
         self.build_path = self.build_path.expanduser().absolute()
         self.src_path = self.src_path.expanduser().absolute()
+        if self.rootfs_path is None:
+            self.rootfs_path = self.sdk_path
         self.cheribuild_path = self.src_path / "cheribuild"
         self.cheribsd_path = self.src_path / "cheribsd"
         self.qemu_path = self.src_path / "qemu"

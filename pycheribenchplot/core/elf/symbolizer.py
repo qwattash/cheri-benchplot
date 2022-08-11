@@ -16,14 +16,71 @@ class SymInfo:
     filepath: Path
     size: int
     addr: int
-    unknown: bool = False
+    is_unknown: bool = False
 
     @classmethod
     def unknown(cls, addr):
-        return SymInfo(name=f"0x{addr:x}", filepath=None, size=0, addr=addr, unknown=True)
+        return SymInfo(name=f"0x{addr:x}", filepath=None, size=0, addr=addr, is_unknown=True)
+
+    def __hash__(self):
+        return hash((self.is_unknown, self.name))
+
+    def __eq__(self, other):
+        return self.is_unknown == other.is_unknown and self.name == other.name
+
+    def __lt__(self, other):
+        return self.name < other.name
 
     def __bool__(self):
-        return not self.unknown
+        return not self.is_unknown
+
+    def to_folded_stack_str(self) -> str:
+        """
+        Covert to the string representation expected by flame graphs.
+        Note that we use addr == -1 to signal an empty stack entry.
+        """
+        if self.is_unknown and self.addr == -1:
+            return ""
+        elif self.is_unknown:
+            return f"??`{self.name}"
+        else:
+            return f"{Path(self.filepath).stem}`{self.name}"
+
+    def __str__(self):
+        if self.is_unknown and self.addr == -1:
+            return "|empty|"
+        return f"|{self.name}|"
+
+
+class ELFSymbolReader:
+    """
+    A symtab reader to dataframe.
+    """
+    def __init__(self, path: Path, logger):
+        self.path = path
+        self.logger = logger
+        self.ef = ELFFile(open(path, "rb"))
+
+    def is_dynamic(self) -> bool:
+        """
+        Check whether the binary file is dynamically linked.
+        """
+        if self.ef.header.e_type == "ET_DYN":
+            return True
+        return False
+
+    def load_to_df(self) -> pd.DataFrame:
+        """
+        Load symbols from the target ELF file into a pandas dataframe
+        """
+        self.logger.debug("Load symbols for %s dyn=%s", self.path, self.is_dynamic())
+        symtab = self.ef.get_section_by_name(".symtab")
+        data_map = map(lambda s: (s.name, s["st_value"], s["st_size"], s["st_info"].type), symtab.iter_symbols())
+        df = pd.DataFrame.from_records(data_map, columns=["name", "addr", "size", "type"])
+        df = df.astype({"addr": np.uint64, "size": np.uint64, "type": str, "name": str})
+        df["path"] = self.path
+        df["dynamic"] = self.is_dynamic()
+        return df
 
 
 class SymbolizerMapping(ABC):
@@ -141,6 +198,9 @@ class Symbolizer(ABC):
         # Sorted mapping of <base address> => SymbolizerMapping
         self.mappings = SortedDict()
 
+        self.df = pd.DataFrame()
+        self.df_funcs = SortedDict()
+
     @abstractmethod
     def _make_mapping(self, path: Path) -> SymbolizerMapping:
         ...
@@ -156,7 +216,59 @@ class Symbolizer(ABC):
             raise ValueError("Duplicate mapping registered")
         self.mappings[base] = self._make_mapping(path)
 
-    def lookup_function(self, addr: int) -> SymInfo:
+    def add_symbols(self, symbols_df: pd.DataFrame):
+        """
+        expect index {"path", "name", "addr"}
+        expect columns {"dynamic", "size", "type"}
+        from ELFSymbolReader
+        """
+        self.df = pd.concat([self.df, symbols_df.reset_index()])
+        # update the bisect mapper to access rows
+        fn_df = self.df.loc[self.df["type"] == "STT_FUNC"]
+        self.df_funcs = SortedDict(zip(fn_df["addr"], fn_df.index))
+
+    def lookup_function(self, addr):
+        idx = self.df_funcs.bisect(addr) - 1
+        if idx < 0:
+            return SymInfo.unknown(addr)
+        df_index = self.df_funcs.values()[idx]
+        row = self.df.iloc[df_index]
+        return SymInfo(row["name"], row["path"], row["addr"], row["size"])
+
+    def lookup_function_df(self, addr: pd.DataFrame) -> pd.DataFrame:
+        fn_df = self.df.loc[self.df["type"] == "STT_FUNC"]
+        indices = fn_df.index.get_level_values("addr").searchsorted(addr, side="right")
+        mapped = fn_df.iloc[indices - 1]
+        mapped["addr"] = mapped.loc[:, "addr"].mask(indices == 0, np.nan)
+
+        # Find last valid address
+        # mapped["addr"] = mapped.loc[:, "addr"].mask(indices == len(fn_df), np.nan)
+        def make_symbols(row):
+            return SymInfo.unknown(addr)
+
+        # elif idx < len(fn_df):
+        #     return SymInfo(fn_df.iloc[idx - 1]["name"],
+        #                    fn_df.iloc[idx - 1]["path"],
+        #                    fn_df.iloc[idx - 1]["size"],
+        #                    addr)
+        # else:
+        #     sym = SymInfo.unknown(addr)
+        mapped["sym"] = mapped.apply(make_symbol, axis=1)
+        mapped.index = addr.index
+        return mapped
+
+    def _test_lookup_function(self, addr: int) -> SymInfo:
+        fn_df = self.df.loc[self.df["type"] == "STT_FUNCTION"]
+        idx = fn_df.index.get_level_values("addr").searchsorted(addr, side="right")
+        if idx < 1:
+            return SymInfo.unknown(addr)
+        elif idx < len(fn_df):
+            return SymInfo(fn_df.iloc[idx - 1]["name"], fn_df.iloc[idx - 1]["path"], fn_df.iloc[idx - 1]["size"], addr)
+        else:
+            sym = SymInfo.unknown(addr)
+        return sym
+
+    def _old_lookup_function(self, addr: int) -> SymInfo:
         """
         Lookup a function at the given address.
 
@@ -209,7 +321,7 @@ class AddressSpaceManager:
         self.shared_addrspaces = []
         self.addrspaces = {}
 
-    def register_address_space(self, as_key: str, shared: bool = False):
+    def register_address_space(self, as_key: str, shared: bool = False) -> Symbolizer:
         """
         Create a new address space.
 
@@ -228,6 +340,7 @@ class AddressSpaceManager:
         self.addrspaces[as_key] = symbolizer
         if shared:
             self.shared_addrspaces.append(symbolizer)
+        return symbolizer
 
     def register_address_space_alias(self, as_key: str, alias: str):
         """
@@ -249,6 +362,29 @@ class AddressSpaceManager:
             self.logger.error("Attempted to register mapped binary for missing address space %s", as_key)
         symbolizer.add_mapping(base, path)
 
+    def lookup_function_df(self, as_key: str, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        temporary test implementation
+        """
+        sym_df = df.copy()
+        sym_df["sym"] = None
+        target_as = None
+        if as_key in self.addrspaces:
+            target_as = self.addrspaces[as_key]
+            sym_df["sym"] = target_as.lookup_function_df(sym_df)
+            if not sym_df["sym"].isna().any():
+                # Resolved everything
+                return sym_df
+        # Try to resolve missing using fallbacks
+        for curr_as in self.shared_addrspaces:
+            if curr_as == target_as:
+                continue
+            sym_df_missing = sym_df["sym"].isna()
+            sym_df.loc[sym_df_missing, "sym"] = curr_as.lookup_function_df(sym_df.loc[sym_df_missing])
+            if not sym_df["sym"].isna().any():
+                break
+        return sym_df
+
     def lookup_function(self, as_key: str, addr: int, exact: bool = False) -> SymInfo:
         """
         Search for a function in the given address space. If exact is set, only return
@@ -259,13 +395,12 @@ class AddressSpaceManager:
         :param exact: Only look for exact matches.
         :return: Symbol information
         """
-        if as_key not in self.addrspaces:
-            self.logger.warn("Lookup function 0x%x in non-existing address space %s", addr, as_key)
-            return SymInfo.unknown(addr)
-        target_symbolizer = self.addrspaces[as_key]
-        sym = target_symbolizer.lookup_function(addr)
-        if sym:
-            return sym
+        target_symbolizer = None
+        if as_key in self.addrspaces:
+            target_symbolizer = self.addrspaces[as_key]
+            sym = target_symbolizer.lookup_function(addr)
+            if sym:
+                return sym
         # Fallback shared address space lookup
         for symbolizer in self.shared_addrspaces:
             if symbolizer == target_symbolizer:
