@@ -133,6 +133,7 @@ class Benchmark:
             analysers.append(handler_class(self, options))
 
         if len(analysis_config.handlers) == 0:
+            # This mode should probably be deprecated and go away
             for handler_class in BenchmarkAnalysisRegistry.analysis_steps.values():
                 if handler_class.cross_analysis != cross_analysis:
                     continue
@@ -143,10 +144,11 @@ class Benchmark:
                     checker = lambda dss, conf: handler_class.require.issubset(dss)
                 if not checker(datasets, analysis_config):
                     continue
-                # Check for config enable
-                if (handler_class.name in analysis_config.enable
-                        or handler_class.tags.issubset(analysis_config.enable_tags)):
-                    analysers.append(handler_class(self))
+                if handler_class.analysis_options_class:
+                    options = handler_class.analysis_options_class.schema().load({})
+                else:
+                    options = {}
+                analysers.append(handler_class(self, options))
         return analysers
 
     def _configure_datasets(self):

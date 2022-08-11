@@ -46,8 +46,8 @@ class BenchmarkPlotBase(BenchmarkAnalysis):
     # List of subplot classes that we attempt to draw
     subplots = []
 
-    def __init__(self, benchmark: "BenchmarkBase", config: Config):
-        super().__init__(benchmark, config)
+    def __init__(self, benchmark: "Benchmark", options):
+        super().__init__(benchmark, options)
         self.logger = new_logger(self.get_plot_name(), benchmark.logger)
         self.mosaic = self._make_subplots_mosaic()
         self.fig_manager = self._make_figure_manager()
@@ -73,7 +73,7 @@ class BenchmarkPlotBase(BenchmarkAnalysis):
 
     def get_plot_root_path(self):
         return self.benchmark.session.get_plot_root_path()
-        
+
     def _make_figure_manager(self):
         """
         Build the figure manager backend for this plot.

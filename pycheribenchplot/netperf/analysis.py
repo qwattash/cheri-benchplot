@@ -21,7 +21,7 @@ class NetperfSanityCheck(BenchmarkAnalysis):
                 "Can not verify netperf iteration count, consider enabling the CONFIDENCE_ITERATION output")
         # Check that all benchmarks ran a consistent amount of sampling
         # functions in libstatcounters
-        dset = self.get_dataset(DatasetName.QEMU_STATS_CALL_HIST)
+        dset = self.get_dataset(DatasetName.QEMU_STATS_CALL_HIT)
         if dset:
             syms_index = dset.ctx_agg_df.index.get_level_values("symbol")
             cpu_start = syms_index == "cpu_start"

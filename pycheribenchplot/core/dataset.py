@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 from pandas.api.types import (is_integer_dtype, is_numeric_dtype, is_object_dtype)
 
-from .config import DatasetArtefact, DatasetName
+from .config import DatasetArtefact, DatasetConfig, DatasetName
 from .instance import InstanceInfo
 from .shellgen import ShellScriptBuilder
 from .util import new_logger
@@ -167,7 +167,7 @@ class DataSetContainer(metaclass=DatasetRegistry):
     # Data class for the dataset-specific run options in the configuration file
     run_options_class = None
 
-    def __init__(self, benchmark: "Benchmark", config: "BenchmarkDataSetConfig"):
+    def __init__(self, benchmark: "Benchmark", config: DatasetConfig):
         """
         Arguments:
         benchmark: the benchmark instance this dataset belongs to
@@ -176,7 +176,7 @@ class DataSetContainer(metaclass=DatasetRegistry):
         self.benchmark = benchmark
         self.config = config.run_options
         self.logger = new_logger(f"{self.dataset_config_name}", parent=self.benchmark.logger)
-        self.df = None
+        self.df = pd.DataFrame()
         self.merged_df = None
         self.agg_df = None
         self.cross_merged_df = None
@@ -226,6 +226,8 @@ class DataSetContainer(metaclass=DatasetRegistry):
                 param = self.benchmark.config.parameters[pcol]
                 self.logger.debug("No parameter %s column, generate from config %s", pcol, param)
                 df[pcol] = param
+        if len(df) == 0:
+            self.logger.warning("Appending empty dataframe")
         # Normalize columns to always contain at least all input columns
         existing = df.columns.to_list() + list(df.index.names)
         default_columns = []
@@ -248,7 +250,11 @@ class DataSetContainer(metaclass=DatasetRegistry):
         if self.df is None:
             self.df = df[column_subset]
         else:
-            self.df = pd.concat([self.df, df[column_subset]])
+            new_df = pd.concat([self.df, df[column_subset]])
+            if len(new_df) < len(self.df):
+                self.logger.error("Dataframe shrunk after append?")
+                raise ValueError("Invalid dataframe append")
+            self.df = new_df
             # Check that we did not accidentally change dtype, this may cause weirdness due to conversions
             dtype_check = self.df.dtypes[column_subset] == df.dtypes[column_subset]
             if not dtype_check.all():

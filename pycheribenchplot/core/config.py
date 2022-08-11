@@ -735,12 +735,6 @@ class AnalysisHandlerConfig(Config):
 
 @dc.dataclass
 class AnalysisConfig(Config):
-    #: List of plots/analysis steps to enable
-    enable: typing.List[str] = dc.field(default_factory=list)
-
-    #: Tags for group enable
-    enable_tags: typing.Set[str] = dc.field(default_factory=set)
-
     #: Generate multiple split plots instead of combining
     split_subplots: bool = False
 
