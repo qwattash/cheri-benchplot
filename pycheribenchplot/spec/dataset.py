@@ -1,6 +1,7 @@
 import typing
 from dataclasses import dataclass, field
 from pathlib import Path
+import pandas as pd
 
 from ..core.config import ConfigPath, TemplateConfig
 from ..core.dataset import DatasetArtefact, DataSetContainer, DatasetName
@@ -39,6 +40,9 @@ class SpecDataset(DataSetContainer):
         # Remote path to spec benchmark
         remote_benchmark_dir = self.config.spec_path / self.config.spec_benchmark
         self.spec_benchmark_bin = remote_benchmark_dir / self.config.spec_benchmark
+
+    def load(self):
+        self.df = pd.DataFrame() 
 
     def iteration_output_file(self, iteration):
         # For now do not commit to an extension, not sure what they emit

@@ -9,6 +9,7 @@ from uuid import UUID
 import asyncssh
 import pandas as pd
 
+
 from .analysis import BenchmarkAnalysisRegistry
 from .config import AnalysisConfig, DatasetArtefact, DatasetConfig, DatasetName
 from .dataset import DataSetContainer, DatasetRegistry
@@ -120,6 +121,8 @@ class Benchmark:
                 continue
             if not handler_class.require.issubset(datasets):
                 self.logger.warn("analysis handler %s requires but only %s available", handler_class.require, datasets)
+                continue
+            if handler_class.cross_analysis != cross_analysis:
                 continue
             if handler_class.analysis_options_class:
                 options = handler_class.analysis_options_class.schema().load(conf.options)
@@ -259,7 +262,8 @@ class Benchmark:
 
     @property
     def cheribsd_rootfs_path(self):
-        rootfs_path = self.user_config.sdk_path / f"rootfs-{self.config.instance.cheri_target}"
+        rootfs_path = self.user_config.sdk_path.parent / f"rootfs-{self.config.instance.cheri_target}"
+        # rootfs_path = self.user_config.sdk_path / f"rootfs-{self.config.instance.cheri_target}"
         if not rootfs_path.exists() or not rootfs_path.is_dir():
             raise ValueError(f"Invalid rootfs path {rootfs_path} for benchmark instance")
         return rootfs_path
@@ -422,7 +426,7 @@ class Benchmark:
         Setup benchmark metadata and load results into datasets from the currently assigned run configuration.
         Note: this runs in the aio loop executor asyncronously
         """
-        self._load_kernel_symbols()
+        # self._load_kernel_symbols()
         # Always load the pidmap dataset first
         self.logger.info("Loading pidmap data")
         self._dataset_modules[DatasetName.PIDMAP].load()
@@ -479,7 +483,7 @@ class Benchmark:
             dset.aggregate()
             dset.post_aggregate()
 
-    def analyse(self, analysis_config: AnalysisConfig):
+    def analyse(self, analysis_config: AnalysisConfig, run_context):
         """
         Run analysis steps on this benchmark. This includes plotting.
         Currently there is no ordering guarantee among analysis steps.
@@ -489,7 +493,7 @@ class Benchmark:
         analysers = self._collect_analysers(analysis_config, cross_analysis=False)
         self.logger.debug("Resolved analysis steps %s", [str(a) for a in analysers])
         for handler in analysers:
-            handler.process_datasets()
+            run_context.schedule_task(handler.process_datasets())
 
     def cross_merge(self, others: typing.List["Benchmark"]):
         """
@@ -506,7 +510,7 @@ class Benchmark:
         for dset in self._dataset_modules.values():
             dset.post_cross_merge()
 
-    def cross_analysis(self, analysis_config: AnalysisConfig):
+    def cross_analysis(self, analysis_config: AnalysisConfig, run_context):
         """
         Perform any analysis steps on the merged frame with all the parameterized
         benchmark variants.
@@ -515,4 +519,4 @@ class Benchmark:
         analysers = self._collect_analysers(analysis_config, cross_analysis=True)
         self.logger.debug("Resolved cross analysis steps %s", [str(a) for a in analysers])
         for handler in analysers:
-            handler.process_datasets()
+            run_context.schedule_task(handler.process_datasets())

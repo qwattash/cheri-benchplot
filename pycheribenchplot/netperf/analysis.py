@@ -9,7 +9,7 @@ class NetperfSanityCheck(BenchmarkAnalysis):
     name = "netperf-sanity-check"
     require = {DatasetName.NETPERF_DATA}
 
-    def process_datasets(self):
+    async def process_datasets(self):
         self.logger.info("Verify integrity of netperf datasets")
         dset = self.get_dataset(DatasetName.NETPERF_DATA)
         # Check that all benchmarks report the same number of iterations

@@ -5,6 +5,8 @@ from enum import Enum
 import numpy as np
 import pandas as pd
 
+from pycheribenchplot.core.config import Config
+
 from ..analysis import BenchmarkAnalysis
 from ..dataset import DatasetArtefact, DataSetContainer
 from ..util import new_logger
@@ -44,8 +46,8 @@ class BenchmarkPlotBase(BenchmarkAnalysis):
     # List of subplot classes that we attempt to draw
     subplots = []
 
-    def __init__(self, benchmark: "BenchmarkBase"):
-        super().__init__(benchmark)
+    def __init__(self, benchmark: "BenchmarkBase", config: Config):
+        super().__init__(benchmark, config)
         self.logger = new_logger(self.get_plot_name(), benchmark.logger)
         self.mosaic = self._make_subplots_mosaic()
         self.fig_manager = self._make_figure_manager()
@@ -69,6 +71,9 @@ class BenchmarkPlotBase(BenchmarkAnalysis):
         else:
             return self.benchmark.get_plot_path() / self.name
 
+    def get_plot_root_path(self):
+        return self.benchmark.session.get_plot_root_path()
+        
     def _make_figure_manager(self):
         """
         Build the figure manager backend for this plot.
@@ -156,7 +161,7 @@ class BenchmarkPlotBase(BenchmarkAnalysis):
                     layout.append(row)
         return Mosaic(layout, subplots)
 
-    def process_datasets(self):
+    async def process_datasets(self):
         """Populate the plot axes and draw everything."""
         self.logger.info("Setup plot %s on %s", self.get_plot_name(), self.fig_manager)
         self.fig_manager.allocate_cells(self.mosaic)

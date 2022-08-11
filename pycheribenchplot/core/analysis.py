@@ -56,7 +56,10 @@ class BenchmarkAnalysis(metaclass=BenchmarkAnalysisRegistry):
         """
         self.benchmark = benchmark
         self.logger = benchmark.logger
-        self.config = benchmark.session.analysis_config
+        if config:
+            self.config = config
+        else:
+            self.config = benchmark.session.analysis_config
 
     @property
     def analysis_config(self) -> AnalysisConfig:
@@ -66,7 +69,7 @@ class BenchmarkAnalysis(metaclass=BenchmarkAnalysisRegistry):
         """Helper to access datasets in the benchmark"""
         return self.benchmark.get_dataset(dset_id)
 
-    def process_datasets(self):
+    async def process_datasets(self):
         """
         Process the datasets to generate the intermediate data representation
         used to produce the output artifacts.

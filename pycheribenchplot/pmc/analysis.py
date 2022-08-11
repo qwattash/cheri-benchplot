@@ -16,7 +16,7 @@ class PMCStacksPlot(BenchmarkAnalysis):
     def get_output_path(self):
         return (self.benchmark.get_plot_path() / self.name)
 
-    def process_datasets(self):
+    async def process_datasets(self):
         ds = self.get_dataset(DatasetName.PMC_PROFCLOCK_STACKSAMPLE)
         self.logger.info("Extract folded stacks to %s", self.get_output_path())
         folded_stacks = []
