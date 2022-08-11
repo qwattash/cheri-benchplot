@@ -195,6 +195,12 @@ class PipelineSession:
         """
         return self.session_root_path / "plots"
 
+    def get_asset_root_path(self) -> Path:
+        """
+        :return: The root path for binary assets e.g. kernel images
+        """
+        return self.session_root_path / "assets"
+
     def clean(self):
         """
         Clean all output files for a session and ensure that the
@@ -202,9 +208,13 @@ class PipelineSession:
         This will also clean the raw data and cache files.
         """
         data_root = self.get_data_root_path()
+        asset_root = self.get_asset_root_path()
         if data_root.exists():
             shutil.rmtree(data_root)
+        if asset_root.exists():
+            shutil.rmtree(asset_root)
         data_root.mkdir()
+        asset_root.mkdir()
 
     def run(self, mode: str = "full") -> AbstractContextManager:
         """
