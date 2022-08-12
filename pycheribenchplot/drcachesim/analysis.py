@@ -71,7 +71,6 @@ class DrCacheSimRun(BenchmarkAnalysis):
             p = kvp[0]
             path = kvp[1]
             err = (await p.communicate())[1];
-            print(path)
             with open(path, "w") as f: 
                 f.write(err.decode())
         self.logger.info(f"Finished drcachesim")
