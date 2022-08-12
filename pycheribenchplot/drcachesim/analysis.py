@@ -26,14 +26,12 @@ class DrCacheSimRun(BenchmarkAnalysis):
     def __init__(self, benchmark, config):
         super().__init__(benchmark, config)
         self.processes_dict = {}
-        self.out_paths = {}
 
     async def _run_drcachesim(self, level_arg, size, indir, out_path):
         if os.path.isfile(out_path) and not self.config.rerun_sim:
            return
-        self.out_paths[size] = out_path
         p = await aio.create_subprocess_exec(self.config.drrun_path, '-t', 'drcachesim', '-indir', indir, '-' + level_arg, size, stderr=aio.subprocess.PIPE)
-        self.processes_dict[p] = size
+        self.processes_dict[p] = out_path
 
     async def process_datasets(self):
         dset = self.get_dataset(DatasetName.QEMU_DYNAMORIO)
@@ -71,9 +69,10 @@ class DrCacheSimRun(BenchmarkAnalysis):
 
         for kvp in self.processes_dict.items():
             p = kvp[0]
-            size = kvp[1]
+            path = kvp[1]
             err = (await p.communicate())[1];
-            with open(self.out_paths[size], "w") as f: 
+            print(path)
+            with open(path, "w") as f: 
                 f.write(err.decode())
         self.logger.info(f"Finished drcachesim")
                 
