@@ -1,6 +1,6 @@
 import asyncio as aio
+import shutil
 from enum import Enum
-from shutil import copyfileobj
 
 import numpy as np
 import pandas as pd
@@ -32,6 +32,9 @@ class KernelSymbolsDataset(CSVDataSetContainer):
     def output_file(self):
         return super().output_file().with_suffix(".csv")
 
+    def kernel_asset_file(self):
+        return self.benchmark.get_instance_asset_path() / "kernel.full"
+
     def kernel_object_path(self):
         kernel = self.benchmark.cheribsd_rootfs_path / "boot" / f"kernel.{self.benchmark.config.instance.kernel}" / "kernel.full"
         if not kernel.exists():
@@ -43,6 +46,12 @@ class KernelSymbolsDataset(CSVDataSetContainer):
             kernel = self.benchmark.cheribsd_rootfs_path / "boot" / "kernel" / "kernel.full"
         return kernel
 
+    def before_run(self):
+        super().before_run()
+        # Cleaup previous run assets
+        if self.kernel_asset_file().exists():
+            self.kernel_asset_file().unlink()
+
     async def after_extract_results(self, script, instance):
         """
         After benchmarks completed on the instance we generate
@@ -50,7 +59,11 @@ class KernelSymbolsDataset(CSVDataSetContainer):
         XXX-AM: This could run in parallel with the instance running,
         if we *really* cared.
         """
-        sym_loader = ELFSymbolReader(self.kernel_object_path(), self.logger)
+        if not self.kernel_object_path().exists():
+            self.logger.debug("Copy instance kernel asset %s", self.kernel_object_path())
+            shutil.copy(self.kernel_object_path(), self.kernel_asset_file())
+
+        sym_loader = ELFSymbolReader.create(self.benchmark.session, self.kernel_object_path())
         df = sym_loader.load_to_df()
         df.to_csv(self.output_file(), index=False)
 

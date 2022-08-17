@@ -649,6 +649,12 @@ class DataSetContainer(metaclass=DatasetRegistry):
         """
         self.logger.debug("Gen pre-extract")
 
+    def before_run(self):
+        """
+        Give a chance to run any extra collection/configuration step before the instance runs.
+        """
+        self.logger.debug("Before run hook")
+
     async def after_extract_results(self, script: ShellScriptBuilder, instance: InstanceInfo):
         """
         Give a chance to run commands on the live instance after the benchmark has

@@ -267,7 +267,20 @@ class Benchmark:
         """
         :return: The output directory for run data corresponding to this benchmark configuration.
         """
-        return self.session.get_data_root_path() / f"{self.uuid}"
+        return self.session.get_data_root_path() / f"{self.config.name}-{self.uuid}"
+
+    def get_benchmark_asset_path(self) -> Path:
+        """
+        :return: Path for archiving binaries used in the run
+        """
+        return self.session.get_asset_root_path() / f"{self.config.name}-{self.uuid}"
+
+    def get_instance_asset_path(self) -> Path:
+        """
+        :return: Path for archiving binaries used in the run but belonging to the instance.
+        This avoids duplication.
+        """
+        return self.session.get_asset_root_path() / f"{self.config.instance.name}-{self.g_uuid}"
 
     def get_plot_path(self):
         """
@@ -382,15 +395,15 @@ class Benchmark:
         remote_script = Path(f"{self.config.name}-{self.uuid}.sh")
         script = await self.build_run_script()
         self.logger.info("Waiting for instance")
-        # instance_reservation = instance_manager.request(self.uuid, self.config.instance)
-        # async with instance_reservation as reserved_instance:
+
+        for dset in sorted(self._dataset_runner_modules.values(), key=op.attrgetter("dataset_run_order")):
+            dset.before_run()
 
         instance = await instance_manager.request_instance(self.uuid, self.config.instance)
         try:
             await instance.connect()
             self.logger.debug("Import script file host:%s => guest:%s", script_path, remote_script)
             await instance.import_file(script_path, remote_script, preserve=True)
-            # await instance.import_file("/home/qwattash/cheri/cheri-benchplot/test.sh", remote_script, preserve=True)
             self.logger.info("Execute benchmark script verbose=%s", self.user_config.verbose)
             with timing("Benchmark script completed", logger=self.logger):
                 await instance.run_cmd("sh", [remote_script], verbose=self.user_config.verbose)
@@ -400,8 +413,6 @@ class Benchmark:
             for dset in sorted(self._dataset_runner_modules.values(), key=op.attrgetter("dataset_run_order")):
                 await dset.after_extract_results(script, instance)
 
-            # Record successful run and cleanup any pending background task
-            # self._record_benchmark_run()
             return True
         except Exception as ex:
             self.logger.exception("Benchmark run failed: %s", ex)
