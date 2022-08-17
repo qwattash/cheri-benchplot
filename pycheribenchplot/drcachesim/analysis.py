@@ -1,12 +1,15 @@
-from pathlib import Path
-import typing
-from ..core.analysis import BenchmarkAnalysis
-from ..core.dataset import DatasetName
 import asyncio as aio
-import subprocess, os, shutil
-
+import os
+import shutil
+import subprocess
+import typing
 from dataclasses import dataclass, field
-from ..core.config import TemplateConfig, ConfigPath
+from pathlib import Path
+
+from ..core.analysis import BenchmarkAnalysis
+from ..core.config import ConfigPath, TemplateConfig
+from ..core.dataset import DatasetName
+
 
 @dataclass
 class DrCacheSimConfig(TemplateConfig):
@@ -18,19 +21,28 @@ class DrCacheSimConfig(TemplateConfig):
     run_cache_levels: typing.List[str] = field(default_factory=list)
     rerun_sim: bool = False
 
+
 class DrCacheSimRun(BenchmarkAnalysis):
     require = {DatasetName.QEMU_DYNAMORIO}
     name: str = "drcachesim"
     description: str = "Run drcachesim"
     analysis_options_class = DrCacheSimConfig
+
     def __init__(self, benchmark, config):
         super().__init__(benchmark, config)
         self.processes_dict = {}
 
     async def _run_drcachesim(self, level_arg, size, indir, out_path):
         if os.path.isfile(out_path) and not self.config.rerun_sim:
-           return
-        p = await aio.create_subprocess_exec(self.config.drrun_path, '-t', 'drcachesim', '-indir', indir, '-' + level_arg, size, stderr=aio.subprocess.PIPE)
+            return
+        p = await aio.create_subprocess_exec(self.config.drrun_path,
+                                             '-t',
+                                             'drcachesim',
+                                             '-indir',
+                                             indir,
+                                             '-' + level_arg,
+                                             size,
+                                             stderr=aio.subprocess.PIPE)
         self.processes_dict[p] = out_path
 
     async def process_datasets(self):
@@ -66,14 +78,10 @@ class DrCacheSimRun(BenchmarkAnalysis):
             else:
                 self.logger.error(f"Unknown cache level {level}")
 
-
         for kvp in self.processes_dict.items():
             p = kvp[0]
-            path = kvp[1]
-            err = (await p.communicate())[1];
-            with open(path, "w") as f: 
+            size = kvp[1]
+            err = (await p.communicate())[1]
+            with open(self.out_paths[size], "w") as f:
                 f.write(err.decode())
         self.logger.info(f"Finished drcachesim")
-                
-
- 

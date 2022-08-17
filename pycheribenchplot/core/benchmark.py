@@ -9,7 +9,6 @@ from uuid import UUID
 import asyncssh
 import pandas as pd
 
-
 from .analysis import BenchmarkAnalysisRegistry
 from .config import AnalysisConfig, DatasetArtefact, DatasetConfig, DatasetName
 from .dataset import DataSetContainer, DatasetRegistry

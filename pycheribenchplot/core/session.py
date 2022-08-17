@@ -354,10 +354,9 @@ class SessionAnalysisContext(AbstractContextManager):
         except Exception as ex:
             self.logger.exception("Exiting interactive analysis with error")
         self.logger.info("Interactive analysis done")
-    
+
     def schedule_task(self, task):
         self._tasks.append(aio.create_task(task))
-
 
     async def main(self):
         """

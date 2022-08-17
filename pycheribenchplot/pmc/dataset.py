@@ -540,7 +540,7 @@ class ProfclockStackSamples(JSONDataSetContainer):
 
             result = grouped[sym_columns].apply(resolve_syms)
             df_stacks[sym_columns] = result
-        # XXX remove support older traces that lack tid
+        # XXX remove: support older traces that lack tid
         if df_stacks.index.unique("tid").isna().all():
             df_stacks = df_stacks.droplevel("tid")
         # This operation should not have resulted into a frame resize
