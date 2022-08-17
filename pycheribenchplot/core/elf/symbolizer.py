@@ -1,3 +1,4 @@
+import io
 import subprocess
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -52,16 +53,42 @@ class SymInfo:
         return f"|{self.name}|"
 
 
-class ELFSymbolReader:
+class ELFSymbolReader(ABC):
+    """
+    Base class for symbol extractors
+    """
+    @classmethod
+    def create(cls, session: "PipelineSession", *args):
+        """
+        Build a symbol reader based on the strategy configured in the session
+        """
+        if session.config.use_builtin_symbolizer:
+            return ELFToolsSymbolReader(session, *args)
+        else:
+            return LLVMSymbolReader(session, *args)
+
+    def __init__(self, session: "PipelineSession", path: Path):
+        self.session = session
+        self.logger = session.logger
+        self.path = path
+
+    @abstractmethod
+    def load_to_df(self) -> pd.DataFrame:
+        """
+        Load symbols to a dataframe
+        """
+        ...
+
+
+class ELFToolsSymbolReader(ELFSymbolReader):
     """
     A symtab reader to dataframe.
     """
-    def __init__(self, path: Path, logger):
-        self.path = path
-        self.logger = logger
+    def __init__(self, session, path):
+        super().__init__(session, path)
         self.ef = ELFFile(open(path, "rb"))
 
-    def is_dynamic(self) -> bool:
+    def is_dynamic(self):
         """
         Check whether the binary file is dynamically linked.
         """
@@ -69,7 +96,7 @@ class ELFSymbolReader:
             return True
         return False
 
-    def load_to_df(self) -> pd.DataFrame:
+    def load_to_df(self):
         """
         Load symbols from the target ELF file into a pandas dataframe
         """
@@ -80,6 +107,38 @@ class ELFSymbolReader:
         df = df.astype({"addr": np.uint64, "size": np.uint64, "type": str, "name": str})
         df["path"] = self.path
         df["dynamic"] = self.is_dynamic()
+        return df
+
+
+class LLVMSymbolReader(ELFSymbolReader):
+    """
+    Read symtabl using llvm tools instead of elftools
+    """
+    def __init__(self, session, path):
+        super().__init__(session, path)
+        self.nm = session.user_config.sdk_path / "sdk" / "bin" / "nm"
+        et = ELFFile(open(path, "rb"))
+        self.dynamic = et.header.e_type == "ET_DYN"
+
+    def is_dynamic(self):
+        return self.dynamic
+
+    def load_to_df(self):
+        self.logger.debug("Load symbols for %s", self.path)
+        result = subprocess.run([self.nm, "--print-size", "--format", "posix", self.path],
+                                capture_output=True,
+                                text=True)
+        if result.returncode != 0:
+            self.logger.error("Failed to run nm %s: %s", self.path, result.stderr)
+            raise RuntimeError("Failed to run nm")
+        df = pd.read_csv(io.StringIO(result.stdout), delim_whitespace=True, names=["name", "type", "addr", "size"])
+        df["path"] = self.path
+        df["dynamic"] = self.dynamic
+        # Normalize addr and size to integers
+        df["addr"] = df["addr"].map(lambda v: int(v, 16))
+        df["size"] = df["size"].map(lambda v: int(v, 16))
+        df["type"] = df["type"].mask(df["type"].str.upper() == "T", "STT_FUNC")
+        df["type"] = df["type"].mask(df["type"].str.upper() == "D", "STT_OBJECT")
         return df
 
 

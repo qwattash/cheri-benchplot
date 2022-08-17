@@ -531,6 +531,9 @@ class CommonSessionConfig(TemplateConfig):
     #: Allow reusing instances for multiple benchmark runs
     reuse_instances: bool = False
 
+    #: Extract symbols with elftools instead of llvm
+    use_builtin_symbolizer: bool = True
+
     def __post_init__(self):
         super().__post_init__()
         self.ssh_key = self.ssh_key.resolve()
