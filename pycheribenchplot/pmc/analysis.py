@@ -58,7 +58,7 @@ class PMCStacksPlot(BenchmarkAnalysis):
     def get_folded_stacks_path(self):
         return self.get_output_path().with_suffix(".stacks")
 
-    def process_datasets(self):
+    async def process_datasets(self):
         flamegraph_gen = self.benchmark.user_config.flamegraph_path
         ds = self.get_dataset(DatasetName.PMC_PROFCLOCK_STACKSAMPLE)
         # We only operate on the gid groups here

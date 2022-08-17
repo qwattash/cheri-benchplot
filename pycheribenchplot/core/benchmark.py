@@ -484,7 +484,7 @@ class Benchmark:
             dset.aggregate()
             dset.post_aggregate()
 
-    def analyse(self, analysis_config: AnalysisConfig, run_context):
+    def analyse(self, run_context: "SessionAnalysisContext", analysis_config: AnalysisConfig):
         """
         Run analysis steps on this benchmark. This includes plotting.
         Currently there is no ordering guarantee among analysis steps.
@@ -511,7 +511,7 @@ class Benchmark:
         for dset in self._dataset_modules.values():
             dset.post_cross_merge()
 
-    def cross_analysis(self, analysis_config: AnalysisConfig, run_context):
+    def cross_analysis(self, run_context: "SessionAnalysisContext", analysis_config: AnalysisConfig):
         """
         Perform any analysis steps on the merged frame with all the parameterized
         benchmark variants.

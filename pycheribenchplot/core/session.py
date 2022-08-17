@@ -415,7 +415,7 @@ class SessionAnalysisContext(AbstractContextManager):
         self.logger.info("Run analysis steps")
         for params, row in self._benchmark_matrix.iterrows():
             self.logger.debug("Analyse param set %s", params)
-            row[self._baseline_g_uuid].analyse(self.analysis_config, self)
+            row[self._baseline_g_uuid].analyse(self, self.analysis_config)
         await aio.gather(*self._tasks)
         self._tasks.clear()
 
@@ -427,7 +427,7 @@ class SessionAnalysisContext(AbstractContextManager):
         target.cross_merge(to_merge.iloc[1:])
         if self._mode == SessionAnalysisMode.INTERACTIVE_XMERGE:
             self._interactive_analysis()
-        target.cross_analysis(self.analysis_config, self)
+        target.cross_analysis(self, self.analysis_config)
         await aio.gather(*self._tasks)
         self._tasks.clear()
 
