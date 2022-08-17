@@ -61,6 +61,10 @@ class HWPMCPidMapDataset(JSONDataSetContainer):
         return ["pmcstat", "-O", self.iteration_output_file(iteration), "-S", "CLOCK.HARD"] + cmd
 
     async def after_extract_results(self, script, instance):
+        # If we are supposed to get pids from other pmcstat sources skip
+        # XXX need to integrate this better
+        if self.benchmark.get_dataset(DatasetName.PMC_PROFCLOCK_STACKSAMPLE):
+            return
         # Here we just check that we have the output files
         for i in range(self.benchmark.config.iterations):
             check_path = self.iteration_output_file(i)
