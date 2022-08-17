@@ -178,7 +178,7 @@ class BenchmarkTable(BenchmarkPlotBase):
 
 class BenchmarkPlot(BenchmarkPlotBase):
     def _make_figure_manager(self):
-        return MplFigureManager(self.config)
+        return MplFigureManager(self.analysis_config)
 
 
 class BenchmarkSubPlot(ABC):
