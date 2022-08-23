@@ -58,7 +58,7 @@ class HWPMCPidMapDataset(JSONDataSetContainer):
         """
         Helper to produce a pmcstat command that only tracks processes and mappings
         """
-        return ["pmcstat", "-O", self.iteration_output_file(iteration), "-S", "CLOCK.HARD"] + cmd
+        return ["pmcstat", "-O", self.iteration_output_file(iteration), "-S", "DUMMY.DUMMY"] + cmd
 
     async def after_extract_results(self, script, instance):
         # If we are supposed to get pids from other pmcstat sources skip
