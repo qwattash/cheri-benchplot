@@ -517,15 +517,15 @@ class ProfclockStackSamples(JSONDataSetContainer):
 
         def normalize_value(v):
             if type(v) == str:
-                return int(v, 16)
+                return np.uint64(int(v, 16))
             elif type(v) == int:
-                return v
+                return np.uint64(v)
             else:
-                return np.nan
+                return 0
 
         for i in range(self.max_stacktrace_depth):
             df_stacks[f"stacktrace_{i}"] = self.df["stacktrace"].map(lambda st: normalize_value(st[-(i + 1)])
-                                                                     if len(st) > i else np.nan)
+                                                                     if len(st) > i else 0)
         # Resolve PID mappings
         df_stacks = self._resolve_pids(df_stacks)
         # Translate addresses in-place, this could be done faster with a join()
@@ -534,10 +534,9 @@ class ProfclockStackSamples(JSONDataSetContainer):
 
             def resolve_syms(group):
                 as_key = group.name[1]  # process
-                # int_group = group.applymap(lambda v: int(v, 16) if type(v) == str else np.nan)
-                return group.applymap(lambda v: self.benchmark.sym_resolver.lookup_function(as_key, int(v))
-                                      if not np.isnan(v) else v)
-
+                # Would be better to use a proper NULL entry insted of unknown
+                return group.applymap(lambda v: self.benchmark.sym_resolver.lookup_function(as_key, v)
+                                      if v else SymInfo.unknown(-1))
             result = grouped[sym_columns].apply(resolve_syms)
             df_stacks[sym_columns] = result
         # XXX remove: support older traces that lack tid
@@ -546,7 +545,6 @@ class ProfclockStackSamples(JSONDataSetContainer):
         # This operation should not have resulted into a frame resize
         assert len(df_stacks) == len(self.df), "Call stacks dataframe size changed"
         # Count number of samples for each stack trace
-        df_stacks = df_stacks.fillna(SymInfo.unknown(-1))  # Would be better to use a proper NULL entry
         stacks_nsamples = df_stacks.groupby(df_stacks.index.names + sym_columns).size()
         stacks_nsamples.name = "nsamples"
         self.df = stacks_nsamples.reset_index(sym_columns)

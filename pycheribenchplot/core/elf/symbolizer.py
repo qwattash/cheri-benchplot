@@ -45,7 +45,10 @@ class SymInfo:
         elif self.is_unknown:
             return f"??`{self.name}"
         else:
-            return f"{Path(self.filepath).stem}`{self.name}"
+            location = Path(self.filepath).stem
+            if location.startswith("kernel"):
+                location = "kernel"
+            return f"{location}`{self.name}"
 
     def __str__(self):
         if self.is_unknown and self.addr == -1:
