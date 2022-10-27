@@ -240,11 +240,11 @@ class ExecutionTask(Task):
     2. Configure the benchmark instance via platform_options.
     3. Add commands to the benchmark run script sections.
     """
-    task_name = "exec"
+    task_namespace = "exec"
 
     def __init__(self, benchmark: "Benchmark", script: ShellScriptBuilder, task_config: Config = None):
         super().__init__(benchmark, task_config=task_config)
-        assert self.task_name == "exec", "ExecutionTask convention mandates the 'exec' task name"
+        assert self.task_namespace == "exec", "ExecutionTask convention mandates the 'exec' task namespace"
         self.script = script
 
 
@@ -264,7 +264,7 @@ class DatasetAnalysisTask(Task):
     Analysis tasks that perform anythin from plotting to data checks and transformations.
     These generally are the top-level tasks that correspond to run targets exposed via CLI.
     """
-    pass
+    task_namespace = "analysis"
 
 
 class ResourceManager:
@@ -453,6 +453,8 @@ class TaskScheduler:
             # Kill all tasks and signal workers stop
             self.logger.warning("Cancelling all pending tasks")
             with self._worker_wakeup:
+                for t in self._task_queue:
+                    t.notify_failed("cancelled")
                 self._task_queue.clear()
                 # XXX Find a nice way to propagate the early-stop request to current tasks.
                 # for task in self._active_tasks:
@@ -465,69 +467,75 @@ class TaskScheduler:
                 self._pending_tasks_cv.notify_all()
         else:
             # Find out which tasks we have to kill and unschedule them
-            pass
+            raise NotImplementedError("TODO")
 
-    def _check_worker_shutdown(self):
+    def _next_task(self) -> Task:
         """
-        Check the worker shutdown signal condition.
-        If the flag is set, we abort the execution of the worker loop via an exception.
+        Pull the next task to work on from the queue.
+        If the worker has been asked to shut down we also take this opportunity to bail out.
         """
-        with self._worker_lock:
+        with self._worker_wakeup:
+            self._worker_wakeup.wait_for(lambda: self._worker_shutdown or len(self._task_queue) > 0)
             if self._worker_shutdown:
                 raise WorkerShutdown()
+            return self._task_queue.pop(0)
 
-    def _worker_loop(self, worker_index: int):
+    def _worker_thread(self, worker_index: int):
+        self.logger.debug("Start worker[%d]", worker_index)
+        try:
+            while True:
+                self._worker_loop_one(worker_index)
+        except WorkerShutdown:
+            self.logger.debug("Caught worker shutdown signal, exit worker loop")
+        except Exception as ex:
+            # This should never happen, everything should be caught within the worker loop
+            self.logger.critical("Critical error in worker thread, scheduler state is undefined: %s", ex)
+        self.logger.debug("Shutdown worker[%d]", worker_index)
+
+    def _worker_loop_one(self, worker_index: int):
         """
         Main worker loop. This pulls tasks from the task_queue and handles them when their dependencies
         have completed. If the schedule is well-formed, we are guaranteed not to deadlock.
 
         :param worker_index: The sequential index of the worker in the worker list.
         """
-        self.logger.debug("Start worker[%d]", worker_index)
-        while True:
-            self.logger.debug("worker[%d] waiting for work...", worker_index)
-            with self._worker_wakeup:
-                self._worker_wakeup.wait_for(lambda: self._worker_shutdown or len(self._task_queue) > 0)
-                # Check shutdown signal
-                if self._worker_shutdown:
-                    break
-                task = self._task_queue.pop(0)
-            self.logger.debug("worker[%d] received task: %s", worker_index, task)
-            try:
-                # Wait for all dependencies to be done
-                for dep in self._task_graph.successors(task):
-                    dep.wait()
-                    assert dep.completed, f"Dependency wait() returned but task is not completed {dep}"
-                    # If a dependency failed, we need to do some scheduling changes, the exception triggers it
-                    if dep.failed:
-                        self.logger.error("Dependency %s failed, bail out from %s", dep, task)
-                        raise RuntimeError("Task dependency failed")
-                    # Before continuing, we should check whether somebody notified worker shutdown
-                    with self._worker_wakeup:
-                        if self._worker_shutdown:
-                            raise WorkerShutdown()
-                # Grab all resources
-                with ExitStack() as resource_stack:
-                    resources = {}
-                    for req in sorted(task.resources()):
-                        resources[req.name] = resource_stack.enter_context(self._rman[req.name].acquire(req))
-                    # Now we can run the task
-                    task.run()
-                # After cleanup of resources we notify done and unlock the others
-                task.notify_done()
-            except WorkerShutdown:
-                self.logger.debug("Caught worker shutdown signal, exit worker loop")
-                break
-            except Exception as ex:
-                self.logger.exception("Error in worker[%d]", worker_index)
-                # Notify other workers that may be waiting on this dependency that they should bail out.
-                task.notify_failed(ex)
-                # Now we need to cancel some tasks
-                self._handle_failure(task)
+        task = self._next_task()
+        self.logger.debug("worker[%d] received task: %s", worker_index, task)
+        try:
+            # Wait for all dependencies to be done
+            for dep in self._task_graph.successors(task):
+                dep.wait()
+                assert dep.completed, f"Dependency wait() returned but task is not completed {dep}"
+                # If a dependency failed, we need to do some scheduling changes, the exception triggers it
+                if dep.failed:
+                    self.logger.error("Dependency %s failed, bail out from %s", dep, task)
+                    raise RuntimeError("Task dependency failed")
+                # Before continuing, we should check whether somebody notified worker shutdown
+                with self._worker_wakeup:
+                    if self._worker_shutdown:
+                        raise WorkerShutdown()
+            # Grab all resources
+            with ExitStack() as resource_stack:
+                resources = {}
+                for req in sorted(task.resources()):
+                    resources[req.name] = resource_stack.enter_context(self._rman[req.name].acquire(req))
+                # Now we can run the task
+                task.run()
+            # We have finished with the task, if we reach this point the task completed successfully
+            # and its resources have been released
+            task.notify_done()
             with self._pending_tasks_cv:
                 self._pending_tasks -= 1
                 self._pending_tasks_cv.notify_all()
-        self.logger.debug("Shutdown worker[%d]", worker_index)
+        except WorkerShutdown:
+            # Just pass it through
+            raise
+        except Exception as ex:
+            self.logger.exception("Error in worker[%d]", worker_index)
+            # Notify other workers that may be waiting on this dependency that they should bail out.
+            task.notify_failed(ex)
+            # Now we need to cancel some tasks
+            self._handle_failure(task)
 
     def add_task(self, task: Task):
         self.logger.debug("Schedule task %s", task.task_id)
@@ -584,7 +592,7 @@ class TaskScheduler:
             if self._pending_tasks == 0:
                 return
             for i in range(self.num_workers):
-                worker = Thread(target=self._worker_loop, args=[i])
+                worker = Thread(target=self._worker_thread, args=[i])
                 self._worker_threads.append(worker)
                 worker.start()
             # notify that we have work
