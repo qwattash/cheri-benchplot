@@ -48,6 +48,12 @@ def setup_logging(verbose: bool = False, logfile: Path = None):
         file_handler.setFormatter(logging.Formatter(fmt=log_fmt))
         file_handler.setLevel(logging.DEBUG)
         logger.addHandler(file_handler)
+    # Silence logging for paramiko SSH events
+    pko_logger = logging.getLogger("paramiko")
+    pko_logger.setLevel(logging.ERROR)
+    pko_logger.addHandler(console_handler)
+    if logfile:
+        pko_logger.addHandler(file_handler)
     return logger
 
 

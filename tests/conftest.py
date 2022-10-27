@@ -1,4 +1,4 @@
-import asyncio as aio
+import copy
 import io
 import uuid
 from contextlib import contextmanager
@@ -14,14 +14,13 @@ from pycheribenchplot.core.config import (AnalysisConfig, BenchmarkRunConfig, Be
 from pycheribenchplot.core.dataset import DatasetArtefact, DataSetContainer
 from pycheribenchplot.core.pipeline import PipelineManager
 from pycheribenchplot.core.session import PipelineSession
-
-fake_session_conf = {"uuid": "17856370-2fd1-4597-937a-42b1277da44f", "name": "benchplot-selftest", "configurations": []}
+from pycheribenchplot.core.task import ExecutionTask
 
 fake_benchmark_conf = {
     "name": "selftest0",
     "iterations": 2,
     "benchmark": {
-        "handler": "test-fake"
+        "handler": "test-benchmark"
     },
     "uuid": "8bc941a3-f6d6-4d37-b193-4738f1da3dae",
     "g_uuid": "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb",
@@ -33,10 +32,120 @@ fake_benchmark_conf = {
     }
 }
 
+fake_session_conf = {
+    "uuid": "17856370-2fd1-4597-937a-42b1277da44f",
+    "name": "benchplot-selftest",
+    "configurations": [fake_benchmark_conf]
+}
 
-class FakeDataset(DataSetContainer):
-    dataset_config_name = DatasetName.TEST_FAKE
-    dataset_source_id = DatasetArtefact.TEST_FAKE
+fake_session_conf_with_params = {
+    "uuid":
+    "17856370-2fd1-4597-937a-42b1277da440",
+    "name":
+    "benchplot-selftest-model",
+    "configurations": [{
+        "name": "selftest0",
+        "iterations": 2,
+        "parameters": {
+            "param0": 10,
+            "param1": "param1-value"
+        },
+        "benchmark": {
+            "handler": "test-benchmark"
+        },
+        "uuid": "8bc941a3-f6d6-4d37-b193-4738f1da3dae",
+        "g_uuid": "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb",
+        "instance": {
+            "kernel": "selftest-kernel",
+            "baseline": True,
+            "name": "selftest-instance"
+        }
+    }]
+}
+
+
+class FakeExecTask(ExecutionTask):
+    public = True
+    task_namespace = "test-benchmark"
+
+
+@pytest.fixture
+def empty_session_config():
+    """
+    Produces a sample skeleton for a valid session configuration.
+    """
+    conf = {"uuid": "17856370-2fd1-4597-937a-42b1277da44f", "name": "benchplot-selftest", "configurations": []}
+    return conf
+
+
+@pytest.fixture
+def single_benchmark_config(empty_session_config):
+    """
+    Produces a session configuration with a single benchmark entry.
+    No parameterization.
+    """
+    conf = copy.deepcopy(empty_session_config)
+    conf["configurations"].append({
+        "name": "selftest0",
+        "iterations": 2,
+        "benchmark": {
+            "handler": "test-benchmark"
+        },
+        "uuid": "8bc941a3-f6d6-4d37-b193-4738f1da3dae",
+        "g_uuid": "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb",
+        "instance": {
+            "kernel": "selftest-kernel",
+            "baseline": True,
+            "name": "selftest-instance",
+            "cheribuild_kernel": False
+        }
+    })
+    return conf
+
+
+@pytest.fixture
+def multi_benchmark_config(empty_session_config):
+    """
+    Produces a session configuration with 2 parameterized benchmark entries.
+    """
+    conf = copy.deepcopy(empty_session_config)
+    conf["configurations"].append({
+        "name": "selftest0",
+        "iterations": 2,
+        "parameters": {
+            "param0": "param0-value0"
+        },
+        "benchmark": {
+            "handler": "test-benchmark"
+        },
+        "uuid": "8bc941a3-f6d6-4d37-b193-4738f1da3dae",
+        "g_uuid": "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb",
+        "instance": {
+            "kernel": "selftest-kernel",
+            "baseline": True,
+            "name": "selftest-instance",
+            "cheribuild_kernel": False
+        }
+    })
+    conf["configurations"].append({
+        "name": "selftest0",
+        "iterations": 2,
+        "parameters": {
+            "param0": "param0-value1"
+        },
+        "benchmark": {
+            "handler": "test-benchmark"
+        },
+        "uuid": "c73169b7-5797-41c8-9edc-656d666cb45a",
+        "g_uuid": "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb",
+        "instance": {
+            "kernel": "selftest-kernel",
+            "baseline": True,
+            "name": "selftest-instance",
+            "cheribuild_kernel": False
+        }
+    })
+    return conf
 
 
 @pytest.fixture
@@ -51,12 +160,16 @@ def fake_pipeline():
 
 
 @pytest.fixture
-def fake_session(fake_pipeline, tmp_path):
-    config = SessionRunConfig.schema().load(fake_session_conf)
-    session = PipelineSession(fake_pipeline, config, session_path=tmp_path)
-    session.analysis_config = AnalysisConfig()
-    session.clean()
-    return session
+def fake_session_factory(fake_pipeline, tmp_path):
+    def factory(config: dict = None):
+        if config is None:
+            config = fake_session_conf
+        sess_config = SessionRunConfig.schema().load(config)
+        session = PipelineSession(fake_pipeline, sess_config, session_path=tmp_path)
+        session.analysis_config = AnalysisConfig()
+        return session
+
+    return factory
 
 
 @pytest.fixture
@@ -68,6 +181,23 @@ def fake_benchmark_factory(fake_session):
         return Benchmark(fake_session, bench_config)
 
     return factory
+
+
+@pytest.fixture
+def fake_session(fake_session_factory):
+    """
+    A fake session instance with the default user configuration.
+    This uses an empty session configuration.
+    """
+    return fake_session_factory()
+
+
+@pytest.fixture
+def fake_session_with_params(fake_session_factory):
+    """
+    Create a fake session instance with a single parameterized benchmark configuration.
+    """
+    return fake_session_factory(fake_session_conf_with_params)
 
 
 @pytest.fixture

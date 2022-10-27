@@ -7,6 +7,8 @@ import uuid
 from json.decoder import JSONDecodeError
 from pathlib import Path
 
+from marshmallow.exceptions import ValidationError
+
 from pycheribenchplot.core.config import PipelineConfig, BenchplotUserConfig, AnalysisConfig
 from pycheribenchplot.core.session import SessionAnalysisMode
 from pycheribenchplot.core.pipeline import PipelineManager
@@ -123,6 +125,9 @@ def main():
                 config = PipelineConfig.load_json(args.pipeline_config)
             except JSONDecodeError as ex:
                 logger.error("Malformed pipeline configuration %s: %s", args.pipeline_config, ex)
+                raise
+            except ValidationError as ex:
+                logger.error("Invalid pipeline configuration %s: %s", args.pipeline_config, ex)
                 raise
             existing = manager.resolve_session(args.session_path)
             if existing:

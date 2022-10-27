@@ -10,8 +10,6 @@ import pandas as pd
 from pandas.api.types import (is_integer_dtype, is_numeric_dtype, is_object_dtype)
 
 from .config import DatasetArtefact, DatasetConfig, DatasetName
-from .instance import InstanceInfo
-from .shellgen import ShellScriptBuilder
 from .util import new_logger
 
 
@@ -586,7 +584,7 @@ class DataSetContainer(metaclass=DatasetRegistry):
         self.logger.debug("Configure dataset")
         return options
 
-    def configure_iteration(self, script: ShellScriptBuilder, iteration: int):
+    def configure_iteration(self, script: "ShellScriptBuilder", iteration: int):
         """
         Update configuration for the current benchmark iteration, if any depends on it.
         This is called for each iteration, before pre_benchmark_iter()
@@ -597,7 +595,7 @@ class DataSetContainer(metaclass=DatasetRegistry):
         """
         self.logger.debug("Configure iteration %d", iteration)
 
-    def gen_pre_benchmark(self, script: ShellScriptBuilder):
+    def gen_pre_benchmark(self, script: "ShellScriptBuilder"):
         """
         Generate runner script content before the benchmark run phase.
 
@@ -605,7 +603,7 @@ class DataSetContainer(metaclass=DatasetRegistry):
         """
         self.logger.debug("Gen pre-benchmark")
 
-    def gen_pre_benchmark_iter(self, script: ShellScriptBuilder, iteration: int):
+    def gen_pre_benchmark_iter(self, script: "ShellScriptBuilder", iteration: int):
         """
         Generate runner script content before every benchmark iteration.
 
@@ -614,7 +612,7 @@ class DataSetContainer(metaclass=DatasetRegistry):
         """
         self.logger.debug("Gen pre-benchmark iteration %d", iteration)
 
-    def gen_benchmark(self, script: ShellScriptBuilder, iteration: int):
+    def gen_benchmark(self, script: "ShellScriptBuilder", iteration: int):
         """
         Generate the runner script command for the given benchmark iteration;
 
@@ -623,7 +621,7 @@ class DataSetContainer(metaclass=DatasetRegistry):
         """
         self.logger.debug("Gen benchmark iteration %d", iteration)
 
-    def gen_post_benchmark_iter(self, script: ShellScriptBuilder, iteration: int):
+    def gen_post_benchmark_iter(self, script: "ShellScriptBuilder", iteration: int):
         """
         Generate the runner script contet after every benchmark iteration.
 
@@ -632,7 +630,7 @@ class DataSetContainer(metaclass=DatasetRegistry):
         """
         self.logger.debug("Gen post-benchmark iteration %d", iteration)
 
-    def gen_post_benchmark(self, script: ShellScriptBuilder):
+    def gen_post_benchmark(self, script: "ShellScriptBuilder"):
         """
         Generate runner script content after the benchmark run phase.
 
@@ -640,7 +638,7 @@ class DataSetContainer(metaclass=DatasetRegistry):
         """
         self.logger.debug("Gen post-benchmark")
 
-    def gen_pre_extract_results(self, script: ShellScriptBuilder):
+    def gen_pre_extract_results(self, script: "ShellScriptBuilder"):
         """
         Generate runner script content after everything else, but before
         the data files are extracted.
@@ -655,7 +653,7 @@ class DataSetContainer(metaclass=DatasetRegistry):
         """
         self.logger.debug("Before run hook")
 
-    async def after_extract_results(self, script: ShellScriptBuilder, instance: InstanceInfo):
+    async def after_extract_results(self, script: "ShellScriptBuilder", instance: "InstanceInfo"):
         """
         Give a chance to run commands on the live instance after the benchmark has
         completed. Note that this should only be used to extract auxiliary information

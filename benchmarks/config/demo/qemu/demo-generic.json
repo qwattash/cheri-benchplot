@@ -1,0 +1,33 @@
+{
+    "ssh_key": "extra_files/freebsd_test_id_rsa",
+    "concurrent_instances": 2,
+    "reuse_instances": false,
+    "instance_config": {
+        "instances": [{
+            "name": "hybrid",
+            "baseline": true,
+            "kernel": "CHERI-QEMU-NODEBUG",
+            "platform": "qemu",
+            "cheri_target": "riscv64-purecap",
+            "kernelabi": "hybrid"
+        }, {
+            "name": "purecap",
+            "baseline": false,
+            "kernel": "CHERI-PURECAP-QEMU-NODEBUG",
+            "platform": "qemu",
+            "cheri_target": "riscv64-purecap",
+            "kernelabi": "purecap"
+        }]
+    },
+    "benchmark_config": [{
+        "name": "demo-uname",
+        "desc": "uname demo",
+        "iterations": 5,
+        "benchmark": {
+            "handler": "generic",
+            "run_options": {
+                "command": "uname -a"
+            }
+        }
+    }]
+}

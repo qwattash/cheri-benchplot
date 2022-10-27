@@ -10,23 +10,16 @@ from uuid import UUID
 
 import pandas as pd
 
-from .benchmark import Benchmark
+from .benchmark import Benchmark, BenchmarkExecMode, ExecTaskConfig
 from .config import (AnalysisConfig, Config, DatasetConfig, PipelineConfig, SessionRunConfig, TemplateConfigContext)
-from .dataset import DatasetName, DatasetRegistry
+from .dataset import DatasetName
 from .instance import InstanceManager
+from .model import UUIDType
 from .perfetto import TraceProcessorCache
+from .task import TaskRegistry, TaskScheduler
 from .util import new_logger
 
 SESSION_RUN_FILE = "session-run.json"
-
-
-class SessionRunMode(Enum):
-    """
-    Run mode determines the type of run strategy to use.
-    This is currently used for partial or pretend runs.
-    """
-    FULL = "full"
-    SHELLGEN = "shellgen"
 
 
 class SessionAnalysisMode(Enum):
@@ -103,21 +96,27 @@ class PipelineSession:
 
     def __init__(self, manager: "PipelineManager", config: SessionRunConfig, session_path: Path = None):
         super().__init__()
+        # XXX debatable whether we want the manager here
         self.manager = manager
         # Now resolve the configuration templates, before doing anything in the session
+        #: Main session configuration
         self.config = self._resolve_config_template(config)
         self.logger = new_logger(f"session-{self.config.name}")
         if session_path is None:
             session_root_path = self.manager.user_config.session_path / self.config.name
         else:
             session_root_path = session_path
+        #: Session root path, where all the session data will be stored
         self.session_root_path = session_root_path.expanduser().absolute()
+        self._ensure_dir_tree()
+        #: A dataframe that organises the set of benchmarks to run or analyse.
+        self.benchmark_matrix = self._resolve_benchmark_matrix()
+        #: Benchmark baseline instance group UUID.
+        self.baseline_g_uuid = self._resolve_baseline()
+        #: Task scheduler
+        self.scheduler = TaskScheduler(self)
         # Analysis step configuration, only set when running analysis
         self.analysis_config = None
-        # Benchmark baseline instance group UUID
-        self.baseline_g_uuid = None
-        # Benchmark analysis matrix, only set when running analysis
-        self.benchmark_matrix = None
 
     def __str__(self):
         return f"Session({self.uuid}) [{self.name}]"
@@ -128,14 +127,14 @@ class PipelineSession:
 
         :param config: A single dataset configuration
         :return: A Config object to be used as the new :attr:`DatasetConfig.run_options`.
-        If the dataset does not specify a run_options_class, return a dict with the same content as
+        If the exec task does not specify a task_config_class, return a dict with the same content as
         the original run_options dict.
         """
-        dataset_class = DatasetRegistry.resolve_name(config.handler)
-        if not dataset_class.run_options_class:
-            return config.run_options
-        run_opts = dataset_class.run_options_class.schema().load(config.run_options)
-        return run_opts
+        # Existence of the exec task is ensured by configuration validation
+        exec_task = TaskRegistry.public_tasks[config.handler]["exec"]
+        if exec_task.task_config_class:
+            return exec_task.task_config_class.schema().load(config.run_options)
+        return config.run_options
 
     def _resolve_config_template(self, config: SessionRunConfig) -> SessionRunConfig:
         """
@@ -170,6 +169,88 @@ class PipelineSession:
             new_bench_conf.append(bench_conf.bind(ctx))
         new_config.configurations = new_bench_conf
         return new_config
+
+    def _resolve_baseline(self):
+        """
+        Resolve the baseline benchmark run group ID.
+        This is necessary to identify the benchmark run that we compare against
+        (actually the column in the benchmark matrix we compare against).
+
+        :return: The baseline group ID.
+        """
+        baseline = None
+        for benchmark_config in self.config.configurations:
+            if benchmark_config.instance.baseline:
+                if baseline and baseline != benchmark_config.g_uuid:
+                    self.logger.error("Multiple baseline instances?")
+                    raise RuntimeError("Too many baseline specifiers")
+                baseline = benchmark_config.g_uuid
+        if not baseline:
+            self.logger.error("Missing baseline instance")
+            raise RuntimeError("Missing baseline")
+        baseline_conf = self.benchmark_matrix[baseline].iloc[0].config
+        self.logger.debug("Benchmark baseline %s (%s)", baseline_conf.instance.name, baseline)
+        return baseline
+
+    def _resolve_benchmark_matrix(self) -> typing.Tuple[pd.DataFrame, UUID]:
+        """
+        Generate the benchmark matrix from the benchmark configurations.
+        In the resulting dataframe:
+         - rows are different parameterizations of the benchmark, indexed by param keys.
+         - columns are different instances on which the benchmark is run, indexed by dataset_gid.
+
+        :return: The benchmark matrix as a pandas dataframe
+        """
+        # First pass, just collect instances and parameters
+        instances = {}
+        parameters = defaultdict(list)
+        for benchmark_config in self.config.configurations:
+            self.logger.debug("Found benchmark run config %s", benchmark_config)
+            instances[benchmark_config.g_uuid] = benchmark_config.instance.name
+            for k, p in benchmark_config.parameters.items():
+                parameters[k].append(p)
+        if parameters:
+            index_frame = pd.DataFrame(parameters)
+            index = pd.MultiIndex.from_frame(index_frame)
+            if not index.is_unique:
+                index = index.unique()
+        else:
+            # If there is no parameterization, just use a flat index, there will be only
+            # one row in the benchmark matrix.
+            index = pd.Index([0], name="RESERVED__unparameterized_index")
+
+        # Second pass, fill the matrix
+        bench_matrix = pd.DataFrame(index=index, columns=instances.keys())
+        BenchParams = namedtuple("BenchParams", bench_matrix.index.names)
+        for benchmark_config in self.config.configurations:
+            benchmark = Benchmark(self, benchmark_config)
+            if benchmark_config.parameters:
+                # Note: config.parameters is unordered, use namedtuple to ensure
+                # the key ordering
+                i = BenchParams(**benchmark_config.parameters)
+                bench_matrix.loc[i, benchmark_config.g_uuid] = benchmark
+            else:
+                bench_matrix[benchmark_config.g_uuid] = benchmark
+            benchmark.get_plot_path().mkdir(exist_ok=True)
+
+        assert not bench_matrix.isna().any().any(), "Incomplete benchmark matrix"
+        for i, row in bench_matrix.iterrows():
+            if isinstance(i, tuple):
+                i = BenchParams(*i)
+            self.logger.debug("Benchmark matrix %s = %s", i, row.values)
+        if bench_matrix.shape[0] * bench_matrix.shape[1] != len(self.config.configurations):
+            self.logger.error("Malformed benchmark matrix")
+            raise RuntimeError("Malformed benchmark matrix")
+
+        return bench_matrix
+
+    def _ensure_dir_tree(self):
+        """
+        Build the session directory tree.
+        """
+        self.get_data_root_path().mkdir(exist_ok=True)
+        self.get_asset_root_path().mkdir(exist_ok=True)
+        self.get_plot_root_path().mkdir(exist_ok=True)
 
     @property
     def name(self):
@@ -213,25 +294,22 @@ class PipelineSession:
             shutil.rmtree(data_root)
         if asset_root.exists():
             shutil.rmtree(asset_root)
-        data_root.mkdir()
-        asset_root.mkdir()
+        self._ensure_dir_tree()
 
-    def run(self, mode: str = "full") -> AbstractContextManager:
+    def run(self, mode: str = "full"):
         """
-        Prepare to run the session.
+        Run the session benchmark execution task stack
 
         :param mode: Alternate run mode for partial or pretend runs.
-        :return: A context manager to wrap the main loop and manage
-        the tasks for the session.
         """
-        session_run_mode = SessionRunMode(mode)
+        exec_config = ExecTaskConfig(mode=BenchmarkExecMode(mode))
+        instance_manager = InstanceManager(self)
+        self.scheduler.register_resource(instance_manager)
 
-        ctx = SessionRunContext(self, session_run_mode)
-        for benchmark_config in self.config.configurations:
-            self.logger.debug("Found benchmark run config %s", benchmark_config)
-            benchmark = Benchmark(self, benchmark_config)
-            ctx.schedule_benchmark(benchmark)
-        return ctx
+        for col in self.benchmark_matrix:
+            for bench in self.benchmark_matrix[col]:
+                bench.schedule_exec_tasks(self.scheduler, exec_config)
+        self.scheduler.run()
 
     def analyse(self, analysis_config: AnalysisConfig, mode: str = "async-load") -> AbstractContextManager:
         """
@@ -243,67 +321,19 @@ class PipelineSession:
         the analysis tasks.
         """
         session_analysis_mode = SessionAnalysisMode(mode)
-        self.get_plot_root_path().mkdir(exist_ok=True)
         self.analysis_config = analysis_config
+        # Override the baseline ID if configured
+        if analysis_config.baseline_gid != self.baseline_g_uuid:
+            self.baseline_g_uuid = analisis_config.baseline_gid
+            try:
+                baseline_conf = self.benchmark_matrix[baseline].iloc[0].config
+            except KeyError:
+                self.logger.error("Invalid baseline instance ID %s", analysis_config.baseline_gid)
+                raise
+            self.logger.info("Using alternative baseline %s (%s)", baseline_conf.instance.name, self.baseline_g_uuid)
 
-        # Resolve benchmark matrix
-        # Rows are different parameterizations of the benchmark. Indexed by param keys.
-        # Columns are different instances on which the benchmark is run. Indexed by dataset_gid.
-        # First pass, just collect instances and parameters
-        instances = {}
-        baseline = None
-        parameters = defaultdict(list)
-        for benchmark_config in self.config.configurations:
-            self.logger.debug("Found benchmark run config %s", benchmark_config)
-            instances[benchmark_config.g_uuid] = benchmark_config.instance.name
-            if (analysis_config.baseline_gid == benchmark_config.g_uuid
-                    or (analysis_config.baseline_gid is None and benchmark_config.instance.baseline)):
-                if baseline and baseline != benchmark_config.g_uuid:
-                    self.logger.error("Multiple baseline instances?")
-                    raise Exception("Too many baseline specifiers")
-                baseline = benchmark_config.g_uuid
-            for k, p in benchmark_config.parameters.items():
-                parameters[k].append(p)
-        if parameters:
-            index_frame = pd.DataFrame(parameters)
-            index = pd.MultiIndex.from_frame(index_frame)
-            if not index.is_unique:
-                index = index.unique()
-        else:
-            # If there is no parameterization, just use a flat index, there will be only
-            # one row in the benchmark matrix.
-            index = pd.Index([0], name="index")
-
-        # Second pass, fill the matrix
-        bench_matrix = pd.DataFrame(index=index, columns=instances.keys())
-        BenchParams = namedtuple("BenchParams", bench_matrix.index.names)
-        for benchmark_config in self.config.configurations:
-            benchmark = Benchmark(self, benchmark_config)
-            if benchmark_config.parameters:
-                # Note: config.parameters is unordered, use namedtuple to ensure
-                # the key ordering
-                i = BenchParams(**benchmark_config.parameters)
-                bench_matrix.loc[i, benchmark_config.g_uuid] = benchmark
-            else:
-                bench_matrix[benchmark_config.g_uuid] = benchmark
-            benchmark.get_plot_path().mkdir(exist_ok=True)
-
-        assert not bench_matrix.isna().any().any(), "Incomplete benchmark matrix"
-        if not baseline:
-            self.logger.error("Missing baseline instance")
-            raise RuntimeError("Missing baseline")
-        self.logger.debug("Benchmark baseline %s (%s)", instances[baseline], baseline)
-        for i, row in bench_matrix.iterrows():
-            if isinstance(i, tuple):
-                i = BenchParams(*i)
-            self.logger.debug("Benchmark matrix %s = %s", i, row.values)
-        if bench_matrix.shape[0] * bench_matrix.shape[1] != len(self.config.configurations):
-            self.logger.error("Malformed benchmark matrix")
-            raise RuntimeError("Malformed benchmark matrix")
-
-        self.benchmark_matrix = bench_matrix
-        self.baseline_g_uuid = baseline
-        ctx = SessionAnalysisContext(self, analysis_config, bench_matrix, baseline, session_analysis_mode)
+        ctx = SessionAnalysisContext(self, analysis_config, self.benchmark_matrix, self.baseline_g_uuid,
+                                     session_analysis_mode)
         return ctx
 
 
@@ -432,63 +462,63 @@ class SessionAnalysisContext(AbstractContextManager):
         self._tasks.clear()
 
 
-class SessionRunContext(AbstractContextManager):
-    """
-    Handle the context for a single session run.
-    This abstract benchmark scheduling and cleanup.
+# class SessionRunContext(AbstractContextManager):
+#     """
+#     Handle the context for a single session run.
+#     This abstract benchmark scheduling and cleanup.
 
-    :param session: The parent pipeline session
-    """
-    def __init__(self, session: PipelineSession, mode: SessionRunMode):
-        self.session = session
-        self.mode = mode
-        self.loop = aio.get_event_loop()
-        self.logger = session.logger
-        self.instance_manager = InstanceManager(self.session)
-        self._tasks = []
+#     :param session: The parent pipeline session
+#     """
+#     def __init__(self, session: PipelineSession, mode: SessionRunMode):
+#         self.session = session
+#         self.mode = mode
+#         self.loop = aio.get_event_loop()
+#         self.logger = session.logger
+#         self.instance_manager = InstanceManager(self.session)
+#         self._tasks = []
 
-    def __exit__(self, ex_type, ex, traceback):
-        self.logger.debug("SessionRunContext cleanup")
+#     def __exit__(self, ex_type, ex, traceback):
+#         self.logger.debug("SessionRunContext cleanup")
 
-        if isinstance(ex, KeyboardInterrupt):
-            self.logger.debug("SessionRunContext user SIGINT cleanup")
-            self.loop.run_until_complete(self._dirty_shutdown())
-        elif isinstance(ex, Exception):
-            self.logger.debug("SessionRunContext error cleanup")
-            self.loop.run_until_complete(self._dirty_shutdown())
-        else:
-            # normal shutdown
-            self.logger.debug("SessionRunContext regular cleanup")
-            self.loop.run_until_complete(self._clean_shutdown())
-        self.logger.info("Session shutdown complete")
+#         if isinstance(ex, KeyboardInterrupt):
+#             self.logger.debug("SessionRunContext user SIGINT cleanup")
+#             self.loop.run_until_complete(self._dirty_shutdown())
+#         elif isinstance(ex, Exception):
+#             self.logger.debug("SessionRunContext error cleanup")
+#             self.loop.run_until_complete(self._dirty_shutdown())
+#         else:
+#             # normal shutdown
+#             self.logger.debug("SessionRunContext regular cleanup")
+#             self.loop.run_until_complete(self._clean_shutdown())
+#         self.logger.info("Session shutdown complete")
 
-    async def _dirty_shutdown(self):
-        """
-        Cancel all tasks and wait for the cleanup
-        """
-        for t in self._tasks:
-            self.logger.debug("Cancel task %s", t.get_name())
-            t.cancel()
-        await aio.gather(*self._tasks, return_exceptions=True)
-        await self.instance_manager.kill()
+#     async def _dirty_shutdown(self):
+#         """
+#         Cancel all tasks and wait for the cleanup
+#         """
+#         for t in self._tasks:
+#             self.logger.debug("Cancel task %s", t.get_name())
+#             t.cancel()
+#         await aio.gather(*self._tasks, return_exceptions=True)
+#         await self.instance_manager.kill()
 
-    async def _clean_shutdown(self):
-        """
-        Stop gracefully background tasks.
-        """
-        for task in self._tasks:
-            if not task.done():
-                await self._dirty_shutdown()
-                return
-        await self.instance_manager.shutdown()
+#     async def _clean_shutdown(self):
+#         """
+#         Stop gracefully background tasks.
+#         """
+#         for task in self._tasks:
+#             if not task.done():
+#                 await self._dirty_shutdown()
+#                 return
+#         await self.instance_manager.shutdown()
 
-    def schedule_benchmark(self, bench):
-        if self.mode == SessionRunMode.FULL:
-            run_task = self.loop.create_task(bench.run(self.instance_manager))
-        elif self.mode == SessionRunMode.SHELLGEN:
-            run_task = self.loop.create_task(bench.build_run_script())
-        run_task.set_name(f"Task[{bench.config.name}/{bench.config.instance.name}]")
-        self._tasks.append(run_task)
+#     def schedule_benchmark(self, bench):
+#         if self.mode == SessionRunMode.FULL:
+#             run_task = self.loop.create_task(bench.run(self.instance_manager))
+#         elif self.mode == SessionRunMode.SHELLGEN:
+#             run_task = self.loop.create_task(bench.build_run_script())
+#         run_task.set_name(f"Task[{bench.config.name}/{bench.config.instance.name}]")
+#         self._tasks.append(run_task)
 
-    async def main(self):
-        await aio.gather(*self._tasks)
+#     async def main(self):
+#         await aio.gather(*self._tasks)

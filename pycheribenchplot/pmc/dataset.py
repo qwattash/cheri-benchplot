@@ -537,6 +537,7 @@ class ProfclockStackSamples(JSONDataSetContainer):
                 # Would be better to use a proper NULL entry insted of unknown
                 return group.applymap(lambda v: self.benchmark.sym_resolver.lookup_function(as_key, v)
                                       if v else SymInfo.unknown(-1))
+
             result = grouped[sym_columns].apply(resolve_syms)
             df_stacks[sym_columns] = result
         # XXX remove: support older traces that lack tid

@@ -78,12 +78,8 @@ class PipelineManager:
         run_mode = "full"
         if shellgen_only:
             run_mode = "shellgen"
-
-        loop = aio.get_event_loop()
         self.logger.debug("Session %s (%s) start run", session.name, session.uuid)
-        with session.run(mode=run_mode) as ctx:
-            loop.run_until_complete(ctx.main())
-        loop.close()
+        session.run(mode=run_mode)
         self.logger.info("Session %s (%s) run finished", session.name, session.uuid)
 
     def run_analysis(self, session: PipelineSession, config: AnalysisConfig, mode: str = None):

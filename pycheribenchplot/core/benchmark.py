@@ -2,7 +2,9 @@ import asyncio as aio
 import operator as op
 import shlex
 import typing
+from collections import defaultdict
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from uuid import UUID
 
@@ -10,26 +12,251 @@ import asyncssh
 import pandas as pd
 
 from .analysis import BenchmarkAnalysisRegistry
-from .config import AnalysisConfig, DatasetArtefact, DatasetConfig, DatasetName
+from .config import (AnalysisConfig, Config, DatasetArtefact, DatasetConfig, DatasetName)
 from .dataset import DataSetContainer, DatasetRegistry
 from .elf import AddressSpaceManager, DWARFHelper
-from .instance import InstanceConfig, InstanceInfo, InstanceManager
-from .shellgen import ShellScriptBuilder
+from .instance import InstanceManager
+from .shellgen import ScriptBuilder
+from .task import ExecutionTask, Task, TaskRegistry, TaskScheduler
 from .util import new_logger, timing
 
 
-class BenchmarkError(Exception):
-    def __init__(self, benchmark, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.benchmark = benchmark
-        self.benchmark.logger.error(str(self))
+class BenchmarkExecMode(Enum):
+    """
+    Run mode determines the type of run strategy to use.
+    This is currently used for partial or pretend runs.
+    """
+    FULL = "full"
+    SHELLGEN = "shellgen"
 
-    def __str__(self):
-        msg = super().__str__()
-        return f"BenchmarkError: {msg} on benchmark instance {self.benchmark.uuid}"
+
+@dataclass
+class ExecTaskConfig(Config):
+    """
+    Configuration object for :class:`BenchmarkExecTask`
+    """
+    mode: BenchmarkExecMode = BenchmarkExecMode.FULL
+
+
+class BenchmarkExecTask(Task):
+    """
+    Task that dynamically gathers dependencies for all the execution task required
+    by a benchmark run instance.
+    """
+    task_namespace = "internal"
+    task_name = "benchmark.exec"
+
+    def __init__(self, benchmark, task_config: ExecTaskConfig):
+        super().__init__(benchmark, task_config=task_config)
+        self.script = ScriptBuilder(benchmark)
+
+    def _fetch_task(self, config: DatasetConfig) -> Task:
+        task_namespace = TaskRegistry.all_tasks[config.handler]
+        task_klass = task_namespace.get("exec")
+        if task_klass is None:
+            self.logger.error("Invalid task name specification %s.exec", task_namespace)
+            raise ValueError("Invalid task name")
+        if issubclass(ExecutionTask, task_klass):
+            self.logger.error("BenchmarkExecTask only supports depending on ExecutionTasks, found %s", task_klass)
+            raise TypeError("Invalid dependency type")
+        return task_klass(self.benchmark, self.script, task_config=config.run_options)
+
+    def _handle_config_command_hooks_for_section(section_name: str, cmd_list: list[str | dict]):
+        """
+        Helper to handle config command hooks for a specific section.
+        """
+        global_section = self.script.sections[section_name]
+        # Accumulate here any non-global command hook specification
+        iter_sections = defaultdict(list)
+        for cmd_spec in cmd_list:
+            if isinstance(cmd_spec, str):
+                global_section.add_cmd(cmd_spec)
+            else:
+                iter_sections.update({k: iter_sections[k] + v for k, v in cmd_spec.items()})
+        # Now resolve the merged iteration spec
+        for iter_section_spec, iter_cmd_list in iter_sections.items():
+            if iter_section_spec == "*":
+                # Wildcard for all iterations
+                for group in self.script.benchmark_sections:
+                    for cmd in iter_cmd_list:
+                        group[section_name].add_cmd(cmd)
+            else:
+                # Must be an integer index
+                index = int(iteration_spec)
+                for cmd in iter_cmd_list:
+                    self.script.benchmark_sections[index][section_name].add_cmd(cmd)
+
+    def _handle_config_command_hooks(self):
+        """
+        Add the extra commands from :attr:`BenchmarkRunConfig.command_hooks`
+        See the :class:`BenchmarkRunConfig` class for a description of the format we expect.
+        """
+        for section_name, cmd_list in self.benchmark.config.command_hooks.items():
+            if section_name not in self.script.sections:
+                self.logger.warning(
+                    "Configuration file wants to add hooks to script section %s but the section does not exist: %s",
+                    section_name, self.script.sections.keys())
+                continue
+            self._handle_config_command_hooks_for_section(section_name, cmd_list)
+
+    def resources(self):
+        yield from super().resources()
+        self.instance_req = InstanceManager.request(self.benchmark.g_uuid,
+                                                    instance_config=self.benchmark.config.instance)
+        yield self.instance_req
+
+    def dependencies(self):
+        yield from super().dependencies()
+        yield self._fetch_task(self.benchmark.config.benchmark)
+        # # Implicit auxiliary datasets
+        # modules[DatasetName.PIDMAP] = self._find_dataset_module(DatasetConfig(handler=DatasetName.PIDMAP))
+        for aux_config in self.benchmark.config.aux_dataset_handlers:
+            yield self._fetch_task(aux_config)
+
+    def run(self):
+        """
+        Run the benchmark and extract the results.
+        This involves the steps:
+        1. Emit the remote run script from the benchmark state
+        2. Ask the instance manager for an instance that we can run on
+        3. Connect to the instance, upload the run script and run it to completion.
+        4. Extract results
+        """
+        self._handle_config_command_hooks()
+        script_path = self.benchmark.get_run_script_path()
+        remote_script_path = Path(f"{self.benchmark.config.name}-{self.benchmark.uuid}.sh")
+        with open(script_path, "w+") as script_file:
+            self.script.generate(script_file)
+        script_path.chmod(0o755)
+        if self.config.mode == BenchmarkExecMode.SHELLGEN:
+            # Just stop after shell script generation
+            return
+
+        instance = self.instance_req.get()
+        self.logger.debug("Import script file host: %s => guest: %s", script_path, remote_script_path)
+        instance.import_file(script_path, remote_script_path)
+        self.logger.info("Execute benchmark script verbose=%s", self.benchmark.user_config.verbose)
+        with timing("Benchmark script completed", logger=self.logger):
+            instance.run_cmd("sh", [remote_script_path])
+
+        # Extract all output files
+        self.logger.info("Extract output files")
+        for dep in self.resolved_dependencies:
+            for output in dep.outputs():
+                if output.is_file() and output.needs_extraction():
+                    self.logger.debug("Extract guest: %s => host: %s", output.to_remote_path(), output.path)
+                    instance.extract_file(output.to_remote_path(), output.path)
+        self.logger.info("Benchmark run completed")
 
 
 class Benchmark:
+    """
+    Benchmark context
+
+    :param session: The parent session
+    :param config: The benchmark run configuration allocated to this handler.
+    """
+    def __init__(self, session: "PipelineSession", config: "BenchmarkRunConfig"):
+        self.session = session
+        self.config = config
+        self.logger = new_logger(f"{self.config.name}:{self.config.instance.name}")
+
+        # Symbol mapping handler for this benchmark instance
+        self.sym_resolver = AddressSpaceManager(self)
+        # Dwarf information extraction helper
+        self.dwarf_helper = DWARFHelper(self)
+
+    def __str__(self):
+        return f"{self.config.name}({self.uuid})"
+
+    def __repr__(self):
+        return str(self)
+
+    @property
+    def uuid(self):
+        return self.config.uuid
+
+    @property
+    def g_uuid(self):
+        return self.config.g_uuid
+
+    @property
+    def user_config(self):
+        return self.session.user_config
+
+    @property
+    def analysis_config(self):
+        return self.session.analysis_config
+
+    @property
+    def cheribsd_rootfs_path(self):
+        rootfs_path = self.user_config.rootfs_path / f"rootfs-{self.config.instance.cheri_target}"
+        if not rootfs_path.exists() or not rootfs_path.is_dir():
+            raise ValueError(f"Invalid rootfs path {rootfs_path} for benchmark instance")
+        return rootfs_path
+
+    def get_run_script_path(self) -> Path:
+        """
+        :return: The path to the run script to import to the guest for this benchmark
+        """
+        return self.get_benchmark_data_path() / "runner-script.sh"
+
+    def get_benchmark_data_path(self) -> Path:
+        """
+        :return: The output directory for run data corresponding to this benchmark configuration.
+        """
+        return self.session.get_data_root_path() / f"{self.config.name}-{self.uuid}"
+
+    def get_benchmark_asset_path(self) -> Path:
+        """
+        :return: Path for archiving binaries used in the run
+        """
+        return self.session.get_asset_root_path() / f"{self.config.name}-{self.uuid}"
+
+    def get_instance_asset_path(self) -> Path:
+        """
+        :return: Path for archiving binaries used in the run but belonging to the instance.
+        This avoids duplication.
+        """
+        return self.session.get_asset_root_path() / f"{self.config.instance.name}-{self.g_uuid}"
+
+    def get_plot_path(self):
+        """
+        Get base plot path for the current benchmark instance.
+        Every plot should use this path as the base path to generate plots.
+        """
+        return self.session.get_plot_root_path() / self.config.name
+
+    def get_benchmark_iter_data_path(self, iteration: int) -> Path:
+        """
+        :return: The output directory for run data corresponding to this benchmark configuration and
+        a specific benchmark iteration.
+        """
+        iter_path = self.get_benchmark_data_path() / str(iteration)
+        return iter_path
+
+    def schedule_exec_tasks(self, scheduler: TaskScheduler, exec_config: ExecTaskConfig):
+        """
+        Generate the top-level benchmark execution task for this benchmark run and schedule it.
+
+        :param scheduler: The scheduler for this session
+        :param exec_config: The execution task configuration. This is used to control partial
+        execution runs and behaviour outside of the session configuration file.
+        """
+        # Ensure that all the data paths are initialized
+        self.get_benchmark_data_path().mkdir(exist_ok=True)
+        for i in range(self.config.iterations):
+            self.get_benchmark_iter_data_path(i).mkdir(exist_ok=True)
+
+        exec_task = BenchmarkExecTask(self, task_config=exec_config)
+        self.logger.info("Initialize top-level benchmark task %s", exec_task)
+        scheduler.add_task(exec_task)
+
+    # def schedule_analysis_tasks(self, scheduler: TaskScheduler, analysis_config: AnalysisTaskConfig):
+    #     pass
+
+
+class _Benchmark:
     """
     New benchmark handler implementation
 
@@ -52,11 +279,11 @@ class Benchmark:
         self.dwarf_helper = DWARFHelper(self)
 
         self.get_benchmark_data_path().mkdir(exist_ok=True)
-        self._dataset_modules = self._collect_dataset_modules()
-        self._dataset_runner_modules = self._collect_runner_modules()
-        self._configure_datasets()
+        # self._dataset_modules = self._collect_dataset_modules()
+        # self._dataset_runner_modules = self._collect_runner_modules()
+        # self._configure_datasets()
         # PID/TID mapper XXX this should be a separate thing like sym_resolver
-        self.pidmap = self.get_dataset_by_artefact(DatasetArtefact.PIDMAP)
+        # self.pidmap = self.get_dataset_by_artefact(DatasetArtefact.PIDMAP)
 
     def __str__(self):
         return f"{self.config.name}({self.uuid})"
@@ -156,7 +383,7 @@ class Benchmark:
         for dset in self._dataset_modules.values():
             opts = dset.configure(opts)
 
-    def _build_remote_script(self) -> ShellScriptBuilder:
+    def _build_remote_script(self):
         """
         Helper to build a new benchmark run script based on the current configuration.
 
@@ -201,7 +428,7 @@ class Benchmark:
         script_path.chmod(0o755)
         return script
 
-    def _gen_hooks(self, script: ShellScriptBuilder, name: str):
+    def _gen_hooks(self, script: "ShellScriptBuilder", name: str):
         """
         Generate script commands from configured hooks. The given name is the
         hook key in the configuration dictionary.
@@ -213,7 +440,7 @@ class Benchmark:
             cmd_args = shlex.split(cmd)
             script.gen_cmd(cmd_args[0], cmd_args[1:])
 
-    async def _extract_results(self, script: ShellScriptBuilder, instance: InstanceInfo):
+    async def _extract_results(self, script: "ShellScriptBuilder", instance: "InstanceInfo"):
         """
         Helper to extract results from a connected instance
 
@@ -521,3 +748,7 @@ class Benchmark:
         self.logger.debug("Resolved cross analysis steps %s", [str(a) for a in analysers])
         for handler in analysers:
             run_context.schedule_task(handler.process_datasets())
+
+    ############# New task API ############
+    def build_exec_task(self):
+        return BenchmarkExecutionTask(self)

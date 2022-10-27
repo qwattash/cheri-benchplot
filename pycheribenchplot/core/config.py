@@ -5,15 +5,17 @@ import functools as ft
 import itertools as it
 import json
 import shutil
-import typing
 from collections import OrderedDict
 from datetime import date, datetime
 from enum import Enum, auto
 from pathlib import Path
+from typing import Dict, List, Optional, Set, Union
 from uuid import UUID, uuid4
 
 import marshmallow.fields as mfields
-from marshmallow import Schema, ValidationError
+import numpy as np
+from marshmallow import Schema, ValidationError, validates_schema
+from marshmallow.validate import OneOf
 from marshmallow_dataclass import NewType, class_schema
 from marshmallow_enum import EnumField
 from typing_inspect import get_args, get_origin, is_generic_type
@@ -27,6 +29,16 @@ def _template_safe(temp: str, **kwargs):
 
 
 def lazy_nested_config_field():
+    """
+    Create a field marked as lazily-resolved configuration type.
+    This is used for parts of configuration objects that have a configuration type
+    assigned at runtime from a Task.
+    This prevents the data from being modified when binding template values.
+    """
+    # Note that we need to levels of metadata: the first is for the dataclass field
+    # that is picked up by marshmallow_dataclass, the second is the keyword argument
+    # 'metadata' passed to the underlying marshmallow field constructor.
+    # return dc.field(default_factory=dict, metadata={"metadata": {"late_config_bind": True}})
     return dc.field(default_factory=dict, metadata={"late_config_bind": True})
 
 
@@ -52,7 +64,35 @@ class PathField(mfields.Field):
             raise ValidationError(f"Invalid path {value}") from ex
 
 
+class TaskSpecField(mfields.Field):
+    """
+    Field used to validate a public task name specifier.
+    This validated that task namespace that is used to resolve execution
+    and ingestion tasks. In practice this is the first portion of the dotted task name,
+    e.g. 'my-task' that resolves to 'my-task.exec' and 'my-task.load', depending on the operation
+    """
+    def _serialize(self, value, attr, obj, **kwargs):
+        if value is None:
+            return ""
+        return str(value)
+
+    def _deserialize(self, value, attr, data, **kwargs):
+        from .task import TaskRegistry
+        value = str(value)
+        if value == "":
+            raise ValidationError("Task specifier can not be blank")
+        namespace = TaskRegistry.public_tasks.get(value)
+        if namespace is None:
+            raise ValidationError("Task specifier does not match a public task namespace")
+        # The namespace specified here must have a correspoding 'exec' task
+        # otherwise the configuration does not make sense.
+        if "exec" not in namespace:
+            raise ValidationError("Task specifier matches a namespace without an 'exec' task")
+        return value
+
+
 # Helper type for dataclasses to use the PathField
+ConfigTaskSpec = NewType("ConfigTaskSpec", str, field=TaskSpecField)
 ConfigPath = NewType("ConfigPath", Path, field=PathField)
 ConfigAny = NewType("ConfigAny", any, field=mfields.Raw)
 
@@ -112,6 +152,8 @@ class TemplateConfigContext:
 @dc.dataclass
 class TemplateConfig(Config):
     def _bind_one(self, context, dtype, value):
+        if value is None:
+            return value
         params = context.conf_template_params()
         if dtype == str:
             return _template_safe(value, **params)
@@ -140,7 +182,7 @@ class TemplateConfig(Config):
             if dc.is_dataclass(value):
                 return self._bind_one(context, type(value), value)
             return value
-        elif origin is typing.Union:
+        elif origin is Union:
             args = get_args(f.type)
             if len(args) == 2 and args[1] == type(None):
                 # If we have an optional field, bind with the type argument instead
@@ -149,10 +191,10 @@ class TemplateConfig(Config):
                 # Common union field, use whatever type we have as the argument as we do not
                 # know how to parse it
                 return self._bind_one(context, type(value), value)
-        elif origin is typing.List or origin is list:
+        elif origin is List or origin is list:
             arg_type = get_args(f.type)[0]
             return [self._bind_one(context, arg_type, v) for v in value]
-        elif origin is typing.Dict or origin is dict:
+        elif origin is Dict or origin is dict:
             arg_type = get_args(f.type)[1]
             return {key: self._bind_one(context, arg_type, v) for key, v in value.items()}
         else:
@@ -170,7 +212,10 @@ class TemplateConfig(Config):
         for f in dc.fields(self):
             if not f.init:
                 continue
-            replaced = self.bind_field(context, f, getattr(self, f.name))
+            try:
+                replaced = self.bind_field(context, f, getattr(self, f.name))
+            except Exception as ex:
+                raise ValueError(f"Failed to bind {f.name} with value {getattr(self, f.name)}: {ex}")
             if replaced:
                 changes[f.name] = replaced
         return dc.replace(self, **changes)
@@ -187,19 +232,19 @@ class CommonPlatformOptions(TemplateConfig):
     cores: int = 1
 
     #: The trace file used by default unless one of the datasets overrides it
-    qemu_trace_file: typing.Optional[ConfigPath] = None
+    qemu_trace_file: Optional[ConfigPath] = None
 
     #: The trace file generated by interceptor
-    qemu_interceptor_trace_file: typing.Optional[ConfigPath] = None
+    qemu_interceptor_trace_file: Optional[ConfigPath] = None
 
     #: Run qemu with tracing enabled ('no', "perfetto", "perfetto-dynamorio")
     qemu_trace: str = "no"
 
     #: Trace categories to enable for qemu-perfetto
-    qemu_trace_categories: typing.Set[str] = dc.field(default_factory=set)
+    qemu_trace_categories: Set[str] = dc.field(default_factory=set)
 
     #: VCU118 bios
-    vcu118_bios: typing.Optional[ConfigPath] = None
+    vcu118_bios: Optional[ConfigPath] = None
 
     #: IP to use for the VCU118 board
     vcu118_ip: str = "10.88.88.2"
@@ -218,28 +263,25 @@ class PlatformOptions(TemplateConfig):
     a default value.
     """
     #: Number of cores in the system
-    cores: typing.Optional[int] = None
+    cores: Optional[int] = None
 
     #: The trace file used by default unless one of the datasets overrides it
-    qemu_trace_file: typing.Optional[ConfigPath] = None
+    qemu_trace_file: Optional[ConfigPath] = None
 
     #: The trace file generated by interceptor
-    qemu_interceptor_trace_file: typing.Optional[ConfigPath] = None
+    qemu_interceptor_trace_file: Optional[ConfigPath] = None
 
     #: Run qemu with tracing enabled
-    qemu_trace: typing.Optional[str] = None
+    qemu_trace: str = dc.field(default="no", metadata={"validate": OneOf(["no", "perfetto", "perfetto-dynamorio"])})
 
     #: Trace categories to enable for qemu-perfetto
-    qemu_trace_categories: typing.Optional[typing.Set[str]] = None
+    qemu_trace_categories: Optional[Set[str]] = None
 
     #: VCU118 bios
-    vcu118_bios: typing.Optional[ConfigPath] = None
+    vcu118_bios: Optional[ConfigPath] = None
 
     #: IP to use for the VCU118 board
-    vcu118_ip: typing.Optional[str] = None
-
-    def __post_init__(self):
-        assert self.qemu_trace in [None, "no", "perfetto", "perfetto-dynamorio"]
+    vcu118_ip: Optional[str] = None
 
     def replace_common(self, common: CommonPlatformOptions):
         for f in dc.fields(self):
@@ -297,7 +339,7 @@ class InstanceConfig(TemplateConfig):
     """
     kernel: str
     baseline: bool = False
-    name: typing.Optional[str] = None
+    name: Optional[str] = None
     platform: InstancePlatform = dc.field(default=InstancePlatform.QEMU, metadata={"by_value": True})
     cheri_target: InstanceCheriBSD = dc.field(default=InstanceCheriBSD.RISCV64_PURECAP, metadata={"by_value": True})
     kernelabi: InstanceKernelABI = dc.field(default=InstanceKernelABI.HYBRID, metadata={"by_value": True})
@@ -415,10 +457,11 @@ class DatasetConfig(TemplateConfig):
     datasets.
     """
     #: Identifier (string) of a dataset to add to the run
-    handler: DatasetName = dc.field(metadata={"by_value": True})
+    #handler: DatasetName = dc.field(metadata={"by_value": True})
+    handler: ConfigTaskSpec
 
     #: Extra options for the dataset handler, depend on the handler
-    run_options: typing.Dict[str, ConfigAny] = lazy_nested_config_field()
+    run_options: Dict[str, ConfigAny] = lazy_nested_config_field()
 
 
 @dc.dataclass
@@ -431,7 +474,7 @@ class PipelineInstanceConfig(Config):
     #: Common platform options, depend on the platforms used in the instances
     platform_options: CommonPlatformOptions = dc.field(default_factory=CommonPlatformOptions)
     #: Instance descriptors for each instance to run
-    instances: typing.List[InstanceConfig] = dc.field(default_factory=list)
+    instances: List[InstanceConfig] = dc.field(default_factory=list)
 
     def __post_init__(self):
         super().__post_init__()
@@ -454,17 +497,29 @@ class CommonBenchmarkConfig(TemplateConfig):
     #: Benchmark configuration
     benchmark: DatasetConfig
     #: Auxiliary data generators/handlers
-    aux_dataset_handlers: typing.List[DatasetConfig] = dc.field(default_factory=list)
+    aux_dataset_handlers: List[DatasetConfig] = dc.field(default_factory=list)
     #: Number of iterations to drop to reach steady-state
     drop_iterations: int = 0
     #: Benchmark description, used for plot titles (can contain a template), defaults to :attr:`name`.
-    desc: typing.Optional[str] = None
+    desc: Optional[str] = None
     #: Name of the benchmark output directory in the Guest instance OS filesystem
     remote_output_dir: ConfigPath = Path("/root/benchmark-output")
-    #: Extra commands to run in the benchmark script. Keys in the dictionary are
-    # benchmark setup steps 'pre_benchmark', 'pre_benchmark_iter', 'post_benchmark_iter',
-    # 'post_benchmark'.
-    command_hooks: typing.Dict[str, typing.List[str]] = dc.field(default_factory=dict)
+    #: Extra commands to run in the benchmark script.
+    #: Keys in the dictionary are shell generator sections (see :class:`ScriptBuilder.Section`)
+    #: 'pre_benchmark', 'benchmark', 'post_benchmark', 'last'. Each key maps to a list containing either
+    #: commmands as strings or a dictionary. Commands are added directyl to the corresponding global section,
+    #: dictionaries map an iteration index to the corresponding list of commands.
+    #:
+    #: .. highlight:: json
+    #: { "pre_benchmark": [
+    #:   "cmd1", "cmd2", // -> added to the global pre_benchmark section
+    #:   {
+    #:     "*": ["cmd3"], // -> added to all iterations pre_benchmark section
+    #:     1: ["cmd4"], // -> added only to the first iteration pre_benchmark section
+    #:   }
+    #: ]}
+    #: ::
+    command_hooks: Dict[str, List[Union[str, dict]]] = dc.field(default_factory=dict)
 
     def __post_init__(self):
         super().__post_init__()
@@ -487,7 +542,7 @@ class PipelineBenchmarkConfig(CommonBenchmarkConfig):
     User-facing benchmark configuration.
     """
     #: Parameterized benchmark generator instructions. This should map (param_name => [values]).
-    parameterize: typing.Dict[str, typing.List[ConfigAny]] = dc.field(default_factory=dict)
+    parameterize: Dict[str, List[ConfigAny]] = dc.field(default_factory=dict)
 
 
 @dc.dataclass
@@ -500,13 +555,13 @@ class BenchmarkRunConfig(CommonBenchmarkConfig):
     uuid: UUID = dc.field(default_factory=uuid4)
 
     #: Unique benchmark group identifier, links benchmarks that run on the same instance
-    g_uuid: typing.Optional[UUID] = None
+    g_uuid: Optional[UUID] = None
 
     #: Benchmark parameters
-    parameters: typing.Dict[str, ConfigAny] = dc.field(default_factory=dict)
+    parameters: Dict[str, ConfigAny] = dc.field(default_factory=dict)
 
     #: Instance configuration
-    instance: typing.Optional[InstanceConfig] = None
+    instance: Optional[InstanceConfig] = None
 
     def __str__(self):
         if self.g_uuid and self.instance:
@@ -525,8 +580,17 @@ class CommonSessionConfig(TemplateConfig):
     #: Path to the SSH private key to use to access instances
     ssh_key: ConfigPath = Path("~/.ssh/id_rsa")
 
+    #: Failure policy for workers. If true, when an worker encounters an error, it
+    #: causes the scheduler to stop executing tasks and cleaup. If false failures
+    #: are tolerated and the tasks that depend on the failed one will be removed
+    #: from the schedule.
+    abort_on_failure: bool = True
+
     #: Maximum number of concurrent instances that can be run (0 means unlimted)
     concurrent_instances: int = 0
+
+    #: Maximum number of concurrent workers
+    concurrent_workers: int = 0
 
     #: Allow reusing instances for multiple benchmark runs
     reuse_instances: bool = False
@@ -561,7 +625,7 @@ class PipelineConfig(CommonSessionConfig):
     instance_config: PipelineInstanceConfig = dc.field(default_factory=PipelineInstanceConfig)
 
     #: Benchmark configuration, required
-    benchmark_config: typing.List[PipelineBenchmarkConfig] = dc.field(default_factory=list)
+    benchmark_config: List[PipelineBenchmarkConfig] = dc.field(default_factory=list)
 
     def __post_init__(self):
         super().__post_init__()
@@ -583,15 +647,24 @@ class SessionRunConfig(CommonSessionConfig):
     uuid: UUID = dc.field(default_factory=uuid4)
 
     #: Session name, defaults to the session UUID
-    name: typing.Optional[str] = None
+    name: Optional[str] = None
 
     #: Benchmark run configuration, this is essentially the flattened benchmark matrix
-    configurations: typing.List[BenchmarkRunConfig] = dc.field(default_factory=list)
+    configurations: List[BenchmarkRunConfig] = dc.field(default_factory=list)
 
     def __post_init__(self):
         super().__post_init__()
         if self.name is None:
             self.name = str(self.uuid)
+
+    @validates_schema
+    def validate_configuration(self, data, **kwargs):
+        # Check that the concurrent instances configuration is compatible with the platform
+        if data["concurrent_instances"] != 1:
+            for bench_config in data["configurations"]:
+                if bench_config.instance.platform == InstancePlatform.VCU118:
+                    raise ValidationError("Running on VCU118 instances requires concurrent_instances=1",
+                                          "concurrent_instances")
 
     @classmethod
     def generate(cls, mgr: "PipelineManager", config: PipelineConfig) -> "SessionRunConfig":
@@ -694,16 +767,16 @@ class BenchplotUserConfig(Config):
     flamegraph_path: ConfigPath = Path("flamegraph.pl")
 
     #: CHERI rootfs path
-    rootfs_path: typing.Optional[ConfigPath] = None
+    rootfs_path: Optional[ConfigPath] = None
 
     #: Path to cheribuild, inferred from :attr:`src_path` if missing
-    cheribuild_path: typing.Optional[ConfigPath] = dc.field(init=False, default=None)
+    cheribuild_path: Optional[ConfigPath] = dc.field(init=False, default=None)
 
     #: Path to the CheriBSD sources, inferred from :attr:`src_path` if missing
-    cheribsd_path: typing.Optional[ConfigPath] = dc.field(init=False, default=None)
+    cheribsd_path: Optional[ConfigPath] = dc.field(init=False, default=None)
 
     #: Path to the qemu sources, inferred from :attr:`src_path` if missing
-    qemu_path: typing.Optional[ConfigPath] = dc.field(init=False, default=None)
+    qemu_path: Optional[ConfigPath] = dc.field(init=False, default=None)
 
     #: Enable extra debug output
     verbose: bool = False
@@ -733,7 +806,7 @@ class AnalysisHandlerConfig(Config):
     name: str
 
     #: analysis-specific options
-    options: typing.Dict[str, ConfigAny] = dc.field(default_factory=dict)
+    options: Dict[str, ConfigAny] = dc.field(default_factory=dict)
 
 
 @dc.dataclass
@@ -742,21 +815,21 @@ class AnalysisConfig(Config):
     split_subplots: bool = False
 
     #: Output formats
-    plot_output_format: typing.List[str] = dc.field(default_factory=lambda: ["pdf"])
+    plot_output_format: List[str] = dc.field(default_factory=lambda: ["pdf"])
 
     #: Constants to show in various plots, depending on the X and Y axes.
     # The dictionary maps parameters of the benchmark parameterisation to a dict
     # mapping description -> constant value
-    parameter_constants: typing.Dict[str, dict] = dc.field(default_factory=dict)
+    parameter_constants: Dict[str, dict] = dc.field(default_factory=dict)
 
     #: Baseline dataset group id, defaults to the baseline instance uuid
-    baseline_gid: typing.Optional[UUID] = None
+    baseline_gid: Optional[UUID] = None
 
     #: Use builtin symbolizer instead of addr2line
     use_builtin_symbolizer: bool = True
 
     #: Specify analysis passes to run
-    handlers: typing.List[AnalysisHandlerConfig] = dc.field(default_factory=list)
+    handlers: List[AnalysisHandlerConfig] = dc.field(default_factory=list)
 
     def __post_init__(self):
         super().__post_init__()
