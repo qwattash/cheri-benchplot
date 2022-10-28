@@ -11,8 +11,7 @@ from uuid import UUID
 import pandas as pd
 
 from .benchmark import Benchmark, BenchmarkExecMode, ExecTaskConfig
-from .config import (AnalysisConfig, Config, DatasetConfig, PipelineConfig, SessionRunConfig, TemplateConfigContext)
-from .dataset import DatasetName
+from .config import (AnalysisConfig, Config, PipelineConfig, SessionRunConfig, TaskTargetConfig, TemplateConfigContext)
 from .instance import InstanceManager
 from .model import UUIDType
 from .perfetto import TraceProcessorCache
@@ -27,8 +26,7 @@ class SessionAnalysisMode(Enum):
     Analysis mode determines the type of run strategy to use for the
     processing steps.
     """
-    ASYNC_LOAD = "async-load"
-    SYNC = "sync"
+    BATCH = "batch"
     INTERACTIVE_LOAD = "interactive-load"
     INTERACTIVE_PREMERGE = "interactive-pre-merge"
     INTERACTIVE_MERGE = "interactive-merge"
@@ -115,26 +113,24 @@ class PipelineSession:
         self.baseline_g_uuid = self._resolve_baseline()
         #: Task scheduler
         self.scheduler = TaskScheduler(self)
-        # Analysis step configuration, only set when running analysis
-        self.analysis_config = None
 
     def __str__(self):
         return f"Session({self.uuid}) [{self.name}]"
 
-    def _resolve_run_options(self, config: DatasetConfig) -> typing.Optional[Config]:
+    def _resolve_task_options(self, config: TaskTargetConfig) -> typing.Optional[Config]:
         """
-        Resolve the configuration type for a :class:`DatasetConfig` containing run options.
+        Resolve the configuration type for a :class:`TaskTargetConfig` containing run options.
 
         :param config: A single dataset configuration
-        :return: A Config object to be used as the new :attr:`DatasetConfig.run_options`.
+        :return: A Config object to be used as the new :attr:`TaskTargetConfig.task_options`.
         If the exec task does not specify a task_config_class, return a dict with the same content as
         the original run_options dict.
         """
         # Existence of the exec task is ensured by configuration validation
-        exec_task = TaskRegistry.public_tasks[config.handler]["exec"]
+        exec_task = TaskRegistry.public_tasks[config.namespace or "exec"][config.name]
         if exec_task.task_config_class:
-            return exec_task.task_config_class.schema().load(config.run_options)
-        return config.run_options
+            return exec_task.task_config_class.schema().load(config.task_options)
+        return config.task_options
 
     def _resolve_config_template(self, config: SessionRunConfig) -> SessionRunConfig:
         """
@@ -162,10 +158,10 @@ class PipelineSession:
                                         platform=inst_conf.platform.value,
                                         cheri_target=inst_conf.cheri_target.value,
                                         kernelabi=inst_conf.kernelabi.value)
-            # Resolve run_options for each DatasetConfig
-            bench_conf.benchmark.run_options = self._resolve_run_options(bench_conf.benchmark)
+            # Resolve run_options for each TaskTargetConfig
+            bench_conf.benchmark.task_options = self._resolve_task_options(bench_conf.benchmark)
             for aux_conf in bench_conf.aux_dataset_handlers:
-                aux_conf.run_options = self._resolve_run_options(aux_conf)
+                aux_conf.task_options = self._resolve_task_options(aux_conf)
             new_bench_conf.append(bench_conf.bind(ctx))
         new_config.configurations = new_bench_conf
         return new_config
@@ -311,20 +307,22 @@ class PipelineSession:
                 bench.schedule_exec_tasks(self.scheduler, exec_config)
         self.scheduler.run()
 
-    def analyse(self, analysis_config: AnalysisConfig, mode: str = "async-load") -> AbstractContextManager:
+    def analyse(self, analysis_config: AnalysisConfig, mode: str = "batch"):
         """
-        Prepare data analysis.
+        Run the session analysis tasks requested.
+        The analysis pipeline is slighly different from the execution pipeline.
+        This is because the same data can be used for different analysis targets and
+        the user should be able to specify the set of targets we need to run.
+        Here the analysis configuration should specify a set of public task names that
+        we collect and schedule
 
         :param analysis_config: The analysis configuration
-        :param mode: The mode to use for the analysis task scheduling.
-        :return: A context manager to wrap the main loop and manage
-        the analysis tasks.
+        :param mode: The mode to use for the analysis task scheduling. (XXX implement, currently ignored)
         """
-        session_analysis_mode = SessionAnalysisMode(mode)
-        self.analysis_config = analysis_config
+        # session_analysis_mode = SessionAnalysisMode(mode)
         # Override the baseline ID if configured
         if analysis_config.baseline_gid != self.baseline_g_uuid:
-            self.baseline_g_uuid = analisis_config.baseline_gid
+            self.baseline_g_uuid = analysis_config.baseline_gid
             try:
                 baseline_conf = self.benchmark_matrix[baseline].iloc[0].config
             except KeyError:
@@ -332,193 +330,139 @@ class PipelineSession:
                 raise
             self.logger.info("Using alternative baseline %s (%s)", baseline_conf.instance.name, self.baseline_g_uuid)
 
-        ctx = SessionAnalysisContext(self, analysis_config, self.benchmark_matrix, self.baseline_g_uuid,
-                                     session_analysis_mode)
-        return ctx
+        for handler in analysis_config.handlers:
+            task_klass = TaskRegistry.public_tasks[handler.namespace].get(handler.name)
+            if task_klass is None:
+                self.logger.error("Invalid task name specification %s", handler.handler)
+                raise ValueError("Invalid task name")
+            if not issubclass(task_class, AnalysisTask):
+                self.logger.error("Analysis process only supports scheduling of AnalysisTasks, found %s", task_klass)
+                raise TypeError("Invalid task type")
+            task = task_klass(self, analysis_config, task_config=handler.task_options)
+            self.scheduler.add_task(task)
+        self.scheduler.run()
 
 
-class SessionAnalysisContext(AbstractContextManager):
-    """
-    Handle the context for a session analysis.
-    This abstract the cleanup process and resource allocation for
-    the analysis phase.
-
-    :param session: The parent pipeline session
-    """
-    def __init__(self, session: PipelineSession, analysis_config: AnalysisConfig, benchmark_matrix: pd.DataFrame,
-                 baseline: UUID, mode: SessionAnalysisMode):
-        self.session = session
-        self.analysis_config = analysis_config
-        self.loop = aio.get_event_loop()
-        self.logger = session.logger
-        self._mode = mode
-        self._tp_cache = TraceProcessorCache.get_instance(session)
-        self._baseline_g_uuid = baseline
-        self._benchmark_matrix = benchmark_matrix
-        self._tasks = []
-
-    def __exit__(self, ex_type, ex, traceback):
-        self.logger.debug("SessionAnalysisContext cleanup")
-
-        if ex and self._tasks:
-            self.loop.run_until_complete(self._dirty_shutdown())
-        self._tp_cache.shutdown()
-        self.logger.info("Analysis complete")
-
-    async def _dirty_shutdown(self):
-        """
-        Cancel all tasks can wait for cleanup
-        """
-        for task in self._tasks:
-            self.logger.debug("Cancel task %s", task)
-            task.cancel()
-        await aio.gather(*self._tasks, return_exceptions=True)
-
-    def _interactive_analysis(self):
-        self.logger.info("Enter interactive analysis")
-        local_env = {"pd": pandas, "ctx": self}
-        try:
-            code.interact(local=local_env)
-        except aio.CancelledError:
-            raise
-        except Exception as ex:
-            self.logger.exception("Exiting interactive analysis with error")
-        self.logger.info("Interactive analysis done")
-
-    def schedule_task(self, task):
-        self._tasks.append(aio.create_task(task))
-
-    async def main(self):
-        """
-        Main analysis processing steps.
-        Analysis is split in the following phases:
-        1. Load data concurrently
-        2. Perform any post-load cleanup in the pre_merge step
-        3. Merge datasets for the same parameterizations into a single dataframe.
-        4. Perform any post-merge processing
-        5. Compute aggregated columns (e.g. mean, quartiles...)
-        6. Perform post-aggregation processing, usually to produce deltas
-        7. Merge the aggregated data into a single dataframe
-        8. Perform analysis across all parameterizations
-        """
-
-        self.logger.info("Loading datasets")
-        if self._mode == SessionAnalysisMode.SYNC:
-            # Just load and pre_merge everything sequentially
-            # The rest is synchronous anyway
-            for bench in self._benchmark_matrix.values.ravel():
-                bench.load()
-                bench.pre_merge()
-        elif self._mode == SessionAnalysisMode.INTERACTIVE_LOAD:
-            for bench in self._benchmark_matrix.values.ravel():
-                self._tasks.append(self.loop.run_in_executor(None, bench.load))
-            await aio.gather(*self._tasks)
-            self._tasks.clear()
-            self._interactive_analysis()
-            # Continue with the pre merge
-            for bench in self._benchmark_matrix.values.ravel():
-                self._tasks.append(self.loop.run_in_executor(None, bench.pre_merge))
-            await aio.gather(*self._tasks)
-            self._tasks.clear()
-        else:
-            for bench in self._benchmark_matrix.values.ravel():
-                self._tasks.append(self.loop.run_in_executor(None, bench.load_and_pre_merge))
-            await aio.gather(*self._tasks)
-            self._tasks.clear()
-            if self._mode == SessionAnalysisMode.INTERACTIVE_PREMERGE:
-                self._interactive_analysis()
-
-        self.logger.info("Merge datasets by param set")
-        to_merge = self._benchmark_matrix.columns.difference([self._baseline_g_uuid])
-        for params, row in self._benchmark_matrix.iterrows():
-            self.logger.debug("Merge param set %s", params)
-            row[self._baseline_g_uuid].merge(row[to_merge])
-        if self._mode == SessionAnalysisMode.INTERACTIVE_MERGE:
-            self._interactive_analysis()
-        # From now on we ony operate on the baseline dataset containing the merged data
-        self.logger.info("Aggregate datasets")
-        for params, row in self._benchmark_matrix.iterrows():
-            self.logger.debug("Aggregate param set %s", params)
-            row[self._baseline_g_uuid].aggregate()
-        if self._mode == SessionAnalysisMode.INTERACTIVE_AGG:
-            self._interactive_analysis()
-        self.logger.info("Run analysis steps")
-        for params, row in self._benchmark_matrix.iterrows():
-            self.logger.debug("Analyse param set %s", params)
-            row[self._baseline_g_uuid].analyse(self, self.analysis_config)
-        await aio.gather(*self._tasks)
-        self._tasks.clear()
-
-        self.logger.info("Run cross-param analysis")
-        # Just pick a random instance to perform the cross-parameterization merge and
-        # analysis
-        to_merge = self._benchmark_matrix[self._baseline_g_uuid]
-        target = to_merge.iloc[0]
-        target.cross_merge(to_merge.iloc[1:])
-        if self._mode == SessionAnalysisMode.INTERACTIVE_XMERGE:
-            self._interactive_analysis()
-        target.cross_analysis(self, self.analysis_config)
-        await aio.gather(*self._tasks)
-        self._tasks.clear()
-
-
-# class SessionRunContext(AbstractContextManager):
+# class SessionAnalysisContext(AbstractContextManager):
 #     """
-#     Handle the context for a single session run.
-#     This abstract benchmark scheduling and cleanup.
+#     Handle the context for a session analysis.
+#     This abstract the cleanup process and resource allocation for
+#     the analysis phase.
 
 #     :param session: The parent pipeline session
 #     """
-#     def __init__(self, session: PipelineSession, mode: SessionRunMode):
+#     def __init__(self, session: PipelineSession, analysis_config: AnalysisConfig, benchmark_matrix: pd.DataFrame,
+#                  baseline: UUID, mode: SessionAnalysisMode):
 #         self.session = session
-#         self.mode = mode
+#         self.analysis_config = analysis_config
 #         self.loop = aio.get_event_loop()
 #         self.logger = session.logger
-#         self.instance_manager = InstanceManager(self.session)
+#         self._mode = mode
+#         self._tp_cache = TraceProcessorCache.get_instance(session)
+#         self._baseline_g_uuid = baseline
+#         self._benchmark_matrix = benchmark_matrix
 #         self._tasks = []
 
 #     def __exit__(self, ex_type, ex, traceback):
-#         self.logger.debug("SessionRunContext cleanup")
+#         self.logger.debug("SessionAnalysisContext cleanup")
 
-#         if isinstance(ex, KeyboardInterrupt):
-#             self.logger.debug("SessionRunContext user SIGINT cleanup")
+#         if ex and self._tasks:
 #             self.loop.run_until_complete(self._dirty_shutdown())
-#         elif isinstance(ex, Exception):
-#             self.logger.debug("SessionRunContext error cleanup")
-#             self.loop.run_until_complete(self._dirty_shutdown())
-#         else:
-#             # normal shutdown
-#             self.logger.debug("SessionRunContext regular cleanup")
-#             self.loop.run_until_complete(self._clean_shutdown())
-#         self.logger.info("Session shutdown complete")
+#         self._tp_cache.shutdown()
+#         self.logger.info("Analysis complete")
 
 #     async def _dirty_shutdown(self):
 #         """
-#         Cancel all tasks and wait for the cleanup
-#         """
-#         for t in self._tasks:
-#             self.logger.debug("Cancel task %s", t.get_name())
-#             t.cancel()
-#         await aio.gather(*self._tasks, return_exceptions=True)
-#         await self.instance_manager.kill()
-
-#     async def _clean_shutdown(self):
-#         """
-#         Stop gracefully background tasks.
+#         Cancel all tasks can wait for cleanup
 #         """
 #         for task in self._tasks:
-#             if not task.done():
-#                 await self._dirty_shutdown()
-#                 return
-#         await self.instance_manager.shutdown()
+#             self.logger.debug("Cancel task %s", task)
+#             task.cancel()
+#         await aio.gather(*self._tasks, return_exceptions=True)
 
-#     def schedule_benchmark(self, bench):
-#         if self.mode == SessionRunMode.FULL:
-#             run_task = self.loop.create_task(bench.run(self.instance_manager))
-#         elif self.mode == SessionRunMode.SHELLGEN:
-#             run_task = self.loop.create_task(bench.build_run_script())
-#         run_task.set_name(f"Task[{bench.config.name}/{bench.config.instance.name}]")
-#         self._tasks.append(run_task)
+#     def _interactive_analysis(self):
+#         self.logger.info("Enter interactive analysis")
+#         local_env = {"pd": pandas, "ctx": self}
+#         try:
+#             code.interact(local=local_env)
+#         except aio.CancelledError:
+#             raise
+#         except Exception as ex:
+#             self.logger.exception("Exiting interactive analysis with error")
+#         self.logger.info("Interactive analysis done")
+
+#     def schedule_task(self, task):
+#         self._tasks.append(aio.create_task(task))
 
 #     async def main(self):
+#         """
+#         Main analysis processing steps.
+#         Analysis is split in the following phases:
+#         1. Load data concurrently
+#         2. Perform any post-load cleanup in the pre_merge step
+#         3. Merge datasets for the same parameterizations into a single dataframe.
+#         4. Perform any post-merge processing
+#         5. Compute aggregated columns (e.g. mean, quartiles...)
+#         6. Perform post-aggregation processing, usually to produce deltas
+#         7. Merge the aggregated data into a single dataframe
+#         8. Perform analysis across all parameterizations
+#         """
+
+#         self.logger.info("Loading datasets")
+#         if self._mode == SessionAnalysisMode.SYNC:
+#             # Just load and pre_merge everything sequentially
+#             # The rest is synchronous anyway
+#             for bench in self._benchmark_matrix.values.ravel():
+#                 bench.load()
+#                 bench.pre_merge()
+#         elif self._mode == SessionAnalysisMode.INTERACTIVE_LOAD:
+#             for bench in self._benchmark_matrix.values.ravel():
+#                 self._tasks.append(self.loop.run_in_executor(None, bench.load))
+#             await aio.gather(*self._tasks)
+#             self._tasks.clear()
+#             self._interactive_analysis()
+#             # Continue with the pre merge
+#             for bench in self._benchmark_matrix.values.ravel():
+#                 self._tasks.append(self.loop.run_in_executor(None, bench.pre_merge))
+#             await aio.gather(*self._tasks)
+#             self._tasks.clear()
+#         else:
+#             for bench in self._benchmark_matrix.values.ravel():
+#                 self._tasks.append(self.loop.run_in_executor(None, bench.load_and_pre_merge))
+#             await aio.gather(*self._tasks)
+#             self._tasks.clear()
+#             if self._mode == SessionAnalysisMode.INTERACTIVE_PREMERGE:
+#                 self._interactive_analysis()
+
+#         self.logger.info("Merge datasets by param set")
+#         to_merge = self._benchmark_matrix.columns.difference([self._baseline_g_uuid])
+#         for params, row in self._benchmark_matrix.iterrows():
+#             self.logger.debug("Merge param set %s", params)
+#             row[self._baseline_g_uuid].merge(row[to_merge])
+#         if self._mode == SessionAnalysisMode.INTERACTIVE_MERGE:
+#             self._interactive_analysis()
+#         # From now on we ony operate on the baseline dataset containing the merged data
+#         self.logger.info("Aggregate datasets")
+#         for params, row in self._benchmark_matrix.iterrows():
+#             self.logger.debug("Aggregate param set %s", params)
+#             row[self._baseline_g_uuid].aggregate()
+#         if self._mode == SessionAnalysisMode.INTERACTIVE_AGG:
+#             self._interactive_analysis()
+#         self.logger.info("Run analysis steps")
+#         for params, row in self._benchmark_matrix.iterrows():
+#             self.logger.debug("Analyse param set %s", params)
+#             row[self._baseline_g_uuid].analyse(self, self.analysis_config)
 #         await aio.gather(*self._tasks)
+#         self._tasks.clear()
+
+#         self.logger.info("Run cross-param analysis")
+#         # Just pick a random instance to perform the cross-parameterization merge and
+#         # analysis
+#         to_merge = self._benchmark_matrix[self._baseline_g_uuid]
+#         target = to_merge.iloc[0]
+#         target.cross_merge(to_merge.iloc[1:])
+#         if self._mode == SessionAnalysisMode.INTERACTIVE_XMERGE:
+#             self._interactive_analysis()
+#         target.cross_analysis(self, self.analysis_config)
+#         await aio.gather(*self._tasks)
+#         self._tasks.clear()

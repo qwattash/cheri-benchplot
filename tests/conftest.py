@@ -9,9 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pycheribenchplot.core.benchmark import Benchmark
-from pycheribenchplot.core.config import (AnalysisConfig, BenchmarkRunConfig, BenchplotUserConfig, DatasetName,
-                                          SessionRunConfig)
-from pycheribenchplot.core.dataset import DatasetArtefact, DataSetContainer
+from pycheribenchplot.core.config import (AnalysisConfig, BenchmarkRunConfig, BenchplotUserConfig, SessionRunConfig)
 from pycheribenchplot.core.pipeline import PipelineManager
 from pycheribenchplot.core.session import PipelineSession
 from pycheribenchplot.core.task import ExecutionTask
@@ -66,7 +64,7 @@ fake_session_conf_with_params = {
 
 class FakeExecTask(ExecutionTask):
     public = True
-    task_namespace = "test-benchmark"
+    task_name = "test-benchmark"
 
 
 @pytest.fixture

@@ -7,7 +7,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .dataset import DatasetArtefact, DataSetContainer, DatasetName, Field
+from .config import DatasetArtefact, DatasetName
+from .dataset import DataSetContainer, Field
 from .json import JSONDataSetContainer
 
 

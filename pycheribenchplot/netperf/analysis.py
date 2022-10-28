@@ -1,5 +1,5 @@
 from ..core.analysis import BenchmarkAnalysis
-from ..core.dataset import DatasetName
+from ..core.config import DatasetName
 
 
 class NetperfSanityCheck(BenchmarkAnalysis):

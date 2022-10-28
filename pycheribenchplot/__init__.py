@@ -7,9 +7,10 @@ import pycheribenchplot.drcachesim.plot
 import pycheribenchplot.generic.task
 import pycheribenchplot.kernel_static.dataset
 import pycheribenchplot.kernel_static.plot
-import pycheribenchplot.netperf.analysis
-import pycheribenchplot.netperf.dataset
-import pycheribenchplot.netperf.plot
+# import pycheribenchplot.netperf.analysis
+# import pycheribenchplot.netperf.dataset
+# import pycheribenchplot.netperf.plot
+import pycheribenchplot.netperf.task
 import pycheribenchplot.netstat.dataset
 import pycheribenchplot.pmc.analysis
 import pycheribenchplot.pmc.dataset

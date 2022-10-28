@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 from pandas.api.types import (is_integer_dtype, is_numeric_dtype, is_object_dtype)
 
-from .config import DatasetArtefact, DatasetConfig, DatasetName
+# from .config import DatasetArtefact, DatasetConfig, DatasetName
 from .util import new_logger
 
 
@@ -82,7 +82,7 @@ class DatasetRegistry(type):
     dataset_types = defaultdict(list)
 
     @classmethod
-    def resolve_name(cls, ds_name: DatasetName) -> typing.Type["DataSetContainer"]:
+    def resolve_name(cls, ds_name: "DatasetName") -> typing.Type["DataSetContainer"]:
         """
         Find the dataset class with the given configuration name.
         It is an error if multiple matches are found.
@@ -103,7 +103,8 @@ class DatasetRegistry(type):
         if self.dataset_config_name:
             # Only attempt to register datasets that can be named in the configuration file
             assert self.dataset_source_id, "Missing dataset_source_id"
-            did = DatasetArtefact(self.dataset_source_id)
+            # did = DatasetArtefact(self.dataset_source_id)
+            did = None
             duplicates = [
                 dset for dset in DatasetRegistry.dataset_types[did]
                 if dset.dataset_config_name == self.dataset_config_name
@@ -157,15 +158,15 @@ class DataSetContainer(metaclass=DatasetRegistry):
     - The next levels contain the name of aggregates or derived columns that are generated.
     """
     # Unique name of the dataset in the configuration files
-    dataset_config_name: DatasetName = None
+    dataset_config_name: "DatasetName" = None
     # Internal identifier of the dataset, this can be reused if multiple containers use the
     # same source data to produce different datasets
-    dataset_source_id: DatasetArtefact = None
+    dataset_source_id: "DatasetArtefact" = None
     dataset_run_order = DatasetRunOrder.ANY
     # Data class for the dataset-specific run options in the configuration file
     run_options_class = None
 
-    def __init__(self, benchmark: "Benchmark", config: DatasetConfig):
+    def __init__(self, benchmark: "Benchmark", config: "DatasetConfig"):
         """
         Arguments:
         benchmark: the benchmark instance this dataset belongs to
@@ -460,12 +461,12 @@ class DataSetContainer(metaclass=DatasetRegistry):
         """
         Check whether we are using an auxiliary dataset that requires qemu tracing output
         """
-        if (self.benchmark.get_dataset(DatasetName.QEMU_STATS_BB_HIT) is not None
-                or self.benchmark.get_dataset(DatasetName.QEMU_STATS_BB_ICOUNT) is not None
-                or self.benchmark.get_dataset(DatasetName.QEMU_STATS_CALL_HIT) is not None
-                or self.benchmark.get_dataset(DatasetName.QEMU_UMA_COUNTERS) is not None
-                or self.benchmark.get_dataset(DatasetName.QEMU_DYNAMORIO) is not None):
-            return True
+        # if (self.benchmark.get_dataset(DatasetName.QEMU_STATS_BB_HIT) is not None
+        #         or self.benchmark.get_dataset(DatasetName.QEMU_STATS_BB_ICOUNT) is not None
+        #         or self.benchmark.get_dataset(DatasetName.QEMU_STATS_CALL_HIT) is not None
+        #         or self.benchmark.get_dataset(DatasetName.QEMU_UMA_COUNTERS) is not None
+        #         or self.benchmark.get_dataset(DatasetName.QEMU_DYNAMORIO) is not None):
+        #     return True
         return False
 
     def input_fields(self) -> typing.Sequence[Field]:

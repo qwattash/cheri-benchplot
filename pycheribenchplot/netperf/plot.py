@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from ..core.dataset import DatasetName
+from ..core.config import DatasetName
 from ..core.plot import (BarPlotDataView, BenchmarkPlot, BenchmarkSubPlot, LinePlotDataView, Mosaic, Scale,
                          get_col_or_idx)
 

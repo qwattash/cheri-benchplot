@@ -1,7 +1,8 @@
 import numpy as np
 import pandas as pd
 
-from ..core.dataset import (DatasetName, check_multi_index_aligned, generalized_xs)
+from ..core.config import DatasetName
+from ..core.dataset import check_multi_index_aligned, generalized_xs
 from ..core.plot import (BenchmarkPlot, BenchmarkSubPlot, LegendInfo, LinePlotDataView, Mosaic)
 
 

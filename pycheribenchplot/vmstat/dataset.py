@@ -5,8 +5,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from ..core.dataset import (DatasetArtefact, DataSetContainer, DatasetName, DatasetRunOrder, Field,
-                            align_multi_index_levels)
+from ..core.config import DatasetArtefact, DatasetName
+from ..core.dataset import (DataSetContainer, DatasetRunOrder, Field, align_multi_index_levels)
 from ..core.json import JSONDataSetContainer
 
 

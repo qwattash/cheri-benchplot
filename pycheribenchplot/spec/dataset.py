@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from ..core.config import ConfigPath, TemplateConfig
-from ..core.dataset import DatasetArtefact, DataSetContainer, DatasetName
+from ..core.config import (ConfigPath, DatasetArtefact, DatasetName, TemplateConfig)
+from ..core.dataset import DataSetContainer
 
 
 @dataclass

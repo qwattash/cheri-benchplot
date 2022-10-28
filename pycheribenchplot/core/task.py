@@ -10,8 +10,8 @@ from threading import Condition, Event, Lock, Semaphore, Thread
 
 import networkx as nx
 
-from .config import Config
-from .shellgen import ShellScriptBuilder
+from .config import AnalysisConfig, Config
+from .shellgen import ScriptBuilder
 from .util import new_logger
 
 
@@ -64,22 +64,33 @@ class Target:
         return None
 
 
-class DataFileTarget(Target):
+class FileTarget(Target):
     """
-    A target output file that is generated on the guest and needs to be extracted.
+    Base class for a target output file.
     """
     @classmethod
-    def from_task(cls, task: "Task", iteration: int = None, extension: str = None):
+    def from_task(cls, task: "Task", name=None, iteration: int = None, extension: str = None):
         """
-        Create a task path using the task identifier and the parent session data root path
+        Create a task path using the task identifier and the parent session data root path.
+
+        :param task: The task that generates this file
+        :param name: Additional name used to generate the filename, in case the task generates
+        multiple files
+        :param iteration: Benchmark iteration
+        :param extension: Optional file extension
         """
-        name = task.task_id
-        if iteration:
-            base_path = task.benchmark.get_benchmark_iter_data_path(iteration)
-        else:
+        full_name = re.sub(r"\.", "-", task.task_id)
+        if name:
+            full_name = f"{name}-{full_name}"
+        if iteration is None:
             base_path = task.benchmark.get_benchmark_data_path()
-        path = base_path / name
+        else:
+            base_path = task.benchmark.get_benchmark_iter_data_path(iteration)
+
+        path = base_path / full_name
         if extension:
+            if not extension.startswith("."):
+                extension = "." + extension
             path = path.with_suffix(extension)
         return cls(task.benchmark, path)
 
@@ -87,10 +98,27 @@ class DataFileTarget(Target):
         self.benchmark = benchmark
         self.path = path
 
-    def to_remote_path(self):
+    def to_remote_path(self) -> Path:
         """
         Convert a path in the benchmark local data directory to a remote file path
         """
+        raise NotImplementedError("Must override")
+
+    def is_file(self):
+        return True
+
+    def needs_extraction(self):
+        raise NotImplementedError("Must override")
+
+    def target_id(self):
+        return self.path
+
+
+class DataFileTarget(FileTarget):
+    """
+    A target output file that is generated on the guest and needs to be extracted.
+    """
+    def to_remote_path(self):
         base_path = self.benchmark.get_benchmark_data_path()
         base_guest_output = self.benchmark.config.remote_output_dir
         assert self.path.is_absolute(), f"Ensure target path is absolute {self.path}"
@@ -98,19 +126,24 @@ class DataFileTarget(Target):
             str(base_path)), f"Ensure target path {self.path} is in benchmark {self.benchmark} output"
         return base_guest_output / self.path.relative_to(base_path)
 
-    def is_file(self):
-        return True
-
     def needs_extraction(self):
         return True
 
-    def target_id(self):
-        return self.path
+
+class LocalFileTarget(FileTarget):
+    """
+    A target output file that is generated on the host and does not need to be extracted
+    """
+    def to_remote_path(self):
+        raise TypeError("LocalFileTarget does not have a corresponding remote path")
+
+    def needs_extraction(self):
+        return False
 
 
 class Task(metaclass=TaskRegistry):
     """
-    Base class for dataset operations.
+    Abstract base class for dataset operations.
     This can be a task to run a benchmark or perform an analysis step.
     Tasks in the pipeline have determined inputs and outputs that are derived from the session that
     creates the tasks.
@@ -124,13 +157,12 @@ class Task(metaclass=TaskRegistry):
     #: If set, use the given Config class to unpack the task configuration
     task_config_class: typing.Type[Config] = None
 
-    def __init__(self, benchmark: "Benchmark", task_config: Config = None):
-        #: parent benchmark
-        self.benchmark = benchmark
+    def __init__(self, task_config: Config = None):
+        assert self.task_name is not None, "Attempted to use task with uninitialized name"
         #: task-specific configuration options, if any
         self.config = task_config
         #: task logger
-        self.logger = new_logger(f"{self.task_name}", parent=self.benchmark.logger)
+        self.logger = new_logger(self.task_name)
         #: notify when task is completed
         self._completed = Event()
         #: if the task run() fails, the scheduler will set this to the exception raised by the task
@@ -138,10 +170,8 @@ class Task(metaclass=TaskRegistry):
         #: set of tasks we resolved that we depend upon, this is filled by the scheduler
         self.resolved_dependencies = set()
 
-        assert self.task_name is not None, "Attempted to use task with uninitialized name"
-
     def __str__(self):
-        return f"{self.task_namespace}.{self.task_name}-{self.benchmark.uuid}"
+        return str(self.task_id)
 
     def __repr__(self):
         return f"<{self.__class__.__name__} id={self.task_id}>"
@@ -154,25 +184,14 @@ class Task(metaclass=TaskRegistry):
 
     @property
     def session(self):
-        return self.benchmark.session
-
-    @property
-    def uuid(self):
-        return self.benchmark.uuid
-
-    @property
-    def g_uuid(self):
-        return self.benchmark.g_uuid
+        raise NotImplementedError("Subclasses should override")
 
     @property
     def task_id(self) -> typing.Hashable:
         """
         Return the unique task identifier.
-        Note that this currently assumes that tasks with the same name are not issued
-        more than once for each benchmark run UUID. If this is violated, we need to
-        change the task ID generation.
         """
-        return f"{self.task_namespace}.{self.task_name}-{self.benchmark.uuid}"
+        raise NotImplementedError("Subclass should override")
 
     @property
     def completed(self) -> bool:
@@ -234,6 +253,8 @@ class ExecutionTask(Task):
     configuration before the actual benchmark instance runs.
     Note that these tasks are dynamically resolved by the benchmark context and attached as dependencies
     of the top-level execution tasks :class:`BenchmarkExecTask`.
+    Each execution task is associated with an unique benchmark context and a corresponding script builder
+    that will generate the script for the associated benchmark.
 
     The run() method for ExecutionTasks is a good place to perform any of the following:
     1. Extract any static information from benchmark binary files.
@@ -242,29 +263,66 @@ class ExecutionTask(Task):
     """
     task_namespace = "exec"
 
-    def __init__(self, benchmark: "Benchmark", script: ShellScriptBuilder, task_config: Config = None):
-        super().__init__(benchmark, task_config=task_config)
+    def __init__(self, benchmark: "Benchmark", script: ScriptBuilder, task_config: Config = None):
+        super().__init__(task_config=task_config)
         assert self.task_namespace == "exec", "ExecutionTask convention mandates the 'exec' task namespace"
+        #: Associated benchmark context
+        self.benchmark = benchmark
+        #: Script builder associated to the current benchmark context.
         self.script = script
+        #: Make the logger a child of the benchmark logger
+        self.logger = new_logger(f"{self.task_name}", parent=self.benchmark.logger)
+
+    @property
+    def session(self):
+        return self.benchmark.session
+
+    @property
+    def uuid(self):
+        return self.benchmark.uuid
+
+    @property
+    def g_uuid(self):
+        return self.benchmark.g_uuid
+
+    @property
+    def task_id(self):
+        """
+        Note that this currently assumes that tasks with the same name are not issued
+        more than once for each benchmark run UUID. If this is violated, we need to
+        change the task ID generation.
+        """
+        return f"{self.task_namespace}.{self.task_name}-{self.benchmark.uuid}"
 
 
-class DatasetIngestionTask(Task):
-    """
-    Base class for tasks that perform data ingestion.
-    These are generally reusable and perform the load/pre_merge/merge/post_merge steps.
-    """
-    task_name = "load"
-
-    def run(self):
-        pass
-
-
-class DatasetAnalysisTask(Task):
+class AnalysisTask(Task):
     """
     Analysis tasks that perform anythin from plotting to data checks and transformations.
-    These generally are the top-level tasks that correspond to run targets exposed via CLI.
+    This is the base class for all public analysis steps that are allocated by the session.
+    Analysis tasks are not necessarily associated to a single benchmark. In general they reference the
+    current session and analysis configuration, subclasses may be associated to a benchmark context.
     """
     task_namespace = "analysis"
+
+    def __init__(self, session: "PipelineSession", analysis_config: AnalysisConfig, task_config: Config = None):
+        super().__init__(task_config=task_config)
+        #: The current session
+        self._session = session
+        #: Analysis configuration for this invocation
+        self.analysis_config = analysis_config
+
+    @property
+    def session(self):
+        return self._session
+
+    @property
+    def task_id(self):
+        """
+        Note that this currently assumes that tasks with the same name are not issued
+        more than once for each benchmark run UUID. If this is violated, we need to
+        change the task ID generation.
+        """
+        return f"{self.task_namespace}.{self.task_name}-{self.session.uuid}"
 
 
 class ResourceManager:
@@ -321,8 +379,10 @@ class ResourceManager:
         self.session = session
         self.logger = new_logger(f"rman-{self.resource_name}")
         self.limit = limit
-        if limit is not None:
+        if not self.is_unlimited:
             self._limit_guard = Semaphore(self.limit)
+        self.logger.debug("Initialized resource manager %s with limit %s", self.resource_name, self.limit
+                          or "<unlimited>")
 
     def __str__(self):
         return f"{self.__class__.__name__}[{self.resource_name}]"
@@ -357,7 +417,7 @@ class ResourceManager:
 
     @property
     def is_unlimited(self) -> bool:
-        return self.limit is None
+        return self.limit is None or self.limit == 0
 
     @contextmanager
     def acquire(self, req: ResourceRequest) -> typing.ContextManager[typing.Any]:
@@ -430,6 +490,9 @@ class TaskScheduler:
         #: active tasks set, this contains the set of tasks the workers are currently working on.
         #: Protected by the _worker_wakeup lock.
         self._active_tasks = []
+        #: Failed tasks, this does not include tasks that were cancelled as a result of a failure.
+        #: Shares the _worker_wakeup lock.
+        self._failed_tasks = []
         # XXX should this share the lock with worker_wakeup?
         #: pending tasks count, protected by _pending_tasks_cv
         self._pending_tasks = 0
@@ -453,6 +516,7 @@ class TaskScheduler:
             # Kill all tasks and signal workers stop
             self.logger.warning("Cancelling all pending tasks")
             with self._worker_wakeup:
+                self._failed_tasks.append(failed_task)
                 for t in self._task_queue:
                     t.notify_failed("cancelled")
                 self._task_queue.clear()
@@ -536,6 +600,15 @@ class TaskScheduler:
             task.notify_failed(ex)
             # Now we need to cancel some tasks
             self._handle_failure(task)
+
+    @property
+    def failed_tasks(self) -> list[Task]:
+        """
+        Verify whether there were failed tasks during the execution.
+        This returns a copy of the internal failed tasks list.
+        """
+        with self._worker_lock:
+            return list(self._failed_tasks)
 
     def add_task(self, task: Task):
         self.logger.debug("Schedule task %s", task.task_id)

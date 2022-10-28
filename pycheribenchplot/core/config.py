@@ -68,26 +68,46 @@ class TaskSpecField(mfields.Field):
     """
     Field used to validate a public task name specifier.
     This validated that task namespace that is used to resolve execution
-    and ingestion tasks. In practice this is the first portion of the dotted task name,
-    e.g. 'my-task' that resolves to 'my-task.exec' and 'my-task.load', depending on the operation
+    and ingestion tasks. In practice this is the last portion of the dotted task name, or the full dotted name.
+    e.g. 'my-task' that resolves to 'exec.my-task' and 'load.my-task', depending on the operation.
     """
     def _serialize(self, value, attr, obj, **kwargs):
         if value is None:
             return ""
         return str(value)
 
-    def _deserialize(self, value, attr, data, **kwargs):
+    def _validate_full(self, namespace_name, task_name):
         from .task import TaskRegistry
+
+        # Full task name with namespace portion, verify that it exists
+        namespace = TaskRegistry.public_tasks.get(namespace_name)
+        if namespace is None:
+            raise ValidationError("Task specifier does not match a public task namespace")
+        if task_name not in namespace:
+            raise ValidationError("Task specifier does not match a public task name")
+
+    def _validate_implicit(self, task_name):
+        from .task import TaskRegistry
+
+        # Try to look in the implicit task namespaces
+        exec_ns = TaskRegistry.public_tasks["exec"]
+        if task_name in exec_ns:
+            return
+        analysis_ns = TaskRegistry.public_tasks["analysis"]
+        if task_name in analysis_ns:
+            return
+        raise ValidationError("Task specifier does not match a public task name")
+
+    def _deserialize(self, value, attr, data, **kwargs):
         value = str(value)
         if value == "":
             raise ValidationError("Task specifier can not be blank")
-        namespace = TaskRegistry.public_tasks.get(value)
-        if namespace is None:
-            raise ValidationError("Task specifier does not match a public task namespace")
-        # The namespace specified here must have a correspoding 'exec' task
-        # otherwise the configuration does not make sense.
-        if "exec" not in namespace:
-            raise ValidationError("Task specifier matches a namespace without an 'exec' task")
+        parts = value.split(".")
+        namespace_name = ".".join(parts[0:-1])
+        if namespace_name:
+            self._validate_full(namespace_name, parts[-1])
+        else:
+            self._validate_implicit(value)
         return value
 
 
@@ -289,6 +309,24 @@ class PlatformOptions(TemplateConfig):
                 setattr(self, f.name, getattr(common, f.name))
 
 
+@dc.dataclass
+class ProfileConfig(TemplateConfig):
+    """
+    Common profiling options.
+    These are inteded to be embedded into benchmark task_options for those benchmarks
+    that support some form of profiling.
+    """
+    #: Run qemu with tracing enabled
+    qemu_trace: Optional[str] = dc.field(default=None,
+                                         metadata={"validate": OneOf([None, "perfetto", "perfetto-dynamorio"])})
+
+    #: Trace categories to enable for qemu-perfetto
+    qemu_trace_categories: Optional[Set[str]] = None
+
+    #: HWPMC performance counters modes
+    hwpmc_trace: Optional[str] = dc.field(default=None, metadata={"validate": OneOf([None, "pmc", "profclock"])})
+
+
 class InstancePlatform(Enum):
     QEMU = "qemu"
     VCU118 = "vcu118"
@@ -450,18 +488,31 @@ class DatasetArtefact(Enum):
 
 
 @dc.dataclass
-class DatasetConfig(TemplateConfig):
+class TaskTargetConfig(TemplateConfig):
     """
-    Define the parameters to run a dataset handler for the benchmark.
-    This is shared between the actual benchmark parameters and auxiliary
-    datasets.
+    Define a target task.
+    The handler field identifies either a task name or namespace + name.
+    The run_options are interpreted lazily depending on the target Task class,
+    these are per-task auxiliary argument.
     """
-    #: Identifier (string) of a dataset to add to the run
-    #handler: DatasetName = dc.field(metadata={"by_value": True})
+    #: Identifier of a task to run. This can be either a name or a namespace.name.
+    #: The namespace may be implicit depending on the context,
+    #: e.g. benchmark execution tasks are implicitly searched within the exec namespace.
     handler: ConfigTaskSpec
 
     #: Extra options for the dataset handler, depend on the handler
-    run_options: Dict[str, ConfigAny] = lazy_nested_config_field()
+    task_options: Dict[str, ConfigAny] = lazy_nested_config_field()
+
+    @property
+    def namespace(self):
+        parts = self.handler.split(".")
+        if len(parts) == 1:
+            return None
+        return ".".join(parts[0:-1])
+
+    @property
+    def name(self):
+        return self.handler.split(".")[-1]
 
 
 @dc.dataclass
@@ -495,9 +546,9 @@ class CommonBenchmarkConfig(TemplateConfig):
     #: The number of iterations to run
     iterations: int
     #: Benchmark configuration
-    benchmark: DatasetConfig
+    benchmark: TaskTargetConfig
     #: Auxiliary data generators/handlers
-    aux_dataset_handlers: List[DatasetConfig] = dc.field(default_factory=list)
+    aux_dataset_handlers: List[TaskTargetConfig] = dc.field(default_factory=list)
     #: Number of iterations to drop to reach steady-state
     drop_iterations: int = 0
     #: Benchmark description, used for plot titles (can contain a template), defaults to :attr:`name`.
@@ -801,15 +852,6 @@ class BenchplotUserConfig(Config):
 
 
 @dc.dataclass
-class AnalysisHandlerConfig(Config):
-    #: Identifier of the analysis pass
-    name: str
-
-    #: analysis-specific options
-    options: Dict[str, ConfigAny] = dc.field(default_factory=dict)
-
-
-@dc.dataclass
 class AnalysisConfig(Config):
     #: Generate multiple split plots instead of combining
     split_subplots: bool = False
@@ -829,7 +871,7 @@ class AnalysisConfig(Config):
     use_builtin_symbolizer: bool = True
 
     #: Specify analysis passes to run
-    handlers: List[AnalysisHandlerConfig] = dc.field(default_factory=list)
+    handlers: List[TaskTargetConfig] = dc.field(default_factory=list)
 
     def __post_init__(self):
         super().__post_init__()

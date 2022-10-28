@@ -5,9 +5,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from ..core.config import ConfigPath, TemplateConfig
+from ..core.config import (ConfigPath, DatasetArtefact, DatasetName, TemplateConfig)
 from ..core.csv import CSVDataSetContainer
-from ..core.dataset import DatasetArtefact, DatasetName, Field
+from ..core.dataset import Field
 from ..core.procstat import ProcstatDataset
 
 

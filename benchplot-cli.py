@@ -79,7 +79,7 @@ def main():
     sub_analyse = sub.add_parser("analyse", help="process benchmarks and generate plots")
     add_session_spec_options(sub_analyse)
     sub_analyse.add_argument("--mode", choices=[m.value for m in SessionAnalysisMode], help="Analysis mode",
-                             default=SessionAnalysisMode.ASYNC_LOAD)
+                             default=SessionAnalysisMode.BATCH)
     sub_analyse.add_argument("-a", "--analysis-config", type=Path, help="Analysis configuration file",
                              default=None)
 

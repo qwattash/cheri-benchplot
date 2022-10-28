@@ -3,7 +3,8 @@ import itertools as it
 import numpy as np
 import pandas as pd
 
-from ..core.dataset import (DatasetName, assign_sorted_coord, broadcast_xs, subset_xs)
+from ..core.config import DatasetName
+from ..core.dataset import assign_sorted_coord, broadcast_xs, subset_xs
 from ..core.plot import (AALineDataView, ArrowPlotDataView, BarPlotDataView, BenchmarkPlot, BenchmarkSubPlot, CellData,
                          HistPlotDataView, LegendInfo, Mosaic, Scale)
 from ..vmstat.plot import VMStatUMAMetricHist

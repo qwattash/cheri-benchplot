@@ -7,8 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..core.analysis import BenchmarkAnalysis
-from ..core.config import ConfigPath, TemplateConfig
-from ..core.dataset import DatasetName
+from ..core.config import ConfigPath, DatasetName, TemplateConfig
 
 
 @dataclass

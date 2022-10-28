@@ -1,6 +1,7 @@
 import numpy as np
 
-from ..core.dataset import DatasetName, scale_to_std_notation
+from ..core.config import DatasetName
+from ..core.dataset import scale_to_std_notation
 from ..core.plot import (BarPlotDataView, BenchmarkPlot, BenchmarkSubPlot, LegendInfo, LinePlotDataView, Mosaic, Scale,
                          Symbols, get_col_or_idx)
 

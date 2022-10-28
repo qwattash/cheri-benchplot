@@ -1,8 +1,9 @@
 import numpy as np
 import pandas as pd
 
-from ..core.dataset import (DatasetName, align_multi_index_levels, broadcast_xs, check_multi_index_aligned,
-                            generalized_xs, pivot_multi_index_level)
+from ..core.config import DatasetName
+from ..core.dataset import (align_multi_index_levels, broadcast_xs, check_multi_index_aligned, generalized_xs,
+                            pivot_multi_index_level)
 from ..core.plot import (BenchmarkPlot, BenchmarkSubPlot, BenchmarkTable, LegendInfo, Scale, ScatterPlotDataView, Style,
                          Symbols, TableDataView)
 

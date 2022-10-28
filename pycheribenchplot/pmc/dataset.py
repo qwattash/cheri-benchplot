@@ -8,9 +8,9 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 
+from ..core.config import DatasetArtefact, DatasetName
 from ..core.csv import CSVDataSetContainer
-from ..core.dataset import (DatasetArtefact, DatasetName, Field, align_multi_index_levels, generalized_xs,
-                            make_index_key)
+from ..core.dataset import (Field, align_multi_index_levels, generalized_xs, make_index_key)
 from ..core.elf import SymInfo
 from ..core.json import JSONDataSetContainer
 from ..core.util import timing

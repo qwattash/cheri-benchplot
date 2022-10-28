@@ -9,6 +9,7 @@ from pycheribenchplot.core.task import ResourceManager, Task, TaskScheduler
 
 class FakeInvalidTask(Task):
     # Missing the task_name
+    task_id = "fake-invalid-task"
 
     def run(self):
         return
@@ -16,6 +17,7 @@ class FakeInvalidTask(Task):
 
 class FakeTaskA(Task):
     task_name = "fake-task-A"
+    task_id = "fake-task-A"
 
     def run(self):
         time.sleep(1)
@@ -23,11 +25,12 @@ class FakeTaskA(Task):
 
 class FakeTaskB(Task):
     task_name = "fake-task-B"
+    task_id = "fake-task-B"
 
     test_result_task_A_completed = False
 
     def dependencies(self):
-        self.a_task = FakeTaskA(self.benchmark)
+        self.a_task = FakeTaskA()
         yield self.a_task
 
     def run(self):
@@ -36,9 +39,10 @@ class FakeTaskB(Task):
 
 class FakeTaskC(Task):
     task_name = "fake-task-C"
+    task_id = "fake-task-C"
 
     def dependencies(self):
-        yield FakeTaskB(self.benchmark)
+        yield FakeTaskB()
 
     def run(self):
         return
@@ -46,10 +50,11 @@ class FakeTaskC(Task):
 
 class FakeTaskHorizontalDeps(Task):
     task_name = "fake-task-horizontal-deps"
+    task_id = "fake-task-horizontal-deps"
 
     def dependencies(self):
-        yield FakeTaskC(self.benchmark)
-        yield FakeTaskB(self.benchmark)
+        yield FakeTaskC()
+        yield FakeTaskB()
 
     def run(self):
         return
@@ -57,10 +62,11 @@ class FakeTaskHorizontalDeps(Task):
 
 class FakeTaskCycleA(Task):
     task_name = "fake-task-cycle-A"
+    task_id = "fake-task-cycle-A"
 
     def dependencies(self):
-        yield FakeTaskA(self.benchmark)
-        yield FakeTaskCycleB(self.benchmark)
+        yield FakeTaskA()
+        yield FakeTaskCycleB()
 
     def run(self):
         return
@@ -68,9 +74,10 @@ class FakeTaskCycleA(Task):
 
 class FakeTaskCycleB(Task):
     task_name = "fake-task-cycle-B"
+    task_id = "fake-task-cycle-B"
 
     def dependencies(self):
-        yield FakeTaskCycleA(self.benchmark)
+        yield FakeTaskCycleA()
 
     def run(self):
         return
@@ -78,10 +85,11 @@ class FakeTaskCycleB(Task):
 
 class FakeTaskCycle(Task):
     task_name = "fake-task-cycle"
+    task_id = "fake-task-cycle"
 
     def dependencies(self):
-        yield FakeTaskCycleA(self.benchmark)
-        yield FakeTaskCycleB(self.benchmark)
+        yield FakeTaskCycleA()
+        yield FakeTaskCycleB()
 
     def run(self):
         return
@@ -89,6 +97,7 @@ class FakeTaskCycle(Task):
 
 class FakeTaskError(Task):
     task_name = "fake-task-error"
+    task_id = "fake-task-error"
 
     def run(self):
         raise RuntimeError("Failed task test")
@@ -96,10 +105,11 @@ class FakeTaskError(Task):
 
 class FakeTaskDepError(Task):
     task_name = "fake-task-with-dep-error"
+    task_id = "fake-task-with-dep-error"
 
     def dependencies(self):
-        self.error_task = FakeTaskError(self.benchmark)
-        self.valid_task = FakeTaskA(self.benchmark)
+        self.error_task = FakeTaskError()
+        self.valid_task = FakeTaskA()
         yield from [self.error_task, self.valid_task]
 
     def run(self):
@@ -118,9 +128,10 @@ class DummyResource(ResourceManager):
 
 class FakeTaskWithResource(Task):
     task_name = "fake-task-with-resource"
+    task_id = "fake-task-with-resource"
 
     def dependencies(self):
-        self.a = FakeTaskA(self.benchmark)
+        self.a = FakeTaskA()
         yield self.a
 
     def resources(self):
@@ -132,9 +143,9 @@ class FakeTaskWithResource(Task):
         self.resource_r_value = self.r.get()
 
 
-def test_invalid_task_check(fake_simple_benchmark):
+def test_invalid_task_check():
     with pytest.raises(AssertionError):
-        task = FakeInvalidTask(fake_simple_benchmark)
+        task = FakeInvalidTask()
 
 
 def test_task_schedule_simple(fake_session_with_params):
@@ -144,8 +155,8 @@ def test_task_schedule_simple(fake_session_with_params):
 
     schedule = [t.task_id for t in sched.resolve_schedule()]
     assert len(schedule) == 2
-    assert schedule[0] == f"internal.fake-task-A-{bench.uuid}"
-    assert schedule[1] == f"internal.fake-task-B-{bench.uuid}"
+    assert schedule[0] == f"fake-task-A"
+    assert schedule[1] == f"fake-task-B"
 
 
 def test_task_schedule_horizontal_deps(fake_session_with_params):
@@ -155,10 +166,10 @@ def test_task_schedule_horizontal_deps(fake_session_with_params):
 
     schedule = [t.task_id for t in sched.resolve_schedule()]
     assert len(schedule) == 4
-    assert schedule[0] == f"internal.fake-task-A-{bench.uuid}"
-    assert schedule[1] == f"internal.fake-task-B-{bench.uuid}"
-    assert schedule[2] == f"internal.fake-task-C-{bench.uuid}"
-    assert schedule[3] == f"internal.fake-task-horizontal-deps-{bench.uuid}"
+    assert schedule[0] == f"fake-task-A"
+    assert schedule[1] == f"fake-task-B"
+    assert schedule[2] == f"fake-task-C"
+    assert schedule[3] == f"fake-task-horizontal-deps"
 
 
 def test_task_schedule_cyclic_deps(fake_session_with_params):

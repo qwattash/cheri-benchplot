@@ -5,8 +5,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from .config import DatasetArtefact
 from .csv import CSVDataSetContainer
-from .dataset import DatasetArtefact, Field
+from .dataset import Field
 
 
 class ProcstatDataset(CSVDataSetContainer):

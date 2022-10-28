@@ -8,7 +8,7 @@ import pandas as pd
 from pycheribenchplot.core.config import Config
 
 from ..analysis import BenchmarkAnalysis
-from ..dataset import DatasetArtefact, DataSetContainer
+from ..dataset import DataSetContainer
 from ..util import new_logger
 from .backend import FigureManager, Mosaic
 from .data_view import CellData, LegendInfo
@@ -210,7 +210,7 @@ class BenchmarkSubPlot(ABC):
         """
         return (1, 1)
 
-    def get_dataset(self, dset_id: DatasetArtefact):
+    def get_dataset(self, dset_id: "DatasetArtefact"):
         """Helper to access datasets in the benchmark"""
         dset = self.plot.get_dataset(dset_id)
         assert dset is not None, "Subplot scheduled with missing dependency"

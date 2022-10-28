@@ -1,4 +1,5 @@
-from ..core.dataset import DatasetName, Field
+from ..core.config import DatasetName
+from ..core.dataset import Field
 from .dataset import DatasetProcessingError, QEMUGuestCountersDataset
 
 

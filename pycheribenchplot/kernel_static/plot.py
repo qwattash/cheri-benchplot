@@ -3,8 +3,9 @@ import typing
 import numpy as np
 import pandas as pd
 
-from ..core.dataset import (DatasetName, assign_sorted_coord, check_multi_index_aligned, filter_aggregate,
-                            pivot_multi_index_level, quantile_slice, stacked_histogram, subset_xs)
+from ..core.config import DatasetName
+from ..core.dataset import (assign_sorted_coord, check_multi_index_aligned, filter_aggregate, pivot_multi_index_level,
+                            quantile_slice, stacked_histogram, subset_xs)
 from ..core.plot import (AALineDataView, BarPlotDataView, BenchmarkPlot, BenchmarkSubPlot, BenchmarkTable,
                          HistPlotDataView, LegendInfo, Scale, ScatterPlotDataView, Symbols, TableDataView)
 
