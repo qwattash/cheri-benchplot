@@ -98,10 +98,21 @@ class BenchmarkExecTask(Task):
         for section_name, cmd_list in self.benchmark.config.command_hooks.items():
             if section_name not in self.script.sections:
                 self.logger.warning(
-                    "Configuration file wants to add hooks to script section %s but the section does not exist: %s",
-                    section_name, self.script.sections.keys())
+                    "Configuration file wants to add hooks to script" +
+                    " section %s but the section does not exist: %s", section_name, self.script.sections.keys())
                 continue
             self._handle_config_command_hooks_for_section(section_name, cmd_list)
+
+    def _extract_files(self, instance, task):
+        """
+        Extract remote files for a given task.
+        """
+        for output_key, output in task.outputs():
+            if not output.is_file() or not output.needs_extraction():
+                continue
+            for remote_path, host_path in zip(output.remote_paths, output.paths):
+                self.logger.debug("Extract %s guest: %s => host: %s", output_key, remote_path, host_path)
+                instance.extract_file(remote_path, host_path)
 
     @property
     def task_id(self):
@@ -116,8 +127,6 @@ class BenchmarkExecTask(Task):
     def dependencies(self):
         yield from super().dependencies()
         yield self._fetch_task(self.benchmark.config.benchmark)
-        # # Implicit auxiliary datasets
-        # modules[DatasetName.PIDMAP] = self._find_dataset_module(DatasetConfig(handler=DatasetName.PIDMAP))
         for aux_config in self.benchmark.config.aux_dataset_handlers:
             yield self._fetch_task(aux_config)
 
@@ -150,10 +159,7 @@ class BenchmarkExecTask(Task):
         # Extract all output files
         self.logger.info("Extract output files")
         for dep in self.resolved_dependencies:
-            for output in dep.outputs():
-                if output.is_file() and output.needs_extraction():
-                    self.logger.debug("Extract guest: %s => host: %s", output.to_remote_path(), output.path)
-                    instance.extract_file(output.to_remote_path(), output.path)
+            self._extract_files(instance, dep)
         self.logger.info("Benchmark run completed")
 
 

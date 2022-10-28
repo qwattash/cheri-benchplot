@@ -47,6 +47,6 @@ class QEMUTracingSetupTask(ExecutionTask):
         opts.qemu_trace_categories = self.config.qemu_trace_categories
 
     def outputs(self):
-        yield self.get_qemu_profile_target()
+        yield "perfetto-trace", self.get_qemu_profile_target()
         if self.config.qemu_trace == "perfetto-dynamorio":
-            yield self.get - qemu_interceptor_target()
+            yield "interceptor-trace", self.get_qemu_interceptor_target()

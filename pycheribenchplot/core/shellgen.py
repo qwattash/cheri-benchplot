@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock
 
+from .task import Target
 from .util import new_logger
 
 
@@ -114,7 +115,7 @@ class ScriptBuilder:
                     command: str | Path,
                     args: list[str] = None,
                     env: dict[str, str] = None,
-                    output: "Target" = None,
+                    output: Path | Target = None,
                     cpu: int | None = None,
                     background: bool = False) -> ScriptCommand:
             """
@@ -128,8 +129,11 @@ class ScriptBuilder:
             :return: An opaque command reference, this is useful to terminate background commands
             """
             cmd = ScriptCommand(cmd=command, args=args or [], env=env or {}, background=background)
-            if output:
-                cmd.stdout_path = output.to_remote_path()
+            if output and isinstance(output, Target):
+                # Must assume that the target points to a single file
+                cmd.stdout_path = output.remote_path
+            else:
+                cmd.stdout_path = output
             if cpu is not None:
                 cmd.cpu = cpu
             cmd.pid_reference_id = str(self._script._next_sequence())

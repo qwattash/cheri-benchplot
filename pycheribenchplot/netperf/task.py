@@ -41,12 +41,12 @@ class NetperfExecTask(ExecutionTask):
         self.netserver_bin = Path("/") / rootfs_netserver_bin.relative_to(self.benchmark.cheribsd_rootfs_path)
         self.logger.debug("Using %s %s", self.netperf_bin, self.netserver_bin)
 
-    def get_stats_target(self, iteration: int):
-        return DataFileTarget.from_task(self, iteration=iteration, extension="csv")
+    def get_stats_target(self):
+        return DataFileTarget.from_task(self, iter_base=True, ext="csv")
 
-    def get_hwpmc_target(self, iteration: int) -> Path:
+    def get_hwpmc_target(self) -> Path:
         """The remote profiling output target"""
-        return DataFileTarget.from_task(self, name="hwpmc", iteration=iteration, extension="csv")
+        return DataFileTarget.from_task(self, prefix="hwpmc", iter_base=True, ext="csv")
 
     def dependencies(self):
         if self.config.profile.qemu_trace:
@@ -72,16 +72,19 @@ class NetperfExecTask(ExecutionTask):
         for i in range(self.benchmark.config.iterations):
             iteration_arguments = []
             if self.config.profile.hwpmc_trace:
-                iteration_arguments += ["-G", self.get_profile_target(i).to_remote_path()]
+                iteration_arguments += ["-G", self.get_hwpmc_target().remote_paths[i]]
             full_options = self.config.netperf_options + extra_arguments + iteration_arguments
             s = self.script.benchmark_sections[i]["benchmark"]
-            s.add_cmd(self.netperf_bin, full_options, env=run_env, output=self.get_stats_target(i))
+            s.add_cmd(self.netperf_bin, full_options, env=run_env, output=self.get_stats_target().remote_paths[i])
 
         s = self.script.sections["post-benchmark"]
         s.add_kill_cmd(netserver)
 
     def outputs(self):
-        for i in range(self.benchmark.config.iterations):
-            yield self.get_stats_target(i)
-            if self.config.profile.hwpmc_trace:
-                yield self.get_hwpmc_target(i)
+        yield "stats", self.get_stats_target()
+        if self.config.profile.hwpmc_trace:
+            yield "hwpmc", self.get_hwpmc_target()
+        # for i in range(self.benchmark.config.iterations):
+        #     yield self.get_stats_target(i)
+        #     if self.config.profile.hwpmc_trace:
+        #         yield self.get_hwpmc_target(i)

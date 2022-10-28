@@ -28,5 +28,4 @@ class GenericExecTask(ExecutionTask):
             section.add_cmd(parts[0], parts[1:], output=output)
 
     def outputs(self):
-        for i in range(self.benchmark.config.iterations):
-            yield DataFileTarget.from_task(self, iteration=i)
+        yield "stdout", DataFileTarget.from_task(self, iter_base=True, ext="txt")

@@ -11,7 +11,6 @@ from threading import Condition, Event, Lock, Semaphore, Thread
 import networkx as nx
 
 from .config import AnalysisConfig, Config
-from .shellgen import ScriptBuilder
 from .util import new_logger
 
 
@@ -50,18 +49,13 @@ class TaskRegistry(type):
 class Target:
     """
     Helper to represent output artifacts of a task.
+    This is the base class to also support non-file targets if necessary.
     """
     def is_file(self):
         """
-        When true, the target should expose an host absolute file path in the :attr:`Target.path` property
+        When true, the target should be a subclass of :class:`FileTarget`
         """
         return False
-
-    def needs_extraction(self):
-        return False
-
-    def target_id(self):
-        return None
 
 
 class FileTarget(Target):
@@ -69,38 +63,72 @@ class FileTarget(Target):
     Base class for a target output file.
     """
     @classmethod
-    def from_task(cls, task: "Task", name=None, iteration: int = None, extension: str = None):
+    def from_task(cls, task: "Task", prefix: str = None, iter_base: bool = False, ext: str = None):
         """
         Create a task path using the task identifier and the parent session data root path.
 
         :param task: The task that generates this file
-        :param name: Additional name used to generate the filename, in case the task generates
+        :param prefix: Additional name used to generate the filename, in case the task generates
         multiple files
-        :param iteration: Benchmark iteration
-        :param extension: Optional file extension
+        :param iter_base: There is one file per benchmark iteration
+        :param ext: Optional file extension
         """
-        full_name = re.sub(r"\.", "-", task.task_id)
-        if name:
-            full_name = f"{name}-{full_name}"
-        if iteration is None:
-            base_path = task.benchmark.get_benchmark_data_path()
-        else:
-            base_path = task.benchmark.get_benchmark_iter_data_path(iteration)
+        name = re.sub(r"\.", "-", task.task_id)
+        if prefix:
+            name = f"{prefix}-{name}"
+        path = Path(name)
 
-        path = base_path / full_name
-        if extension:
-            if not extension.startswith("."):
-                extension = "." + extension
-            path = path.with_suffix(extension)
-        return cls(task.benchmark, path)
+        if ext:
+            if not ext.startswith("."):
+                ext = "." + ext
+            path = path.with_suffix(ext)
+        return cls(task.benchmark, path, has_iteration_path=iter_base)
 
-    def __init__(self, benchmark, path):
+    def __init__(self, benchmark, path: Path, has_iteration_path: bool = False):
+        """
+        :param benchmark: The benchmark context this file belongs to
+        :param path: The file relative path from the benchmark output data directory.
+        :param per_iteration: Whether the file is replicated for each iteration
+        """
         self.benchmark = benchmark
-        self.path = path
+        self.has_iteration_path = has_iteration_path
+        self._path = path
 
-    def to_remote_path(self) -> Path:
+    @property
+    def path(self) -> Path:
         """
-        Convert a path in the benchmark local data directory to a remote file path
+        Shorthand to return the path for targets that do not depend on iterations.
+        If the path depends on the iteration index, this raises a TypeError.
+        """
+        if self.has_iteration_path:
+            raise TypeError("Can not use shorthand path property when multiple paths are present")
+        return self.benchmark.get_benchmark_data_path() / self._path
+
+    @property
+    def remote_path(self) -> Path:
+        """
+        Shorthand to return the path for targets that do not depend on iterations.
+        If the path depends on the iteration index, this raises a TypeError.
+        """
+        raise NotImplementedError("Must override")
+
+    @property
+    def paths(self) -> list[Path]:
+        """
+        Return a list of paths belonging to this target.
+        If the path depends on the benchmark iteration, this returns all paths sorted
+        by iteration number.
+        If the path does not depend on iterations, this only returns the path.
+        """
+        if not self.has_iteration_path:
+            return [self.benchmark.get_benchmark_data_path() / self._path]
+        base_paths = map(self.benchmark.get_benchmark_iter_data_path, range(self.benchmark.config.iterations))
+        return [path / self._path for path in base_paths]
+
+    @property
+    def remote_paths(self) -> list[Path]:
+        """
+        Same as path but all paths are coverted rebased to the guest data output directory
         """
         raise NotImplementedError("Must override")
 
@@ -110,21 +138,22 @@ class FileTarget(Target):
     def needs_extraction(self):
         raise NotImplementedError("Must override")
 
-    def target_id(self):
-        return self.path
-
 
 class DataFileTarget(FileTarget):
     """
     A target output file that is generated on the guest and needs to be extracted.
     """
-    def to_remote_path(self):
-        base_path = self.benchmark.get_benchmark_data_path()
-        base_guest_output = self.benchmark.config.remote_output_dir
-        assert self.path.is_absolute(), f"Ensure target path is absolute {self.path}"
-        assert str(self.path).startswith(
-            str(base_path)), f"Ensure target path {self.path} is in benchmark {self.benchmark} output"
-        return base_guest_output / self.path.relative_to(base_path)
+    @property
+    def remote_path(self):
+        base = self.benchmark.get_benchmark_data_path()
+        guest_base = self.benchmark.config.remote_output_dir
+        return guest_base / self.path.relative_to(base)
+
+    @property
+    def remote_paths(self):
+        base = self.benchmark.get_benchmark_data_path()
+        guest_base = self.benchmark.config.remote_output_dir
+        return [guest_base / path.relative_to(base) for path in self.paths]
 
     def needs_extraction(self):
         return True
@@ -134,7 +163,12 @@ class LocalFileTarget(FileTarget):
     """
     A target output file that is generated on the host and does not need to be extracted
     """
-    def to_remote_path(self):
+    @property
+    def remote_path(self):
+        raise TypeError("LocalFileTarget does not have a corresponding remote path")
+
+    @property
+    def remote_paths(self):
         raise TypeError("LocalFileTarget does not have a corresponding remote path")
 
     def needs_extraction(self):
@@ -195,7 +229,19 @@ class Task(metaclass=TaskRegistry):
 
     @property
     def completed(self) -> bool:
+        """
+        Check whether the task has completed. This only notifies whether
+        the task is done, to check whether an error occurred, the :attr:`Task.failed`
+        should be used.
+        """
         return self._completed.is_set()
+
+    @property
+    def output_map(self) -> dict[str, Target]:
+        """
+        Shorthand to access outputs by key
+        """
+        return dict(self.outputs())
 
     def wait(self):
         """
@@ -217,7 +263,7 @@ class Task(metaclass=TaskRegistry):
         self.failed = ex
         self._completed.set()
 
-    def resources(self) -> typing.Generator[str, None, None]:
+    def resources(self) -> typing.Iterable["ResourceManager.ResourceRequest"]:
         """
         Produce a set of resources that are consumed by this task.
         Once the resources are available, they will be reserved and
@@ -226,7 +272,7 @@ class Task(metaclass=TaskRegistry):
         """
         yield from []
 
-    def dependencies(self) -> typing.Generator["Task", None, None]:
+    def dependencies(self) -> typing.Iterable["Task"]:
         """
         Produce the set of :class:`Task` objects that this task depends upon.
 
@@ -234,10 +280,13 @@ class Task(metaclass=TaskRegistry):
         """
         yield from []
 
-    def outputs(self) -> typing.Generator[Target, None, None]:
+    def outputs(self) -> typing.Iterable[tuple[str, Target]]:
         """
         Produce the set of :class:`Target` objects that describe the outputs that are produced
         by this task.
+        Each target must be associated to a unique name. The name is considered to be the public
+        interface for other tasks to fetch targets and outputs of this task.
+        The name/target pairs may be used to construct a dictionary to access the return values by key.
         """
         yield from []
 
@@ -263,7 +312,7 @@ class ExecutionTask(Task):
     """
     task_namespace = "exec"
 
-    def __init__(self, benchmark: "Benchmark", script: ScriptBuilder, task_config: Config = None):
+    def __init__(self, benchmark: "Benchmark", script: "ScriptBuilder", task_config: Config = None):
         super().__init__(task_config=task_config)
         assert self.task_namespace == "exec", "ExecutionTask convention mandates the 'exec' task namespace"
         #: Associated benchmark context
