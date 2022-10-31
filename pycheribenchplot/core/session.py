@@ -1,4 +1,4 @@
-import asyncio as aio
+import re
 import shutil
 import typing
 from collections import defaultdict, namedtuple
@@ -14,8 +14,7 @@ from .benchmark import Benchmark, BenchmarkExecMode, ExecTaskConfig
 from .config import (AnalysisConfig, Config, PipelineConfig, SessionRunConfig, TaskTargetConfig, TemplateConfigContext)
 from .instance import InstanceManager
 from .model import UUIDType
-from .perfetto import TraceProcessorCache
-from .task import TaskRegistry, TaskScheduler
+from .task import AnalysisTask, TaskRegistry, TaskScheduler
 from .util import new_logger
 
 SESSION_RUN_FILE = "session-run.json"
@@ -217,6 +216,11 @@ class PipelineSession:
 
         # Second pass, fill the matrix
         bench_matrix = pd.DataFrame(index=index, columns=instances.keys())
+        for index_name in bench_matrix.index.names:
+            if not re.fullmatch(r"[a-zA-Z0-9_]+", index_name):
+                self.logger.exception(
+                    "Benchmark parameter keys must be valid python property names, only [a-zA-Z0-9_] allowed")
+                raise ValueError("Invalid parameter key")
         BenchParams = namedtuple("BenchParams", bench_matrix.index.names)
         for benchmark_config in self.config.configurations:
             benchmark = Benchmark(self, benchmark_config)
@@ -321,12 +325,12 @@ class PipelineSession:
         """
         # session_analysis_mode = SessionAnalysisMode(mode)
         # Override the baseline ID if configured
-        if analysis_config.baseline_gid != self.baseline_g_uuid:
+        if (analysis_config.baseline_gid is not None and analysis_config.baseline_gid != self.baseline_g_uuid):
             self.baseline_g_uuid = analysis_config.baseline_gid
             try:
-                baseline_conf = self.benchmark_matrix[baseline].iloc[0].config
+                baseline_conf = self.benchmark_matrix[self.baseline_g_uuid].iloc[0].config
             except KeyError:
-                self.logger.error("Invalid baseline instance ID %s", analysis_config.baseline_gid)
+                self.logger.error("Invalid baseline instance ID %s", self.baseline_g_uuid)
                 raise
             self.logger.info("Using alternative baseline %s (%s)", baseline_conf.instance.name, self.baseline_g_uuid)
 
@@ -335,7 +339,7 @@ class PipelineSession:
             if task_klass is None:
                 self.logger.error("Invalid task name specification %s", handler.handler)
                 raise ValueError("Invalid task name")
-            if not issubclass(task_class, AnalysisTask):
+            if not issubclass(task_klass, AnalysisTask):
                 self.logger.error("Analysis process only supports scheduling of AnalysisTasks, found %s", task_klass)
                 raise TypeError("Invalid task type")
             task = task_klass(self, analysis_config, task_config=handler.task_options)

@@ -9,6 +9,7 @@ from queue import Queue
 from threading import Condition, Event, Lock, Semaphore, Thread
 
 import networkx as nx
+import pandas as pd
 
 from .config import AnalysisConfig, Config
 from .util import new_logger
@@ -56,6 +57,15 @@ class Target:
         When true, the target should be a subclass of :class:`FileTarget`
         """
         return False
+
+
+class DataFrameTarget(Target):
+    """
+    Target wrapping an output dataframe from a task.
+    """
+    def __init__(self, model: "DataModel", df: pd.DataFrame):
+        self.model = model
+        self.df = df
 
 
 class FileTarget(Target):
@@ -192,7 +202,7 @@ class Task(metaclass=TaskRegistry):
     task_config_class: typing.Type[Config] = None
 
     def __init__(self, task_config: Config = None):
-        assert self.task_name is not None, "Attempted to use task with uninitialized name"
+        assert self.task_name is not None, f"Attempted to use task with uninitialized name {self.__class__.__name__}"
         #: task-specific configuration options, if any
         self.config = task_config
         #: task logger
@@ -540,8 +550,10 @@ class TaskScheduler:
         #: Protected by the _worker_wakeup lock.
         self._active_tasks = []
         #: Failed tasks, this does not include tasks that were cancelled as a result of a failure.
-        #: Shares the _worker_wakeup lock.
+        #: Records failed tasks, shares the _worker_wakeup lock.
         self._failed_tasks = []
+        #: Records completed tasks by task_id, shares the _worker_wakup lock.
+        self._completed_tasks = {}
         # XXX should this share the lock with worker_wakeup?
         #: pending tasks count, protected by _pending_tasks_cv
         self._pending_tasks = 0
@@ -637,6 +649,8 @@ class TaskScheduler:
             # We have finished with the task, if we reach this point the task completed successfully
             # and its resources have been released
             task.notify_done()
+            with self._worker_lock:
+                self._completed_tasks[task.task_id] = task
             with self._pending_tasks_cv:
                 self._pending_tasks -= 1
                 self._pending_tasks_cv.notify_all()
@@ -658,6 +672,18 @@ class TaskScheduler:
         """
         with self._worker_lock:
             return list(self._failed_tasks)
+
+    @property
+    def completed_tasks(self) -> dict[str, Task]:
+        """
+        Maps task-id to completed tasks.
+        This is useful to retreive a specific task by ID although generally
+        it should not be used by the task pipeline as the task outputs from the task
+        instances issued as dependencies can be referenced directly.
+        Note that this will not include failed tasks.
+        """
+        with self._worker_lock:
+            return dict(self._completed_tasks)
 
     def add_task(self, task: Task):
         self.logger.debug("Schedule task %s", task.task_id)

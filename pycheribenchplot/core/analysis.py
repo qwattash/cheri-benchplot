@@ -1,82 +1,14 @@
 import typing
 from dataclasses import dataclass, field
+from pathlib import Path
 from uuid import UUID
 
+import pandas as pd
+
 from .benchmark import Benchmark
-from .config import AnalysisConfig, Config, DatasetName
-from .task import AnalysisTask
-
-
-class BenchmarkAnalysisRegistry(type):
-    analysis_steps = {}
-
-    def __init__(self, name, bases, kdict):
-        super().__init__(name, bases, kdict)
-        if self.name is None:
-            return
-        if self.name in BenchmarkAnalysisRegistry.analysis_steps:
-            raise ValueError(f"Duplicate analysis step {self.name}")
-        BenchmarkAnalysisRegistry.analysis_steps[self.name] = self
-
-    def __str__(self):
-        # From BenchmarkAnalysis base class
-        required = [r.value for r in self.require]
-        return f"{self.name}: {self.description} requires {required}"
-
-
-class BenchmarkAnalysis(metaclass=BenchmarkAnalysisRegistry):
-    """
-    Base class for analysis steps registered on a benchmark handler.
-    Each analysis generates one or more artifacts from one or more datasets
-    in the benchmark.
-    Each analysis handler is responsible for handling the presentation logic that
-    translates the dataframes from one or more datasets into dataframes suitable to
-    present certain features or relationships in the datasets.
-    This supports plotting and other forms of dataset manipulation by specialization.
-    Note that the dataframe manipulation logic may be shared between plot analysis and other
-    presentation methods.
-    """
-    # Required datasets to be present for this analysis step to work correctly
-    # The callable provides more granular filtering, it is passed the set of datasets loaded
-    # and the analysis configuration.
-    require: set[DatasetName] | typing.Callable = []
-    # Unique name of the analysis step, to be used to enable it in the configuration
-    name: str = None
-    # Description of the analysis step
-    description: str = None
-    #: Cross benchmark variant analysis step
-    cross_analysis: bool = False
-    #: Extra options from the analysis config are parsed with this configuration
-    analysis_options_class: Config = None
-
-    def __init__(self, benchmark: "Benchmark", config: Config, **kwargs):
-        """
-        Create a new benchmark analysis handler.
-
-        :param benchmark: The parent benchmark
-        :param config: The analysis options, the type is specified by :attribute:`analysis_options_class`
-        """
-        self.benchmark = benchmark
-        self.logger = benchmark.logger
-        self.config = config
-
-    @property
-    def analysis_config(self) -> AnalysisConfig:
-        return self.benchmark.session.analysis_config
-
-    def get_dataset(self, dset_id: DatasetName):
-        """Helper to access datasets in the benchmark"""
-        return self.benchmark.get_dataset(dset_id)
-
-    async def process_datasets(self):
-        """
-        Process the datasets to generate the intermediate data representation
-        used to produce the output artifacts.
-        """
-        pass
-
-    def __str__(self):
-        return self.name
+from .config import AnalysisConfig, Config
+from .model import DataModel
+from .task import AnalysisTask, DataFrameTarget, ExecutionTask
 
 
 class BenchmarkAnalysisTask(AnalysisTask):
@@ -87,8 +19,8 @@ class BenchmarkAnalysisTask(AnalysisTask):
     """
     task_namespace = "analysis.benchmark"
 
-    def __init__(self, benchmark: Benchmark, task_config: Config = None):
-        super().__init__(benchmark.session, task_config=task_config)
+    def __init__(self, benchmark: Benchmark, analysis_config: AnalysisConfig, task_config: Config = None):
+        super().__init__(benchmark.session, analysis_config, task_config=task_config)
         #: The associated benchmark context
         self.benchmark = benchmark
 
@@ -160,3 +92,121 @@ class ParamGroupAnalysisTask(AnalysisTask):
     @property
     def task_id(self):
         return f"{self.task_namespace}.{self.task_name}-{self.g_uuid}"
+
+
+class BenchmarkDataLoadTask(BenchmarkAnalysisTask):
+    """
+    General-purpose data loading and pre-processing task for benchmarks.
+
+    This task will load some data from a target of a benchmark exec task.
+    The load task needs to be pointed to the provider of the target, from which it
+    can extract the path information.
+    The data is loaded to a dataframe, according to a :class:`DataModel`.
+    The input data model must be specified so that the input data is validated and
+    the columns of interest are filtered.
+    This task generates a DataFrameTarget() that identifies the task result.
+    """
+    #: The exec task from which to fetch the target
+    exec_task: ExecutionTask = None
+    #: The name of the target file to load
+    target_key: str = None
+    #: Input data model
+    model: DataModel = None
+
+    def __init__(self, benchmark: Benchmark, analysis_config: AnalysisConfig, **kwargs):
+        super().__init__(benchmark, analysis_config, **kwargs)
+        self._df = []
+
+    def _parameter_index_columns(self):
+        if self.benchmark.config.parameters:
+            return list(self.benchmark.config.parameters.keys())
+        return []
+
+    def _output_df(self) -> pd.DataFrame:
+        """
+        Produce the output dataframe by joining all the iteration frames
+        """
+        if len(self._df) == 0:
+            # Bail because we can not concatenate and validate an empty frame
+            # We could support empty data but there is no use case for it now.
+            self.logger.error("No data has been loaded for %s", self)
+            raise ValueError("Loader did not find any data")
+        schema = self.model.to_schema(self.session)
+        df = pd.concat(self._df)
+        return schema.validate(df)
+
+    def _append_df(self, df: pd.DataFrame):
+        """
+        Add a given dataframe to the output dataframe.
+        This is used to combine multiple iterations of the same benchmark that
+        come from different files.
+        Here we also set the index columns based on the benchmark configuration.
+        """
+        if len(df) == 0:
+            self.logger.warning("Appending empty dataframe")
+            return
+
+        if "dataset_id" not in df.columns:
+            self.logger.debug("No dataset column, using default")
+            df["dataset_id"] = self.benchmark.uuid
+        if "dataset_gid" not in df.columns:
+            self.logger.debug("No dataset group, using default")
+            df["dataset_gid"] = self.benchmark.g_uuid
+        for pcol in self._parameter_index_columns():
+            if pcol in df.columns:
+                continue
+            param = self.benchmark.config.parameters[pcol]
+            self.logger.debug("No parameter %s column, generate from config %s=%s", pcol, pcol, param)
+            df[pcol] = param
+
+        # Now set the index based on the data model definition and proceed to validate
+        schema = self.model.to_schema(self.session)
+        df.set_index(schema.index.names, inplace=True)
+        valid_df = schema.validate(df)
+        self._df.append(df)
+
+    def _load_one_csv(self, path: Path) -> pd.DataFrame:
+        return pd.read_csv(path)
+
+    def _load_one_json(self, path: Path) -> pd.DataFrame:
+        return pd.io.json.read_json(path)
+
+    def _load_one(self, path: Path, iteration: int):
+        """
+        Load data from the given path. The format is inferred from the extension.
+        """
+        self.logger.debug("Loading data[i=%d] from %s", iteration, path)
+        if path.suffix == ".csv":
+            df = self._load_one_csv(path)
+        elif path.suffix == ".json":
+            df = self._load_one_json(path)
+        else:
+            self.logger.error(
+                "Can not determine how to load %s, add extesion or override BenchmarkDataLoadTask._load_one()", path)
+            raise RuntimeError("Can not ifer file type from extension")
+        df["iteration"] = iteration
+        self._append_df(df)
+
+    def run(self):
+        target_task = self.exec_task(self.benchmark, script=None)
+        target = target_task.output_map.get(self.target_key)
+        if target is None:
+            self.logger.error("%s can not load data from task %s, output key %s missing", self, target_task,
+                              self.target_key)
+            raise KeyError(f"{self.target_key} is not in task output_map")
+        if not target.is_file():
+            raise NotImplementedError("BenchmarkDataLoadTask only supports loading from files")
+        for i, path in enumerate(target.paths):
+            if not path.exists():
+                self.logger.error("Can not load %s, does not exist", path)
+                raise FileNotFoundError(f"{path} does not exist")
+            if not target.has_iteration_path:
+                i = -1
+            self._load_one(path, i)
+
+    def outputs(self):
+        """
+        Note that the target data will be valid only after the Task.completed
+        flag has been set.
+        """
+        yield "df", DataFrameTarget(self.model, self._output_df())
