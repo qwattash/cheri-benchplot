@@ -45,7 +45,7 @@ class ValidateStats(ParamGroupDataModel):
     count_std_sample: Series[float] = Field(alias=("count", "std", "sample"),
                                             approx_oneof=dict(sequence=[1, 1], distance=.2))
     count_std_delta: Series[float] = Field(alias=("count", "std", "delta"),
-                                           approx_oneof=dict(sequence=[1.4, 1.4], distance=.2))
+                                           approx_oneof=dict(sequence=[1.4, 1.4], distance=.5))
     count_std_ndelta: Series[float] = Field(alias=("count", "std", "norm_delta"),
                                             nullable=True,
                                             approx_oneof=dict(sequence=[np.nan, 1], distance=.2))
@@ -55,7 +55,7 @@ class ValidateStats(ParamGroupDataModel):
                                               approx_oneof=dict(sequence=[0, 90], distance=2))
     count_median_ndelta: Series[float] = Field(alias=("count", "median", "norm_delta"),
                                                nullable=True,
-                                               approx_oneof=dict(sequence=[0, 9], distance=.5))
+                                               approx_oneof=dict(sequence=[0, 9], distance=2))
     count_q25_sample: Series[float] = Field(alias=("count", "q25", "sample"))
     count_q25_delta: Series[float] = Field(alias=("count", "q25", "delta"))
     count_q25_ndelta: Series[float] = Field(alias=("count", "q25", "norm_delta"), nullable=True)

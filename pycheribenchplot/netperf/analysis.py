@@ -1,4 +1,4 @@
-from ..core.analysis import BenchmarkAnalysisTask
+from ..core.analysis import (BenchmarkDataLoadTask, BenchmarkStatsByParamGroupTask, StatsForAllParamSetsTask)
 
 # class NetperfSanityCheck(BenchmarkAnalysis):
 #     """
@@ -40,6 +40,8 @@ class NetperfStatsLoadTask(BenchmarDataLoadTask):
     """
     Netperf output data load and pre-processing
     """
+    task_namespace = "netperf"
+    task_name = "load"
     exec_task = NetperfExecTask
     target = "stats"
     model = NetperfInputModel
@@ -49,16 +51,29 @@ class NetperfStatsByParamGroup(BenchmarkStatsByParamGroupTask):
     """
     Generate netperf statistics by parameterization group, along the machine configuration axis.
     """
+    task_namespace = "netperf"
+    task_name = "stats-by-param-set"
     load_task = NetperfStatsLoadTask
     model = NetperfStatsModel
 
 
-class NetperfStatsParamAxis:
+class NetperfStatsParamTrend(StatsForAllParamSetsTask):
     """
     Generate netperf statistics showing the scaling of the netperf benchmark along the parameterization axis.
     """
-    pass
+    task_namespace = "netperf"
+    task_name = "merged-stats"
+    stats_task = NetperfStatsByParamGroup
+    model = NetperfStatsModel
 
 
-class NetperfStatsPipeline:
-    pass
+class NetperfStatsPipeline(AnalysisTask):
+    public = True
+    task_namespace = "netperf"
+    task_name = "stats-pipeline"
+
+    def dependencies(self):
+        pass
+
+    def run(self):
+        pass

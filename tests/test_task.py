@@ -1,6 +1,5 @@
 import time
-from collections import defaultdict
-from unittest.mock import ANY, PropertyMock, call
+from unittest.mock import ANY, call
 
 import pytest
 
@@ -261,14 +260,11 @@ def test_task_run_with_dependency_error(single_benchmark_config, fake_session_fa
     assert task.failed
 
 
-def test_task_registry(mocker):
+def test_task_registry(mock_task_registry):
     # Mock the task registry dictionaries
-    public_tasks = defaultdict(dict)
-    all_tasks = defaultdict(dict)
-    mock_public_tasks = mocker.patch("pycheribenchplot.core.task.TaskRegistry.public_tasks", new_callable=PropertyMock)
-    mock_public_tasks.return_value = public_tasks
-    mock_all_tasks = mocker.patch("pycheribenchplot.core.task.TaskRegistry.all_tasks", new_callable=PropertyMock)
-    mock_all_tasks.return_value = all_tasks
+    public_tasks, all_tasks = mock_task_registry
+    public_tasks.clear()
+    all_tasks.clear()
 
     class TaskA(Task):
         public = True
@@ -285,19 +281,22 @@ def test_task_registry(mocker):
     assert all_tasks == {"internal": {"fake-task-A": TaskA, "fake-task-B": TaskB}}
 
 
-def test_task_registry_duplicate(mocker):
-    # Mock the task registry dictionaries
-    mock_public_tasks = mocker.patch("pycheribenchplot.core.task.TaskRegistry.public_tasks",
-                                     new_callable=PropertyMock())
-    mock_all_tasks = mocker.patch("pycheribenchplot.core.task.TaskRegistry.all_tasks", new_callable=PropertyMock())
+def test_task_registry_duplicate(mock_task_registry):
+    public_tasks, all_tasks = mock_task_registry
 
     class ExistingTask(Task):
+        task_namespace = "test"
         task_name = "fake-dup-task"
 
-    mock_all_tasks.return_value = {"fake-dup-task": ExistingTask}
+    public_tasks.clear()
+    all_tasks.clear()
+    all_tasks["test"].update({"fake-dup-task": ExistingTask})
 
-    class TaskDup(Task):
-        task_name = "fake-dup-task"
+    with pytest.raises(ValueError):  # , match=r"[Dd]uplicate"):
+
+        class TaskDup(Task):
+            task_namespace = "test"
+            task_name = "fake-dup-task"
 
 
 @pytest.mark.timeout(5)

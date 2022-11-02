@@ -365,7 +365,6 @@ class BenchmarkStatsByParamGroupTask(ParamGroupAnalysisTask):
         return ["dataset_gid"] + self.session.parameter_keys
 
     def dependencies(self):
-        yield from super().dependencies()
         # Generate dependencies for our parameter set, this corresponds to a benchmark matrix row
         contexts = self.session.benchmark_matrix
         for key, value in self.parameters.items():
@@ -402,6 +401,43 @@ class BenchmarkStatsByParamGroupTask(ParamGroupAnalysisTask):
         agg_df = self._transform_aggregate(merged_df)
         delta_df = self._transform_delta(agg_df)
         self._df = delta_df
+
+    def outputs(self):
+        yield "df", DataFrameTarget(self.model, self._output_df())
+
+
+class StatsForAllParamSetsTask(AnalysisTask):
+    """
+    Generate statistics for each set of parameters in the benchmark matrix.
+    Merge the statistics in the output dataframe.
+    """
+    #: The task class to produce the statistics dataframe
+    stats_task: typing.Type[BenchmarkStatsByParamGroupTask] = None
+    #: Data model for the output dataframe
+    model: typing.Type[DataModel] = None
+
+    def __init__(self, session, analysis_config, **kwargs):
+        super().__init__(session, analysis_config, **kwargs)
+        #: The output dataframe, after the task is completed.
+        self._df = None
+
+    def _output_df(self) -> pd.DataFrame:
+        """
+        Produce the output dataframe
+        """
+        schema = self.model.to_schema(self.session)
+        return schema.validate(self._df)
+
+    def dependencies(self):
+        for param_set in self.session.benchmark_matrix.index:
+            params = dict(zip(self.session.parameter_keys, param_set))
+            yield self.stats_task(self.session, self.analysis_config, params)
+
+    def run(self):
+        to_merge = []
+        for stats_task in self.resolved_dependencies:
+            to_merge.append(stats_task.output_map["df"].df)
+        self._df = pd.concat(to_merge)
 
     def outputs(self):
         yield "df", DataFrameTarget(self.model, self._output_df())
