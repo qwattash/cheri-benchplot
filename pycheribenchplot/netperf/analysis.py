@@ -36,34 +36,29 @@ from ..core.analysis import BenchmarkAnalysisTask
 #                 self.logger.error("libstatcounters::statcounters_sample anomalous #calls %s", check)
 
 
-class BenchmarkDataLoadTask(BenchmarkAnalysisTask):
-    """
-    General-purpose data loading and pre-processing task for benchmarks.
-
-    This task will load some data from a target of a benchmark exec task.
-    The load task needs to be pointed to the provider of the target, from which it
-    can extract the path information.
-    The data is loaded to a dataframe, according to a :class:`DataModel`.
-    The input data model must be specified so that the input data is validated and
-    the columns of interest are filtered.
-    This task generates a DataFrameTarget() that identifies the task result.
-    """
-    #: The exec task from which to fetch the target
-    exec_task: ExecutionTask = None
-    #: The name of the target file to load
-    target: str = None
-    #: Input data model
-    model: DataModel = None
-
-    def run(self):
-        pass
-
-
 class NetperfStatsLoadTask(BenchmarDataLoadTask):
+    """
+    Netperf output data load and pre-processing
+    """
     exec_task = NetperfExecTask
     target = "stats"
     model = NetperfInputModel
 
 
-class NetperfStatsPipeline():
+class NetperfStatsByParamGroup(BenchmarkStatsByParamGroupTask):
+    """
+    Generate netperf statistics by parameterization group, along the machine configuration axis.
+    """
+    load_task = NetperfStatsLoadTask
+    model = NetperfStatsModel
+
+
+class NetperfStatsParamAxis:
+    """
+    Generate netperf statistics showing the scaling of the netperf benchmark along the parameterization axis.
+    """
+    pass
+
+
+class NetperfStatsPipeline:
     pass

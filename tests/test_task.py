@@ -4,7 +4,7 @@ from unittest.mock import ANY, PropertyMock, call
 
 import pytest
 
-from pycheribenchplot.core.task import ResourceManager, Task, TaskScheduler
+from pycheribenchplot.core.task import (ResourceManager, Target, Task, TaskScheduler)
 
 
 class FakeInvalidTask(Task):
@@ -141,6 +141,29 @@ class FakeTaskWithResource(Task):
     def run(self):
         self.deps_a_completed = self.a.completed
         self.resource_r_value = self.r.get()
+
+
+class FakeStatefulTarget(Target):
+    def __init__(self, value):
+        self.value = value
+
+
+class FakeTaskWithOutput(Task):
+    task_name = "fake-task-with-output"
+    task_id = "fake-task-with-output"
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.value = 0xdeadbeef
+
+    def run(self):
+        self.value = 0x12345
+
+    def outputs(self):
+        """
+        Simulate output content dependency on the run() result
+        """
+        yield "test-output", FakeStatefulTarget(self.value)
 
 
 def test_invalid_task_check():
@@ -310,3 +333,28 @@ def test_task_scheduler_rman_name_collision(fake_session):
     sched.register_resource(rman1)
     with pytest.raises(ValueError, match=r"already registered"):
         sched.register_resource(rman2)
+
+
+def test_clone_tasks_state(fake_session):
+    """
+    Clone tasks are tasks that have the same ID but are scheduled multiple times.
+    We assume that these are interchangeable so only one will be executed, however
+    the state and the results must propagate to its clone(s).
+    This is necessary because tasks that depend on the clone will want to access
+    its state and outputs. This is relevant only for output targets that are stateful,
+    for instance targets holding a dataframe reference.
+    """
+    sched = TaskScheduler(fake_session)
+    task = FakeTaskWithOutput()
+    clone = FakeTaskWithOutput()
+
+    sched.add_task(task)
+    sched.add_task(clone)
+    sched.run()
+
+    assert not sched.failed_tasks
+    assert len(sched.completed_tasks) == 1
+    assert task.completed
+    assert task.output_map["test-output"].value == 0x12345
+    assert clone.completed
+    assert clone.output_map["test-output"].value == 0x12345

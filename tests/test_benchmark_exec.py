@@ -9,7 +9,7 @@ from pycheribenchplot.core.task import ExecutionTask
 
 class FakeAuxExecTask(ExecutionTask):
     public = True
-    task_namespace = "test-aux"
+    task_name = "test-aux"
 
 
 @pytest.fixture

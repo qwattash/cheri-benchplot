@@ -7,6 +7,7 @@ import pytest
 from marshmallow import ValidationError
 
 from pycheribenchplot.core.config import *
+from pycheribenchplot.core.task import TaskRegistry
 
 
 def test_common_platform_options():
@@ -42,7 +43,7 @@ def test_platform_options():
 
     assert default.cores is None
     assert default.qemu_trace_file is None
-    assert default.qemu_trace is None
+    assert default.qemu_trace == "no"
     assert default.qemu_trace_categories is None
     assert default.vcu118_bios is None
     assert default.vcu118_ip is None
@@ -80,12 +81,14 @@ def test_instance_config():
         InstanceConfig.schema().load({})
 
 
-@pytest.mark.parametrize("dataset", [d.value for d in DatasetName])
-def test_dataset_config(dataset):
-    check = DatasetConfig.schema().load({"handler": dataset, "run_options": {"foo": "bar"}})
-    assert check.handler == DatasetName(dataset)
-    assert isinstance(check.run_options, dict)
-    assert check.run_options["foo"] == "bar"
+@pytest.mark.parametrize("task_name", [t.task_name for t in TaskRegistry.public_tasks["exec"].values()])
+def test_task_config(task_name):
+    check = TaskTargetConfig.schema().load({"handler": task_name, "task_options": {"foo": "bar"}})
+    assert check.handler == task_name
+    assert check.namespace is None
+    assert check.name == task_name
+    assert isinstance(check.task_options, dict)
+    assert check.task_options["foo"] == "bar"
 
 
 def test_pipeline_config_missing_benchmark():
@@ -104,7 +107,7 @@ def test_pipeline_config_missing_instance():
             "iterations": 1,
             "parameterize": {},
             "benchmark": {
-                "handler": "test-fake"
+                "handler": "test-benchmark"
             }
         }]
     }
@@ -125,7 +128,7 @@ def test_run_config_gen_without_parametrization(fake_pipeline):
             "iterations": 1,
             "parameterize": {},
             "benchmark": {
-                "handler": "test-fake"
+                "handler": "test-benchmark"
             }
         }]
     }
@@ -136,7 +139,7 @@ def test_run_config_gen_without_parametrization(fake_pipeline):
     conf0 = check.configurations[0]
     assert conf0.name == "test-valid"
     assert conf0.iterations == 1
-    assert conf0.benchmark.handler == DatasetName.TEST_FAKE
+    assert conf0.benchmark.handler == "test-benchmark"
     assert conf0.g_uuid is not None
     assert conf0.parameters == {}
     assert conf0.instance.kernel == "GENERIC-FAKE-TEST"
@@ -155,14 +158,14 @@ def test_run_config_gen_without_parametrization_fail(fake_pipeline):
             "iterations": 1,
             "parameterize": {},
             "benchmark": {
-                "handler": "test-fake"
+                "handler": "test-benchmark"
             }
         }, {
             "name": "test-valid2",
             "iterations": 1,
             "parameterize": {},
             "benchmark": {
-                "handler": "test-fake"
+                "handler": "test-benchmark"
             }
         }]
     }
@@ -185,8 +188,8 @@ def test_run_config_gen_single_parametrization(fake_pipeline):
                 "fakeparam": ["value0", "value1"]
             },
             "benchmark": {
-                "handler": "test-fake",
-                "run_options": {
+                "handler": "test-benchmark",
+                "task_options": {
                     "fake_arg": "{fakeparam}"
                 }
             }
@@ -199,8 +202,8 @@ def test_run_config_gen_single_parametrization(fake_pipeline):
     conf0 = check.configurations[0]
     assert conf0.name == "test-valid-{fakeparam}"
     assert conf0.iterations == 1
-    assert conf0.benchmark.handler == DatasetName.TEST_FAKE
-    assert conf0.benchmark.run_options["fake_arg"] == "{fakeparam}"
+    assert conf0.benchmark.handler == "test-benchmark"
+    assert conf0.benchmark.task_options["fake_arg"] == "{fakeparam}"
     assert conf0.g_uuid is not None
     assert conf0.parameters == {"fakeparam": "value0"}
     assert conf0.instance.kernel == "GENERIC-FAKE-TEST"
@@ -208,8 +211,8 @@ def test_run_config_gen_single_parametrization(fake_pipeline):
     conf1 = check.configurations[1]
     assert conf1.name == "test-valid-{fakeparam}"
     assert conf1.iterations == 1
-    assert conf1.benchmark.handler == DatasetName.TEST_FAKE
-    assert conf1.benchmark.run_options["fake_arg"] == "{fakeparam}"
+    assert conf1.benchmark.handler == "test-benchmark"
+    assert conf1.benchmark.task_options["fake_arg"] == "{fakeparam}"
     assert conf1.g_uuid is not None
     assert conf1.parameters == {"fakeparam": "value1"}
     assert conf1.instance.kernel == "GENERIC-FAKE-TEST"
@@ -231,8 +234,8 @@ def test_run_config_gen_multi_parametrization(fake_pipeline):
                 "fakeparam": ["value0"]
             },
             "benchmark": {
-                "handler": "test-fake",
-                "run_options": {
+                "handler": "test-benchmark",
+                "task_options": {
                     "fake_arg": "{fakeparam}"
                 }
             }
@@ -243,8 +246,8 @@ def test_run_config_gen_multi_parametrization(fake_pipeline):
                 "fakeparam": ["value1"]
             },
             "benchmark": {
-                "handler": "test-fake",
-                "run_options": {
+                "handler": "test-benchmark",
+                "task_options": {
                     "fake_arg": "{fakeparam}"
                 }
             }
@@ -257,8 +260,8 @@ def test_run_config_gen_multi_parametrization(fake_pipeline):
     conf0 = check.configurations[0]
     assert conf0.name == "test-first-{fakeparam}"
     assert conf0.iterations == 1
-    assert conf0.benchmark.handler == DatasetName.TEST_FAKE
-    assert conf0.benchmark.run_options["fake_arg"] == "{fakeparam}"
+    assert conf0.benchmark.handler == "test-benchmark"
+    assert conf0.benchmark.task_options["fake_arg"] == "{fakeparam}"
     assert conf0.g_uuid is not None
     assert conf0.parameters == {"fakeparam": "value0"}
     assert conf0.instance.kernel == "GENERIC-FAKE-TEST"
@@ -266,8 +269,8 @@ def test_run_config_gen_multi_parametrization(fake_pipeline):
     conf1 = check.configurations[1]
     assert conf1.name == "test-second-{fakeparam}"
     assert conf1.iterations == 1
-    assert conf1.benchmark.handler == DatasetName.TEST_FAKE
-    assert conf1.benchmark.run_options["fake_arg"] == "{fakeparam}"
+    assert conf1.benchmark.handler == "test-benchmark"
+    assert conf1.benchmark.task_options["fake_arg"] == "{fakeparam}"
     assert conf1.g_uuid is not None
     assert conf1.parameters == {"fakeparam": "value1"}
     assert conf1.instance.kernel == "GENERIC-FAKE-TEST"
@@ -289,8 +292,8 @@ def test_run_config_gen_multi_parametrization_mismatch(fake_pipeline):
                 "fakeparam": ["value0"]
             },
             "benchmark": {
-                "handler": "test-fake",
-                "run_options": {
+                "handler": "test-benchmark",
+                "task_options": {
                     "fake_arg": "{fakeparam}"
                 }
             }
@@ -301,8 +304,8 @@ def test_run_config_gen_multi_parametrization_mismatch(fake_pipeline):
                 "otherfakeparam": ["value1"]
             },
             "benchmark": {
-                "handler": "test-fake",
-                "run_options": {
+                "handler": "test-benchmark",
+                "task_options": {
                     "fake_arg": "{otherfakeparam}"
                 }
             }
@@ -327,8 +330,8 @@ def test_run_config_gen_multi_parametrization_missing(fake_pipeline):
                 "fakeparam": ["value0"]
             },
             "benchmark": {
-                "handler": "test-fake",
-                "run_options": {
+                "handler": "test-benchmark",
+                "task_options": {
                     "fake_arg": "{fakeparam}"
                 }
             }
@@ -337,7 +340,7 @@ def test_run_config_gen_multi_parametrization_missing(fake_pipeline):
             "iterations": 1,
             "parameterize": {},
             "benchmark": {
-                "handler": "test-fake"
+                "handler": "test-benchmark"
             }
         }]
     }

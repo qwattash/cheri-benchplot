@@ -27,7 +27,7 @@ class DummyModel(DataModel):
 
 
 class DummyLoadTask(BenchmarkDataLoadTask):
-    task_namespace = "test"
+    task_namespace = "test.analysis-load"
     task_name = "fake-load-task"
     exec_task = DummyExecTask
     target_key = "test-target"
@@ -85,6 +85,10 @@ def fake_analysis_session(session_config_with_param, fake_session_factory):
 
 
 def test_simple_load_task(csv_file_content, fake_analysis_session):
+    """
+    Test loading data from a simple CSV file.
+    This exercises the common dataframe load task with data validation.
+    """
     aconf = AnalysisConfig.schema().load({"handlers": [{"handler": "test.fake-analysis-dummy"}]})
     fake_analysis_session.analyse(aconf)
 
@@ -93,15 +97,11 @@ def test_simple_load_task(csv_file_content, fake_analysis_session):
     tasks = fake_analysis_session.scheduler.completed_tasks
 
     # benchmark UUID is appended for task ID, see conftest single_benchmark_config
-    expect_id = "test.fake-load-task-8bc941a3-f6d6-4d37-b193-4738f1da3dae"
+    expect_id = "test.analysis-load.fake-load-task-8bc941a3-f6d6-4d37-b193-4738f1da3dae"
     assert expect_id in tasks
     load_task = tasks[expect_id]
     target = load_task.output_map["df"]
     assert isinstance(target, DataFrameTarget)
-    assert target.df.index.names == ["dataset_id", "dataset_gid", "param_key", "number"]
+    assert target.df.index.names == ["dataset_id", "dataset_gid", "iteration", "param_key", "number"]
     assert (target.df.columns == ["name", "surname"]).all()
     assert len(target.df) == 4
-
-
-def test_simple_load_task_without_column_header(fake_analysis_session):
-    assert not fake_analysis_session.scheduler.failed_tasks

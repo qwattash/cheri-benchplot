@@ -26,15 +26,19 @@ class UUIDType(numpy_engine.Object):
         return series.map(lambda uid: uid if isinstance(uid, uuid.UUID) else uuid.UUID(uid))
 
 
-class DataModel(SchemaModel):
+class BaseDataModel(SchemaModel):
     """
     Empty base data model for all schemas.
-    The dataset_id and gid fields are added dynamically from the current session.
-    This is necessary until we find a nice way to automate the hooking to add dynamic fields.
+    This does not assume the presence of any of the dynamic ID fields but provides the
+    infrastructure to add dynamic fields based on a session.
     """
-    dataset_id: Index[UUIDType] = Field(nullable=False, title="benchmark run ID")
-    dataset_gid: Index[UUIDType] = Field(nullable=False, title="platform ID")
-    # Extra dynamic param indexes are generated from the configuration after this field
+    @classmethod
+    def dynamic_index_position(cls) -> str:
+        """
+        Return the name of the index level after which we insert the dynamically
+        generated parameter key index fields from the session.
+        """
+        raise NotImplementedError("Must override")
 
     @classmethod
     def to_schema(cls, session: "PipelineSession" = None):
@@ -64,8 +68,8 @@ class DataModel(SchemaModel):
                                               title=param,
                                               description=f"Benchmark parameter {param}")
         s = s.add_columns(extra_columns).reset_index()
-        # Create new index in the following order [dataset_id, dataset_gid, <param_index_fields>, <other_index_fields>]
-        offset = index_names.index("dataset_gid") + 1
+        # Create new index in the following order [<index_up_to_dynamic_position>, <param_index_fields>, <other_index_fields>]
+        offset = index_names.index(cls.dynamic_index_position()) + 1
         index_names[offset:offset] = extra_columns.keys()
         return s.set_index(index_names)
 
@@ -74,6 +78,37 @@ class DataModel(SchemaModel):
         strict = "filter"
         # Coerce data types
         coerce = True
+
+
+class DataModel(BaseDataModel):
+    """
+    Base class for data models for input data.
+    Input data is generally loaded and assembled from the benchmark output files.
+    We will should always have the full IDs here.
+    """
+    dataset_id: Index[UUIDType] = Field(nullable=False, title="benchmark run ID")
+    dataset_gid: Index[UUIDType] = Field(nullable=False, title="platform ID")
+    # The iteration number may be null if there is no iteration associated to the data, meaning
+    # that it is collected for the whole set of iterations of the benchmark.
+    iteration: Index[int] = Field(nullable=True, title="Iteration number")
+
+    @classmethod
+    def dynamic_index_position(cls):
+        return "iteration"
+
+
+class ParamGroupDataModel(BaseDataModel):
+    """
+    Base class for groups of statistics by parameter group.
+    These will be a result of aggregation along the iteration or other custom axes.
+    """
+    # Note: Need the check_name=True because otherwise the single-level index will not
+    # have a name associated to it. This does not happen for multi-indexes
+    dataset_gid: Index[UUIDType] = Field(nullable=False, title="platform ID", check_name=True)
+
+    @classmethod
+    def dynamic_index_position(cls):
+        return "dataset_gid"
 
 
 def _resolve_validator(type_target: typing.Type, value: typing.Any) -> typing.Type[DataModel] | None:

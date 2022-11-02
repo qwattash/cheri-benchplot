@@ -191,6 +191,9 @@ class Task(metaclass=TaskRegistry):
     This can be a task to run a benchmark or perform an analysis step.
     Tasks in the pipeline have determined inputs and outputs that are derived from the session that
     creates the tasks.
+    Tasks start as individual entities. When scheduled, if multiple tasks have the same ID, one task instance will be elected as the main task, the others will be attached to it as drones.
+    The drones will share the task state with the main task instance to maintain consistency
+    when producing stateful task outputs. This is a relatively strange dynamic Borg pattern.
     """
     #: Mark the task as a top-level target
     public = False
@@ -252,6 +255,19 @@ class Task(metaclass=TaskRegistry):
         Shorthand to access outputs by key
         """
         return dict(self.outputs())
+
+    def add_drone(self, other: "Task"):
+        """
+        Register a 'clone' task for this task.
+        Drone tasks will share the state of the main task, this includes the completed/failed state and any internal state required for the generation of outputs.
+        It is the responsiblity of subclasses to ensure that the proper bits of state
+        are shared.
+        Note that when this happens it is critical that there are no threads waiting
+        on the task.completed event, otherwise they will never be notified.
+        """
+        assert self.task_id == other.task_id
+        assert type(self) == type(other)
+        other.__dict__ = self.__dict__
 
     def wait(self):
         """
@@ -532,7 +548,7 @@ class TaskScheduler:
         """
         #: parent session
         self.session = session
-        #: task graph
+        #: task graph, nodes are Task.task_id, each node has the attribute task, containing the task instance to run.
         self._task_graph = nx.DiGraph()
         #: scheduler logger
         self.logger = new_logger("task-scheduler", self.session.logger)
@@ -628,7 +644,8 @@ class TaskScheduler:
         self.logger.debug("worker[%d] received task: %s", worker_index, task)
         try:
             # Wait for all dependencies to be done
-            for dep in self._task_graph.successors(task):
+            for dep_id in self._task_graph.successors(task.task_id):
+                dep = self._task_graph.nodes[dep_id]["task"]
                 dep.wait()
                 assert dep.completed, f"Dependency wait() returned but task is not completed {dep}"
                 # If a dependency failed, we need to do some scheduling changes, the exception triggers it
@@ -687,16 +704,17 @@ class TaskScheduler:
 
     def add_task(self, task: Task):
         self.logger.debug("Schedule task %s", task.task_id)
-        if task in self._task_graph:
+        if task.task_id in self._task_graph:
             # Assume that we can not have tasks with duplicate IDs
             # If a task is already scheduled just skip this, duplicate
             # dependencies are allowed.
+            self._task_graph.nodes[task.task_id]["task"].add_drone(task)
             return
-        self._task_graph.add_node(task)
+        self._task_graph.add_node(task.task_id, task=task)
         for dep in task.dependencies():
             task.resolved_dependencies.add(dep)
             self.add_task(dep)
-            self._task_graph.add_edge(task, dep)
+            self._task_graph.add_edge(task.task_id, dep.task_id)
 
     def resolve_schedule(self):
         """
@@ -705,15 +723,16 @@ class TaskScheduler:
         """
         try:
             if self.session.config.reuse_instances:
-                sched = nx.lexicographical_topological_sort(self._task_graph, key=lambda t: t.g_uuid)
+                sched = nx.lexicographical_topological_sort(self._task_graph,
+                                                            key=lambda t: self._task_graph[t]["task"].g_uuid)
             else:
                 sched = nx.topological_sort(self._task_graph)
-            run_sched = list(reversed(list(sched)))
+            run_sched = [self._task_graph.nodes[t]["task"] for t in reversed(list(sched))]
             self.logger.debug("Resolved benchmark schedule %s", run_sched)
             return run_sched
         except nx.NetworkXUnfeasible:
             for cycle in nx.simple_cycles(self._task_graph):
-                cycle_str = [str(c) for c in cycle]
+                cycle_str = [str(self._task_graph.nodes[c]["task"]) for c in cycle]
                 self.logger.error("Impossible task schedule: cyclic dependency %s", cycle_str)
             raise RuntimeError("Impossible to create a task schedule")
 

@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from fixtures.task_helpers import mock_task_registry
 
 from pycheribenchplot.core.benchmark import Benchmark
 from pycheribenchplot.core.config import (AnalysisConfig, BenchmarkRunConfig, BenchplotUserConfig, SessionRunConfig)
@@ -139,6 +140,52 @@ def multi_benchmark_config(empty_session_config):
         "instance": {
             "kernel": "selftest-kernel",
             "baseline": True,
+            "name": "selftest-instance",
+            "cheribuild_kernel": False
+        }
+    })
+    return conf
+
+
+@pytest.fixture
+def fullmatrix_benchmark_config(multi_benchmark_config):
+    """
+    Produces a session configuration with a 2x2 benchmark matrix.
+    This will have 2 parameterized runs for each of the 2 machine configurations ID.
+    """
+    conf = copy.deepcopy(multi_benchmark_config)
+    conf["configurations"].append({
+        "name": "selftest0",
+        "iterations": 2,
+        "parameters": {
+            "param0": "param0-value0"
+        },
+        "benchmark": {
+            "handler": "test-benchmark"
+        },
+        "uuid": "05a4ca0d-c659-4f40-bb18-6f8ead5d2ec3",
+        "g_uuid": "4995a8b2-4852-4310-9b34-26cbd28494f0",
+        "instance": {
+            "kernel": "selftest-kernel",
+            "baseline": False,
+            "name": "selftest-instance",
+            "cheribuild_kernel": False
+        }
+    })
+    conf["configurations"].append({
+        "name": "selftest0",
+        "iterations": 2,
+        "parameters": {
+            "param0": "param0-value1"
+        },
+        "benchmark": {
+            "handler": "test-benchmark"
+        },
+        "uuid": "f011e12b-75ef-4174-ba38-2795c2ca1e30",
+        "g_uuid": "4995a8b2-4852-4310-9b34-26cbd28494f0",
+        "instance": {
+            "kernel": "selftest-kernel",
+            "baseline": False,
             "name": "selftest-instance",
             "cheribuild_kernel": False
         }

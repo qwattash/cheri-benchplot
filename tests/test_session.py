@@ -240,7 +240,7 @@ def test_session_exec_same_instance(mocker, multi_benchmark_config, fake_session
     session.run()
 
     # Check that the instance_manager.acquire() was called once for each benchmark
-    print(mock_manager.mock_calls)
+    # TODO
 
 
 def test_session_exec_two_instances(mocker, multi_benchmark_config, fake_session_factory):
@@ -254,3 +254,4 @@ def test_session_exec_two_instances(mocker, multi_benchmark_config, fake_session
     session = fake_session_factory(conf)
 
     session.run()
+    # TODO

@@ -33,6 +33,10 @@ class SessionAnalysisMode(Enum):
     INTERACTIVE_XMERGE = "interactive-xmerge"
 
 
+#: Constant name to mark the benchmark matrix index as unparameterized
+UNPARAMETERIZED_INDEX_NAME = "RESERVED__unparameterized_index"
+
+
 class PipelineSession:
     """
     Represent a benchmarking session.
@@ -212,7 +216,7 @@ class PipelineSession:
         else:
             # If there is no parameterization, just use a flat index, there will be only
             # one row in the benchmark matrix.
-            index = pd.Index([0], name="RESERVED__unparameterized_index")
+            index = pd.Index([0], name=UNPARAMETERIZED_INDEX_NAME)
 
         # Second pass, fill the matrix
         bench_matrix = pd.DataFrame(index=index, columns=instances.keys())
@@ -263,6 +267,17 @@ class PipelineSession:
     @property
     def user_config(self):
         return self.manager.user_config
+
+    @property
+    def parameter_keys(self) -> list[str]:
+        """
+        The set of parameter keys that index the rows of the benchmark matrix.
+        """
+        names = self.benchmark_matrix.index.names
+        if len(names) == 1 and names[0] == UNPARAMETERIZED_INDEX_NAME:
+            return []
+        else:
+            return list(names)
 
     def get_data_root_path(self) -> Path:
         """

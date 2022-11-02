@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import UUID
 
+import numpy as np
 import pandas as pd
 
 from .benchmark import Benchmark
@@ -84,14 +85,21 @@ class ParamGroupAnalysisTask(AnalysisTask):
     """
     task_namespace = "analysis.pgroup"
 
-    def __init__(self, session: "PipelineSession", analysis_config: AnalysisConfig, task_config: Config = None):
+    def __init__(self,
+                 session: "PipelineSession",
+                 analysis_config: AnalysisConfig,
+                 parameters: dict[str, any],
+                 task_config: Config = None):
         super().__init__(session, analysis_config, task_config=task_config)
         #: The baseline group uuid
-        self.baseline = analysis_config.baseline_g_uuid
+        self.baseline = session.baseline_g_uuid
+        #: The set of parameters identifying the target benchmark matrix row
+        self.parameters = parameters
 
     @property
     def task_id(self):
-        return f"{self.task_namespace}.{self.task_name}-{self.g_uuid}"
+        parameter_set = ":".join([f"{key}={value}" for key, value in self.parameters.items()])
+        return f"{self.task_namespace}.{self.task_name}-{parameter_set}"
 
 
 class BenchmarkDataLoadTask(BenchmarkAnalysisTask):
@@ -107,11 +115,11 @@ class BenchmarkDataLoadTask(BenchmarkAnalysisTask):
     This task generates a DataFrameTarget() that identifies the task result.
     """
     #: The exec task from which to fetch the target
-    exec_task: ExecutionTask = None
+    exec_task: typing.Type[ExecutionTask] = None
     #: The name of the target file to load
     target_key: str = None
     #: Input data model
-    model: DataModel = None
+    model: typing.Type[DataModel] = None
 
     def __init__(self, benchmark: Benchmark, analysis_config: AnalysisConfig, **kwargs):
         super().__init__(benchmark, analysis_config, **kwargs)
@@ -209,4 +217,191 @@ class BenchmarkDataLoadTask(BenchmarkAnalysisTask):
         Note that the target data will be valid only after the Task.completed
         flag has been set.
         """
+        yield "df", DataFrameTarget(self.model, self._output_df())
+
+
+class BenchmarkStatsByParamGroupTask(ParamGroupAnalysisTask):
+    """
+    Base task that computes statistics for a group of benchmarks with the same parameter keys.
+    This will produce a dataframe with different benchmark runs and machine g_uuids in the index, with the same parameterization values.
+    This task depends on the load tasks for all benchmarks with a given set of parameter keys.
+    We merge the output of various load tasks into a single dataframe which is used to generate the aggregated output.
+    The output dataframe should conform to the DataModel for this task.
+    """
+    #: The load task to use for loading dependencies
+    load_task: typing.Type[BenchmarkDataLoadTask] = None
+    #: The output data model
+    model: typing.Type[DataModel] = None
+
+    def __init__(self, session, analysis_config, parameters, **kwargs):
+        super().__init__(session, analysis_config, parameters, **kwargs)
+        self._df = None
+
+    def _make_load_depend(self, benchmark: Benchmark):
+        return self.load_task(benchmark, self.analysis_config)
+
+    def _output_df(self) -> pd.DataFrame:
+        """
+        Produce the output dataframe and validate it with the given model
+        """
+        if len(self._df) == 0:
+            # Bail it is weird to have an empty dataframe
+            self.logger.error("Empty stats dataframe")
+            raise RuntimeError("Empty stats dataframe")
+        schema = self.model.to_schema(self.session)
+        return schema.validate(self._df)
+
+    def _transform_merged(self, mdf: pd.DataFrame) -> pd.DataFrame:
+        """
+        Hook to perform transformations on the merged dataframe before aggregation.
+        """
+        return mdf
+
+    # Add I/O checks for base models?
+    def _transform_aggregate(self, mdf: pd.DataFrame) -> pd.DataFrame:
+        """
+        Hook to perform aggregation on the merged dataframe.
+        This should produce an extra column index level which will become the "aggregate" level.
+        """
+
+        # Setup aggregation functions map, note that function names will become names in the
+        # 'aggregate' index level.
+        def q25(v):
+            return np.quantile(v, q=0.25)
+
+        def q75(v):
+            return np.quantile(v, q=0.75)
+
+        agg_list = ["mean", "median", "std", q25, q75]
+        agg_strategy = {c: agg_list for c in mdf.columns}
+
+        # Group and aggregate
+        grouped = mdf.groupby(self.group_keys)
+        agg_df = grouped.aggregate(agg_strategy)
+        agg_df.columns.set_names("aggregate", level=-1, inplace=True)
+        return agg_df
+
+    def _transform_delta_normal(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Compute deltas with uncertainty propagation assuming a normal distribution
+        """
+        baseline_xs = df.xs(self.baseline, level="dataset_gid")
+        # replicate the baseline to align it to each of the other datasets
+        _, baseline_align = df.align(baseline_xs, axis=0)
+        meanslice = (slice(None), "mean")
+        stdslice = (slice(None), "std")
+        delta = df.loc[:, meanslice] - baseline_align.loc[:, meanslice]
+        std_delta = (df.loc[:, stdslice]**2 + baseline_align.loc[:, stdslice]**2)**0.5
+        norm_delta = delta / baseline_align.loc[:, meanslice]
+        # Approximated by taylor expansion as standard deviation for f(x,y) = x / y
+        # If proof needed see https://www.stat.cmu.edu/~hseltman/files/ratio.pdf
+        x = std_delta / delta.values
+        y = baseline_align.loc[:, stdslice] / baseline_align.loc[:, meanslice].values
+        std_norm_delta = norm_delta.abs().values * ((x**2 + y**2)**0.5)
+        out_df = pd.concat([delta, std_delta, norm_delta, std_norm_delta],
+                           keys=["delta", "delta", "norm_delta", "norm_delta"],
+                           names=["delta"],
+                           axis=1)
+        return out_df.reorder_levels(["metric", "aggregate", "delta"], axis=1)
+
+    def _transform_delta_skewed(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Compute deltas with uncertainty propagation assuming a skewed distribution.
+        Note this is more shaky in theory, we subtract directly the quartile values
+        so that we get an estimation of the worst case scenario, where a value in the
+        lower quartile gets subtracted a value from the high quartile (and reverse).
+        This likely overestimates the uncertainty.
+        XXX probably want to replace this with something like this
+        https://iopscience.iop.org/article/10.1088/1681-7575/ab2a8d/pdf
+        new_err_hi = data_err_hi + bs_err_lo
+        new_err_lo = data_err_lo + bs_err_hi
+        """
+        baseline_xs = df.xs(self.baseline, level="dataset_gid")
+        # replicate the baseline to align it to each of the other datasets
+        _, baseline_align = df.align(baseline_xs, axis=0)
+        medianslice = (slice(None), "median")
+        q75slice = (slice(None), "q75")
+        q25slice = (slice(None), "q25")
+
+        # Median delta
+        delta = df.loc[:, medianslice] - baseline_align.loc[:, medianslice]
+        norm_delta = delta / baseline_align.loc[:, medianslice]
+        # Estimated quartiles propagation
+        delta_q25 = df.loc[:, q25slice] - baseline_align.loc[:, q75slice].values
+        delta_q75 = df.loc[:, q75slice] - baseline_align.loc[:, q25slice].values
+        norm_delta_q25 = delta_q25 / baseline_align.loc[:, q75slice].values
+        norm_delta_q75 = delta_q75 / baseline_align.loc[:, q25slice].values
+
+        out_df = pd.concat([delta, delta_q25, delta_q75, norm_delta, norm_delta_q25, norm_delta_q75],
+                           keys=["delta", "delta", "delta", "norm_delta", "norm_delta", "norm_delta"],
+                           names=["delta"],
+                           axis=1)
+        return out_df.reorder_levels(["metric", "aggregate", "delta"], axis=1)
+
+    # Add I/O checks for base models?
+    def _transform_delta(self, adf: pd.DataFrame) -> pd.DataFrame:
+        """
+        Hook to compute statistics delta on the merged dataframe.
+        This should produce an extra column index level which will become the "delta" level.
+        """
+        # We rely on the column index ordering here, so double check it first
+        assert adf.columns.names == ["metric", "aggregate"]
+
+        delta_normal = self._transform_delta_normal(adf)
+        delta_skewed = self._transform_delta_skewed(adf)
+        # Add the delta level also to the absolute values of the stats data
+        base_stats_df = pd.concat([adf], keys=["sample"], names=["delta"],
+                                  axis=1).reorder_levels(["metric", "aggregate", "delta"], axis=1)
+        # Join together all the delta columns with the original data columns
+        stats_df = pd.concat([base_stats_df, delta_normal, delta_skewed], axis=1)
+        return stats_df
+
+    @property
+    def group_keys(self) -> list[str]:
+        """
+        The list of keys to group by for statistics aggregation.
+        By default group by machine configuration ID and parameter keys, so we aggregate along the iterations axis.
+        """
+        return ["dataset_gid"] + self.session.parameter_keys
+
+    def dependencies(self):
+        yield from super().dependencies()
+        # Generate dependencies for our parameter set, this corresponds to a benchmark matrix row
+        contexts = self.session.benchmark_matrix
+        for key, value in self.parameters.items():
+            contexts = contexts.xs(value, level=key)
+        if len(contexts) != 1:
+            self.logger.error(
+                "Unexpected set of benchmarks resolved: %s. A single benchmark matrix row should be selected by %s",
+                contexts.index, self.parameters)
+            raise RuntimeError("Invalid benchmark parameters set")
+        for ctx in contexts.to_numpy().ravel():
+            yield self._make_load_depend(ctx)
+
+    def run(self):
+        """
+        This task merges all load dependencies output into a single dataframe.
+        Subclasses get a chance to transform the merged data before aggregation via
+        :meth:`BenchmarkStatsByParamSetTask._transform_merged`.
+        The merged dataframe is then aggregated using the declared set of aggregation
+        functions.
+        This will produce one additional column index level which is named 'aggregate'.
+        The original column index level name is changed to 'metric'.
+
+        The final dataframe will have the following properties:
+        The column index has 3 levels: ["metric", "aggregate", "delta"]
+        The row index will have a varying set of levels, depending on the aggregation group keys.
+        """
+        to_merge = []
+        for loader in self.resolved_dependencies:
+            to_merge.append(loader.output_map["df"].df)
+        merged_df = pd.concat(to_merge)
+        merged_df = self.load_task.model.to_schema(self.session).validate(merged_df)
+        merged_df.columns.name = "metric"
+        merged_df = self._transform_merged(merged_df)
+        agg_df = self._transform_aggregate(merged_df)
+        delta_df = self._transform_delta(agg_df)
+        self._df = delta_df
+
+    def outputs(self):
         yield "df", DataFrameTarget(self.model, self._output_df())
