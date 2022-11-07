@@ -160,6 +160,11 @@ def main():
             traceback.print_exception(ex)
             exit(1)
 
+    if args.workers:
+        # The argument takes precedence over everything
+        user_config.concurrent_workers = args.workers
+
+    # Adjust log level
     if user_config.verbose:
         logger.setLevel(logging.DEBUG)
 
