@@ -14,6 +14,10 @@ if [ "$1" = "-h" ]; then
     exit 0
 fi
 
+echo "Installing git hooks"
+ln -s ../../git-hooks/pre-commit .git/hooks/pre-commit
+ln -s ../../git-hooks/pre-push .git/hooks/pre-push
+
 echo "Create virtualenv at $TARGET_DIR with $WHICH_PYTHON"
 
 virtualenv --python $WHICH_PYTHON $TARGET_DIR
