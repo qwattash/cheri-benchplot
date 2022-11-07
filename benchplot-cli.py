@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
-import logging
 import argparse as ap
+import logging
 import traceback
 import uuid
 from json.decoder import JSONDecodeError
@@ -9,18 +9,20 @@ from pathlib import Path
 
 from marshmallow.exceptions import ValidationError
 
-from pycheribenchplot.core.config import PipelineConfig, BenchplotUserConfig, AnalysisConfig, TaskTargetConfig
+from pycheribenchplot.core.config import (AnalysisConfig, BenchplotUserConfig, PipelineConfig, TaskTargetConfig)
 from pycheribenchplot.core.session import Session
 from pycheribenchplot.core.util import setup_logging
 
 # Global logger from the logging setup
 logger = None
 
+
 def add_session_spec_options(parser):
     """
     Helper to add options to identify a session
     """
     session_name = parser.add_argument("session_path", type=Path, help="Path or name of the target session")
+
 
 def resolve_session(user_config, session_path):
     session = Session.from_path(user_config, session_path)
@@ -29,11 +31,13 @@ def resolve_session(user_config, session_path):
         exit(1)
     return session
 
+
 def list_session(session):
     configurations = session.config.configurations
     print(f"Session {session.config.name} ({session.config.uuid}):")
     for c in session.config.configurations:
         print("\t", c)
+
 
 def list_tasks(session):
     """
@@ -69,6 +73,8 @@ def handle_command(user_config: BenchplotUserConfig, args):
         session.run("shellgen" if args.shellgen_only else "full")
     elif args.command == "analyse":
         session = resolve_session(user_config, args.session_path)
+        if args.clean:
+            session.clean_analysis()
         if args.analysis_config:
             analysis_config = AnalysisConfig.load_json(args.analysis_config)
         else:
@@ -95,12 +101,20 @@ def handle_command(user_config: BenchplotUserConfig, args):
         parser.print_help()
         exit(1)
 
+
 def main():
     parser = ap.ArgumentParser(description="Benchmark run and plot tool")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     parser.add_argument("-l", "--logfile", type=Path, help="logfile", default=None)
-    parser.add_argument("-w", "--workers", type=int, help="Override max number of workers from configuration file", default=None)
-    parser.add_argument("-c", "--config", type=Path, help="User environment configuration file",
+    parser.add_argument("-w",
+                        "--workers",
+                        type=int,
+                        help="Override max number of workers from configuration file",
+                        default=None)
+    parser.add_argument("-c",
+                        "--config",
+                        type=Path,
+                        help="User environment configuration file",
                         default=Path("~/.config/cheri-benchplot.json").expanduser())
     sub = parser.add_subparsers(help="command", dest="command")
 
@@ -111,22 +125,27 @@ def main():
 
     sub_run = sub.add_parser("run", help="run benchmarks in configuration")
     add_session_spec_options(sub_run)
-    sub_run.add_argument("--shellgen-only", action="store_true",
+    sub_run.add_argument("--shellgen-only",
+                         action="store_true",
                          help="Only perform shell script generation and stop before running any instance")
 
     sub_analyse = sub.add_parser("analyse", help="process benchmarks and generate plots")
     add_session_spec_options(sub_analyse)
-    sub_analyse.add_argument("-a", "--analysis-config", type=Path, help="Analysis configuration file",
-                             default=None)
-    sub_analyse.add_argument("-t", "--task", type=str, nargs="+", help="Task names to run for the analysis. This is a convenience shorthand for the full analysis configuration")
+    sub_analyse.add_argument("-a", "--analysis-config", type=Path, help="Analysis configuration file", default=None)
+    sub_analyse.add_argument(
+        "-t",
+        "--task",
+        type=str,
+        nargs="+",
+        help="Task names to run for the analysis. This is a convenience shorthand for the full analysis configuration")
+    sub_analyse.add_argument("--clean", type=bool, action="store_true", help="Wipe analysis outputs before running")
 
     sub_clean = sub.add_parser("clean", help="clean output directory")
     add_session_spec_options(sub_clean)
 
     sub_list = sub.add_parser("show", help="Show session contents and other information")
     sub_list.add_argument("what", choices=["info", "tasks"], help="What to show")
-    sub_list.add_argument("session_path", type=Path, help="Path of the target session",
-                          nargs='?')
+    sub_list.add_argument("session_path", type=Path, help="Path of the target session", nargs='?')
 
     sub_bundle = sub.add_parser("bundle", help="create a session archive")
     sub_bundle.add_argument("session_path", type=Path, help="Path of the target session")
@@ -167,6 +186,7 @@ def main():
         if args.verbose:
             traceback.print_exception(ex)
         exit(1)
+
 
 if __name__ == "__main__":
     main()

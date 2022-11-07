@@ -346,18 +346,29 @@ class Session:
         """
         return self.session_root_path / "assets"
 
-    def clean(self):
+    def clean_all(self):
         """
-        Clean all output files for a session and ensure that the
-        directory hierarchy for the output data is created.
-        This will also clean the raw data and cache files.
+        Clean all output files, including benchmark data.
         """
         data_root = self.get_data_root_path()
+        plot_root = self.get_plot_root_path()
         asset_root = self.get_asset_root_path()
         if data_root.exists():
             shutil.rmtree(data_root)
+        if plot_root.exists():
+            shutil.rmtree(plot_root)
         if asset_root.exists():
             shutil.rmtree(asset_root)
+        self._ensure_dir_tree()
+
+    def clean_analysis(self):
+        """
+        Clean all output analysis files.
+        This retains the benchmark run data and assets.
+        """
+        plot_root = self.get_plot_root_path()
+        if plot_root.exists():
+            shutil.rmtree(plot_root)
         self._ensure_dir_tree()
 
     def run(self, mode: str = "full"):
@@ -367,7 +378,7 @@ class Session:
         :param mode: Alternate run mode for partial or pretend runs.
         """
         # Cleanup previous run, to avoid any confusion
-        self.clean()
+        self.clean_all()
 
         exec_config = ExecTaskConfig(mode=BenchmarkExecMode(mode))
         instance_manager = InstanceManager(self)
