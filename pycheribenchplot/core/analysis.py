@@ -5,11 +5,12 @@ from uuid import UUID
 
 import numpy as np
 import pandas as pd
+from pandera import Field
 
 from .benchmark import Benchmark
 from .config import AnalysisConfig, Config
 from .model import DataModel
-from .task import AnalysisTask, DataFrameTarget, ExecutionTask
+from .task import AnalysisTask, DataFrameTarget, ExecutionTask, PlotTarget
 
 
 class BenchmarkAnalysisTask(AnalysisTask):
@@ -102,6 +103,24 @@ class ParamGroupAnalysisTask(AnalysisTask):
         return f"{self.task_namespace}.{self.task_name}-{parameter_set}"
 
 
+class PlotTask(AnalysisTask):
+    """
+    Base class for plotting tasks.
+    Plot tasks generate one or more plots from some analysis task data.
+    These are generally the public-facing tasks that are selected in the analysis
+    configuration.
+    Each plot task is responsible for setting up a figure and axes.
+    Note that the ID of the task is generated assuming that there is only one plot per session.
+    """
+    task_namespace = "analysis.plot"
+
+    def __init__(self, session: "PipelineSession", analysis_config: AnalysisConfig, task_config: Config = None):
+        super().__init__(session, analysis_config, task_config=task_config)
+
+    def _plot_output(self, suffix: str) -> PlotTarget:
+        return PlotTarget(self.session.get_plot_root_path() / f"{self.task_id}-{suffix}.pdf")
+
+
 class BenchmarkDataLoadTask(BenchmarkAnalysisTask):
     """
     General-purpose data loading and pre-processing task for benchmarks.
@@ -173,11 +192,11 @@ class BenchmarkDataLoadTask(BenchmarkAnalysisTask):
         valid_df = schema.validate(df)
         self._df.append(df)
 
-    def _load_one_csv(self, path: Path) -> pd.DataFrame:
-        return pd.read_csv(path)
+    def _load_one_csv(self, path: Path, **kwargs) -> pd.DataFrame:
+        return pd.read_csv(path, **kwargs)
 
-    def _load_one_json(self, path: Path) -> pd.DataFrame:
-        return pd.io.json.read_json(path)
+    def _load_one_json(self, path: Path, **kwargs) -> pd.DataFrame:
+        return pd.io.json.read_json(path, **kwargs)
 
     def _load_one(self, path: Path, iteration: int):
         """
@@ -196,7 +215,9 @@ class BenchmarkDataLoadTask(BenchmarkAnalysisTask):
         self._append_df(df)
 
     def run(self):
-        target_task = self.exec_task(self.benchmark, script=None)
+        target_task = self.exec_task(self.benchmark,
+                                     script=None,
+                                     task_config=self.benchmark.config.benchmark.task_options)
         target = target_task.output_map.get(self.target_key)
         if target is None:
             self.logger.error("%s can not load data from task %s, output key %s missing", self, target_task,
@@ -220,7 +241,7 @@ class BenchmarkDataLoadTask(BenchmarkAnalysisTask):
         yield "df", DataFrameTarget(self.model, self._output_df())
 
 
-class BenchmarkStatsByParamGroupTask(ParamGroupAnalysisTask):
+class StatsByParamGroupTask(ParamGroupAnalysisTask):
     """
     Base task that computes statistics for a group of benchmarks with the same parameter keys.
     This will produce a dataframe with different benchmark runs and machine g_uuids in the index, with the same parameterization values.
@@ -232,9 +253,13 @@ class BenchmarkStatsByParamGroupTask(ParamGroupAnalysisTask):
     load_task: typing.Type[BenchmarkDataLoadTask] = None
     #: The output data model
     model: typing.Type[DataModel] = None
+    #: Extra group keys to use, if more complex changes to the set of keys is needed, override
+    #: the group_keys property
+    extra_group_keys: list[str] = []
 
     def __init__(self, session, analysis_config, parameters, **kwargs):
         super().__init__(session, analysis_config, parameters, **kwargs)
+        self._merged_df = None
         self._df = None
 
     def _make_load_depend(self, benchmark: Benchmark):
@@ -249,7 +274,8 @@ class BenchmarkStatsByParamGroupTask(ParamGroupAnalysisTask):
             self.logger.error("Empty stats dataframe")
             raise RuntimeError("Empty stats dataframe")
         schema = self.model.to_schema(self.session)
-        return schema.validate(self._df)
+        result = schema.validate(self._df)
+        return result
 
     def _transform_merged(self, mdf: pd.DataFrame) -> pd.DataFrame:
         """
@@ -362,7 +388,8 @@ class BenchmarkStatsByParamGroupTask(ParamGroupAnalysisTask):
         The list of keys to group by for statistics aggregation.
         By default group by machine configuration ID and parameter keys, so we aggregate along the iterations axis.
         """
-        return ["dataset_gid"] + self.session.parameter_keys
+        # Note that key ordering matters, we have this assumption in the DataModelBase.
+        return ["dataset_gid"] + self.session.parameter_keys + self.extra_group_keys
 
     def dependencies(self):
         # Generate dependencies for our parameter set, this corresponds to a benchmark matrix row
@@ -381,7 +408,7 @@ class BenchmarkStatsByParamGroupTask(ParamGroupAnalysisTask):
         """
         This task merges all load dependencies output into a single dataframe.
         Subclasses get a chance to transform the merged data before aggregation via
-        :meth:`BenchmarkStatsByParamSetTask._transform_merged`.
+        :meth:`StatsByParamSetTask._transform_merged`.
         The merged dataframe is then aggregated using the declared set of aggregation
         functions.
         This will produce one additional column index level which is named 'aggregate'.
@@ -397,13 +424,24 @@ class BenchmarkStatsByParamGroupTask(ParamGroupAnalysisTask):
         merged_df = pd.concat(to_merge)
         merged_df = self.load_task.model.to_schema(self.session).validate(merged_df)
         merged_df.columns.name = "metric"
-        merged_df = self._transform_merged(merged_df)
-        agg_df = self._transform_aggregate(merged_df)
+        self._merged_df = self._transform_merged(merged_df)
+        agg_df = self._transform_aggregate(self._merged_df)
         delta_df = self._transform_delta(agg_df)
         self._df = delta_df
 
     def outputs(self):
+        yield "merged_df", DataFrameTarget(self.load_task.model, self._merged_df)
         yield "df", DataFrameTarget(self.model, self._output_df())
+
+
+def StatsField(name, **kwargs):
+    """
+    Pandera model field that matches a column with the expected column multi-index pattern
+    from the :class:`StatsByParamGroupTask`.
+    Note: this is a function in pandera, we have to keep it this way.
+    """
+    col = (name, "mean|median|std|q25|q75", "sample|delta|norm_delta")
+    return Field(alias=col, regex=True, **kwargs)
 
 
 class StatsForAllParamSetsTask(AnalysisTask):
@@ -412,12 +450,14 @@ class StatsForAllParamSetsTask(AnalysisTask):
     Merge the statistics in the output dataframe.
     """
     #: The task class to produce the statistics dataframe
-    stats_task: typing.Type[BenchmarkStatsByParamGroupTask] = None
+    stats_task: typing.Type[StatsByParamGroupTask] = None
     #: Data model for the output dataframe
     model: typing.Type[DataModel] = None
 
     def __init__(self, session, analysis_config, **kwargs):
         super().__init__(session, analysis_config, **kwargs)
+        #: The merged dataframe with all unaggregated data.
+        self._merged_df = None
         #: The output dataframe, after the task is completed.
         self._df = None
 
@@ -429,15 +469,24 @@ class StatsForAllParamSetsTask(AnalysisTask):
         return schema.validate(self._df)
 
     def dependencies(self):
-        for param_set in self.session.benchmark_matrix.index:
-            params = dict(zip(self.session.parameter_keys, param_set))
-            yield self.stats_task(self.session, self.analysis_config, params)
+        # If the index is not parameterized, just schedule one stats_task
+        if not self.session.parameter_keys:
+            yield self.stats_task(self.session, self.analysis_config, {})
+        else:
+            for param_set in self.session.benchmark_matrix.index:
+                params = dict(zip(self.session.parameter_keys, param_set))
+                yield self.stats_task(self.session, self.analysis_config, params)
 
     def run(self):
-        to_merge = []
+        unaggregated_frames = []
+        stats_frames = []
         for stats_task in self.resolved_dependencies:
-            to_merge.append(stats_task.output_map["df"].df)
-        self._df = pd.concat(to_merge)
+            unaggregated_frames.append(stats_task.output_map["merged_df"].df)
+            stats_frames.append(stats_task.output_map["df"].df)
+        self._merged_df = pd.concat(unaggregated_frames)
+        self._df = pd.concat(stats_frames)
 
     def outputs(self):
+        # re-validate this as well?
+        yield "merged_df", DataFrameTarget(self.stats_task.load_task.model, self._merged_df)
         yield "df", DataFrameTarget(self.model, self._output_df())

@@ -1,147 +1,108 @@
+from pathlib import Path
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import seaborn as sns
 
-from ..core.config import DatasetName
-from ..core.plot import (BarPlotDataView, BenchmarkPlot, BenchmarkSubPlot, LinePlotDataView, Mosaic, Scale,
-                         get_col_or_idx)
+from pycheribenchplot.core.analysis import PlotTask
+from pycheribenchplot.core.task import PlotTarget
+from pycheribenchplot.netperf.analysis import NetperfStatsMergedParams
 
 
-class NetperfDataPlot(BenchmarkSubPlot):
+class NetperfStatsPlot(PlotTask):
     """
-    Common netperf single-metric plot
+    Produce a box plot of the absolute netperf metrics.
+    Note that the depencencies are the same as the task computing the merged statistics frame
+    across all parameterizations, but we need to access the raw merged frames here as we use
+    seaborn to show individual samples distribution.
     """
-    def __init__(self, plot, metric, param=None, overhead=False):
-        super().__init__(plot)
-        self.ds = self.get_dataset(DatasetName.NETPERF_DATA)
-        self.param = param
-        self.metric = metric
-        self.is_overhead = overhead
-        if overhead:
-            delta = "norm_delta_baseline"
-            self.y_unit = "% "
-        else:
-            delta = "sample"
-            self.y_unit = ""
-        self.col = (metric, "median", delta)
-        self.err_hi_col = (metric, "q75", delta)
-        self.err_lo_col = (metric, "q25", delta)
+    public = True
+    task_namespace = "netperf"
+    task_name = "plot-stats"
 
-        if metric == "Throughput":
-            # Fetch the thoughput scale
-            if self.ds.merged_df.groupby("Throughput Units").ngroups > 1:
-                self.logger.warning("netperf throughput units differ: %s",
-                                    self.ds.merged_df["Throughput Units"].unique())
-            else:
-                self.y_unit += self.ds.merged_df["Throughput Units"].unique()[0]
-
-    def get_cell_title(self):
-        if self.param:
-            return f"Netperf {self.metric} w.r.t. {self.param}"
-        else:
-            return f"Netperf {self.metric}"
-
-    def get_legend_info(self):
-        base = self.build_legend_by_gid()
-        return base.assign_colors_hsv("dataset_gid", h=(0.2, 1), s=(0.7, 0.7), v=(0.6, 0.9))
-
-    def get_df(self):
-        if self.param is None:
-            return self.ds.agg_df.copy()
-        else:
-            return self.ds.cross_merged_df.copy()
-
-    def _adjust_columns(self, df):
-        """Adjust error columns to be relative to the median and make norm data a percentage"""
-        # plots want relative errors
-        df[self.err_hi_col] = df[self.err_hi_col] - df[self.col]
-        df[self.err_lo_col] = df[self.col] - df[self.err_lo_col]
-        if self.is_overhead:
-            df.loc[:, self.col] *= 100
-            df.loc[:, self.err_hi_col] *= 100
-            df.loc[:, self.err_lo_col] *= 100
-        return df
-
-
-class NetperfBar(NetperfDataPlot):
-    """
-    Display a single netperf metric as a bar plot
-    """
-    def generate(self, fm, cell):
-        self.logger.debug("extract Netperf metric %s (relative=%s)", self.metric, self.is_overhead)
-        df = self.get_df()
-        # We have a single group of bars for each plot, so just 1 seed coordinate
-        df["x"] = 0
-        df = self._adjust_columns(df)
-
-        view = BarPlotDataView(df, x="x", yleft=self.col, err_hi=self.err_hi_col, err_lo=self.err_lo_col)
-        view.bar_group = "dataset_gid"
-        view.legend_info = self.get_legend_info()
-        view.legend_level = ["dataset_gid"]
-        cell.add_view(view)
-
-        cell.x_config.ticks = [0]
-        cell.x_config.tick_labels = [self.metric]
-        cell.x_config.padding = 0.4
-        cell.yleft_config.label = f"value {self.y_unit}"
-
-
-class NetperfParamScalingPlot(NetperfDataPlot):
-    """
-    Generate line plot to show netperf stats scaling along a parameterisation axis.
-    """
-    def generate(self, fm, cell):
+    def _draw_box_metric(self, df, metric: str):
         """
-        TODO the generation function is mostly the same everywhere for these plots,
-        move to a shared base class?
+        Produce the box plot for a given metric, we keep grouping by g_uuid.
         """
-        df = self.get_df()
-        self.logger.debug("Extract X %s along %s (relative=%s)", self.metric, self.param, self.is_overhead)
-        df = self._adjust_columns(df)
-
-        # Detect whether we should use a log scale for the X axis
-        x_values = get_col_or_idx(df, self.param).unique()
-        x_values = map(lambda x: int(np.log2(x)) == np.log2(x), x_values)
-        if np.all(x_values):
-            scale = Scale("log", base=2)
+        fig = plt.figure(constrained_layout=True)
+        ax = fig.subplots()
+        # There may be multiple parameterization axes, join as strings for now
+        # probably not the best.
+        if self.session.parameter_keys:
+            param_desc = df.index.to_frame()[self.session.parameter_keys].agg("-".join, axis=1)
         else:
-            scale = None
+            # Should be only one benchmark, get its name
+            name = self.session.config.configurations[0].name
+            param_desc = pd.Series(name, index=df.index)
+        hue = df.index.get_level_values("dataset_gid").map(lambda gid: self.session.machine_configuration_name(gid))
+        sns.boxplot(ax=ax, y=metric, x=param_desc, hue=hue, data=df, palette="pastel")
 
-        view = LinePlotDataView(df, x=self.param, yleft=self.col, err_hi=self.err_hi_col, err_lo=self.err_lo_col)
-        view.line_group = ["dataset_gid"]
-        view.legend_info = self.build_legend_by_gid()
-        view.legend_level = ["dataset_gid"]
-        cell.add_view(view)
+        fig.savefig(self._plot_output(metric).path)
+        plt.close(fig)
 
-        cell.x_config.label = self.param
-        cell.x_config.ticks = sorted(df.index.unique(self.param))
-        cell.x_config.scale = scale
-        cell.yleft_config.label = self.metric
+    def dependencies(self):
+        self.stats = NetperfStatsMergedParams(self.session, self.analysis_config)
+        yield self.stats
 
+    def run(self):
+        df = self.stats.output_map["merged_df"].df
+        # Determine how many metrics and parameters we have
+        metrics = df.columns.unique("metric")
+        for m in metrics:
+            self._draw_box_metric(df, m)
 
-class NetperfStats(BenchmarkPlot):
-    """
-    Interesting netperf reported statistics
-    """
-    require = {DatasetName.NETPERF_DATA}
-    name = "netperf-stats"
-    description = "Netperf stats"
-
-    def _make_subplots_mosaic(self):
-        netperf = self.get_dataset(DatasetName.NETPERF_DATA)
-        m = self._make_mosaic_from_dataset_columns(NetperfBar, netperf, include_overhead=True)
-        return m
+    def outputs(self):
+        df = self.stats.output_map["merged_df"].df
+        for m in df.columns.unique("metric"):
+            yield f"plot-{m}", self._plot_output(metric)
 
 
-class NetperfScalingStats(BenchmarkPlot):
-    """
-    Netperf throughput scaling across benchmark variants.
-    """
-    require = {DatasetName.NETPERF_DATA}
-    name = "netperf-scaling-stats"
-    description = "Netperf stats across benchmark variants"
-    cross_analysis = True
+class NetperfStatsDeltaPlot(PlotTask):
+    public = True
+    task_namespace = "netperf"
+    task_name = "plot-delta-stats"
 
-    def _make_subplots_mosaic(self):
-        netperf = self.get_dataset(DatasetName.NETPERF_DATA)
-        m = self._make_mosaic_from_cross_merged_dataset(NetperfParamScalingPlot, netperf, include_overhead=True)
-        return m
+    def _draw_bar_metric(self, df, metric: str):
+        """
+        Produce the bar plot for a given metric, we keep grouping by g_uuid.
+        """
+        fig = plt.figure(constrained_layout=True)
+        ax = fig.subplots()
+
+        chunk = df.xs(metric, level="metric", axis=1)
+        if self.session.parameter_keys:
+            param_desc = chunk.index.to_frame()[self.session.parameter_keys].agg("-".join, axis=1)
+        else:
+            # Should be only one benchmark, get its name
+            name = self.session.config.configurations[0].name
+            param_desc = pd.Series(name, index=chunk.index)
+        hue = chunk.index.get_level_values("dataset_gid")
+        err_hi = chunk[("q75", "delta")] - chunk[("median", "delta")]
+        err_lo = chunk[("median", "delta")] - chunk[("q25", "delta")]
+        sns.barplot(ax=ax,
+                    x=param_desc,
+                    y=("median", "delta"),
+                    hue=hue,
+                    data=chunk,
+                    palette="pastel",
+                    errorbar=lambda v: [err_hi, err_lo])
+
+        fig.savefig(self._plot_output(metric).path)
+        plt.close(fig)
+
+    def dependencies(self):
+        self.stats = NetperfStatsMergedParams(self.session, self.analysis_config)
+        yield self.stats
+
+    def run(self):
+        df = self.stats.output_map["df"].df
+        # Determine how many metrics and parameters we have
+        metrics = df.columns.unique("metric")
+        for m in metrics:
+            self._draw_bar_metric(df, m)
+
+    def outputs(self):
+        df = self.stats.output_map["df"].df
+        for m in df.columns.unique("metric"):
+            yield f"plot-{m}", self._plot_output(metric)

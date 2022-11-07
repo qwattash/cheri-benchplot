@@ -68,6 +68,14 @@ class DataFrameTarget(Target):
         self.df = df
 
 
+class PlotTarget(Target):
+    """
+    Target pointing to a plot path
+    """
+    def __init__(self, path):
+        self.path = path
+
+
 class FileTarget(Target):
     """
     Base class for a target output file.

@@ -1,4 +1,7 @@
-from ..core.analysis import (BenchmarkDataLoadTask, BenchmarkStatsByParamGroupTask, StatsForAllParamSetsTask)
+from ..core.analysis import (BenchmarkDataLoadTask, StatsByParamGroupTask, StatsForAllParamSetsTask)
+from ..core.task import AnalysisTask
+from .model import NetperfInputModel, NetperfStatsModel
+from .task import NetperfExecTask
 
 # class NetperfSanityCheck(BenchmarkAnalysis):
 #     """
@@ -36,18 +39,22 @@ from ..core.analysis import (BenchmarkDataLoadTask, BenchmarkStatsByParamGroupTa
 #                 self.logger.error("libstatcounters::statcounters_sample anomalous #calls %s", check)
 
 
-class NetperfStatsLoadTask(BenchmarDataLoadTask):
+class NetperfStatsLoadTask(BenchmarkDataLoadTask):
     """
     Netperf output data load and pre-processing
     """
     task_namespace = "netperf"
     task_name = "load"
     exec_task = NetperfExecTask
-    target = "stats"
+    target_key = "stats"
     model = NetperfInputModel
 
+    def _load_one_csv(self, path, **kwargs):
+        kwargs["skiprows"] = 1
+        return super()._load_one_csv(path, **kwargs)
 
-class NetperfStatsByParamGroup(BenchmarkStatsByParamGroupTask):
+
+class NetperfStatsByParamGroup(StatsByParamGroupTask):
     """
     Generate netperf statistics by parameterization group, along the machine configuration axis.
     """
@@ -55,9 +62,10 @@ class NetperfStatsByParamGroup(BenchmarkStatsByParamGroupTask):
     task_name = "stats-by-param-set"
     load_task = NetperfStatsLoadTask
     model = NetperfStatsModel
+    extra_group_keys = ["Request Size Bytes", "Response Size Bytes"]
 
 
-class NetperfStatsParamTrend(StatsForAllParamSetsTask):
+class NetperfStatsMergedParams(StatsForAllParamSetsTask):
     """
     Generate netperf statistics showing the scaling of the netperf benchmark along the parameterization axis.
     """
@@ -73,7 +81,8 @@ class NetperfStatsPipeline(AnalysisTask):
     task_name = "stats-pipeline"
 
     def dependencies(self):
-        pass
+        self.stats = NetperfStatsMergedParams(self.session, self.analysis_config)
+        yield self.stats
 
     def run(self):
-        pass
+        print(self.stats.output_map["df"].df)

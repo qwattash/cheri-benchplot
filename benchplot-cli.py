@@ -9,7 +9,7 @@ from pathlib import Path
 
 from marshmallow.exceptions import ValidationError
 
-from pycheribenchplot.core.config import PipelineConfig, BenchplotUserConfig, AnalysisConfig
+from pycheribenchplot.core.config import PipelineConfig, BenchplotUserConfig, AnalysisConfig, TaskTargetConfig
 from pycheribenchplot.core.session import SessionAnalysisMode
 from pycheribenchplot.core.pipeline import PipelineManager
 from pycheribenchplot.core.util import setup_logging
@@ -82,6 +82,7 @@ def main():
                              default=SessionAnalysisMode.BATCH)
     sub_analyse.add_argument("-a", "--analysis-config", type=Path, help="Analysis configuration file",
                              default=None)
+    sub_analyse.add_argument("-t", "--task", type=str, nargs="+", help="Task names to run for the analysis. This is a convenience shorthand for the full analysis configuration")
 
     sub_clean = sub.add_parser("clean", help="clean output directory")
     add_session_spec_options(sub_clean)
@@ -146,6 +147,8 @@ def main():
                 analysis_config = AnalysisConfig.load_json(args.analysis_config)
             else:
                 analysis_config = AnalysisConfig()
+                for task in args.task:
+                    analysis_config.handlers.append(TaskTargetConfig(handler=task))
             manager.run_analysis(session, analysis_config, mode=args.mode)
         elif args.command == "clean":
             raise NotImplementedError("TODO")

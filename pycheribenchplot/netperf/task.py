@@ -7,7 +7,6 @@ from marshmallow.validate import OneOf
 from ..core.config import ConfigPath, ProfileConfig, TemplateConfig
 from ..core.task import DataFileTarget, ExecutionTask
 from ..qemu.task import QEMUTracingSetupTask
-from .model import NetperfData, NetperfStatData
 
 
 @dataclass

@@ -25,7 +25,7 @@
         "iterations": 5,
         "benchmark": {
             "handler": "generic",
-            "run_options": {
+            "task_options": {
                 "command": "uname -a"
             }
         }

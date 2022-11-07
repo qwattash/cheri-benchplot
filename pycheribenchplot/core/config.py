@@ -787,12 +787,21 @@ class BenchplotUserConfig(Config):
 
 
 @dc.dataclass
-class AnalysisConfig(Config):
+class PlotConfig(Config):
+    """
+    Plotting configuration.
+    This is separated in case it needs to be propagated separately.
+    """
     #: Generate multiple split plots instead of combining
     split_subplots: bool = False
-
     #: Output formats
     plot_output_format: List[str] = dc.field(default_factory=lambda: ["pdf"])
+
+
+@dc.dataclass
+class AnalysisConfig(Config):
+    #: General plot configuration
+    plot: PlotConfig = dc.field(default_factory=PlotConfig)
 
     #: Constants to show in various plots, depending on the X and Y axes.
     # The dictionary maps parameters of the benchmark parameterisation to a dict
@@ -807,7 +816,3 @@ class AnalysisConfig(Config):
 
     #: Specify analysis passes to run
     handlers: List[TaskTargetConfig] = dc.field(default_factory=list)
-
-    def __post_init__(self):
-        super().__post_init__()
-        assert isinstance(self.plot_output_format, list)

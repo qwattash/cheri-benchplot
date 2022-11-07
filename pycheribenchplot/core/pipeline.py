@@ -92,12 +92,8 @@ class PipelineManager:
         :param session: A valid session object
         """
         assert session is not None
-
-        loop = aio.get_event_loop()
         self.logger.debug("Session %s (%s) start analysis", session.name, session.uuid)
-        with session.analyse(config, mode) as ctx:
-            loop.run_until_complete(ctx.main())
-        loop.close()
+        session.analyse(config, mode)
         self.logger.info("Session %s (%s) analysis finished", session.name, session.uuid)
 
     def get_analysis_handlers(self, session: PipelineSession | None) -> list[typing.Type[AnalysisTask]]:
