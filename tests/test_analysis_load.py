@@ -11,7 +11,7 @@ from pycheribenchplot.core.task import (AnalysisTask, DataFrameTarget, Execution
 
 
 class DummyExecTask(ExecutionTask):
-    task_name = "fake-exec-load-task"
+    task_namespace = "test.analysis-load"
 
     def run(self):
         pass
@@ -41,8 +41,8 @@ class DummyAnalysisRoot(AnalysisTask):
     instantiated by the session analysis entry point.
     """
     public = True
-    task_namespace = "test"
-    task_name = "fake-analysis-dummy"
+    task_namespace = "test.analysis-load"
+    task_name = "fake-analysis-main"
 
     def dependencies(self):
         yield DummyLoadTask(self.session.benchmark_matrix.iloc[0, 0], self.analysis_config)
@@ -89,7 +89,7 @@ def test_simple_load_task(csv_file_content, fake_analysis_session):
     Test loading data from a simple CSV file.
     This exercises the common dataframe load task with data validation.
     """
-    aconf = AnalysisConfig.schema().load({"handlers": [{"handler": "test.fake-analysis-dummy"}]})
+    aconf = AnalysisConfig.schema().load({"handlers": [{"handler": "test.analysis-load.fake-analysis-main"}]})
     fake_analysis_session.analyse(aconf)
 
     assert not fake_analysis_session.scheduler.failed_tasks

@@ -46,6 +46,53 @@ class TaskRegistry(type):
             ns = TaskRegistry.public_tasks[self.task_namespace]
             ns[self.task_name] = self
 
+    def __str__(self):
+        return f"<Task {self.__name__}: spec={self.task_namespace}.{self.task_name}>"
+
+    @classmethod
+    def resolve_exec_task(cls, task_spec: str) -> typing.Type["Task"] | None:
+        """
+        Find the exec task named by the given task specifier.
+
+        :param task_spec:
+            Can be one of the following:
+
+            1. The fully qualified name of the task (e.g. <task_namespace>.<task_name>)
+            2. The namespace of an exec task (e.g. <task_spec>.exec exists)
+        :return: The matching exec task or None
+        """
+        parts = task_spec.split(".")
+        ns = cls.public_tasks[".".join(parts[:-1])]
+        # If it is a full name, we are done
+        task = ns.get(parts[-1])
+        if task:
+            return task
+        # Do we have an exec task?
+        exec_ns = TaskRegistry.public_tasks[".".join(parts)]
+        task = exec_ns.get("exec")
+        return task
+
+    @classmethod
+    def resolve_task(cls, task_spec: str) -> list[typing.Type["Task"]]:
+        """
+        Find the task named by the given task specifier.
+
+        :param task_spec:
+            Can be one of the following:
+
+            1. The fully qualified name of the task (e.g. <task_namespace>.<task_name>)
+            2. A wildcard task (e.g. <task_namespace>.*)
+        :return: A list of matching tasks
+        """
+        parts = task_spec.split(".")
+        ns = cls.public_tasks[".".join(parts[:-1])]
+        if parts[-1] == "*":
+            return list(ns.values())
+        task = ns.get(parts[-1])
+        if task:
+            return [task]
+        return []
+
 
 class Target:
     """
@@ -344,11 +391,12 @@ class ExecutionTask(Task):
     2. Configure the benchmark instance via platform_options.
     3. Add commands to the benchmark run script sections.
     """
-    task_namespace = "exec"
+    task_name = "exec"
 
     def __init__(self, benchmark: "Benchmark", script: "ScriptBuilder", task_config: Config = None):
         super().__init__(task_config=task_config)
-        assert self.task_namespace == "exec", "ExecutionTask convention mandates the 'exec' task namespace"
+        # XXX this is somehow relaxed now
+        assert self.task_name == "exec", "ExecutionTask convention mandates the 'exec' task namespace"
         #: Associated benchmark context
         self.benchmark = benchmark
         #: Script builder associated to the current benchmark context.

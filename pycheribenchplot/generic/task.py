@@ -17,7 +17,7 @@ class GenericExecTask(ExecutionTask):
     a custom command and collect the output to the output file.
     """
     public = True
-    task_name = "generic"
+    task_namespace = "generic"
     task_config_class = GenericTaskConfig
 
     def run(self):

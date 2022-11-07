@@ -14,7 +14,7 @@ class QEMUTracingSetupTask(ExecutionTask):
     are populated here via the ProfileConfig
     """
     public = False
-    task_name = "qemu-perfetto"
+    task_namespace = "qemu.tracing"
     task_config_class = ProfileConfig
 
     def get_qemu_profile_target(self) -> LocalFileTarget:

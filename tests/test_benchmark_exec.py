@@ -9,14 +9,14 @@ from pycheribenchplot.core.task import ExecutionTask
 
 class FakeAuxExecTask(ExecutionTask):
     public = True
-    task_name = "test-aux"
+    task_namespace = "test-aux"
 
 
 @pytest.fixture
 def benchmark_config_with_aux(single_benchmark_config):
     conf = copy.deepcopy(single_benchmark_config)
     bench_conf = conf["configurations"][0]
-    bench_conf["aux_dataset_handlers"] = [{"handler": "test-aux"}]
+    bench_conf["aux_tasks"] = [{"handler": "test-aux"}]
     return conf
 
 

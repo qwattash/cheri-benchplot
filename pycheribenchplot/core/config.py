@@ -67,53 +67,46 @@ class PathField(mfields.Field):
 
 class TaskSpecField(mfields.Field):
     """
-    Field used to validate a public task name specifier.
-    This validated that task namespace that is used to resolve execution
-    and ingestion tasks. In practice this is the last portion of the dotted task name, or the full dotted name.
-    e.g. 'my-task' that resolves to 'exec.my-task' and 'load.my-task', depending on the operation.
+    Field used to validate a public task specifier.
+
+    See :meth:`TaskRegistry.resolve_task` for details on the format.
     """
     def _serialize(self, value, attr, obj, **kwargs):
         if value is None:
             return ""
         return str(value)
 
-    def _validate_full(self, namespace_name, task_name):
+    def _validate_taskspec(self, value):
         from .task import TaskRegistry
-
-        # Full task name with namespace portion, verify that it exists
-        namespace = TaskRegistry.public_tasks.get(namespace_name)
-        if namespace is None:
-            raise ValidationError("Task specifier does not match a public task namespace")
-        if task_name not in namespace:
-            raise ValidationError("Task specifier does not match a public task name")
-
-    def _validate_implicit(self, task_name):
-        from .task import TaskRegistry
-
-        # Try to look in the implicit task namespaces
-        exec_ns = TaskRegistry.public_tasks["exec"]
-        if task_name in exec_ns:
-            return
-        analysis_ns = TaskRegistry.public_tasks["analysis"]
-        if task_name in analysis_ns:
-            return
-        raise ValidationError("Task specifier does not match a public task name")
+        task = TaskRegistry.resolve_task(value)
+        if not task:
+            raise ValidationError(f"Task specifier {value} does not name any public tasks")
 
     def _deserialize(self, value, attr, data, **kwargs):
         value = str(value)
         if value == "":
             raise ValidationError("Task specifier can not be blank")
-        parts = value.split(".")
-        namespace_name = ".".join(parts[0:-1])
-        if namespace_name:
-            self._validate_full(namespace_name, parts[-1])
-        else:
-            self._validate_implicit(value)
+
+        self._validate_taskspec(value)
         return value
+
+
+class ExecTaskSpecField(TaskSpecField):
+    """
+    Field used to validate a public execution task name.
+
+    See :meth:`TaskRegistry.resolve_exec_task` for details on the format.
+    """
+    def _validate_taskspec(self, value):
+        from .task import TaskRegistry
+        task = TaskRegistry.resolve_exec_task(value)
+        if not task:
+            raise ValidationError(f"Task specifier {value} does not name any public tasks")
 
 
 # Helper type for dataclasses to use the PathField
 ConfigTaskSpec = NewType("ConfigTaskSpec", str, field=TaskSpecField)
+ConfigExecTaskSpec = NewType("ConfigExecTaskSpec", str, field=ExecTaskSpecField)
 ConfigPath = NewType("ConfigPath", Path, field=PathField)
 ConfigAny = NewType("ConfigAny", any, field=mfields.Raw)
 
@@ -490,29 +483,26 @@ class InstanceConfig(TemplateConfig):
 @dc.dataclass
 class TaskTargetConfig(TemplateConfig):
     """
-    Define a target task.
-    The handler field identifies either a task name or namespace + name.
-    The run_options are interpreted lazily depending on the target Task class,
-    these are per-task auxiliary argument.
+    Specify an analysis task and associated options.
     """
-    #: Identifier of a task to run. This can be either a name or a namespace.name.
-    #: The namespace may be implicit depending on the context,
-    #: e.g. benchmark execution tasks are implicitly searched within the exec namespace.
+    #: Task specifier with format indicated by :meth:`TaskRegistry.resolve_task`
     handler: ConfigTaskSpec
 
     #: Extra options for the dataset handler, depend on the handler
     task_options: Dict[str, ConfigAny] = lazy_nested_config_field()
 
-    @property
-    def namespace(self):
-        parts = self.handler.split(".")
-        if len(parts) == 1:
-            return None
-        return ".".join(parts[0:-1])
 
-    @property
-    def name(self):
-        return self.handler.split(".")[-1]
+@dc.dataclass
+class ExecTargetConfig(TemplateConfig):
+    """
+    Specify an execution task name.
+    Note that the namespace of this task is also used to resolve compatible analysis tasks.
+    """
+    #: Task specifier with format indicated by :meth:`TaskRegistry.resolve_exec_task`
+    handler: ConfigExecTaskSpec
+
+    #: Extra options for the dataset handler, depend on the handler
+    task_options: Dict[str, ConfigAny] = lazy_nested_config_field()
 
 
 @dc.dataclass
@@ -546,9 +536,9 @@ class CommonBenchmarkConfig(TemplateConfig):
     #: The number of iterations to run
     iterations: int
     #: Benchmark configuration
-    benchmark: TaskTargetConfig
-    #: Auxiliary data generators/handlers
-    aux_dataset_handlers: List[TaskTargetConfig] = dc.field(default_factory=list)
+    benchmark: ExecTargetConfig
+    #: Auxiliary data generators
+    aux_tasks: List[ExecTargetConfig] = dc.field(default_factory=list)
     #: Number of iterations to drop to reach steady-state
     drop_iterations: int = 0
     #: Benchmark description, used for plot titles (can contain a template), defaults to :attr:`name`.
@@ -616,10 +606,11 @@ class BenchmarkRunConfig(CommonBenchmarkConfig):
     instance: Optional[InstanceConfig] = None
 
     def __str__(self):
+        common_info = f"params={self.parameters} ns={self.benchmark.handler} aux={self.aux_tasks}"
         if self.g_uuid and self.instance:
-            return f"{self.name} ({self.uuid}/{self.g_uuid}) on {self.instance} params={self.parameters}"
+            return f"{self.name} ({self.uuid}/{self.g_uuid}) on {self.instance} " + common_info
         else:
-            return f"unallocated {self.name} ({self.uuid}) params={self.parameters}"
+            return f"unallocated {self.name} ({self.uuid}) " + common_info
 
 
 @dc.dataclass

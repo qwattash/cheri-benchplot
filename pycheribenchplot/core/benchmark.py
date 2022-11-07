@@ -11,7 +11,7 @@ from uuid import UUID
 import asyncssh
 import pandas as pd
 
-from .config import AnalysisConfig, Config, TaskTargetConfig
+from .config import AnalysisConfig, Config, ExecTargetConfig
 from .elf import AddressSpaceManager, DWARFHelper
 from .instance import InstanceManager
 from .shellgen import ScriptBuilder
@@ -51,9 +51,8 @@ class BenchmarkExecTask(Task):
         #: Script builder for this benchmark context
         self.script = ScriptBuilder(benchmark)
 
-    def _fetch_task(self, config: TaskTargetConfig) -> Task:
-        task_namespace = TaskRegistry.all_tasks["exec"]
-        task_klass = task_namespace.get(config.handler)
+    def _fetch_task(self, config: ExecTargetConfig) -> Task:
+        task_klass = TaskRegistry.resolve_exec_task(config.handler)
         if task_klass is None:
             self.logger.error("Invalid task name specification exec.%s", task_name)
             raise ValueError("Invalid task name")
@@ -127,7 +126,7 @@ class BenchmarkExecTask(Task):
     def dependencies(self):
         yield from super().dependencies()
         yield self._fetch_task(self.benchmark.config.benchmark)
-        for aux_config in self.benchmark.config.aux_dataset_handlers:
+        for aux_config in self.benchmark.config.aux_tasks:
             yield self._fetch_task(aux_config)
 
     def run(self):

@@ -39,18 +39,10 @@ def list_tasks(session):
     """
     Helper to display public tasks for a given session
     """
-    return
-    # handlers = manager.get_analysis_handlers(session)
-    # print("Analysis handlers:")
-    # for h in handlers:
-    #     if h.cross_analysis:
-    #         continue
-    #     print("\t", h)
-
-    # print("Cross-parameter analysis handlers:")
-    # for h in handlers:
-    #     if h.cross_analysis:
-    #         print("\t", h)
+    print("Public analysis targets:")
+    for task in session.get_public_tasks():
+        spec_line = f"{task.task_namespace}.{task.task_name} ({task.__name__})"
+        print("\t", spec_line)
 
 
 def handle_command(user_config: BenchplotUserConfig, args):
@@ -86,12 +78,12 @@ def handle_command(user_config: BenchplotUserConfig, args):
         session.analyse(analysis_config)
     elif args.command == "clean":
         raise NotImplementedError("TODO")
-    elif args.command == "list":
+    elif args.command == "show":
         if args.session_path:
             session = resolve_session(user_config, args.session_path)
         else:
             session = None
-        if args.what == "session":
+        if args.what == "info":
             list_session(session)
         elif args.what == "tasks":
             list_tasks(session)
@@ -131,8 +123,8 @@ def main():
     sub_clean = sub.add_parser("clean", help="clean output directory")
     add_session_spec_options(sub_clean)
 
-    sub_list = sub.add_parser("list", help="List sessions and other information")
-    sub_list.add_argument("what", choices=["session", "analysis"], help="What to show")
+    sub_list = sub.add_parser("show", help="Show session contents and other information")
+    sub_list.add_argument("what", choices=["info", "tasks"], help="What to show")
     sub_list.add_argument("session_path", type=Path, help="Path of the target session",
                           nargs='?')
 

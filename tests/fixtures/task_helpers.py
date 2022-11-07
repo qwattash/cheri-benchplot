@@ -22,6 +22,6 @@ def mock_task_registry(mocker):
     # Always define at least this as it is used by the common session fixtures
     class FakeExecTask(ExecutionTask):
         public = True
-        task_name = "test-benchmark"
+        task_namespace = "test-benchmark"
 
     return (public_tasks, all_tasks)

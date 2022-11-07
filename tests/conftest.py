@@ -64,7 +64,7 @@ fake_session_conf_with_params = {
 
 class FakeExecTask(ExecutionTask):
     public = True
-    task_name = "test-benchmark"
+    task_namespace = "test-benchmark"
 
 
 @pytest.fixture

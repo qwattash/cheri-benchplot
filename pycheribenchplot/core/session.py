@@ -12,8 +12,8 @@ from uuid import UUID
 import pandas as pd
 
 from .benchmark import Benchmark, BenchmarkExecMode, ExecTaskConfig
-from .config import (AnalysisConfig, BenchplotUserConfig, Config, PipelineConfig, SessionRunConfig, TaskTargetConfig,
-                     TemplateConfigContext)
+from .config import (AnalysisConfig, BenchplotUserConfig, Config, ExecTargetConfig, PipelineConfig, SessionRunConfig,
+                     TaskTargetConfig, TemplateConfigContext)
 from .instance import InstanceManager
 from .model import UUIDType
 from .task import AnalysisTask, TaskRegistry, TaskScheduler
@@ -122,17 +122,17 @@ class Session:
     def __str__(self):
         return f"Session({self.uuid}) [{self.name}]"
 
-    def _resolve_task_options(self, config: TaskTargetConfig) -> typing.Optional[Config]:
+    def _resolve_exec_task_options(self, config: ExecTargetConfig) -> typing.Optional[Config]:
         """
-        Resolve the configuration type for a :class:`TaskTargetConfig` containing run options.
+        Resolve the configuration type for a :class:`ExecTargetConfig` containing run options.
 
         :param config: A single dataset configuration
-        :return: A Config object to be used as the new :attr:`TaskTargetConfig.task_options`.
+        :return: A Config object to be used as the new :attr:`ExecTargetConfig.task_options`.
         If the exec task does not specify a task_config_class, return a dict with the same content as
         the original run_options dict.
         """
         # Existence of the exec task is ensured by configuration validation
-        exec_task = TaskRegistry.public_tasks[config.namespace or "exec"][config.name]
+        exec_task = TaskRegistry.resolve_exec_task(config.handler)
         if exec_task.task_config_class:
             return exec_task.task_config_class.schema().load(config.task_options)
         return config.task_options
@@ -164,9 +164,9 @@ class Session:
                                         cheri_target=inst_conf.cheri_target.value,
                                         kernelabi=inst_conf.kernelabi.value)
             # Resolve run_options for each TaskTargetConfig
-            bench_conf.benchmark.task_options = self._resolve_task_options(bench_conf.benchmark)
-            for aux_conf in bench_conf.aux_dataset_handlers:
-                aux_conf.task_options = self._resolve_task_options(aux_conf)
+            bench_conf.benchmark.task_options = self._resolve_exec_task_options(bench_conf.benchmark)
+            for aux_conf in bench_conf.aux_tasks:
+                aux_conf.task_options = self._resolve_exec_task_options(aux_conf)
             new_bench_conf.append(bench_conf.bind(ctx))
         new_config.configurations = new_bench_conf
         return new_config
@@ -243,7 +243,8 @@ class Session:
         for i, row in bench_matrix.iterrows():
             if isinstance(i, tuple):
                 i = BenchParams(*i)
-            self.logger.debug("Benchmark matrix %s = %s", i, row.values)
+            row_str = [str(bench_ctx) for bench_ctx in row.values]
+            self.logger.debug("Benchmark matrix %s = %s", i, row_str)
         if bench_matrix.shape[0] * bench_matrix.shape[1] != len(self.config.configurations):
             self.logger.error("Malformed benchmark matrix")
             raise RuntimeError("Malformed benchmark matrix")
@@ -279,11 +280,22 @@ class Session:
 
     def get_public_tasks(self) -> list[typing.Type[AnalysisTask]]:
         """
-        Return the public analysis tasks available for this session.
+        Return the public tasks available for this session.
 
         :return: A list of :class:`AnalysisTask` classes.
         """
-        raise NotImplementedError("TODO")
+        namespaces = set()
+        for bench_config in self.config.configurations:
+            exec_task = TaskRegistry.resolve_exec_task(bench_config.benchmark.handler)
+            namespaces.add(exec_task.task_namespace)
+            for aux_config in bench_config.aux_tasks:
+                aux_task = TaskRegistry.resolve_exec_task(aux_config.handler)
+                namespaces.add(aux_task.task_namespace)
+        # Now group all public tasks from the namespaces
+        tasks = []
+        for ns in namespaces:
+            tasks += TaskRegistry.public_tasks[ns].values()
+        return [t for t in tasks if issubclass(t, AnalysisTask)]
 
     def delete(self):
         """
@@ -389,16 +401,21 @@ class Session:
                 raise
             self.logger.info("Using alternative baseline %s (%s)", baseline_conf.instance.name, self.baseline_g_uuid)
 
-        for handler in analysis_config.handlers:
-            task_klass = TaskRegistry.public_tasks[handler.namespace].get(handler.name)
-            if task_klass is None:
-                self.logger.error("Invalid task name specification %s", handler.handler)
+        for task_spec in analysis_config.handlers:
+            resolved = TaskRegistry.resolve_task(task_spec.handler)
+            if not resolved:
+                self.logger.error("Invalid task name specification %s", task_spec.handler)
                 raise ValueError("Invalid task name")
-            if not issubclass(task_klass, AnalysisTask):
-                self.logger.error("Analysis process only supports scheduling of AnalysisTasks, found %s", task_klass)
-                raise TypeError("Invalid task type")
-            task = task_klass(self, analysis_config, task_config=handler.task_options)
-            self.scheduler.add_task(task)
+            for task_klass in resolved:
+                if not issubclass(task_klass, AnalysisTask):
+                    self.logger.warning("Analysis process only supports scheduling of AnalysisTasks, skipping %s",
+                                        task_klass)
+                if task_klass.task_config_class:
+                    options = task_class.task_config_class.schema().load(task_spec.task_options)
+                else:
+                    options = task_spec.task_options
+                task = task_klass(self, analysis_config, task_config=options)
+                self.scheduler.add_task(task)
         self.logger.info("Session %s start analysis", self.name)
         self.scheduler.run()
         self.logger.info("Session %s analysis finished", self.name)

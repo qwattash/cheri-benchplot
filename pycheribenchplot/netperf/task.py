@@ -26,7 +26,7 @@ class NetperfRunConfig(TemplateConfig):
 
 class NetperfExecTask(ExecutionTask):
     public = True
-    task_name = "netperf"
+    task_namespace = "netperf"
     task_config_class = NetperfRunConfig
 
     def __init__(self, benchmark, script, **kwargs):
