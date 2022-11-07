@@ -59,7 +59,7 @@ def handle_command(user_config: BenchplotUserConfig, args):
         except ValidationError as ex:
             logger.error("Invalid pipeline configuration %s: %s", args.pipeline_config, ex)
             raise
-        session = Session.from_path(args.session_path)
+        session = Session.from_path(user_config, args.session_path)
         if not session:
             session = Session.make_new(user_config, config, args.session_path)
         elif args.force:
@@ -140,7 +140,7 @@ def main():
         type=str,
         nargs="+",
         help="Task names to run for the analysis. This is a convenience shorthand for the full analysis configuration")
-    sub_analyse.add_argument("--clean", type=bool, action="store_true", help="Wipe analysis outputs before running")
+    sub_analyse.add_argument("--clean", action="store_true", help="Wipe analysis outputs before running")
 
     sub_clean = sub.add_parser("clean", help="clean output directory")
     add_session_spec_options(sub_clean)
@@ -153,6 +153,9 @@ def main():
     sub_bundle.add_argument("session_path", type=Path, help="Path of the target session")
 
     args = parser.parse_args()
+    if args.command is None:
+        parser.print_help()
+        exit(1)
 
     global logger
     logger = setup_logging(args.verbose, args.logfile)
