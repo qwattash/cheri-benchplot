@@ -230,7 +230,7 @@ class Benchmark:
     def get_instance_asset_path(self) -> Path:
         """
         :return: Path for archiving binaries used in the run but belonging to the instance.
-        This avoids duplication.
+            This avoids duplication.
         """
         return self.session.get_asset_root_path() / f"{self.config.instance.name}-{self.g_uuid}"
 
@@ -244,7 +244,7 @@ class Benchmark:
     def get_benchmark_iter_data_path(self, iteration: int) -> Path:
         """
         :return: The output directory for run data corresponding to this benchmark configuration and
-        a specific benchmark iteration.
+            a specific benchmark iteration.
         """
         iter_path = self.get_benchmark_data_path() / str(iteration)
         return iter_path
@@ -255,7 +255,7 @@ class Benchmark:
 
         :param scheduler: The scheduler for this session
         :param exec_config: The execution task configuration. This is used to control partial
-        execution runs and behaviour outside of the session configuration file.
+            execution runs and behaviour outside of the session configuration file.
         """
         # Ensure that all the data paths are initialized
         self.get_benchmark_data_path().mkdir(exist_ok=True)

@@ -496,15 +496,16 @@ class CommonBenchmarkConfig(TemplateConfig):
     #: commmands as strings or a dictionary. Commands are added directyl to the corresponding global section,
     #: dictionaries map an iteration index to the corresponding list of commands.
     #:
-    #: .. highlight:: json
-    #: { "pre_benchmark": [
-    #:   "cmd1", "cmd2", // -> added to the global pre_benchmark section
-    #:   {
-    #:     "*": ["cmd3"], // -> added to all iterations pre_benchmark section
-    #:     1: ["cmd4"], // -> added only to the first iteration pre_benchmark section
-    #:   }
-    #: ]}
-    #: ::
+    #: .. code-block:: python
+    #:
+    #:    { "pre_benchmark": [
+    #:        "cmd1", "cmd2", # added to the global pre_benchmark section
+    #:        {
+    #:            "*": ["cmd3"], # added to all iterations pre_benchmark section
+    #:            1: ["cmd4"], # added only to the first iteration pre_benchmark section
+    #:        }
+    #:    ]}
+    #:
     command_hooks: Dict[str, List[Union[str, dict]]] = dc.field(default_factory=dict)
 
     def __post_init__(self):
@@ -658,12 +659,12 @@ class SessionRunConfig(CommonSessionConfig):
         Generate a new :class:`SessionRunConfig` from a :class:`PipelineConfig`.
         Manual benchmark parameterization is supported by specifying multiple benchmarks with
         the same set of parameterize keys and different values.
-
         We support 3 types of parameterization:
+
         1. there is a single benchmark_config and no parametrization
         2. there is a single benchmark_config with parametrization and template substitution
-        3. there are multiple benchmark_configs with the same set of parametrization keys
-           but disjoint sets of values
+        3. there are multiple benchmark_configs with the same set of parametrization keys but
+           disjoint sets of values
 
         :param config: The :class:`PipelineConfig` to use.
         :return: A new session runfile configuration

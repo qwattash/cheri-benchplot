@@ -74,6 +74,10 @@ class BaseDataModel(SchemaModel):
         return s.set_index(index_names)
 
     class Config:
+        """
+        :noindex:
+        Common configuration for pandera schema validation
+        """
         # Drop extra columns
         strict = "filter"
         # Coerce data types
