@@ -1,4 +1,34 @@
-#!/bin/sh
+#!/bin/bash
 
-isort -c pycheribenchplot --virtual-env venv --py 39 -p pycheribenchplot
-yapf -r pycheribenchplot -p --diff
+if ! which yapf &> /dev/null; then
+    >&2 echo "yapf command not found, install yapf or commit with --no-verify"
+    exit 1
+fi
+if ! which isort &> /dev/null; then
+    >&2 echo "isort command not found, install isort or commit with --no-verify"
+    exit 1
+fi
+
+readarray -t py_files < <(git diff --cached --name-only --diff-filter=AM | grep --color=never '\.py$')
+if [ ${#py_files[@]} -eq 0 ]; then
+    exit 0
+fi
+readarray -t py_unstaged < <(git diff --name-only "${py_files[@]}")
+if [ ${#py_unstaged[@]} -gt 0 ]; then
+    >&2 echo "Unstaged python files may be overwritten, stash temporary changes before commit."
+    exit 1
+fi
+
+echo "Checking imports order..."
+isort -q "${py_files[@]}"
+echo "Checking code formatting..."
+yapf -i "${py_files[@]}"
+
+readarray -t py_changed < <(git diff --name-only "${py_files[@]}")
+if [ ${#py_changed[@]} -gt 0 ]; then
+    >&2 echo "Reformatted staged files, please review the changes"
+    >&2 echo "Updated files: ${py_unstaged[@]}"
+    exit 1
+else
+    exit 0
+fi
