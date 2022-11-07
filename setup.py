@@ -18,6 +18,7 @@ setup(
         "pyelftools>=0.27",
         "PyPika>=0.48.8",
         "sortedcontainers>=2.4.0",
+        "seaborn>=0.12",
         "termcolor>=1.1.0",
         "XlsxWriter>=3.0.2",
         "yapf>=0.31.0",
