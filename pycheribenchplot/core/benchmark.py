@@ -152,7 +152,7 @@ class BenchmarkExecTask(Task):
         instance = self.instance_req.get()
         self.logger.debug("Import script file host: %s => guest: %s", script_path, remote_script_path)
         instance.import_file(script_path, remote_script_path)
-        self.logger.info("Execute benchmark script verbose=%s", self.benchmark.user_config.verbose)
+        self.logger.info("Execute benchmark script")
         with timing("Benchmark script completed", logger=self.logger):
             instance.run_cmd("sh", [remote_script_path])
 
@@ -170,7 +170,7 @@ class Benchmark:
     :param session: The parent session
     :param config: The benchmark run configuration allocated to this handler.
     """
-    def __init__(self, session: "PipelineSession", config: "BenchmarkRunConfig"):
+    def __init__(self, session: "Session", config: "BenchmarkRunConfig"):
         self.session = session
         self.config = config
         self.logger = new_logger(f"{self.config.name}:{self.config.instance.name}")
@@ -274,7 +274,7 @@ class Benchmark:
 #     :param session: The parent session
 #     :param config: The benchmark run configuration allocated to this handler.
 #     """
-#     def __init__(self, session: "PipelineSession", config: "BenchmarkRunConfig"):
+#     def __init__(self, session: "Session", config: "BenchmarkRunConfig"):
 #         self.session = session
 #         self.config = config
 #         self.logger = new_logger(f"{self.config.name}:{self.config.instance.name}")

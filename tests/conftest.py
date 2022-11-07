@@ -11,8 +11,7 @@ from fixtures.task_helpers import mock_task_registry
 
 from pycheribenchplot.core.benchmark import Benchmark
 from pycheribenchplot.core.config import (AnalysisConfig, BenchmarkRunConfig, BenchplotUserConfig, SessionRunConfig)
-from pycheribenchplot.core.pipeline import PipelineManager
-from pycheribenchplot.core.session import PipelineSession
+from pycheribenchplot.core.session import Session
 from pycheribenchplot.core.task import ExecutionTask
 
 fake_benchmark_conf = {
@@ -200,17 +199,12 @@ def benchplot_user_config(pytestconfig):
 
 
 @pytest.fixture
-def fake_pipeline():
-    return PipelineManager(BenchplotUserConfig())
-
-
-@pytest.fixture
-def fake_session_factory(fake_pipeline, tmp_path):
+def fake_session_factory(tmp_path):
     def factory(config: dict = None):
         if config is None:
             config = fake_session_conf
         sess_config = SessionRunConfig.schema().load(config)
-        session = PipelineSession(fake_pipeline, sess_config, session_path=tmp_path)
+        session = Session(BenchplotUserConfig(), sess_config, session_path=tmp_path)
         session.analysis_config = AnalysisConfig()
         return session
 

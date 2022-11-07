@@ -10,6 +10,11 @@ from pycheribenchplot.core.config import *
 from pycheribenchplot.core.task import TaskRegistry
 
 
+@pytest.fixture
+def fake_user_config():
+    return BenchplotUserConfig()
+
+
 def test_common_platform_options():
     default = CommonPlatformOptions.schema().load({})
 
@@ -115,7 +120,7 @@ def test_pipeline_config_missing_instance():
         input_config = PipelineConfig.schema().load(data)
 
 
-def test_run_config_gen_without_parametrization(fake_pipeline):
+def test_run_config_gen_without_parametrization(fake_user_config):
     # Setup a valid pipeline with just one benchmark
     data = {
         "instance_config": {
@@ -133,7 +138,7 @@ def test_run_config_gen_without_parametrization(fake_pipeline):
         }]
     }
     input_config = PipelineConfig.schema().load(data)
-    check = SessionRunConfig.generate(fake_pipeline, input_config)
+    check = SessionRunConfig.generate(fake_user_config, input_config)
 
     assert len(check.configurations) == 1
     conf0 = check.configurations[0]
@@ -145,7 +150,7 @@ def test_run_config_gen_without_parametrization(fake_pipeline):
     assert conf0.instance.kernel == "GENERIC-FAKE-TEST"
 
 
-def test_run_config_gen_without_parametrization_fail(fake_pipeline):
+def test_run_config_gen_without_parametrization_fail(fake_user_config):
     # Setup a pipeline with two benchmark configs that should fail
     data = {
         "instance_config": {
@@ -171,10 +176,10 @@ def test_run_config_gen_without_parametrization_fail(fake_pipeline):
     }
     input_config = PipelineConfig.schema().load(data)
     with pytest.raises(ValueError):
-        check = SessionRunConfig.generate(fake_pipeline, input_config)
+        check = SessionRunConfig.generate(fake_user_config, input_config)
 
 
-def test_run_config_gen_single_parametrization(fake_pipeline):
+def test_run_config_gen_single_parametrization(fake_user_config):
     data = {
         "instance_config": {
             "instances": [{
@@ -196,7 +201,7 @@ def test_run_config_gen_single_parametrization(fake_pipeline):
         }]
     }
     input_config = PipelineConfig.schema().load(data)
-    check = SessionRunConfig.generate(fake_pipeline, input_config)
+    check = SessionRunConfig.generate(fake_user_config, input_config)
 
     assert len(check.configurations) == 2
     conf0 = check.configurations[0]
@@ -220,7 +225,7 @@ def test_run_config_gen_single_parametrization(fake_pipeline):
     assert conf1.g_uuid == conf0.g_uuid
 
 
-def test_run_config_gen_multi_parametrization(fake_pipeline):
+def test_run_config_gen_multi_parametrization(fake_user_config):
     data = {
         "instance_config": {
             "instances": [{
@@ -254,7 +259,7 @@ def test_run_config_gen_multi_parametrization(fake_pipeline):
         }]
     }
     input_config = PipelineConfig.schema().load(data)
-    check = SessionRunConfig.generate(fake_pipeline, input_config)
+    check = SessionRunConfig.generate(fake_user_config, input_config)
 
     assert len(check.configurations) == 2
     conf0 = check.configurations[0]
@@ -278,7 +283,7 @@ def test_run_config_gen_multi_parametrization(fake_pipeline):
     assert conf1.g_uuid == conf0.g_uuid
 
 
-def test_run_config_gen_multi_parametrization_mismatch(fake_pipeline):
+def test_run_config_gen_multi_parametrization_mismatch(fake_user_config):
     data = {
         "instance_config": {
             "instances": [{
@@ -313,10 +318,10 @@ def test_run_config_gen_multi_parametrization_mismatch(fake_pipeline):
     }
     input_config = PipelineConfig.schema().load(data)
     with pytest.raises(ValueError, match="Invalid configuration"):
-        SessionRunConfig.generate(fake_pipeline, input_config)
+        SessionRunConfig.generate(fake_user_config, input_config)
 
 
-def test_run_config_gen_multi_parametrization_missing(fake_pipeline):
+def test_run_config_gen_multi_parametrization_missing(fake_user_config):
     data = {
         "instance_config": {
             "instances": [{
@@ -346,4 +351,4 @@ def test_run_config_gen_multi_parametrization_missing(fake_pipeline):
     }
     input_config = PipelineConfig.schema().load(data)
     with pytest.raises(ValueError, match="Invalid configuration"):
-        SessionRunConfig.generate(fake_pipeline, input_config)
+        SessionRunConfig.generate(fake_user_config, input_config)

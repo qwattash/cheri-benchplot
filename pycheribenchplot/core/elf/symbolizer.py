@@ -61,7 +61,7 @@ class ELFSymbolReader(ABC):
     Base class for symbol extractors
     """
     @classmethod
-    def create(cls, session: "PipelineSession", *args):
+    def create(cls, session: "Session", *args):
         """
         Build a symbol reader based on the strategy configured in the session
         """
@@ -70,7 +70,7 @@ class ELFSymbolReader(ABC):
         else:
             return LLVMSymbolReader(session, *args)
 
-    def __init__(self, session: "PipelineSession", path: Path):
+    def __init__(self, session: "Session", path: Path):
         self.session = session
         self.logger = session.logger
         self.path = path

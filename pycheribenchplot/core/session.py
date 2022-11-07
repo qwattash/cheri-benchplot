@@ -1,3 +1,4 @@
+import logging
 import re
 import shutil
 import typing
@@ -11,33 +12,21 @@ from uuid import UUID
 import pandas as pd
 
 from .benchmark import Benchmark, BenchmarkExecMode, ExecTaskConfig
-from .config import (AnalysisConfig, Config, PipelineConfig, SessionRunConfig, TaskTargetConfig, TemplateConfigContext)
+from .config import (AnalysisConfig, BenchplotUserConfig, Config, PipelineConfig, SessionRunConfig, TaskTargetConfig,
+                     TemplateConfigContext)
 from .instance import InstanceManager
 from .model import UUIDType
 from .task import AnalysisTask, TaskRegistry, TaskScheduler
 from .util import new_logger
 
+#: Constant name of the generated session configuration file
 SESSION_RUN_FILE = "session-run.json"
-
-
-class SessionAnalysisMode(Enum):
-    """
-    Analysis mode determines the type of run strategy to use for the
-    processing steps.
-    """
-    BATCH = "batch"
-    INTERACTIVE_LOAD = "interactive-load"
-    INTERACTIVE_PREMERGE = "interactive-pre-merge"
-    INTERACTIVE_MERGE = "interactive-merge"
-    INTERACTIVE_AGG = "interactive-aggregate"
-    INTERACTIVE_XMERGE = "interactive-xmerge"
-
-
 #: Constant name to mark the benchmark matrix index as unparameterized
 UNPARAMETERIZED_INDEX_NAME = "RESERVED__unparameterized_index"
+benchplot_logger = logging.getLogger("cheri-benchplot")
 
 
-class PipelineSession:
+class Session:
     """
     Represent a benchmarking session.
     A session is the primary container for the benchmark assets, results and
@@ -48,24 +37,24 @@ class PipelineSession:
     to run and how.
     """
     @classmethod
-    def make_new(cls, mgr: "PipelineManager", session_path: Path, config: PipelineConfig) -> "PipelineSession":
+    def make_new(cls, user_config: BenchplotUserConfig, config: PipelineConfig, session_path: Path) -> "Session":
         """
         Create a new session and initialize the directory hierarchy
 
-        :param mgr: The parent pipeline manager
-        :param session_path: The session_path of the new session
+        :param user_config: The user configuration file for local configuration options
         :param config: The session configuration
+        :param session_path: The session_path of the new session
         :return: A new session instance
         """
         if session_path.exists():
-            mgr.logger.error("Session directory already exists for session %s", session_path)
+            benchplot_logger.logger.error("Session directory already exists for session %s", session_path)
             raise ValueError("New session path already exists")
-        run_config = SessionRunConfig.generate(mgr, config)
+        run_config = SessionRunConfig.generate(user_config, config)
         run_config.name = session_path.name
         session_path.mkdir()
         with open(session_path / SESSION_RUN_FILE, "w") as runfile:
             runfile.write(run_config.emit_json())
-        return PipelineSession(mgr, run_config, session_path=session_path)
+        return Session(user_config, run_config, session_path=session_path)
 
     @classmethod
     def is_session(cls, path: Path) -> bool:
@@ -81,30 +70,36 @@ class PipelineSession:
         return False
 
     @classmethod
-    def from_path(cls, mgr: "PipelineManager", path: Path) -> "PipelineSession":
+    def from_path(cls, user_config: BenchplotUserConfig, path: Path) -> typing.Optional["Session"]:
         """
         Load a session from the given path.
 
         :param mgr: The parent pipeline manager
         :param path: The session directory path
-        :return: The corresponding :class:`PipelineSession`
+        :return: The corresponding :class:`Session`
         """
-        assert path.exists()
-        assert cls.is_session(path)
+        benchplot_logger.debug("Scanning %s for valid session", path)
+
+        if not path.exists() or not cls.is_session(path):
+            benchplot_logger.debug("Session for %s not found", path)
+            return None
 
         config = SessionRunConfig.load_json(path / SESSION_RUN_FILE)
-        return PipelineSession(mgr, config, session_path=path)
+        session = Session(user_config, config, session_path=path)
 
-    def __init__(self, manager: "PipelineManager", config: SessionRunConfig, session_path: Path = None):
+        benchplot_logger.debug("Resolved session %s => %s", path, session)
+        return session
+
+    def __init__(self, user_config: BenchplotUserConfig, config: SessionRunConfig, session_path: Path = None):
         super().__init__()
-        # XXX debatable whether we want the manager here
-        self.manager = manager
-        # Now resolve the configuration templates, before doing anything in the session
+        #: The local user configuration
+        self.user_config = user_config
         #: Main session configuration
         self.config = self._resolve_config_template(config)
+        #: Root logger for the session
         self.logger = new_logger(f"session-{self.config.name}")
         if session_path is None:
-            session_root_path = self.manager.user_config.session_path / self.config.name
+            session_root_path = self.user_config.session_path / self.config.name
         else:
             session_root_path = session_path
         #: Session root path, where all the session data will be stored
@@ -114,6 +109,13 @@ class PipelineSession:
         self.benchmark_matrix = self._resolve_benchmark_matrix()
         #: Benchmark baseline instance group UUID.
         self.baseline_g_uuid = self._resolve_baseline()
+
+        # Before using the workers configuration, check if we are overriding it
+        if self.user_config.concurrent_workers:
+            self.logger.debug("Overriding maximum workers count from user configuration (max=%d)",
+                              self.user_config.concurrent_workers)
+            self.config.concurrent_workers = self.user_config.concurrent_workers
+
         #: Task scheduler
         self.scheduler = TaskScheduler(self)
 
@@ -141,7 +143,7 @@ class PipelineSession:
         using the current user configuration.
         """
         ctx = TemplateConfigContext()
-        ctx.register_template_subst(**asdict(self.manager.user_config))
+        ctx.register_template_subst(**asdict(self.user_config))
         # Register substitutions for known stable fields in the run configuration
         ctx.register_template_subst(session=config.uuid)
         ctx.register_template_subst(session_name=config.name)
@@ -265,10 +267,6 @@ class PipelineSession:
         return self.config.uuid
 
     @property
-    def user_config(self):
-        return self.manager.user_config
-
-    @property
     def parameter_keys(self) -> list[str]:
         """
         The set of parameter keys that index the rows of the benchmark matrix.
@@ -278,6 +276,35 @@ class PipelineSession:
             return []
         else:
             return list(names)
+
+    def get_public_tasks(self) -> list[typing.Type[AnalysisTask]]:
+        """
+        Return the public analysis tasks available for this session.
+
+        :return: A list of :class:`AnalysisTask` classes.
+        """
+        raise NotImplementedError("TODO")
+
+    def delete(self):
+        """
+        Delete this session and all associated files.
+        """
+        self.logger.info("Remove session %s (%s)", self.name, self.uuid)
+        shutil.rmtree(self.session_root_path)
+
+    def bundle(self):
+        """
+        Produce a compressed archive with all the session output.
+        """
+        bundle_file = self.session_root_path.with_suffix(".tar.xz")
+        self.logger.info("Generate %s bundle", self.session_root_path)
+        if bundle_file.exists():
+            self.logger.info("Replacing old bundle %s", bundle_file)
+            bundle_file.unlink()
+        result = subprocess.run(["tar", "-J", "-c", "-f", bundle_file, self.session_root_path])
+        if result.returncode:
+            self.logger.error("Failed to produce bundle")
+        self.logger.info("Archive created at %s", bundle_file)
 
     def machine_configuration_name(self, g_uuid: UUID) -> str:
         """
@@ -327,6 +354,9 @@ class PipelineSession:
 
         :param mode: Alternate run mode for partial or pretend runs.
         """
+        # Cleanup previous run, to avoid any confusion
+        self.clean()
+
         exec_config = ExecTaskConfig(mode=BenchmarkExecMode(mode))
         instance_manager = InstanceManager(self)
         self.scheduler.register_resource(instance_manager)
@@ -334,9 +364,11 @@ class PipelineSession:
         for col in self.benchmark_matrix:
             for bench in self.benchmark_matrix[col]:
                 bench.schedule_exec_tasks(self.scheduler, exec_config)
+        self.logger.info("Session %s start run", self.name, self.uuid)
         self.scheduler.run()
+        self.logger.info("Session %s run finished", self.name, self.uuid)
 
-    def analyse(self, analysis_config: AnalysisConfig, mode: str = "batch"):
+    def analyse(self, analysis_config: AnalysisConfig):
         """
         Run the session analysis tasks requested.
         The analysis pipeline is slighly different from the execution pipeline.
@@ -346,9 +378,7 @@ class PipelineSession:
         we collect and schedule
 
         :param analysis_config: The analysis configuration
-        :param mode: The mode to use for the analysis task scheduling. (XXX implement, currently ignored)
         """
-        # session_analysis_mode = SessionAnalysisMode(mode)
         # Override the baseline ID if configured
         if (analysis_config.baseline_gid is not None and analysis_config.baseline_gid != self.baseline_g_uuid):
             self.baseline_g_uuid = analysis_config.baseline_gid
@@ -369,4 +399,6 @@ class PipelineSession:
                 raise TypeError("Invalid task type")
             task = task_klass(self, analysis_config, task_config=handler.task_options)
             self.scheduler.add_task(task)
+        self.logger.info("Session %s start analysis", self.name)
         self.scheduler.run()
+        self.logger.info("Session %s analysis finished", self.name)

@@ -387,7 +387,7 @@ class AnalysisTask(Task):
     """
     task_namespace = "analysis"
 
-    def __init__(self, session: "PipelineSession", analysis_config: AnalysisConfig, task_config: Config = None):
+    def __init__(self, session: "Session", analysis_config: AnalysisConfig, task_config: Config = None):
         super().__init__(task_config=task_config)
         #: The current session
         self._session = session
@@ -457,7 +457,7 @@ class ResourceManager:
         assert cls.resource_name is not None, f"{cls} is missing resource name?"
         return cls.ResourceRequest(cls.resource_name, pool, kwargs)
 
-    def __init__(self, session: "PipelineSession", limit: int | None):
+    def __init__(self, session: "Session", limit: int | None):
         assert self.resource_name is not None, f"{self.__class__} is missing resource name?"
         self.session = session
         self.logger = new_logger(f"rman-{self.resource_name}")
@@ -550,7 +550,7 @@ class TaskScheduler:
     """
     Schedule running tasks into workers, handling task dependencies.
     """
-    def __init__(self, session: "PipelineSession"):
+    def __init__(self, session: "Session"):
         """
         :param session: The parent session
         """

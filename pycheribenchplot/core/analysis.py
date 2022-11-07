@@ -55,11 +55,7 @@ class MachineGroupAnalysisTask(AnalysisTask):
     """
     task_namespace = "analysis.mgroup"
 
-    def __init__(self,
-                 session: "PipelineSession",
-                 analysis_config: AnalysisConfig,
-                 g_uuid: UUID,
-                 task_config: Config = None):
+    def __init__(self, session: "Session", analysis_config: AnalysisConfig, g_uuid: UUID, task_config: Config = None):
         """
         :param session: The current session
         :param analysis_config: The analysis configuration for this run.
@@ -87,7 +83,7 @@ class ParamGroupAnalysisTask(AnalysisTask):
     task_namespace = "analysis.pgroup"
 
     def __init__(self,
-                 session: "PipelineSession",
+                 session: "Session",
                  analysis_config: AnalysisConfig,
                  parameters: dict[str, any],
                  task_config: Config = None):
@@ -114,7 +110,7 @@ class PlotTask(AnalysisTask):
     """
     task_namespace = "analysis.plot"
 
-    def __init__(self, session: "PipelineSession", analysis_config: AnalysisConfig, task_config: Config = None):
+    def __init__(self, session: "Session", analysis_config: AnalysisConfig, task_config: Config = None):
         super().__init__(session, analysis_config, task_config=task_config)
 
     def _plot_output(self, suffix: str) -> PlotTarget:

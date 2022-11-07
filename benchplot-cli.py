@@ -1,4 +1,4 @@
-#!/bin/python
+#!/usr/bin/env python
 
 import logging
 import argparse as ap
@@ -10,9 +10,11 @@ from pathlib import Path
 from marshmallow.exceptions import ValidationError
 
 from pycheribenchplot.core.config import PipelineConfig, BenchplotUserConfig, AnalysisConfig, TaskTargetConfig
-from pycheribenchplot.core.session import SessionAnalysisMode
-from pycheribenchplot.core.pipeline import PipelineManager
+from pycheribenchplot.core.session import Session
 from pycheribenchplot.core.util import setup_logging
+
+# Global logger from the logging setup
+logger = None
 
 def add_session_spec_options(parser):
     """
@@ -20,48 +22,92 @@ def add_session_spec_options(parser):
     """
     session_name = parser.add_argument("session_path", type=Path, help="Path or name of the target session")
 
-
-def resolve_session(args, manager, logger):
-    """
-    Helper to resolve a session depending on the argument passed
-    """
-    session = manager.resolve_session(args.session_path)
-    if session is None:
-        logger.error("Session %s does not exist", args.session_path)
+def resolve_session(user_config, session_path):
+    session = Session.from_path(user_config, session_path)
+    if not session:
+        logger.error("Session %s does not exist", session_path)
         exit(1)
     return session
 
-def list_session(manager, session, logger):
-    if session is None:
-        logger.error("No session %s", args.session_path)
-        return
-
+def list_session(session):
     configurations = session.config.configurations
     print(f"Session {session.config.name} ({session.config.uuid}):")
     for c in session.config.configurations:
         print("\t", c)
 
-def list_analysis(manager, session, logger):
+def list_tasks(session):
     """
-    Helper to display analysis handlers for a given manager
+    Helper to display public tasks for a given session
     """
-    handlers = manager.get_analysis_handlers(session)
-    print("Analysis handlers:")
-    for h in handlers:
-        if h.cross_analysis:
-            continue
-        print("\t", h)
+    return
+    # handlers = manager.get_analysis_handlers(session)
+    # print("Analysis handlers:")
+    # for h in handlers:
+    #     if h.cross_analysis:
+    #         continue
+    #     print("\t", h)
 
-    print("Cross-parameter analysis handlers:")
-    for h in handlers:
-        if h.cross_analysis:
-            print("\t", h)
+    # print("Cross-parameter analysis handlers:")
+    # for h in handlers:
+    #     if h.cross_analysis:
+    #         print("\t", h)
 
+
+def handle_command(user_config: BenchplotUserConfig, args):
+    if args.command == "session":
+        try:
+            config = PipelineConfig.load_json(args.pipeline_config)
+        except JSONDecodeError as ex:
+            logger.error("Malformed pipeline configuration %s: %s", args.pipeline_config, ex)
+            raise
+        except ValidationError as ex:
+            logger.error("Invalid pipeline configuration %s: %s", args.pipeline_config, ex)
+            raise
+        session = Session.from_path(args.session_path)
+        if not session:
+            session = Session.make_new(user_config, config, args.session_path)
+        elif args.force:
+            session.delete()
+            session = Session.make_new(user_config, config, args.session_path)
+        else:
+            logger.error("Session %s already exists", args.session_path)
+            exit(1)
+    elif args.command == "run":
+        session = resolve_session(user_config, args.session_path)
+        session.run("shellgen" if args.shellgen_only else "full")
+    elif args.command == "analyse":
+        session = resolve_session(user_config, args.session_path)
+        if args.analysis_config:
+            analysis_config = AnalysisConfig.load_json(args.analysis_config)
+        else:
+            analysis_config = AnalysisConfig()
+            for task in args.task:
+                analysis_config.handlers.append(TaskTargetConfig(handler=task))
+        session.analyse(analysis_config)
+    elif args.command == "clean":
+        raise NotImplementedError("TODO")
+    elif args.command == "list":
+        if args.session_path:
+            session = resolve_session(user_config, args.session_path)
+        else:
+            session = None
+        if args.what == "session":
+            list_session(session)
+        elif args.what == "tasks":
+            list_tasks(session)
+    elif args.command == "bundle":
+        session = resolve_session(user_config, args.session_path)
+        session.bundle()
+    else:
+        # No command
+        parser.print_help()
+        exit(1)
 
 def main():
     parser = ap.ArgumentParser(description="Benchmark run and plot tool")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     parser.add_argument("-l", "--logfile", type=Path, help="logfile", default=None)
+    parser.add_argument("-w", "--workers", type=int, help="Override max number of workers from configuration file", default=None)
     parser.add_argument("-c", "--config", type=Path, help="User environment configuration file",
                         default=Path("~/.config/cheri-benchplot.json").expanduser())
     sub = parser.add_subparsers(help="command", dest="command")
@@ -78,8 +124,6 @@ def main():
 
     sub_analyse = sub.add_parser("analyse", help="process benchmarks and generate plots")
     add_session_spec_options(sub_analyse)
-    sub_analyse.add_argument("--mode", choices=[m.value for m in SessionAnalysisMode], help="Analysis mode",
-                             default=SessionAnalysisMode.BATCH)
     sub_analyse.add_argument("-a", "--analysis-config", type=Path, help="Analysis configuration file",
                              default=None)
     sub_analyse.add_argument("-t", "--task", type=str, nargs="+", help="Task names to run for the analysis. This is a convenience shorthand for the full analysis configuration")
@@ -97,6 +141,7 @@ def main():
 
     args = parser.parse_args()
 
+    global logger
     logger = setup_logging(args.verbose, args.logfile)
     logger.debug("Loading user config %s", args.config)
     if not args.config.exists():
@@ -119,55 +164,7 @@ def main():
         logger.setLevel(logging.DEBUG)
 
     try:
-        manager = PipelineManager(user_config)
-
-        if args.command == "session":
-            try:
-                config = PipelineConfig.load_json(args.pipeline_config)
-            except JSONDecodeError as ex:
-                logger.error("Malformed pipeline configuration %s: %s", args.pipeline_config, ex)
-                raise
-            except ValidationError as ex:
-                logger.error("Invalid pipeline configuration %s: %s", args.pipeline_config, ex)
-                raise
-            existing = manager.resolve_session(args.session_path)
-            if existing:
-                if args.force:
-                    manager.delete_session(existing)
-                else:
-                    logger.error("Session %s already exists", args.session_path)
-                    exit(1)
-            manager.make_session(args.session_path, config)
-        elif args.command == "run":
-            session = resolve_session(args, manager, logger)
-            manager.run_session(session, shellgen_only=args.shellgen_only)
-        elif args.command == "analyse":
-            session = resolve_session(args, manager, logger)
-            if args.analysis_config:
-                analysis_config = AnalysisConfig.load_json(args.analysis_config)
-            else:
-                analysis_config = AnalysisConfig()
-                for task in args.task:
-                    analysis_config.handlers.append(TaskTargetConfig(handler=task))
-            manager.run_analysis(session, analysis_config, mode=args.mode)
-        elif args.command == "clean":
-            raise NotImplementedError("TODO")
-        elif args.command == "list":
-            if args.session_path:
-                session = resolve_session(args, manager, logger)
-            else:
-                session = None
-            if args.what == "session":
-                list_session(manager, session, logger)
-            elif args.what == "analysis":
-                list_analysis(manager, session, logger)
-        elif args.command == "bundle":
-            session = resolve_session(args, manager, logger)
-            manager.bundle(session)
-        else:
-            # No command
-            parser.print_help()
-            exit(1)
+        handle_command(user_config, args)
     except Exception as ex:
         logger.error("Failed to run command '%s'", args.command)
         if args.verbose:

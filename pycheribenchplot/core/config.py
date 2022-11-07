@@ -4,6 +4,7 @@ import dataclasses as dc
 import functools as ft
 import itertools as it
 import json
+import logging
 import shutil
 from collections import OrderedDict
 from datetime import date, datetime
@@ -239,6 +240,70 @@ class TemplateConfig(Config):
             if replaced:
                 changes[f.name] = replaced
         return dc.replace(self, **changes)
+
+
+@dc.dataclass
+class BenchplotUserConfig(Config):
+    """
+    User-environment configuration.
+    This defines system paths for programs and source code we use.
+    The main point of the user configuration is to make sessions portable,
+    so that a session that is run on a machine can be analysed on another.
+    """
+
+    #: Path to write the cheri-benchplot sessions to
+    session_path: ConfigPath = dc.field(default_factory=Path.cwd)
+
+    #: CHERI sdk path
+    sdk_path: ConfigPath = Path("~/cheri/cherisdk")
+
+    #: CHERI projects build directory, expects the format from cheribuild
+    build_path: ConfigPath = Path("~/cheri/build")
+
+    #: git repositories path
+    src_path: ConfigPath = Path("~/cheri")
+
+    #: Path to the CHERI perfetto fork build directory
+    perfetto_path: ConfigPath = Path("~/cheri/cheri-perfetto/build")
+
+    #: Path to openocd, will be inferred if missing (only relevant when running FPGA)
+    openocd_path: ConfigPath = Path("/usr/bin/openocd")
+
+    #: Path to flamegraph.pl flamegraph generator
+    flamegraph_path: ConfigPath = Path("flamegraph.pl")
+
+    #: CHERI rootfs path
+    rootfs_path: Optional[ConfigPath] = None
+
+    #: Path to cheribuild, inferred from :attr:`src_path` if missing
+    cheribuild_path: Optional[ConfigPath] = dc.field(init=False, default=None)
+
+    #: Path to the CheriBSD sources, inferred from :attr:`src_path` if missing
+    cheribsd_path: Optional[ConfigPath] = dc.field(init=False, default=None)
+
+    #: Path to the qemu sources, inferred from :attr:`src_path` if missing
+    qemu_path: Optional[ConfigPath] = dc.field(init=False, default=None)
+
+    #: Override the maximum number of workers to use
+    concurrent_workers: Optional[int] = None
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.sdk_path = self.sdk_path.expanduser().absolute()
+        self.build_path = self.build_path.expanduser().absolute()
+        self.src_path = self.src_path.expanduser().absolute()
+        if self.rootfs_path is None:
+            self.rootfs_path = self.sdk_path
+        self.cheribuild_path = self.src_path / "cheribuild"
+        self.cheribsd_path = self.src_path / "cheribsd"
+        self.qemu_path = self.src_path / "qemu"
+        # Try to autodetect openocd
+        if self.openocd_path is None:
+            self.openocd_path = shutil.which("openocd")
+
+        self.session_path = self.session_path.expanduser().absolute()
+        if not self.session_path.is_dir():
+            raise ValueError("Session path must be a directory")
 
 
 @dc.dataclass
@@ -654,7 +719,7 @@ class SessionRunConfig(CommonSessionConfig):
                                           "concurrent_instances")
 
     @classmethod
-    def generate(cls, mgr: "PipelineManager", config: PipelineConfig) -> "SessionRunConfig":
+    def generate(cls, user_config: BenchplotUserConfig, config: PipelineConfig) -> "SessionRunConfig":
         """
         Generate a new :class:`SessionRunConfig` from a :class:`PipelineConfig`.
         Manual benchmark parameterization is supported by specifying multiple benchmarks with
@@ -666,38 +731,40 @@ class SessionRunConfig(CommonSessionConfig):
         3. there are multiple benchmark_configs with the same set of parametrization keys but
            disjoint sets of values
 
+        :param user_config: The user configuration for the local machine setup.
         :param config: The :class:`PipelineConfig` to use.
         :return: A new session runfile configuration
         """
         session = SessionRunConfig.from_common_conf(config)
-        mgr.logger.info("Create new session %s", session.uuid)
+        logger = logging.getLogger("cheri-benchplot")
+        logger.info("Create new session %s", session.uuid)
 
         # Collect benchmarks and the instances
         all_conf = []
         # Case (1)
         if ft.reduce(lambda noparams, conf: noparams or len(conf.parameterize) == 0, config.benchmark_config, False):
             if len(config.benchmark_config) > 1:
-                mgr.logger.error("Multiple benchmark configurations must have a parameterization key")
+                logger.error("Multiple benchmark configurations must have a parameterization key")
                 raise ValueError("Invalid configuration")
             conf = config.benchmark_config[0]
-            mgr.logger.debug("Found benchmark %s", conf.name)
+            logger.debug("Found benchmark %s", conf.name)
             all_conf = [BenchmarkRunConfig.from_common_conf(conf)]
         else:
             param_keys = None
             # Case (2) (3)
             for conf in config.benchmark_config:
                 if len(conf.parameterize) == 0:
-                    mgr.logger.error("Missing benchmark parameterization?")
+                    logger.error("Missing benchmark parameterization?")
                     raise ValueError("Invalid configuration")
                 sorted_params = OrderedDict(conf.parameterize)
                 keys = set(conf.parameterize.keys())
                 if param_keys and param_keys != keys:
-                    mgr.logger.error("Mismatching parameterization keys %s != %s", param_keys, keys)
+                    logger.error("Mismatching parameterization keys %s != %s", param_keys, keys)
                     raise ValueError("Invalid configuration")
                 elif param_keys is None:
                     param_keys = keys
                 # XXX TODO Ensure parameter set disjointness
-                mgr.logger.debug("Found parameterized benchmark '%s'", conf.name)
+                logger.debug("Found parameterized benchmark '%s'", conf.name)
                 for param_combination in it.product(*sorted_params.values()):
                     parameters = dict(zip(sorted_params.keys(), param_combination))
                     run_conf = BenchmarkRunConfig.from_common_conf(conf)
@@ -721,70 +788,6 @@ class SessionRunConfig(CommonSessionConfig):
                 final_run_conf.instance = final_inst_conf
                 session.configurations.append(final_run_conf)
         return session
-
-
-@dc.dataclass
-class BenchplotUserConfig(Config):
-    """
-    User-environment configuration.
-    This defines system paths for programs and source code we use.
-    The main point of the user configuration is to make sessions portable,
-    so that a session that is run on a machine can be analysed on another.
-    """
-
-    #: Path to write the cheri-benchplot sessions to
-    session_path: ConfigPath = dc.field(default_factory=Path.cwd)
-
-    #: CHERI sdk path
-    sdk_path: ConfigPath = Path("~/cheri/cherisdk")
-
-    #: CHERI projects build directory, expects the format from cheribuild
-    build_path: ConfigPath = Path("~/cheri/build")
-
-    #: git repositories path
-    src_path: ConfigPath = Path("~/cheri")
-
-    #: Path to the CHERI perfetto fork build directory
-    perfetto_path: ConfigPath = Path("~/cheri/cheri-perfetto/build")
-
-    #: Path to openocd, will be inferred if missing (only relevant when running FPGA)
-    openocd_path: ConfigPath = Path("/usr/bin/openocd")
-
-    #: Path to flamegraph.pl flamegraph generator
-    flamegraph_path: ConfigPath = Path("flamegraph.pl")
-
-    #: CHERI rootfs path
-    rootfs_path: Optional[ConfigPath] = None
-
-    #: Path to cheribuild, inferred from :attr:`src_path` if missing
-    cheribuild_path: Optional[ConfigPath] = dc.field(init=False, default=None)
-
-    #: Path to the CheriBSD sources, inferred from :attr:`src_path` if missing
-    cheribsd_path: Optional[ConfigPath] = dc.field(init=False, default=None)
-
-    #: Path to the qemu sources, inferred from :attr:`src_path` if missing
-    qemu_path: Optional[ConfigPath] = dc.field(init=False, default=None)
-
-    #: Enable extra debug output
-    verbose: bool = False
-
-    def __post_init__(self):
-        super().__post_init__()
-        self.sdk_path = self.sdk_path.expanduser().absolute()
-        self.build_path = self.build_path.expanduser().absolute()
-        self.src_path = self.src_path.expanduser().absolute()
-        if self.rootfs_path is None:
-            self.rootfs_path = self.sdk_path
-        self.cheribuild_path = self.src_path / "cheribuild"
-        self.cheribsd_path = self.src_path / "cheribsd"
-        self.qemu_path = self.src_path / "qemu"
-        # Try to autodetect openocd
-        if self.openocd_path is None:
-            self.openocd_path = shutil.which("openocd")
-
-        self.session_path = self.session_path.expanduser().absolute()
-        if not self.session_path.is_dir():
-            raise ValueError("Session path must be a directory")
 
 
 @dc.dataclass

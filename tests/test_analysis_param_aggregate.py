@@ -5,7 +5,7 @@ from pandera import Field
 from pandera.extensions import register_check_method
 from pandera.typing import Series
 
-from pycheribenchplot.core.analysis import (BenchmarkDataLoadTask, BenchmarkStatsByParamGroupTask)
+from pycheribenchplot.core.analysis import (BenchmarkDataLoadTask, StatsByParamGroupTask)
 from pycheribenchplot.core.config import AnalysisConfig
 from pycheribenchplot.core.model import DataModel, ParamGroupDataModel
 from pycheribenchplot.core.task import AnalysisTask, DataFrameTarget
@@ -81,7 +81,7 @@ def register_tasks(mock_task_registry):
         def run(self):
             return
 
-    class DummyParamGroupTask(BenchmarkStatsByParamGroupTask):
+    class DummyParamGroupTask(StatsByParamGroupTask):
         """
         Note this is marked public for simplicity but would fail to be instantiated
         by the session analysis entry point unless we override __init__().

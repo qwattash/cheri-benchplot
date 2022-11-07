@@ -19,14 +19,14 @@ class TraceProcessorCache:
     instance = None
 
     @classmethod
-    def get_instance(cls, session: "PipelineSession"):
+    def get_instance(cls, session: "Session"):
         # XXX the singleton choice is sub-optimal, it should be propagated
         # from the current run context
         if cls.instance is None:
             cls.instance = TraceProcessorCache(session)
         return cls.instance
 
-    def __init__(self, session: "PipelineSession"):
+    def __init__(self, session: "Session"):
         self._session = session
         self._instances = {}
         self.logger = new_logger("perfetto-trace-processor-cache")

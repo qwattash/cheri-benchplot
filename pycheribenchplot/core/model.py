@@ -41,7 +41,7 @@ class BaseDataModel(SchemaModel):
         raise NotImplementedError("Must override")
 
     @classmethod
-    def to_schema(cls, session: "PipelineSession" = None):
+    def to_schema(cls, session: "Session" = None):
         """
         Generate a dataframe or series schema.
         This takes care to add the dataset index fields, including the dynamic parameters
