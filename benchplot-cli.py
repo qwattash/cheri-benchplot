@@ -83,7 +83,9 @@ def handle_command(user_config: BenchplotUserConfig, args):
                 analysis_config.handlers.append(TaskTargetConfig(handler=task))
         session.analyse(analysis_config)
     elif args.command == "clean":
-        raise NotImplementedError("TODO")
+        # XXX add safety net question?
+        session = resolve_session(user_config, args.session_path)
+        session.clean_all()
     elif args.command == "show":
         if args.session_path:
             session = resolve_session(user_config, args.session_path)
