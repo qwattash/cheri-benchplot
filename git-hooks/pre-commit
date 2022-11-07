@@ -27,7 +27,7 @@ yapf -i "${py_files[@]}"
 readarray -t py_changed < <(git diff --name-only "${py_files[@]}")
 if [ ${#py_changed[@]} -gt 0 ]; then
     >&2 echo "Reformatted staged files, please review the changes"
-    >&2 echo "Updated files: ${py_unstaged[@]}"
+    >&2 echo "Updated files: ${py_changed[@]}"
     exit 1
 else
     exit 0

@@ -1,4 +1,5 @@
 import io
+import logging
 import os
 import signal
 from queue import Queue
@@ -24,7 +25,10 @@ class DummyInstance(Instance):
 
 
 @pytest.fixture
-def manager(mocker, fake_session):
+def manager(pytestconfig, mocker, fake_session):
+    if pytestconfig.option.quiet:
+        logger = logging.getLogger("cheri-benchplot")
+        logger.setLevel(logging.CRITICAL)
     mock_resolve_instance = mocker.patch.object(InstanceManager, "_find_instance_type")
     mock_resolve_instance.return_value = DummyInstance
     manager = InstanceManager(fake_session, limit=1)
@@ -120,6 +124,7 @@ def test_instance_lifecycle(manager, instance_request):
     """
     with manager.acquire(instance_request) as instance:
         assert instance.state == InstanceState.READY
+    # In theory it would be nice to see it go to shutdown or idle queue here
 
 
 @pytest.mark.timeout(5)
