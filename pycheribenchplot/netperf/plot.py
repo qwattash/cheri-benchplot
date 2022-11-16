@@ -6,6 +6,7 @@ import pandas as pd
 import seaborn as sns
 
 from pycheribenchplot.core.analysis import PlotTask
+from pycheribenchplot.core.plot import new_figure
 from pycheribenchplot.core.task import PlotTarget
 from pycheribenchplot.netperf.analysis import NetperfStatsMergedParams
 
@@ -25,21 +26,18 @@ class NetperfStatsPlot(PlotTask):
         """
         Produce the box plot for a given metric, we keep grouping by g_uuid.
         """
-        fig = plt.figure(constrained_layout=True)
-        ax = fig.subplots()
-        # There may be multiple parameterization axes, join as strings for now
-        # probably not the best.
-        if self.session.parameter_keys:
-            param_desc = df.index.to_frame()[self.session.parameter_keys].agg("-".join, axis=1)
-        else:
-            # Should be only one benchmark, get its name
-            name = self.session.config.configurations[0].name
-            param_desc = pd.Series(name, index=df.index)
-        hue = df.index.get_level_values("dataset_gid").map(lambda gid: self.session.machine_configuration_name(gid))
-        sns.boxplot(ax=ax, y=metric, x=param_desc, hue=hue, data=df, palette="pastel")
-
-        fig.savefig(self._plot_output(metric).path)
-        plt.close(fig)
+        with new_figure(self._plot_output(metric).path) as fig:
+            ax = fig.subplots()
+            # There may be multiple parameterization axes, join as strings for now
+            # probably not the best.
+            if self.session.parameter_keys:
+                param_desc = df.index.to_frame()[self.session.parameter_keys].agg("-".join, axis=1)
+            else:
+                # Should be only one benchmark, get its name
+                name = self.session.config.configurations[0].name
+                param_desc = pd.Series(name, index=df.index)
+            hue = df.index.get_level_values("dataset_gid").map(lambda gid: self.session.machine_configuration_name(gid))
+            sns.boxplot(ax=ax, y=metric, x=param_desc, hue=hue, data=df, palette="pastel")
 
     def dependencies(self):
         self.stats = NetperfStatsMergedParams(self.session, self.analysis_config)
@@ -67,29 +65,25 @@ class NetperfStatsDeltaPlot(PlotTask):
         """
         Produce the bar plot for a given metric, we keep grouping by g_uuid.
         """
-        fig = plt.figure(constrained_layout=True)
-        ax = fig.subplots()
-
-        chunk = df.xs(metric, level="metric", axis=1)
-        if self.session.parameter_keys:
-            param_desc = chunk.index.to_frame()[self.session.parameter_keys].agg("-".join, axis=1)
-        else:
-            # Should be only one benchmark, get its name
-            name = self.session.config.configurations[0].name
-            param_desc = pd.Series(name, index=chunk.index)
-        hue = chunk.index.get_level_values("dataset_gid")
-        err_hi = chunk[("q75", "delta")] - chunk[("median", "delta")]
-        err_lo = chunk[("median", "delta")] - chunk[("q25", "delta")]
-        sns.barplot(ax=ax,
-                    x=param_desc,
-                    y=("median", "delta"),
-                    hue=hue,
-                    data=chunk,
-                    palette="pastel",
-                    errorbar=lambda v: [err_hi, err_lo])
-
-        fig.savefig(self._plot_output(metric).path)
-        plt.close(fig)
+        with new_figure(self._plot_output(metric).path) as fig:
+            ax = fig.subplots()
+            chunk = df.xs(metric, level="metric", axis=1)
+            if self.session.parameter_keys:
+                param_desc = chunk.index.to_frame()[self.session.parameter_keys].agg("-".join, axis=1)
+            else:
+                # Should be only one benchmark, get its name
+                name = self.session.config.configurations[0].name
+                param_desc = pd.Series(name, index=chunk.index)
+            hue = chunk.index.get_level_values("dataset_gid")
+            err_hi = chunk[("q75", "delta")] - chunk[("median", "delta")]
+            err_lo = chunk[("median", "delta")] - chunk[("q25", "delta")]
+            sns.barplot(ax=ax,
+                        x=param_desc,
+                        y=("median", "delta"),
+                        hue=hue,
+                        data=chunk,
+                        palette="pastel",
+                        errorbar=lambda v: [err_hi, err_lo])
 
     def dependencies(self):
         self.stats = NetperfStatsMergedParams(self.session, self.analysis_config)
