@@ -268,17 +268,25 @@ def test_task_registry(mock_task_registry):
 
     class TaskA(Task):
         public = True
+        task_namespace = "test"
         task_name = "fake-task-A"
 
     class TaskB(Task):
         public = False
+        task_namespace = "test"
         task_name = "fake-task-B"
+
+    class NoNamespaceTask(Task):
+        task_name = "foobar"
+
+    class NoNameTask(Task):
+        task_namespace = "foobar"
 
     class AbstractTask(Task):
         pass
 
-    assert public_tasks == {"internal": {"fake-task-A": TaskA}}
-    assert all_tasks == {"internal": {"fake-task-A": TaskA, "fake-task-B": TaskB}}
+    assert public_tasks == {"test": {"fake-task-A": TaskA}}
+    assert all_tasks == {"test": {"fake-task-A": TaskA, "fake-task-B": TaskB}}
 
 
 def test_task_registry_duplicate(mock_task_registry):
