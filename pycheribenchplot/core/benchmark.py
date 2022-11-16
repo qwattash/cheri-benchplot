@@ -50,6 +50,8 @@ class BenchmarkExecTask(Task):
         self.benchmark = benchmark
         #: Script builder for this benchmark context
         self.script = ScriptBuilder(benchmark)
+        #: Whether we need to request a VM instance, this becomes valid after dependency scanning
+        self._need_instance = None
 
     def _fetch_task(self, config: ExecTargetConfig) -> Task:
         task_klass = TaskRegistry.resolve_exec_task(config.handler)
@@ -59,6 +61,8 @@ class BenchmarkExecTask(Task):
         if not issubclass(task_klass, ExecutionTask):
             self.logger.error("BenchmarkExecTask only supports depending on ExecutionTasks, found %s", task_klass)
             raise TypeError("Invalid dependency type")
+        if task_klass.require_instance:
+            self._need_instance = True
         return task_klass(self.benchmark, self.script, task_config=config.task_options)
 
     def _handle_config_command_hooks_for_section(self, section_name: str, cmd_list: list[str | dict]):
@@ -118,13 +122,17 @@ class BenchmarkExecTask(Task):
         return f"{self.task_namespace}-{self.task_name}-{self.benchmark.uuid}"
 
     def resources(self):
-        yield from super().resources()
-        self.instance_req = InstanceManager.request(self.benchmark.g_uuid,
-                                                    instance_config=self.benchmark.config.instance)
-        yield self.instance_req
+        assert self._need_instance is not None, "need_instance must have been set, did not scan dependencies?"
+        if self._need_instance:
+            self.instance_req = InstanceManager.request(self.benchmark.g_uuid,
+                                                        instance_config=self.benchmark.config.instance)
+            yield self.instance_req
 
     def dependencies(self):
-        yield from super().dependencies()
+        # Note that dependencies are guaranteed to be scanned on schedule resolution,
+        # so before resource requests are resolved. We can determine here how many deps
+        # require an instance
+        self._need_instance = False
         yield self._fetch_task(self.benchmark.config.benchmark)
         for aux_config in self.benchmark.config.aux_tasks:
             yield self._fetch_task(aux_config)
@@ -138,6 +146,13 @@ class BenchmarkExecTask(Task):
         3. Connect to the instance, upload the run script and run it to completion.
         4. Extract results
         """
+        assert self._need_instance is not None, "need_instance must have been set, did not scan dependencies?"
+
+        if not self._need_instance:
+            # We are done, nothing to run on a remote instance, any task to execute has been completed by deps
+            self.logger.info("Benchmark run completed")
+            return
+
         self._handle_config_command_hooks()
         script_path = self.benchmark.get_run_script_path()
         remote_script_path = Path(f"{self.benchmark.config.name}-{self.benchmark.uuid}.sh")

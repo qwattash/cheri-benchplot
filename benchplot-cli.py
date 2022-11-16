@@ -53,13 +53,13 @@ def handle_command(user_config: BenchplotUserConfig, args):
     if args.command == "session":
         try:
             config = PipelineConfig.load_json(args.pipeline_config)
+            session = Session.from_path(user_config, args.session_path)
         except JSONDecodeError as ex:
             logger.error("Malformed pipeline configuration %s: %s", args.pipeline_config, ex)
             raise
         except ValidationError as ex:
             logger.error("Invalid pipeline configuration %s: %s", args.pipeline_config, ex)
             raise
-        session = Session.from_path(user_config, args.session_path)
         if not session:
             session = Session.make_new(user_config, config, args.session_path)
         elif args.force:

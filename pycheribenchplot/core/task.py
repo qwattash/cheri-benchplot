@@ -35,7 +35,7 @@ class TaskRegistry(type):
 
     def __init__(self, name: str, bases: typing.Tuple[typing.Type], kdict: dict):
         super().__init__(name, bases, kdict)
-        if self.task_name is None:
+        if self.task_name is None or self.task_namespace is None:
             # Skip, this is an abstract task
             return
         ns = TaskRegistry.all_tasks[self.task_namespace]
@@ -128,15 +128,15 @@ class FileTarget(Target):
     Base class for a target output file.
     """
     @classmethod
-    def from_task(cls, task: "Task", prefix: str = None, iter_base: bool = False, ext: str = None):
+    def from_task(cls, task: "Task", prefix: str = None, ext: str = None, **kwargs):
         """
         Create a task path using the task identifier and the parent session data root path.
 
         :param task: The task that generates this file
         :param prefix: Additional name used to generate the filename, in case the task generates
         multiple files
-        :param iter_base: There is one file per benchmark iteration
         :param ext: Optional file extension
+        :param `**kwargs`: Forwarded arguments to the :class:`FileTarget` constructor.
         """
         name = re.sub(r"\.", "-", task.task_id)
         if prefix:
@@ -147,16 +147,19 @@ class FileTarget(Target):
             if not ext.startswith("."):
                 ext = "." + ext
             path = path.with_suffix(ext)
-        return cls(task.benchmark, path, has_iteration_path=iter_base)
+        return cls(task.benchmark, path, **kwargs)
 
-    def __init__(self, benchmark, path: Path, has_iteration_path: bool = False):
+    def __init__(self, benchmark, path: Path, has_iteration_path: bool = False, use_data_root: bool = False):
         """
         :param benchmark: The benchmark context this file belongs to
         :param path: The file relative path from the benchmark output data directory.
         :param per_iteration: Whether the file is replicated for each iteration
+        :param use_data_root: Whether to use the session data root path instead of the per-benchmark data path.
+            This is useful for files that do not belong to a single benchmark.
         """
         self.benchmark = benchmark
         self.has_iteration_path = has_iteration_path
+        self.use_data_root = use_data_root
         self._path = path
 
     @property
@@ -166,8 +169,8 @@ class FileTarget(Target):
         If the path depends on the iteration index, this raises a TypeError.
         """
         if self.has_iteration_path:
-            raise TypeError("Can not use shorthand path property when multiple paths are present")
-        return self.benchmark.get_benchmark_data_path() / self._path
+            raise ValueError("Can not use shorthand path property when multiple paths are present")
+        return self.paths[0]
 
     @property
     def remote_path(self) -> Path:
@@ -186,7 +189,13 @@ class FileTarget(Target):
         If the path does not depend on iterations, this only returns the path.
         """
         if not self.has_iteration_path:
-            return [self.benchmark.get_benchmark_data_path() / self._path]
+            if self.use_data_root:
+                base = self.benchmark.session.get_data_root_path()
+            else:
+                base = self.benchmark.get_benchmark_data_path()
+            return [base / self._path]
+        if self.use_data_root:
+            raise NotImplementedError("Using the data root path for iteration output is not yet supported")
         base_paths = map(self.benchmark.get_benchmark_iter_data_path, range(self.benchmark.config.iterations))
         return [path / self._path for path in base_paths]
 
@@ -253,7 +262,7 @@ class Task(metaclass=TaskRegistry):
     #: Mark the task as a top-level target
     public = False
     #: Human-readable task namespace, used for task identification
-    task_namespace = "internal"
+    task_namespace = None
     #: Human-readable task identifier, used for task identification
     task_name = None
     #: If set, use the given Config class to unpack the task configuration
@@ -368,6 +377,9 @@ class Task(metaclass=TaskRegistry):
         Each target must be associated to a unique name. The name is considered to be the public
         interface for other tasks to fetch targets and outputs of this task.
         The name/target pairs may be used to construct a dictionary to access the return values by key.
+
+        XXX consider making outputs classmethods or recording run tasks outputs somewhere, it is
+        annoying to instantiate the tasks just to get the outputs, which may well be dynamic anyway.
         """
         yield from []
 
@@ -392,11 +404,11 @@ class ExecutionTask(Task):
     3. Add commands to the benchmark run script sections.
     """
     task_name = "exec"
+    #: Whether the task requires a running VM instance or not. Instead of changing this use :class:`DataGenTask`.
+    require_instance = True
 
     def __init__(self, benchmark: "Benchmark", script: "ScriptBuilder", task_config: Config = None):
         super().__init__(task_config=task_config)
-        # XXX this is somehow relaxed now
-        assert self.task_name == "exec", "ExecutionTask convention mandates the 'exec' task namespace"
         #: Associated benchmark context
         self.benchmark = benchmark
         #: Script builder associated to the current benchmark context.
@@ -424,6 +436,18 @@ class ExecutionTask(Task):
         change the task ID generation.
         """
         return f"{self.task_namespace}.{self.task_name}-{self.benchmark.uuid}"
+
+
+class DataGenTask(ExecutionTask):
+    """
+    A special type of execution task that does not require a running instance.
+    The distinction is made so that the root benchmark execution task knows whether
+    to request an instance or not.
+    DataGenTasks should not depend on execution tasks, this is to avoid scanning the whole dependency tree
+    to determine whether we need to request an instance or not, however the reverse is allowed.
+    """
+    #: Whether the task requires a running VM instance or not.
+    require_instance = False
 
 
 class AnalysisTask(Task):
@@ -647,12 +671,13 @@ class TaskScheduler:
         """
         if self.session.config.abort_on_failure:
             # Kill all tasks and signal workers stop
-            self.logger.warning("Cancelling all pending tasks")
             with self._worker_wakeup:
                 self._failed_tasks.append(failed_task)
                 for t in self._task_queue:
                     t.notify_failed("cancelled")
-                self._task_queue.clear()
+                if self._task_queue:
+                    self.logger.warning("Cancelling all pending tasks")
+                    self._task_queue.clear()
                 # XXX Find a nice way to propagate the early-stop request to current tasks.
                 # for task in self._active_tasks:
                 #     task.cancel()
@@ -731,7 +756,7 @@ class TaskScheduler:
             # Just pass it through
             raise
         except Exception as ex:
-            self.logger.exception("Error in worker[%d]", worker_index)
+            self.logger.exception("Error in worker[%d] handling task %s", worker_index, task)
             # Notify other workers that may be waiting on this dependency that they should bail out.
             task.notify_failed(ex)
             # Now we need to cancel some tasks

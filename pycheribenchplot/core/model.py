@@ -69,7 +69,11 @@ class BaseDataModel(SchemaModel):
                                               description=f"Benchmark parameter {param}")
         s = s.add_columns(extra_columns).reset_index()
         # Create new index in the following order [<index_up_to_dynamic_position>, <param_index_fields>, <other_index_fields>]
-        offset = index_names.index(cls.dynamic_index_position()) + 1
+        index_offset = cls.dynamic_index_position()
+        if index_offset is not None:
+            offset = index_names.index(cls.dynamic_index_position()) + 1
+        else:
+            offset = 0
         index_names[offset:offset] = extra_columns.keys()
         return s.set_index(index_names)
 
@@ -82,6 +86,16 @@ class BaseDataModel(SchemaModel):
         strict = "filter"
         # Coerce data types
         coerce = True
+
+
+class GlobalModel(BaseDataModel):
+    """
+    A data model that is not associated to any specific benchmark run or group.
+    This is a global set of data without dynamic fields.
+    """
+    @classmethod
+    def dynamic_index_position(cls):
+        return None
 
 
 class DataModel(BaseDataModel):

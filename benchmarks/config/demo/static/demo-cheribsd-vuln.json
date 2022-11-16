@@ -1,0 +1,23 @@
+{
+    "instance_config": {
+        "instances": [{
+            "name": "hybrid",
+            "baseline": true,
+            "kernel": "CHERI-QEMU-NODEBUG",
+            "platform": "qemu",
+            "cheri_target": "riscv64-purecap",
+            "kernelabi": "hybrid"
+        }]
+    },
+    "benchmark_config": [{
+        "name": "demo-cheribsd-vuln",
+        "desc": "cheri vulnerablity analysis demo",
+        "iterations": 1,
+        "benchmark": {
+            "handler": "kernel-vuln.cheribsd-sa-classification",
+            "task_options": {
+                "classification_file": "extra_files/freebsd_advisories.csv"
+            }
+        }
+    }]
+}

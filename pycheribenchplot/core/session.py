@@ -92,11 +92,13 @@ class Session:
 
     def __init__(self, user_config: BenchplotUserConfig, config: SessionRunConfig, session_path: Path = None):
         super().__init__()
+        # Pre-initialization logger
+        self.logger = new_logger(f"session-init")
         #: The local user configuration
         self.user_config = user_config
         #: Main session configuration
         self.config = self._resolve_config_template(config)
-        #: Root logger for the session
+        #: Root logger for the session, initialized as soon as we know we have a stable session name
         self.logger = new_logger(f"session-{self.config.name}")
         if session_path is None:
             session_root_path = self.user_config.session_path / self.config.name
@@ -387,9 +389,9 @@ class Session:
         for col in self.benchmark_matrix:
             for bench in self.benchmark_matrix[col]:
                 bench.schedule_exec_tasks(self.scheduler, exec_config)
-        self.logger.info("Session %s start run", self.name, self.uuid)
+        self.logger.info("Session %s start run", self.name)
         self.scheduler.run()
-        self.logger.info("Session %s run finished", self.name, self.uuid)
+        self.logger.info("Session %s run finished", self.name)
 
     def analyse(self, analysis_config: AnalysisConfig):
         """

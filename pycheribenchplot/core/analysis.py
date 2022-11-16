@@ -113,8 +113,12 @@ class PlotTask(AnalysisTask):
     def __init__(self, session: "Session", analysis_config: AnalysisConfig, task_config: Config = None):
         super().__init__(session, analysis_config, task_config=task_config)
 
-    def _plot_output(self, suffix: str) -> PlotTarget:
-        return PlotTarget(self.session.get_plot_root_path() / f"{self.task_id}-{suffix}.pdf")
+    def _plot_output(self, suffix: str = None) -> PlotTarget:
+        if suffix:
+            name = f"{self.task_id}-{suffix}.pdf"
+        else:
+            name = f"{self.task_id}.pdf"
+        return PlotTarget(self.session.get_plot_root_path() / name)
 
 
 class BenchmarkDataLoadTask(BenchmarkAnalysisTask):
