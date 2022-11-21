@@ -16,7 +16,8 @@
         "benchmark": {
             "handler": "kernel-vuln.cheribsd-sa-classification",
             "task_options": {
-                "classification_file": "extra_files/freebsd_advisories.csv"
+                "classification_file": "extra_files/freebsd_advisories.csv",
+                "unmitigated_file": "extra_files/freebsd_advisories_unmitigated.csv"
             }
         }
     }]

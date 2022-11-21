@@ -16,7 +16,7 @@ from uuid import UUID, uuid4
 import marshmallow.fields as mfields
 import numpy as np
 from marshmallow import Schema, ValidationError, validates_schema
-from marshmallow.validate import OneOf
+from marshmallow.validate import And, OneOf, Predicate
 from marshmallow_dataclass import NewType, class_schema
 from marshmallow_enum import EnumField
 from typing_inspect import get_args, get_origin, is_generic_type
@@ -63,6 +63,11 @@ class PathField(mfields.Field):
             return Path(value)
         except TypeError as ex:
             raise ValidationError(f"Invalid path {value}") from ex
+
+
+#: Helper to validate that a PathField points to an existing regular file
+validate_path_exists = And(Predicate("exists", error="File does not exist"),
+                           Predicate("is_file", error="File is not regular file"))
 
 
 class TaskSpecField(mfields.Field):

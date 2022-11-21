@@ -280,6 +280,13 @@ class Task(metaclass=TaskRegistry):
         self.failed = None
         #: set of tasks we resolved that we depend upon, this is filled by the scheduler
         self.resolved_dependencies = set()
+        #: collected outputs. This currently caches the results from output_map(). Ideally, however,
+        #: this should be filled either by the scheduler or from cached task metadata.
+        #: The scheduler fill should occur after all dependencies have completed, but before run(),
+        #: so it is possible to access dependencies in the outputs generator. Analysis tasks should be able
+        #: to resolve exec tasks outputs from metadata. This would remove the necessity for instantiating tasks
+        #: to reference outputs and removes limitations for dynamic output descriptor generation.
+        self.collected_outputs = {}
 
     def __str__(self):
         return str(self.task_id)
@@ -316,9 +323,14 @@ class Task(metaclass=TaskRegistry):
     @property
     def output_map(self) -> dict[str, Target]:
         """
-        Shorthand to access outputs by key
+        Return the output descriptors for the task.
+        See note on :attr:`Task.collected_outputs`.
+        The only invariant that should be enforced here is that the output map is only ever accessed
+        after all dependencies tasks have completed.
         """
-        return dict(self.outputs())
+        if not self.collected_outputs:
+            self.collected_outputs = dict(self.outputs())
+        return self.collected_outputs
 
     def add_drone(self, other: "Task"):
         """

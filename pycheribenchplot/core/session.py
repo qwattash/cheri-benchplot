@@ -257,6 +257,7 @@ class Session:
         """
         Build the session directory tree.
         """
+        self.get_metadata_root_path().mkdir(exist_ok=True)
         self.get_data_root_path().mkdir(exist_ok=True)
         self.get_asset_root_path().mkdir(exist_ok=True)
         self.get_plot_root_path().mkdir(exist_ok=True)
@@ -330,6 +331,12 @@ class Session:
         instance_config = col.iloc[0].config.instance
         return instance_config.name
 
+    def get_metadata_root_path(self) -> Path:
+        """
+        :return: The metadata directory, used to store benchplot task metadata.
+        """
+        return self.session_root_path / ".metadata"
+
     def get_data_root_path(self) -> Path:
         """
         :return: The root raw data directory, used to store artifacts from benchmark runs.
@@ -352,9 +359,12 @@ class Session:
         """
         Clean all output files, including benchmark data.
         """
+        meta_root = self.get_metadata_root_path()
         data_root = self.get_data_root_path()
         plot_root = self.get_plot_root_path()
         asset_root = self.get_asset_root_path()
+        if meta_root.exists():
+            shutil.rmtree(meta_root)
         if data_root.exists():
             shutil.rmtree(data_root)
         if plot_root.exists():
