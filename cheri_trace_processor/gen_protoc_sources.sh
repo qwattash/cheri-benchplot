@@ -10,4 +10,4 @@ if [ $# -lt 1 ]; then
     exit 1
 fi
 
-protoc --python_out=. -I=$1 "${1}/protobuf_backend_entry.proto"
+protoc --python_out=. -I=$1 "${1}/qemu_log_entry.proto"
