@@ -434,7 +434,7 @@ class Session:
                     self.logger.warning("Analysis process only supports scheduling of AnalysisTasks, skipping %s",
                                         task_klass)
                 if task_klass.task_config_class:
-                    options = task_class.task_config_class.schema().load(task_spec.task_options)
+                    options = task_klass.task_config_class.schema().load(task_spec.task_options)
                 else:
                     options = task_spec.task_options
                 task = task_klass(self, analysis_config, task_config=options)
