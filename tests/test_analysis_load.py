@@ -17,7 +17,7 @@ class DummyExecTask(ExecutionTask):
         pass
 
     def outputs(self):
-        yield "test-target", LocalFileTarget(self.benchmark, "fake-path.csv")
+        yield "test-target", LocalFileTarget.from_benchmark(self.benchmark, "fake-path.csv")
 
 
 class DummyModel(DataModel):

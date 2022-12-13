@@ -11,7 +11,7 @@ from .config import AnalysisConfig, Config, ExecTargetConfig
 from .elf import AddressSpaceManager, DWARFHelper
 from .instance import InstanceManager
 from .shellgen import ScriptBuilder
-from .task import ExecutionTask, Task, TaskRegistry, TaskScheduler
+from .task import (ExecutionTask, SessionExecutionTask, Task, TaskRegistry, TaskScheduler)
 from .util import new_logger, timing
 
 
@@ -59,7 +59,13 @@ class BenchmarkExecTask(Task):
             raise TypeError("Invalid dependency type")
         if task_klass.require_instance:
             self._need_instance = True
-        return task_klass(self.benchmark, self.script, task_config=config.task_options)
+        if isinstance(task_klass, ExecutionTask):
+            return task_klass(self.benchmark, self.script, task_config=config.task_options)
+        elif isinstance(task_klass, SessionExecutionTask):
+            return task_klass(self.session, task_config=config.task_options)
+        else:
+            self.logger.error("Invalid task %s, must be ExecutionTask or SessionExecutionTask")
+            raise TypeError("Invalid task type")
 
     def _handle_config_command_hooks_for_section(self, section_name: str, cmd_list: list[str | dict]):
         """
