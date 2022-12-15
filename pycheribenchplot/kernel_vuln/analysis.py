@@ -156,8 +156,8 @@ class CheriBSDAdvisoriesHistory(PlotTask):
         yield self._sa_load
 
     def run(self):
-        df = self._sa_load.output_map["df"].df.copy()
-        history = self._sa_load.output_map["history_df"].df.copy()
+        df = self._sa_load.output_map["df"].get()
+        history = self._sa_load.output_map["history_df"].get()
 
         df["year"] = df.index.get_level_values("date").year
         df["advisory"] = df.index.get_level_values("advisory")

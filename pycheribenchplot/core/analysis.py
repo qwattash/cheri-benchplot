@@ -227,7 +227,7 @@ class BenchmarkDataLoadTask(BenchmarkAnalysisTask):
             if not path.exists():
                 self.logger.error("Can not load %s, does not exist", path)
                 raise FileNotFoundError(f"{path} does not exist")
-            if not target.has_iteration_path:
+            if not target.use_iterations:
                 i = -1
             self._load_one(path, i)
         self.output_map["df"].assign(self._output_df())

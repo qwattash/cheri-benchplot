@@ -469,9 +469,10 @@ class FileTarget(Target):
         """
         raise NotImplementedError("Must override")
 
-    def __init__(self, paths: list[Path], remote_paths: list[Path] | None = None):
+    def __init__(self, paths: list[Path], remote_paths: list[Path] | None = None, use_iterations: bool = False):
         self._paths = paths
         self._remote_paths = remote_paths
+        self.use_iterations = use_iterations
 
     @property
     def path(self) -> Path:
@@ -531,7 +532,7 @@ class DataFileTarget(FileTarget):
         else:
             local = [benchmark_data_root / path]
             remote = [guest_data_root / path]
-        return cls(local, remote)
+        return cls(local, remote, use_iterations=use_iterations)
 
     def needs_extraction(self):
         return True
