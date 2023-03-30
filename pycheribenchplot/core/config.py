@@ -393,12 +393,14 @@ class ProfileConfig(TemplateConfig):
 class InstancePlatform(Enum):
     QEMU = "qemu"
     VCU118 = "vcu118"
+    LOCAL = "local"
 
     def __str__(self):
         return self.value
 
 
 class InstanceCheriBSD(Enum):
+    LOCAL_NATIVE = "native"
     RISCV64_PURECAP = "riscv64-purecap"
     RISCV64_HYBRID = "riscv64-hybrid"
     MORELLO_PURECAP = "morello-purecap"
@@ -782,6 +784,17 @@ class SessionRunConfig(CommonSessionConfig):
                     run_conf = BenchmarkRunConfig.from_common_conf(conf)
                     run_conf.parameters = parameters
                     all_conf.append(run_conf)
+
+        # If there is no instance, use the local instance
+        if not config.instance_config.instances:
+            config.instance_config.instances.append(
+                InstanceConfig(kernel="unknown",
+                               baseline=True,
+                               name="local",
+                               platform=InstancePlatform.LOCAL,
+                               cheri_target=InstanceCheriBSD.LOCAL_NATIVE,
+                               kernelabi=InstanceKernelABI.NOCHERI,
+                               cheribuild_kernel=False))
 
         # Map instances to dataset group IDs
         group_uuids = [uuid4() for _ in config.instance_config.instances]

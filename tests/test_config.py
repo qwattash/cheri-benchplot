@@ -121,8 +121,8 @@ def test_pipeline_config_missing_instance():
             }
         }]
     }
-    with pytest.raises(ValueError):
-        input_config = PipelineConfig.schema().load(data)
+
+    input_config = PipelineConfig.schema().load(data)
 
 
 def test_run_config_gen_without_parametrization(fake_user_config):
@@ -357,3 +357,38 @@ def test_run_config_gen_multi_parametrization_missing(fake_user_config):
     input_config = PipelineConfig.schema().load(data)
     with pytest.raises(ValueError, match="Invalid configuration"):
         SessionRunConfig.generate(fake_user_config, input_config)
+
+
+def test_unified_benchmark_generators(fake_user_config, mock_task_registry):
+    data = {
+        "instance_config": {},
+        "benchmark_config": [{
+            "name": "test-unified",
+            "iterations": 1,
+            "generators": [{
+                "handler": "test.generator-1"
+            }, {
+                "handler": "test.generator-2"
+            }]
+        }]
+    }
+
+    class Gen1(Task):
+        public = True
+        task_namespace = "test"
+        task_name = "generator-1"
+
+    class Gen2(Task):
+        public = True
+        task_namespace = "test"
+        task_name = "generator-2"
+
+    input_config = PipelineConfig.schema().load(data)
+    check = SessionRunConfig.generate(fake_user_config, input_config)
+
+    assert len(check.configurations) == 1
+    conf0 = check.configurations[0]
+    assert len(conf0.generators) == 2
+    assert conf0.generators[0].handler == "test.generator-1"
+    assert conf0.generators[1].handler == "test.generator-2"
+    assert conf0.instance.platform == InstancePlatform.LOCAL
