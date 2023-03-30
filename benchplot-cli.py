@@ -116,7 +116,7 @@ def main():
     parser.add_argument("-c",
                         "--config",
                         type=Path,
-                        help="User environment configuration file",
+                        help="User environment configuration file. Defaults to ~/.config/cheri-benchplot.json",
                         default=Path("~/.config/cheri-benchplot.json").expanduser())
     sub = parser.add_subparsers(help="command", dest="command")
 
