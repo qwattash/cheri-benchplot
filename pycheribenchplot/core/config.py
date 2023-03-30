@@ -522,11 +522,6 @@ class PipelineInstanceConfig(Config):
     #: Instance descriptors for each instance to run
     instances: List[InstanceConfig] = dc.field(default_factory=list)
 
-    def __post_init__(self):
-        super().__post_init__()
-        if len(self.instances) == 0:
-            raise ValueError("There must be at least one instance configuration")
-
 
 @dc.dataclass
 class CommonBenchmarkConfig(TemplateConfig):
@@ -541,9 +536,16 @@ class CommonBenchmarkConfig(TemplateConfig):
     #: The number of iterations to run
     iterations: int
     #: Benchmark configuration
-    benchmark: ExecTargetConfig
+    #: .. deprecated:: 1.2
+    #:    Use :attr:`generators` instead.
+    benchmark: Optional[ExecTargetConfig] = None
     #: Auxiliary data generators
+    #: .. deprecated:: 1.2
+    #:    Use :attr:`generators` instead.
     aux_tasks: List[ExecTargetConfig] = dc.field(default_factory=list)
+    #: Data generator tasks.
+    #: These are used to produce the benchmark data and loading it during the analysis phase.
+    generators: List[ExecTargetConfig] = dc.field(default_factory=list)
     #: Number of iterations to drop to reach steady-state
     drop_iterations: int = 0
     #: Benchmark description, used for plot titles (can contain a template), defaults to :attr:`name`.
@@ -571,6 +573,20 @@ class CommonBenchmarkConfig(TemplateConfig):
     def __post_init__(self):
         super().__post_init__()
         assert self.remote_output_dir.is_absolute(), f"Remote output path must be absolute {self.remote_output_dir}"
+        conftype = self.__class__.__name__
+        if self.benchmark is None:
+            if self.aux_tasks:
+                raise ValueError(f"Can not use `{conftype}.aux_tasks` and `{conftype}.generators` at the same time")
+            if not self.generators:
+                raise ValueError(f"At least one `{conftype}.generators` must be specified.")
+        else:
+            if self.generators:
+                raise ValueError(f"Can not use both `{conftype}.benchmark` and `{conftype}.generators`")
+            self.generators.append(self.benchmark)
+            self.generators.extend(self.aux_tasks)
+        # Wipe deprecated fields
+        self.benchmark = None
+        self.aux_tasks = []
 
     @classmethod
     def from_common_conf(cls, other: "CommonBenchmarkConfig"):
@@ -611,7 +627,7 @@ class BenchmarkRunConfig(CommonBenchmarkConfig):
     instance: Optional[InstanceConfig] = None
 
     def __str__(self):
-        common_info = f"params={self.parameters} ns={self.benchmark.handler} aux={self.aux_tasks}"
+        common_info = f"params={self.parameters} gen={self.generators}"
         if self.g_uuid and self.instance:
             return f"{self.name} ({self.uuid}/{self.g_uuid}) on {self.instance} " + common_info
         else:

@@ -213,9 +213,17 @@ class BenchmarkDataLoadTask(BenchmarkAnalysisTask):
         self._append_df(df)
 
     def run(self):
-        target_task = self.exec_task(self.benchmark,
-                                     script=None,
-                                     task_config=self.benchmark.config.benchmark.task_options)
+        target_qualified_name = self.exec_task.task_name
+        if self.exec_task.task_namespace:
+            target_qualified_name = self.exec_task.task_namespace + "." + target_qualified_name
+        for target_config in self.benchmark.config.generators:
+            print(target_config.handler, target_qualified_name)
+            if target_config.handler == target_qualified_name:
+                break
+        else:
+            raise ValueError(f"Could not find configuration for generator task {target_qualified_name}")
+
+        target_task = self.exec_task(self.benchmark, script=None, task_config=target_config.task_options)
         target = target_task.output_map.get(self.target_key)
         if target is None:
             self.logger.error("%s can not load data from task %s, output key %s missing", self, target_task,

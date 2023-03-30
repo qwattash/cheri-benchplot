@@ -136,9 +136,8 @@ class BenchmarkExecTask(Task):
         # so before resource requests are resolved. We can determine here how many deps
         # require an instance
         self._need_instance = False
-        yield self._fetch_task(self.benchmark.config.benchmark)
-        for aux_config in self.benchmark.config.aux_tasks:
-            yield self._fetch_task(aux_config)
+        for exec_target in self.benchmark.config.generators:
+            yield self._fetch_task(exec_target)
 
     def run(self):
         """

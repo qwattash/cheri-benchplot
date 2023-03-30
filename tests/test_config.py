@@ -7,7 +7,7 @@ import pytest
 from marshmallow import ValidationError
 
 from pycheribenchplot.core.config import *
-from pycheribenchplot.core.task import TaskRegistry
+from pycheribenchplot.core.task import Task, TaskRegistry
 
 
 @pytest.fixture
@@ -103,6 +103,11 @@ def test_pipeline_config_missing_benchmark():
 
 
 def test_pipeline_config_missing_instance():
+    """
+    It is possible to run without any instance when the benchmark configuration uses
+    generators that run locally. This is the case for static analysis and source code
+    scraping.
+    """
     data = {
         "instance_config": {
             "instances": []
@@ -144,7 +149,7 @@ def test_run_config_gen_without_parametrization(fake_user_config):
     conf0 = check.configurations[0]
     assert conf0.name == "test-valid"
     assert conf0.iterations == 1
-    assert conf0.benchmark.handler == "test-benchmark"
+    assert conf0.generators[0].handler == "test-benchmark"
     assert conf0.g_uuid is not None
     assert conf0.parameters == {}
     assert conf0.instance.kernel == "GENERIC-FAKE-TEST"
@@ -207,8 +212,8 @@ def test_run_config_gen_single_parametrization(fake_user_config):
     conf0 = check.configurations[0]
     assert conf0.name == "test-valid-{fakeparam}"
     assert conf0.iterations == 1
-    assert conf0.benchmark.handler == "test-benchmark"
-    assert conf0.benchmark.task_options["fake_arg"] == "{fakeparam}"
+    assert conf0.generators[0].handler == "test-benchmark"
+    assert conf0.generators[0].task_options["fake_arg"] == "{fakeparam}"
     assert conf0.g_uuid is not None
     assert conf0.parameters == {"fakeparam": "value0"}
     assert conf0.instance.kernel == "GENERIC-FAKE-TEST"
@@ -216,8 +221,8 @@ def test_run_config_gen_single_parametrization(fake_user_config):
     conf1 = check.configurations[1]
     assert conf1.name == "test-valid-{fakeparam}"
     assert conf1.iterations == 1
-    assert conf1.benchmark.handler == "test-benchmark"
-    assert conf1.benchmark.task_options["fake_arg"] == "{fakeparam}"
+    assert conf1.generators[0].handler == "test-benchmark"
+    assert conf1.generators[0].task_options["fake_arg"] == "{fakeparam}"
     assert conf1.g_uuid is not None
     assert conf1.parameters == {"fakeparam": "value1"}
     assert conf1.instance.kernel == "GENERIC-FAKE-TEST"
@@ -265,8 +270,8 @@ def test_run_config_gen_multi_parametrization(fake_user_config):
     conf0 = check.configurations[0]
     assert conf0.name == "test-first-{fakeparam}"
     assert conf0.iterations == 1
-    assert conf0.benchmark.handler == "test-benchmark"
-    assert conf0.benchmark.task_options["fake_arg"] == "{fakeparam}"
+    assert conf0.generators[0].handler == "test-benchmark"
+    assert conf0.generators[0].task_options["fake_arg"] == "{fakeparam}"
     assert conf0.g_uuid is not None
     assert conf0.parameters == {"fakeparam": "value0"}
     assert conf0.instance.kernel == "GENERIC-FAKE-TEST"
@@ -274,8 +279,8 @@ def test_run_config_gen_multi_parametrization(fake_user_config):
     conf1 = check.configurations[1]
     assert conf1.name == "test-second-{fakeparam}"
     assert conf1.iterations == 1
-    assert conf1.benchmark.handler == "test-benchmark"
-    assert conf1.benchmark.task_options["fake_arg"] == "{fakeparam}"
+    assert conf1.generators[0].handler == "test-benchmark"
+    assert conf1.generators[0].task_options["fake_arg"] == "{fakeparam}"
     assert conf1.g_uuid is not None
     assert conf1.parameters == {"fakeparam": "value1"}
     assert conf1.instance.kernel == "GENERIC-FAKE-TEST"

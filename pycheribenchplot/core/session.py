@@ -166,9 +166,8 @@ class Session:
                                         cheri_target=inst_conf.cheri_target.value,
                                         kernelabi=inst_conf.kernelabi.value)
             # Resolve run_options for each TaskTargetConfig
-            bench_conf.benchmark.task_options = self._resolve_exec_task_options(bench_conf.benchmark)
-            for aux_conf in bench_conf.aux_tasks:
-                aux_conf.task_options = self._resolve_exec_task_options(aux_conf)
+            for exec_task_conf in bench_conf.generators:
+                exec_task_conf.task_options = self._resolve_exec_task_options(exec_task_conf)
             new_bench_conf.append(bench_conf.bind(ctx))
         new_config.configurations = new_bench_conf
         return new_config
@@ -289,11 +288,9 @@ class Session:
         """
         namespaces = set()
         for bench_config in self.config.configurations:
-            exec_task = TaskRegistry.resolve_exec_task(bench_config.benchmark.handler)
-            namespaces.add(exec_task.task_namespace)
-            for aux_config in bench_config.aux_tasks:
-                aux_task = TaskRegistry.resolve_exec_task(aux_config.handler)
-                namespaces.add(aux_task.task_namespace)
+            for exec_task_config in bench_config.generators:
+                exec_task = TaskRegistry.resolve_exec_task(exec_task_config.handler)
+                namespaces.add(exec_task.task_namespace)
         # Now group all public tasks from the namespaces
         tasks = []
         for ns in namespaces:

@@ -16,7 +16,7 @@ class FakeAuxExecTask(ExecutionTask):
 def benchmark_config_with_aux(single_benchmark_config):
     conf = copy.deepcopy(single_benchmark_config)
     bench_conf = conf["configurations"][0]
-    bench_conf["aux_tasks"] = [{"handler": "test-aux"}]
+    bench_conf["generators"].append({"handler": "test-aux"})
     return conf
 
 

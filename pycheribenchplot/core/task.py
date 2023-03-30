@@ -107,6 +107,10 @@ class Target:
         return False
 
 
+# Check that a task_namespace and task_name are valid
+TASK_NAME_REGEX = re.compile(r"[\S.-]+")
+
+
 class Task(metaclass=TaskRegistry):
     """
     Abstract base class for dataset operations.
@@ -117,7 +121,7 @@ class Task(metaclass=TaskRegistry):
     The drones will share the task state with the main task instance to maintain consistency
     when producing stateful task outputs. This is a relatively strange dynamic Borg pattern.
     """
-    #: Mark the task as a top-level target
+    #: Mark the task as a top-level target, which can be named in configuration files and from CLI commands.
     public = False
     #: Human-readable task namespace, used for task identification
     task_namespace = None
@@ -128,6 +132,10 @@ class Task(metaclass=TaskRegistry):
 
     def __init__(self, task_config: Config = None):
         assert self.task_name is not None, f"Attempted to use task with uninitialized name {self.__class__.__name__}"
+        assert self.task_namespace is None or TASK_NAME_REGEX.match(
+            self.task_namespace), f"Invalid task namespace '{self.task_namespace}'"
+        assert TASK_NAME_REGEX.match(self.task_name), f"Invalid task name '{self.task_name}'"
+
         #: task-specific configuration options, if any
         self.config = task_config
         #: task logger
@@ -193,7 +201,9 @@ class Task(metaclass=TaskRegistry):
     def add_drone(self, other: "Task"):
         """
         Register a 'clone' task for this task.
-        Drone tasks will share the state of the main task, this includes the completed/failed state and any internal state required for the generation of outputs.
+        Drone (as in Borg drone) tasks will share the state of the main task,
+        this includes the completed/failed state and any internal state required for
+        the generation of outputs.
         It is the responsiblity of subclasses to ensure that the proper bits of state
         are shared.
         Note that when this happens it is critical that there are no threads waiting

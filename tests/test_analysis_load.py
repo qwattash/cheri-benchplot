@@ -11,6 +11,7 @@ from pycheribenchplot.core.task import (AnalysisTask, DataFrameTarget, Execution
 
 
 class DummyExecTask(ExecutionTask):
+    public = True
     task_namespace = "test.analysis-load"
 
     def run(self):
@@ -75,6 +76,7 @@ def session_config_with_param(single_benchmark_config):
     """
     conf = single_benchmark_config["configurations"][0]
     conf["parameters"] = {"param_key": "param-value"}
+    conf["generators"] = [{"handler": "test.analysis-load.exec"}]
     return single_benchmark_config
 
 

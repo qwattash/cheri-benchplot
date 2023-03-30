@@ -17,9 +17,9 @@ from pycheribenchplot.core.task import ExecutionTask
 fake_benchmark_conf = {
     "name": "selftest0",
     "iterations": 2,
-    "benchmark": {
+    "generators": [{
         "handler": "test-benchmark"
-    },
+    }],
     "uuid": "8bc941a3-f6d6-4d37-b193-4738f1da3dae",
     "g_uuid": "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb",
     "instance": {
@@ -48,9 +48,9 @@ fake_session_conf_with_params = {
             "param0": 10,
             "param1": "param1-value"
         },
-        "benchmark": {
+        "generators": [{
             "handler": "test-benchmark"
-        },
+        }],
         "uuid": "8bc941a3-f6d6-4d37-b193-4738f1da3dae",
         "g_uuid": "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb",
         "instance": {
@@ -86,9 +86,9 @@ def single_benchmark_config(empty_session_config):
     conf["configurations"].append({
         "name": "selftest0",
         "iterations": 2,
-        "benchmark": {
+        "generators": [{
             "handler": "test-benchmark"
-        },
+        }],
         "uuid": "8bc941a3-f6d6-4d37-b193-4738f1da3dae",
         "g_uuid": "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb",
         "instance": {
@@ -113,9 +113,9 @@ def multi_benchmark_config(empty_session_config):
         "parameters": {
             "param0": "param0-value0"
         },
-        "benchmark": {
+        "generators": [{
             "handler": "test-benchmark"
-        },
+        }],
         "uuid": "8bc941a3-f6d6-4d37-b193-4738f1da3dae",
         "g_uuid": "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb",
         "instance": {
@@ -131,9 +131,9 @@ def multi_benchmark_config(empty_session_config):
         "parameters": {
             "param0": "param0-value1"
         },
-        "benchmark": {
+        "generators": [{
             "handler": "test-benchmark"
-        },
+        }],
         "uuid": "c73169b7-5797-41c8-9edc-656d666cb45a",
         "g_uuid": "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb",
         "instance": {
@@ -159,9 +159,9 @@ def fullmatrix_benchmark_config(multi_benchmark_config):
         "parameters": {
             "param0": "param0-value0"
         },
-        "benchmark": {
+        "generators": [{
             "handler": "test-benchmark"
-        },
+        }],
         "uuid": "05a4ca0d-c659-4f40-bb18-6f8ead5d2ec3",
         "g_uuid": "4995a8b2-4852-4310-9b34-26cbd28494f0",
         "instance": {
@@ -177,9 +177,9 @@ def fullmatrix_benchmark_config(multi_benchmark_config):
         "parameters": {
             "param0": "param0-value1"
         },
-        "benchmark": {
+        "generators": [{
             "handler": "test-benchmark"
-        },
+        }],
         "uuid": "f011e12b-75ef-4174-ba38-2795c2ca1e30",
         "g_uuid": "4995a8b2-4852-4310-9b34-26cbd28494f0",
         "instance": {
