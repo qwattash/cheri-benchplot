@@ -12,7 +12,7 @@ import networkx as nx
 import pandas as pd
 import pandera as pa
 
-from .config import AnalysisConfig, Config
+from .config import Config
 from .util import new_logger
 
 
@@ -404,25 +404,6 @@ class SessionDataGenTask(SessionExecutionTask):
     require_instance = False
 
 
-class AnalysisTask(SessionTask):
-    """
-    Analysis tasks that perform anythin from plotting to data checks and transformations.
-    This is the base class for all public analysis steps that are allocated by the session.
-    Analysis tasks are not necessarily associated to a single benchmark. In general they reference the
-    current session and analysis configuration, subclasses may be associated to a benchmark context.
-
-    Note that this currently assumes that tasks with the same name are not issued
-    more than once for each benchmark run UUID. If this is violated, we need to
-    change the task ID generation.
-    """
-    task_namespace = "analysis"
-
-    def __init__(self, session: "Session", analysis_config: AnalysisConfig, task_config: Config = None):
-        super().__init__(session, task_config=task_config)
-        #: Analysis configuration for this invocation
-        self.analysis_config = analysis_config
-
-
 class DataFrameTarget(Target):
     """
     Target wrapping an output dataframe from a task.
@@ -589,14 +570,6 @@ class LocalFileTarget(FileTarget):
 
     def needs_extraction(self):
         return False
-
-
-class PlotTarget(Target):
-    """
-    Target pointing to a plot path
-    """
-    def __init__(self, path):
-        self.path = path
 
 
 class ResourceManager:

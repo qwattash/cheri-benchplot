@@ -10,7 +10,26 @@ from pandera import Field
 from .benchmark import Benchmark
 from .config import AnalysisConfig, Config
 from .model import DataModel
-from .task import AnalysisTask, DataFrameTarget, ExecutionTask, PlotTarget
+from .task import DataFrameTarget, ExecutionTask, PlotTarget, SessionTask
+
+
+class AnalysisTask(SessionTask):
+    """
+    Analysis tasks that perform anythin from plotting to data checks and transformations.
+    This is the base class for all public analysis steps that are allocated by the session.
+    Analysis tasks are not necessarily associated to a single benchmark. In general they reference the
+    current session and analysis configuration, subclasses may be associated to a benchmark context.
+
+    Note that this currently assumes that tasks with the same name are not issued
+    more than once for each benchmark run UUID. If this is violated, we need to
+    change the task ID generation.
+    """
+    task_namespace = "analysis"
+
+    def __init__(self, session: "Session", analysis_config: AnalysisConfig, task_config: Config = None):
+        super().__init__(session, task_config=task_config)
+        #: Analysis configuration for this invocation
+        self.analysis_config = analysis_config
 
 
 class BenchmarkAnalysisTask(AnalysisTask):
@@ -97,28 +116,6 @@ class ParamGroupAnalysisTask(AnalysisTask):
     def task_id(self):
         parameter_set = ":".join([f"{key}={value}" for key, value in self.parameters.items()])
         return f"{self.task_namespace}.{self.task_name}-{parameter_set}"
-
-
-class PlotTask(AnalysisTask):
-    """
-    Base class for plotting tasks.
-    Plot tasks generate one or more plots from some analysis task data.
-    These are generally the public-facing tasks that are selected in the analysis
-    configuration.
-    Each plot task is responsible for setting up a figure and axes.
-    Note that the ID of the task is generated assuming that there is only one plot per session.
-    """
-    task_namespace = "analysis.plot"
-
-    def __init__(self, session: "Session", analysis_config: AnalysisConfig, task_config: Config = None):
-        super().__init__(session, analysis_config, task_config=task_config)
-
-    def _plot_output(self, suffix: str = None) -> PlotTarget:
-        if suffix:
-            name = f"{self.task_id}-{suffix}.pdf"
-        else:
-            name = f"{self.task_id}.pdf"
-        return PlotTarget(self.session.get_plot_root_path() / name)
 
 
 class BenchmarkDataLoadTask(BenchmarkAnalysisTask):

@@ -11,12 +11,13 @@ from uuid import UUID
 
 import pandas as pd
 
+from .analysis import AnalysisTask
 from .benchmark import Benchmark, BenchmarkExecMode, ExecTaskConfig
 from .config import (AnalysisConfig, BenchplotUserConfig, Config, ExecTargetConfig, PipelineConfig, SessionRunConfig,
                      TaskTargetConfig, TemplateConfigContext)
 from .instance import InstanceManager
 from .model import UUIDType
-from .task import AnalysisTask, TaskRegistry, TaskScheduler
+from .task import TaskRegistry, TaskScheduler
 from .util import new_logger
 
 #: Constant name of the generated session configuration file

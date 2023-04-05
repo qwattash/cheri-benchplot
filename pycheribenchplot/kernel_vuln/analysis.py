@@ -6,10 +6,10 @@ import pandas as pd
 import seaborn as sns
 from matplotlib.ticker import AutoMinorLocator, LinearLocator
 
-from pycheribenchplot.core.analysis import PlotTask
+from pycheribenchplot.core.analysis import AnalysisTask
 from pycheribenchplot.core.config import (Config, ConfigPath, validate_path_exists)
-from pycheribenchplot.core.plot import new_figure
-from pycheribenchplot.core.task import (AnalysisTask, DataFrameTarget, LocalFileTarget, PlotTarget, SessionDataGenTask)
+from pycheribenchplot.core.plot import PlotTarget, PlotTask, new_figure
+from pycheribenchplot.core.task import (DataFrameTarget, LocalFileTarget, SessionDataGenTask)
 from pycheribenchplot.kernel_vuln.model import (CheriBSDAdvisories, CheriBSDUnmitigated, History, Marker)
 
 

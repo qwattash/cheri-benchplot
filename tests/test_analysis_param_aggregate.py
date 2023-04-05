@@ -5,10 +5,10 @@ from pandera import Field
 from pandera.extensions import register_check_method
 from pandera.typing import Series
 
-from pycheribenchplot.core.analysis import (BenchmarkDataLoadTask, StatsByParamGroupTask)
+from pycheribenchplot.core.analysis import (AnalysisTask, BenchmarkDataLoadTask, StatsByParamGroupTask)
 from pycheribenchplot.core.config import AnalysisConfig
 from pycheribenchplot.core.model import DataModel, ParamGroupDataModel
-from pycheribenchplot.core.task import AnalysisTask, DataFrameTarget
+from pycheribenchplot.core.task import DataFrameTarget
 
 
 class DummyModel(DataModel):
