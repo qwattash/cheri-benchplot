@@ -94,6 +94,12 @@ class TaskRegistry(type):
             return [task]
         return []
 
+    @classmethod
+    def iter_public(cls) -> "Generator[Type[Task]]":
+        for ns, tasks in cls.public_tasks.items():
+            for key, t in tasks.items():
+                yield t
+
 
 class Target:
     """
@@ -165,6 +171,10 @@ class Task(metaclass=TaskRegistry):
 
     def __eq__(self, other: "Task"):
         return self.task_id == other.task_id
+
+    @classmethod
+    def is_exec_task(cls):
+        return False
 
     @property
     def session(self):
@@ -341,6 +351,10 @@ class ExecutionTask(BenchmarkTask):
         #: Script builder associated to the current benchmark context.
         self.script = script
 
+    @classmethod
+    def is_exec_task(cls):
+        return True
+
     @property
     def uuid(self):
         return self.benchmark.uuid
@@ -356,6 +370,10 @@ class SessionExecutionTask(SessionTask):
     This can be used for data generation that is independent from the benchmark
     configurations.
     """
+    @classmethod
+    def is_exec_task(cls):
+        return True
+
     @property
     def uuid(self):
         raise TypeError("Task.uuid is invalid on SessionExecutionTask")

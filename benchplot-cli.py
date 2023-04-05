@@ -11,6 +11,7 @@ from marshmallow.exceptions import ValidationError
 
 from pycheribenchplot.core.config import (AnalysisConfig, BenchplotUserConfig, PipelineConfig, TaskTargetConfig)
 from pycheribenchplot.core.session import Session
+from pycheribenchplot.core.task import TaskRegistry
 from pycheribenchplot.core.util import setup_logging
 
 # Global logger from the logging setup
@@ -41,11 +42,24 @@ def list_session(session):
 
 def list_tasks(session):
     """
-    Helper to display public tasks for a given session
+    Helper to display public analysis tasks for a given session
     """
-    print("Public analysis targets:")
+    print("Analysis targets:")
     for task in session.get_public_tasks():
         spec_line = f"{task.task_namespace}.{task.task_name} ({task.__name__})"
+        print("\t", spec_line)
+
+
+def list_generators(session):
+    """
+    Helper to list all generator tasks that may be used in a session configuration.
+    If a session is given, this will list the generators in that session.
+    """
+    print("Generator tasks:")
+    for task_class in TaskRegistry.iter_public():
+        if not task_class.is_exec_task():
+            continue
+        spec_line = f"{task_class.task_namespace}.{task_class.task_name} ({task_class.__name__})"
         print("\t", spec_line)
 
 
@@ -95,6 +109,8 @@ def handle_command(user_config: BenchplotUserConfig, args):
             list_session(session)
         elif args.what == "tasks":
             list_tasks(session)
+        elif args.what == "generators":
+            list_generators(session)
     elif args.command == "bundle":
         session = resolve_session(user_config, args.session_path)
         session.bundle()
@@ -138,7 +154,8 @@ def main():
         "-t",
         "--task",
         type=str,
-        nargs="+",
+        required=True,
+        action="append",
         help="Task names to run for the analysis. This is a convenience shorthand for the full analysis configuration")
     sub_analyse.add_argument("--clean", action="store_true", help="Wipe analysis outputs before running")
 
@@ -146,7 +163,7 @@ def main():
     add_session_spec_options(sub_clean)
 
     sub_list = sub.add_parser("show", help="Show session contents and other information")
-    sub_list.add_argument("what", choices=["info", "tasks"], help="What to show")
+    sub_list.add_argument("what", choices=["info", "tasks", "generators"], help="What to show")
     sub_list.add_argument("session_path", type=Path, help="Path of the target session", nargs='?')
 
     sub_bundle = sub.add_parser("bundle", help="create a session archive")
