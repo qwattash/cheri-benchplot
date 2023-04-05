@@ -203,6 +203,9 @@ class Task(metaclass=TaskRegistry):
         See note on :attr:`Task.collected_outputs`.
         The only invariant that should be enforced here is that the output map is only ever accessed
         after all dependencies tasks have completed.
+        XXX this is not strictly true, it can be accessed after the dependencies generator
+        has been consumed, so that dependencies are known and their side-effects are known.
+        The actual data however will be ready only after the tasks are done.
         """
         if not self.collected_outputs:
             self.collected_outputs = dict(self.outputs())

@@ -1,4 +1,5 @@
 import logging
+import shutil
 import subprocess
 import time
 import typing
@@ -76,6 +77,16 @@ def timing(name, level=logging.INFO, logger=None):
     finally:
         end = time.time()
         logger.log(level, "%s in %.2fs", name, end - start)
+
+
+def resolve_system_command(name: str, logger: logging.Logger | None = None):
+    if logger is None:
+        logger = logging.getLogger("cheri-benchplot")
+    path = shutil.which(name)
+    if path is None:
+        logger.critical("Missing dependency %s, should be in your $PATH", name)
+        raise RuntimeError("Missing dependency")
+    return Path(path)
 
 
 class SubprocessHelper:
@@ -166,8 +177,8 @@ class SubprocessHelper:
                                             stdout=subprocess.PIPE,
                                             stderr=subprocess.PIPE,
                                             **popen_kwargs)
-        self._out_observers.append(lambda line: self.logger.debug(line))
-        self._err_observers.append(lambda line: self.logger.warning(line))
+        self._out_observers.append(lambda line: self.logger.debug(line.strip()))
+        self._err_observers.append(lambda line: self.logger.warning(line.strip()))
         self._out_worker = Thread(target=self._do_io, args=(self._subprocess.stdout, self._out_observers))
         self._out_worker.start()
         self._err_worker = Thread(target=self._do_io, args=(self._subprocess.stderr, self._err_observers))
