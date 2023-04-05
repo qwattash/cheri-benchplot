@@ -186,6 +186,8 @@ class BenchmarkDataLoadTask(BenchmarkAnalysisTask):
 
         # Now set the index based on the data model definition and proceed to validate
         schema = self.model.to_schema(self.session)
+        if set(df.index.names).intersection(schema.index.names):
+            df = df.reset_index()
         df.set_index(schema.index.names, inplace=True)
         valid_df = schema.validate(df)
         self._df.append(df)
@@ -212,18 +214,27 @@ class BenchmarkDataLoadTask(BenchmarkAnalysisTask):
         df["iteration"] = iteration
         self._append_df(df)
 
+    def _resolve_dependencies(self, target_task):
+        for d in target_task.dependencies():
+            target_task.resolved_dependencies.add(d)
+            self._resolve_dependencies(d)
+
     def run(self):
         target_qualified_name = self.exec_task.task_name
         if self.exec_task.task_namespace:
             target_qualified_name = self.exec_task.task_namespace + "." + target_qualified_name
         for target_config in self.benchmark.config.generators:
-            print(target_config.handler, target_qualified_name)
             if target_config.handler == target_qualified_name:
                 break
+            # Try to recursively look at their dependencies
+
         else:
             raise ValueError(f"Could not find configuration for generator task {target_qualified_name}")
 
         target_task = self.exec_task(self.benchmark, script=None, task_config=target_config.task_options)
+        # Must ensure that the dependencies side-effects have been produced,
+        # this is required if output from dependencies are forwarded.
+        self._resolve_dependencies(target_task)
         target = target_task.output_map.get(self.target_key)
         if target is None:
             self.logger.error("%s can not load data from task %s, output key %s missing", self, target_task,
