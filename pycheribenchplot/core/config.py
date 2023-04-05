@@ -15,6 +15,7 @@ from uuid import UUID, uuid4
 
 import marshmallow.fields as mfields
 import numpy as np
+from git import Repo
 from marshmallow import Schema, ValidationError, validates_schema
 from marshmallow.validate import And, OneOf, Predicate
 from marshmallow_dataclass import NewType, class_schema
@@ -282,6 +283,9 @@ class BenchplotUserConfig(Config):
     #: Path to the qemu sources, inferred from :attr:`src_path` if missing
     qemu_path: Optional[ConfigPath] = dc.field(init=False, default=None)
 
+    #: Path to the Cheri LLVM sources, inferred from :attr:`src_path` if missing
+    llvm_path: Optional[ConfigPath] = dc.field(init=False, default=None)
+
     #: Override the maximum number of workers to use
     concurrent_workers: Optional[int] = None
 
@@ -295,6 +299,7 @@ class BenchplotUserConfig(Config):
         self.cheribuild_path = self.src_path / "cheribuild"
         self.cheribsd_path = self.src_path / "cheribsd"
         self.qemu_path = self.src_path / "qemu"
+        self.llvm_path = self.src_path / "llvm-project"
         # Try to autodetect openocd
         if self.openocd_path is None:
             self.openocd_path = shutil.which("openocd")
@@ -712,6 +717,10 @@ class SessionRunConfig(CommonSessionConfig):
     #: Session unique ID
     uuid: UUID = dc.field(default_factory=uuid4)
 
+    #: Snapshots of the relevant git repositories that should be syncronised to this session
+    #: These are taken when the session is created.
+    git_sha: Dict[str, str] = dc.field(default_factory=dict)
+
     #: Session name, defaults to the session UUID
     name: Optional[str] = None
 
@@ -812,6 +821,19 @@ class SessionRunConfig(CommonSessionConfig):
                 final_run_conf.g_uuid = gid
                 final_run_conf.instance = final_inst_conf
                 session.configurations.append(final_run_conf)
+
+        # Snapshot all repositories we care about, if they are present.
+        # Note that we should support snapshot hooks in the configured tasks.
+        def snap_head(repo_path, key):
+            if repo_path.exists():
+                session.git_sha[key] = Repo(repo_path).head.commit.hexsha
+            else:
+                logger.warning("No %s repository, skip SHA snapshot", key)
+
+        snap_head(user_config.cheribuild_path, "cheribuild")
+        snap_head(user_config.cheribsd_path, "cheribsd")
+        snap_head(user_config.qemu_path, "qemu")
+        snap_head(user_config.llvm_path, "llvm")
         return session
 
 
