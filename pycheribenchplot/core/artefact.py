@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import ForwardRef
@@ -73,9 +74,9 @@ class FileTarget(Target):
                 ext = "." + ext
             path = path.with_suffix(ext)
 
-        if isinstance(task, SessionTask):
+        if task.is_session_task():
             return cls.from_session(task.session, path, **kwargs)
-        elif isinstance(task, BenchmarkTask):
+        elif task.is_benchmark_task():
             return cls.from_benchmark(task.benchmark, path, **kwargs)
         else:
             raise TypeError(f"Invalid task type {task.__class__}")

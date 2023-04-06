@@ -228,6 +228,18 @@ class Task(Borg, metaclass=TaskRegistry):
             self.collected_outputs = dict(self.outputs())
         return self.collected_outputs
 
+    def is_session_task(self) -> bool:
+        """
+        Helper to determine whether a Task should be treated like a :class:`SessionTask`.
+        """
+        return False
+
+    def is_benchmark_task(self) -> bool:
+        """
+        Helper to determine whether a Task should be treated like a :class:`BenchmarkTask`.
+        """
+        return False
+
     def wait(self):
         """
         Wait for the task to complete.
@@ -396,6 +408,9 @@ class SessionTask(Task):
     def task_id(self):
         return f"{self.task_namespace}.{self.task_name}-{self.session.uuid}"
 
+    def is_session_task(self):
+        return True
+
 
 class BenchmarkTask(Task):
     """
@@ -417,6 +432,9 @@ class BenchmarkTask(Task):
     @property
     def task_id(self):
         return f"{self.task_namespace}.{self.task_name}-{self.benchmark.uuid}"
+
+    def is_benchmark_task(self):
+        return True
 
 
 class ExecutionTask(BenchmarkTask):
