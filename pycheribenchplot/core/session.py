@@ -10,6 +10,7 @@ from pathlib import Path
 from uuid import UUID
 
 import pandas as pd
+from tabulate import tabulate
 
 from .analysis import AnalysisTask
 from .benchmark import Benchmark, BenchmarkExecMode, ExecTaskConfig
@@ -241,12 +242,10 @@ class Session:
                 bench_matrix[benchmark_config.g_uuid] = benchmark
             benchmark.get_plot_path().mkdir(exist_ok=True)
 
+        show_matrix = tabulate(bench_matrix, tablefmt="github", headers="keys")
+        self.logger.debug("Benchmark matrix:\n%s", show_matrix)
+
         assert not bench_matrix.isna().any().any(), "Incomplete benchmark matrix"
-        for i, row in bench_matrix.iterrows():
-            if isinstance(i, tuple):
-                i = BenchParams(*i)
-            row_str = [str(bench_ctx) for bench_ctx in row.values]
-            self.logger.debug("Benchmark matrix %s = %s", i, row_str)
         if bench_matrix.shape[0] * bench_matrix.shape[1] != len(self.config.configurations):
             self.logger.error("Malformed benchmark matrix")
             raise RuntimeError("Malformed benchmark matrix")
