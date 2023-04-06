@@ -2,7 +2,7 @@ from collections import defaultdict
 
 import pytest
 
-from pycheribenchplot.core.task import ExecutionTask, TaskRegistry
+from pycheribenchplot.core.task import (ExecutionTask, TaskRegistry, TaskScheduler)
 
 
 @pytest.fixture

@@ -4,8 +4,9 @@ from pathlib import Path
 
 from marshmallow.validate import OneOf
 
+from ..core.artefact import DataFileTarget
 from ..core.config import ConfigPath, ProfileConfig, TemplateConfig
-from ..core.task import DataFileTarget, ExecutionTask
+from ..core.task import ExecutionTask
 from ..qemu.task import QEMUTracingSetupTask
 
 

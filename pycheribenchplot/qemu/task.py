@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 
+from ..core.artefact import LocalFileTarget
 from ..core.config import InstancePlatform, ProfileConfig
-from ..core.task import ExecutionTask, LocalFileTarget
+from ..core.task import ExecutionTask
 
 
 class QEMUTracingSetupTask(ExecutionTask):

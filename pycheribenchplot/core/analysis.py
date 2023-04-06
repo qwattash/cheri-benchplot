@@ -7,10 +7,11 @@ import numpy as np
 import pandas as pd
 from pandera import Field
 
+from .artefact import DataFrameTarget
 from .benchmark import Benchmark
 from .config import AnalysisConfig, Config
 from .model import DataModel
-from .task import DataFrameTarget, ExecutionTask, PlotTarget, SessionTask
+from .task import ExecutionTask, SessionTask
 
 
 class AnalysisTask(SessionTask):
