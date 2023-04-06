@@ -224,8 +224,7 @@ class BenchmarkDataLoadTask(BenchmarkAnalysisTask):
         for target_config in self.benchmark.config.generators:
             if target_config.handler == target_qualified_name:
                 break
-            # Try to recursively look at their dependencies
-
+            # Try to recursively look at their dependencies?
         else:
             raise ValueError(f"Could not find configuration for generator task {target_qualified_name}")
 
