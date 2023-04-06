@@ -5,6 +5,7 @@ from typing import ForwardRef
 
 import pandas as pd
 import pandera as pa
+from typing_extensions import Self
 
 
 @dataclass
@@ -194,6 +195,19 @@ class LocalFileTarget(FileTarget):
         else:
             local = [benchmark_data_root / path]
         return cls(local)
+
+    def needs_extraction(self):
+        return False
+
+
+class AnalysisFileTarget(FileTarget):
+    """
+    A target that identifies the product of an analysis task, which lives in
+    the analysis output directory.
+    """
+    @classmethod
+    def from_session(cls, session: "Session", path: Path) -> Self:
+        return cls([session.get_plot_root_path() / path])
 
     def needs_extraction(self):
         return False
