@@ -3,7 +3,7 @@ from unittest.mock import ANY, call
 
 import pytest
 
-from pycheribenchplot.core.task import (ResourceManager, Target, Task, TaskScheduler)
+from pycheribenchplot.core.task import (ResourceManager, Target, Task, TaskScheduler, dependency, output)
 
 
 class FakeInvalidTask(Task):
@@ -367,3 +367,84 @@ def test_clone_tasks_state(fake_session):
     assert clone.output_map["test-output"].value == 0x12345
     # Borg invariant
     assert task.__dict__ is clone.__dict__
+
+
+def test_output_collector(mock_task_registry):
+    class SimpleTarget(Target):
+        def __init__(self, name):
+            self.test_key = name
+
+    class TaskA(Task):
+        task_namespace = "test"
+        task_name = "fake-task-collector"
+
+        @property
+        def task_id(self):
+            return "test-task-id"
+
+        @property
+        def session(self):
+            return None
+
+        def run(self):
+            pass
+
+        @output
+        def my_output(self):
+            return SimpleTarget("my-output-target")
+
+        @output(name="override-name")
+        def my_override_output(self):
+            return SimpleTarget("my-override-target")
+
+    task = TaskA()
+
+    assert len(TaskA._output_registry) == 2
+    assert "my_output" in TaskA._output_registry
+    assert "override-name" in TaskA._output_registry
+
+    outputs = list(task.outputs())
+    assert len(outputs) == 2
+    assert outputs[0][0] == "my_output"
+    assert outputs[0][1].test_key == "my-output-target"
+    assert outputs[1][0] == "override-name"
+    assert outputs[1][1].test_key == "my-override-target"
+
+    assert task.output_map["my_output"] == outputs[0][1]
+    assert task.output_map["override-name"] == outputs[1][1]
+
+    assert task.my_output.test_key == "my-output-target"
+    assert task.my_output == task.my_output
+    assert task.my_override_output.test_key == "my-override-target"
+    assert task.my_override_output == task.my_override_output
+
+
+def test_dependency_collector(mock_task_registry):
+    class SomeTask(Task):
+        task_namespace = "test"
+        task_name = "task-A"
+
+        @dependency
+        def fake_a(self):
+            return FakeTaskA()
+
+        @dependency
+        def fake_b(self):
+            return FakeTaskB()
+
+        @property
+        def task_id(self):
+            return "test.task-A"
+
+        def run(self):
+            pass
+
+    task = SomeTask()
+
+    assert len(SomeTask._deps_registry) == 2
+
+    deps = list(task.dependencies())
+    assert len(deps) == 2
+    dep_ids = [d.task_id for d in deps]
+    assert "fake-task-A" in dep_ids
+    assert "fake-task-B" in dep_ids

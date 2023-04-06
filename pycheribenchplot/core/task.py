@@ -33,7 +33,17 @@ class TaskRegistry(type):
     public_tasks = defaultdict(dict)
     all_tasks = defaultdict(dict)
 
-    def __init__(self, name: str, bases: typing.Tuple[typing.Type], kdict: dict):
+    def __new__(mcls, name: str, bases: tuple[typing.Type], kdict: dict):
+        """
+        Add two registry attributes to each task class.
+        The output_registry maintains a set of output generators for the class.
+        The deps_registry maintins a set of dependency generators for the class.
+        """
+        kdict["_output_registry"] = {}
+        kdict["_deps_registry"] = []
+        return super().__new__(mcls, name, bases, kdict)
+
+    def __init__(self, name: str, bases: tuple[typing.Type], kdict: dict):
         super().__init__(name, bases, kdict)
         if self.task_name is None or self.task_namespace is None:
             # Skip, this is an abstract task
@@ -48,6 +58,12 @@ class TaskRegistry(type):
 
     def __str__(self):
         return f"<Task {self.__name__}: spec={self.task_namespace}.{self.task_name}>"
+
+    def register_dependency(cls, name):
+        cls._deps_registry.append(name)
+
+    def register_output(cls, ref: TargetRef):
+        cls._output_registry[ref.name] = ref.attr
 
     @classmethod
     def resolve_exec_task(cls, task_spec: str) -> typing.Type["Task"] | None:
@@ -247,25 +263,115 @@ class Task(Borg, metaclass=TaskRegistry):
 
         :return: sequence of dependencies
         """
-        yield from []
+        registered = [getattr(self, attr) for attr in self._deps_registry]
+        yield from registered
 
     def outputs(self) -> typing.Iterable[tuple[str, Target]]:
         """
-        Produce the set of :class:`Target` objects that describe the outputs that are produced
-        by this task.
-        Each target must be associated to a unique name. The name is considered to be the public
-        interface for other tasks to fetch targets and outputs of this task.
-        The name/target pairs may be used to construct a dictionary to access the return values by key.
+        Produce the set of :class:`Target` objects that describe the outputs
+        that are produced by this task.
+        Each target must be associated to a unique name.
+        The name is considered to be the public interface for other tasks to
+        fetch targets and outputs of this task.
+        The name/target pairs may be used to construct a dictionary to access
+        the return values by key.
 
-        Note that this method generates output descriptors, not output data. The descriptors may be dynamic but
-        must be determined independently of :meth:`Task.run`. This allows to use cached outputs in the future, and
-        avoid calling :meth:`Task.run` altogether. The :meth:`Task.run` is responsible for producing the output
-        data and setting it to the output_map, if needed.
+        Note that this method generates output descriptors, not output data.
+        The descriptors may be dynamic but must be determined independently of
+        :meth:`Task.run`. This allows to use cached outputs in the future, and
+        avoid calling :meth:`Task.run` altogether. The :meth:`Task.run` is
+        responsible for producing the output data and setting it to the
+        output_map, if needed.
         """
-        yield from []
+        registered = {key: getattr(self, attr) for key, attr in self._output_registry.items()}
+        yield from registered.items()
 
     def run(self):
         raise NotImplementedError("Task.run() must be overridden")
+
+
+class dependency:
+    """
+    Decorator for :class:`Task` dependencies.
+    Provides a shorthand to declare dependencies of a task.
+    Note that this behaves as a property field.
+    This should be used in place of the :meth:`Task.dependencies()` and
+    :attr:`Task.resolved_dependencies` if there are no special requirements.
+
+    Note that dependencies are Borgs, so there is a shared state for all tasks
+    with the same ID, regardless of how many times the dependency property
+    is accessed, therefore there is no need to cache here a single instance.
+    """
+    def __init__(self, fn: typing.Callable | None = None):
+        self._fn = fn
+
+    def __set_name__(self, owner, name):
+        """
+        Register this descriptor as a dependency generator of this :class:`Task`
+        """
+        assert issubclass(owner, Task), ("@dependency decorator may be used "
+                                         "only within Task classes")
+        owner.register_dependency(name)
+
+    def __get__(self, instance, owner=None):
+        assert instance is not None
+        assert self._fn is not None
+        return self._fn(instance)
+
+    def __call__(self, fn):
+        """
+        Invoked when the decorator is called with arguments.
+        Just return the descriptor with the correct arguments.
+        """
+        return dependency(fn=fn)
+
+
+class output:
+    """
+    Decorator for :class:`Task` output artefacts.
+    Provides a shorthand to declare outputs of a task.
+    Note that this behaves as a property field.
+    This should be used in place of the :meth:`Task.outputs()` and
+    :attr:`Task.output_map` if there are no special requirements.
+
+    This decorator acts as a property decorator that caches its output.
+    There is only one instance for each task output target, which is held here,
+    further references to it may be obtained from the :class:`Task` class for
+    convenience.
+    """
+    def __init__(self, fn: typing.Callable | None = None, name: str | None = None):
+        """
+        :param name: Override the name of the output, the name of the decorated
+        function is used otherwise.
+        """
+        self._fn = fn
+        self._key = name
+        self._target_instance = None
+
+    def __set_name__(self, owner, name):
+        """
+        Register this descriptor as an output of this :class:`Task`
+        """
+        assert issubclass(owner, Task), ("@output decorator may be used only "
+                                         "within Task classes")
+        assert self._fn is not None
+        if self._key is None:
+            self._key = name
+        owner.register_output(TargetRef(self._key, name))
+
+    def __get__(self, instance, owner=None):
+        assert instance is not None
+        assert self._fn is not None
+        if self._target_instance is None:
+            self._target_instance = self._fn(instance)
+        return self._target_instance
+
+    def __call__(self, fn):
+        """
+        Invoked when the decorator is called with arguments.
+        Just return the descriptor with the correct arguments.
+        """
+        return output(fn=fn, name=self._key)
 
 
 class SessionTask(Task):
