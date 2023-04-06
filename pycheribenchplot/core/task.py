@@ -10,6 +10,7 @@ from threading import Condition, Event, Lock, Semaphore, Thread
 import networkx as nx
 
 from .artefact import Target, TargetRef
+from .borg import Borg
 from .config import Config
 from .util import new_logger
 
@@ -103,15 +104,18 @@ class TaskRegistry(type):
 TASK_NAME_REGEX = re.compile(r"[\S.-]+")
 
 
-class Task(metaclass=TaskRegistry):
+class Task(Borg, metaclass=TaskRegistry):
     """
     Abstract base class for dataset operations.
     This can be a task to run a benchmark or perform an analysis step.
-    Tasks in the pipeline have determined inputs and outputs that are derived from the session that
-    creates the tasks.
-    Tasks start as individual entities. When scheduled, if multiple tasks have the same ID, one task instance will be elected as the main task, the others will be attached to it as drones.
-    The drones will share the task state with the main task instance to maintain consistency
-    when producing stateful task outputs. This is a relatively strange dynamic Borg pattern.
+    Tasks in the pipeline have determined inputs and outputs that are derived
+    from the session that creates the tasks.
+    Tasks start as individual entities. When scheduled, if multiple tasks have
+    the same ID, one task instance will be elected as the main task, the others
+    will be attached to it as drones.
+    The drones will share the task state with the main task instance to
+    maintain consistency when producing stateful task outputs.
+    This is a relatively strange dynamic Borg pattern.
     """
     #: Mark the task as a top-level target, which can be named in configuration files and from CLI commands.
     public = False
@@ -138,13 +142,20 @@ class Task(metaclass=TaskRegistry):
         self.failed = None
         #: set of tasks we resolved that we depend upon, this is filled by the scheduler
         self.resolved_dependencies = set()
-        #: collected outputs. This currently caches the results from output_map(). Ideally, however,
-        #: this should be filled either by the scheduler or from cached task metadata.
-        #: The scheduler fill should occur after all dependencies have completed, but before run(),
-        #: so it is possible to access dependencies in the outputs generator. Analysis tasks should be able
-        #: to resolve exec tasks outputs from metadata. This would remove the necessity for instantiating tasks
-        #: to reference outputs and removes limitations for dynamic output descriptor generation.
+        #: This currently caches the results from output_map().
+        #: Ideally, however, this should be filled either by the scheduler or
+        #: from cached task metadata.
+        #: The scheduler fill should occur after all dependencies have completed,
+        #: but before run(), so it is possible to access dependencies in the
+        #: outputs generator. Analysis tasks should be able to resolve exec
+        #: tasks outputs from metadata. This would remove the necessity for
+        #: instantiating tasks to reference outputs and removes limitations for
+        #: dynamic output descriptor generation.
         self.collected_outputs = {}
+
+        # Note: the whole __dict__ may be replaced by Borg, so no property
+        # initialization beyond this point
+        super().__init__()
 
     def __str__(self):
         return str(self.task_id)
@@ -174,6 +185,10 @@ class Task(metaclass=TaskRegistry):
         raise NotImplementedError("Subclass should override")
 
     @property
+    def borg_state_id(self) -> typing.Hashable:
+        return self.task_id
+
+    @property
     def completed(self) -> bool:
         """
         Check whether the task has completed. This only notifies whether
@@ -196,21 +211,6 @@ class Task(metaclass=TaskRegistry):
         if not self.collected_outputs:
             self.collected_outputs = dict(self.outputs())
         return self.collected_outputs
-
-    def add_drone(self, other: "Task"):
-        """
-        Register a 'clone' task for this task.
-        Drone (as in Borg drone) tasks will share the state of the main task,
-        this includes the completed/failed state and any internal state required for
-        the generation of outputs.
-        It is the responsiblity of subclasses to ensure that the proper bits of state
-        are shared.
-        Note that when this happens it is critical that there are no threads waiting
-        on the task.completed event, otherwise they will never be notified.
-        """
-        assert self.task_id == other.task_id
-        assert type(self) == type(other)
-        other.__dict__ = self.__dict__
 
     def wait(self):
         """
@@ -699,7 +699,6 @@ class TaskScheduler:
             # Assume that we can not have tasks with duplicate IDs
             # If a task is already scheduled just skip this, duplicate
             # dependencies are allowed.
-            self._task_graph.nodes[task.task_id]["task"].add_drone(task)
             return
         self._task_graph.add_node(task.task_id, task=task)
         for dep in task.dependencies():

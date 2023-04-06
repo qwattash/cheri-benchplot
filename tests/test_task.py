@@ -365,3 +365,5 @@ def test_clone_tasks_state(fake_session):
     assert task.output_map["test-output"].value == 0x12345
     assert clone.completed
     assert clone.output_map["test-output"].value == 0x12345
+    # Borg invariant
+    assert task.__dict__ is clone.__dict__
