@@ -381,10 +381,12 @@ class SessionTask(Task):
     These tasks do not reference a specific benchmark ID or benchmark group ID.
     """
     def __init__(self, session: "Session", task_config: Config = None):
-        super().__init__(task_config=task_config)
         self._session = session
         #: Task logger is a child of the session logger
         self.logger = new_logger(f"{self.task_name}", parent=session.logger)
+
+        # Borg initialization occurs here
+        super().__init__(task_config=task_config)
 
     @property
     def session(self):

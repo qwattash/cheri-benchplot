@@ -41,13 +41,15 @@ class BenchmarkExecTask(Task):
     task_name = "benchmark-root"
 
     def __init__(self, benchmark, task_config: ExecTaskConfig):
-        super().__init__(task_config=task_config)
         #: Associated benchmark context
         self.benchmark = benchmark
         #: Script builder for this benchmark context
         self.script = ScriptBuilder(benchmark)
         #: Whether we need to request a VM instance, this becomes valid after dependency scanning
         self._need_instance = None
+
+        # Borg initialization occurs here
+        super().__init__(task_config=task_config)
 
     def _fetch_task(self, config: ExecTargetConfig) -> Task:
         task_klass = TaskRegistry.resolve_exec_task(config.handler)
