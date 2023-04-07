@@ -7,8 +7,9 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 
 from .analysis import AnalysisTask
+from .artefact import AnalysisFileTarget
 from .config import AnalysisConfig, Config
-from .task import Target
+from .task import Task
 
 
 @contextmanager
@@ -22,12 +23,11 @@ def new_figure(dest: Path | list[Path], **kwargs):
     plt.close(fig)
 
 
-class PlotTarget(Target):
+class PlotTarget(AnalysisFileTarget):
     """
     Target pointing to a plot path
     """
-    def __init__(self, path):
-        self.path = path
+    pass
 
 
 class PlotTask(AnalysisTask):

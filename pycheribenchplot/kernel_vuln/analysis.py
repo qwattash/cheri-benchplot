@@ -364,6 +364,6 @@ class CheriBSDAdvisoriesTables(AnalysisTask):
         self._unmitigated_summary()
 
     def outputs(self):
-        yield "mitigation-summary", PlotTarget(self.session.get_plot_root_path() / "security-advisories-summary.csv")
-        yield "unmitigated-summary", PlotTarget(self.session.get_plot_root_path() /
-                                                "unmitigated-advisories-summary.csv")
+        yield "mitigation-summary", PlotTarget([self.session.get_plot_root_path() / "security-advisories-summary.csv"])
+        yield "unmitigated-summary", PlotTarget(
+            [self.session.get_plot_root_path() / "unmitigated-advisories-summary.csv"])

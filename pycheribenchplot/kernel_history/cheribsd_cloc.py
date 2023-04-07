@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 from typing import Optional
 
 import pandas as pd
+import seaborn as sns
 from git import Repo
 from git.exc import BadName
 
@@ -14,6 +15,7 @@ from pycheribenchplot.core.artefact import (AnalysisFileTarget, DataFrameTarget,
 from pycheribenchplot.core.config import Config
 from pycheribenchplot.core.pandas_util import generalized_xs
 from pycheribenchplot.core.plot import PlotTarget, PlotTask, new_figure
+from pycheribenchplot.core.plot_util.mosaic import mosaic_treemap
 from pycheribenchplot.core.task import (DataGenTask, SessionDataGenTask, dependency, output)
 from pycheribenchplot.core.util import SubprocessHelper, resolve_system_command
 
@@ -218,6 +220,8 @@ class CheriBSDLineChangesSummary(AnalysisTask):
         data_df = generalized_xs(df, how="same", complement=True)
         # don't care about the split in how, all of them are changes
         data_df = data_df.groupby("file").sum()
+        # drop rows that do not have code changes
+        data_df = data_df.loc[data_df["code"] != 0]
 
         # now classify files by extension
         def to_file_type(path):
@@ -278,6 +282,27 @@ class CheriBSDLineChangesByPath(PlotTask):
     @dependency
     def loc_diff(self):
         return LoadLoCData(self.session, self.analysis_config)
+
+    def run(self):
+        df = self.loc_diff.diff_df.get()
+        # Don't care how the lines changed
+        data_df = generalized_xs(df, how="same", complement=True)
+        data_df = data_df.groupby("file").sum()
+        # Drop the rows where code changes are 0, as these probably mark
+        # historical changes or just comments
+        data_df = data_df.loc[data_df["code"] != 0]
+        sns.set_palette("crest")
+
+        with new_figure(self.plot.path) as fig:
+            ax = fig.subplots()
+            filename_components = data_df.index.get_level_values("file").str.split("/")
+            # Remove the leading "sys", as it is everywhere, and the filename component
+            data_df["components"] = filename_components.map(lambda c: c[1:-1])
+            mosaic_treemap(data_df, fig, ax, bbox=(0, 0, 100, 100), values="code", groups="components", maxlevel=3)
+
+    @output
+    def plot(self):
+        return PlotTarget.from_task(self)
 
 
 class CheriBSDLineChangesByFile(PlotTask):
