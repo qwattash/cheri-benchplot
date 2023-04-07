@@ -1,16 +1,14 @@
 import pandas as pd
-from pandera import Field, check, dataframe_check
+from pandera import Field, SchemaModel, check, dataframe_check
 from pandera.typing import Index, Series
 
-from pycheribenchplot.core.model import BaseDataModel
+from pycheribenchplot.core.model import DataModel, GlobalModel
 from pycheribenchplot.core.util import new_logger
 
 
-class CheriBSDChangesModel(BaseDataModel):
+class CommonFileChangesModel(SchemaModel):
     """
-    CheriBSD changes are not identified by a benchmark UUID, instead they exist as a
-    session-global dataset.
-    We omit dataset_id/gid and iteration indexes.
+    Common fields that record changes to cheribsd files
     """
     filename: Index[str] = Field(alias="file", check_name=True)
     target_type: Series[str] = Field(isin=["header", "kernel", "lib", "prog"])
@@ -41,6 +39,56 @@ class CheriBSDChangesModel(BaseDataModel):
             logger.error("%s has CHERI changes annotation but have no changes category", fname)
         return ~nulls
 
-    @classmethod
-    def dynamic_index_position(cls):
-        return None
+
+class RawFileChangesModel(DataModel, CommonFileChangesModel):
+    """
+    Cheribsd file changes for a specific kernel configuration
+    """
+    pass
+
+
+class AllFileChangesModel(GlobalModel, CommonFileChangesModel):
+    """
+    Aggregate cheribsd file changes model.
+    This is the union of all the :class:`RawFileChangesModel`s.
+    """
+    pass
+
+
+class CompilationDBModel(DataModel):
+    """
+    The list of files touched during the compilation process.
+    This is specific to a 'benchmark' run.
+    """
+    files: Series[str]
+
+
+class AllCompilationDBModel(GlobalModel):
+    """
+    Union of all the files touched during the compilation process.
+    Aggregated union of all benchmark runs.
+    """
+    # Must at least have an index
+    index: Index[int]
+    files: Series[str]
+
+
+class LoCCountModel(GlobalModel):
+    """
+    SLoC count by file
+    """
+    filename: Index[str] = Field(alias="file", check_name=True)
+    code: Series[int]
+    comment: Series[int]
+    blank: Series[int]
+
+
+class LoCDiffModel(GlobalModel):
+    """
+    SLoC changes by file
+    """
+    filename: Index[str] = Field(alias="file", check_name=True)
+    how: Index[str] = Field(isin=["added", "same", "modified", "removed"])
+    code: Series[int]
+    comment: Series[int]
+    blank: Series[int]

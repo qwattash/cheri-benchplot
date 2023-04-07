@@ -213,10 +213,12 @@ def fake_session_factory(tmp_path):
 
 @pytest.fixture
 def fake_benchmark_factory(fake_session):
-    def factory(config: dict = None):
+    def factory(config: dict = None, randomize_uuid: bool = False):
         if config is None:
             config = fake_benchmark_conf
         bench_config = BenchmarkRunConfig.schema().load(config)
+        if randomize_uuid:
+            bench_config.uuid = uuid.uuid4()
         return Benchmark(fake_session, bench_config)
 
     return factory
