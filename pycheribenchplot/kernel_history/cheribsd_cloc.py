@@ -22,6 +22,17 @@ from pycheribenchplot.core.util import SubprocessHelper, resolve_system_command
 from .model import LoCCountModel, LoCDiffModel
 
 
+def to_file_type(path: str):
+    # Don't expect C++ in the kernel
+    if path.endswith(".h"):
+        return "header"
+    if path.endswith(".c"):
+        return "source"
+    if path.endswith(".S") or path.endswith(".s"):
+        return "assembly"
+    return "other"
+
+
 @dataclass
 class CheriBSDKernelLineChangesConfig(Config):
     #: The freebsd baseline tag or commit SHA to use, if none is given
@@ -223,17 +234,7 @@ class CheriBSDLineChangesSummary(AnalysisTask):
         # drop rows that do not have code changes
         data_df = data_df.loc[data_df["code"] != 0]
 
-        # now classify files by extension
-        def to_file_type(path):
-            # Don't expect C++ in the kernel
-            if path.endswith(".h"):
-                return "header"
-            if path.endswith(".c"):
-                return "source"
-            if path.endswith(".S") or path.endswith(".s"):
-                return "assembly"
-            return "other"
-
+        # Determine file types
         data_df["Type"] = data_df.index.get_level_values("file").map(to_file_type)
         baseline_df["Type"] = baseline_df.index.get_level_values("file").map(to_file_type)
         # Group by type and sum the "code" column
@@ -291,6 +292,8 @@ class CheriBSDLineChangesByPath(PlotTask):
         # Drop the rows where code changes are 0, as these probably mark
         # historical changes or just comments
         data_df = data_df.loc[data_df["code"] != 0]
+
+        # XXX this does not agree well with multithreading
         sns.set_palette("crest")
 
         with new_figure(self.plot.path) as fig:
@@ -298,7 +301,7 @@ class CheriBSDLineChangesByPath(PlotTask):
             filename_components = data_df.index.get_level_values("file").str.split("/")
             # Remove the leading "sys", as it is everywhere, and the filename component
             data_df["components"] = filename_components.map(lambda c: c[1:-1])
-            mosaic_treemap(data_df, fig, ax, bbox=(0, 0, 100, 100), values="code", groups="components", maxlevel=3)
+            mosaic_treemap(data_df, fig, ax, bbox=(0, 0, 100, 100), values="code", groups="components", maxlevel=2)
 
     @output
     def plot(self):
@@ -308,9 +311,184 @@ class CheriBSDLineChangesByPath(PlotTask):
 class CheriBSDLineChangesByFile(PlotTask):
     """
     Produce an histogram sorted by the file with highest diff.
+
+    The histogram is stacked by the "how" index, showing whether the kind of diff.
+    There are two outputs, one using absolute LoC changes, the other using the
+    percentage of LoC changed with respect to the total file LoC.
     """
-    pass
+    public = True
+    task_namespace = "kernel-history"
+    task_name = "cheribsd-cloc-by-file"
+
+    @dependency
+    def loc_diff(self):
+        return LoadLoCData(self.session, self.analysis_config)
+
+    def _prepare_bars(self, df, sort_by, values_col):
+        """
+        Helper to prepare the dataframe for plotting
+
+        Need to prepare the frame by pivoting how into columns and retaining only
+        the relevant code column. This is the format expected by df.plot()
+        Filter top N files, stacked by the 'how' index
+        """
+        NTOP = 50 * len(df.index.unique("how"))
+        show_df = df.sort_values(by=[sort_by, "file", "how"], ascending=False).iloc[:NTOP].reset_index()
+        show_df["file"] = show_df["file"].str.removeprefix("sys/")
+        return show_df.pivot(index=[sort_by, "file"], columns="how", values=values_col)
+
+    def _do_plot(self, df: pd.DataFrame, output: PlotTarget, xlabel: str):
+        """
+        Helper to plot bars for LoC changes.
+        This expects a dataframe produced by _prepare_bars().
+        """
+        # Use tab10 colors, added => green, modified => orange, removed => red
+        cmap = sns.color_palette(as_cmap=True)
+        # ordered as green, orange, red
+        colors = [cmap[2], cmap[1], cmap[3]]
+
+        with new_figure(output.path) as fig:
+            ax = fig.subplots()
+            df.reset_index().plot(x="file",
+                                  y=["added", "modified", "removed"],
+                                  stacked=True,
+                                  kind="barh",
+                                  ax=ax,
+                                  color=colors)
+            ax.tick_params(axis="y", labelsize="xx-small")
+            ax.set_xlabel(xlabel)
+
+    def run_plot(self):
+        df = self.loc_diff.diff_df.get()
+        base_df = self.loc_diff.baseline_df.get()
+        data_df = generalized_xs(df, how="same", complement=True)
+
+        # Ensure we have the proper theme
+        sns.set_theme()
+
+        # Find out the total and percent_total LoC changed by file
+        total_loc = data_df.groupby("file").sum()
+        total_loc = total_loc.join(base_df, on="file", rsuffix="_baseline")
+        total_loc["percent"] = 100 * total_loc["code"] / total_loc["code_baseline"]
+
+        # Backfill the total for each value of the "how" index so we can do the sorting
+        # Note: some files are added completely, we ignore them here because the
+        # they are not particularly interesting for the relative diff by file.
+        # These would always account for 100% of the changes, polluting the histogram
+        # with not very useful information.
+        aligned, _ = total_loc.align(data_df, level="file")
+        data_df["total"] = aligned["code"]
+        data_df["total_percent"] = aligned["percent"]
+        data_df["baseline"] = aligned["code_baseline"]
+        data_df.dropna(inplace=True, subset=["baseline"])
+
+        # Compute relative added/modified/removed counts
+        data_df["code_percent"] = 100 * data_df["code"] / data_df["baseline"]
+
+        # Plot absolute LoC changed
+        show_df = self._prepare_bars(data_df, "total", "code")
+        self._do_plot(show_df, self.absolute_loc_plot, "# of lines")
+
+        # Plot relative LoC, ranked by absolute value
+        show_df = self._prepare_bars(data_df, "total", "code_percent")
+        self._do_plot(show_df, self.percent_loc_sorted_by_absolute_loc_plot, "% of file lines")
+
+        # Plot relative LoC changed
+        show_df = self._prepare_bars(data_df, "total_percent", "code_percent")
+        self._do_plot(show_df, self.percent_loc_plot, "% of file lines")
+
+        # Plot absolute LoC, ranked by percent change
+        show_df = self._prepare_bars(data_df, "total_percent", "code")
+        self._do_plot(show_df, self.absolute_loc_sorted_by_percent_loc_plot, "# of lines")
+
+        ftype = data_df.index.get_level_values("file").map(to_file_type)
+        # Plot absolute LoC in assembly files, ranked by absolute change
+        show_df = self._prepare_bars(data_df.loc[ftype == "assembly"], "total", "code")
+        self._do_plot(show_df, self.absolute_loc_assembly, "# of lines")
+
+        # Plot absolute LoC in header files, ranked by absolute change
+        show_df = self._prepare_bars(data_df.loc[ftype == "header"], "total", "code")
+        self._do_plot(show_df, self.absolute_loc_headers, "# of lines")
+
+        # Plot absolute LoC in source files, ranked by absolute change
+        show_df = self._prepare_bars(data_df.loc[ftype == "source"], "total", "code")
+        self._do_plot(show_df, self.absolute_loc_sources, "# of lines")
+
+    @output
+    def absolute_loc_plot(self):
+        return PlotTarget.from_task(self, prefix="abs")
+
+    @output
+    def percent_loc_sorted_by_absolute_loc_plot(self):
+        return PlotTarget.from_task(self, prefix="rel-sorted-by-abs")
+
+    @output
+    def percent_loc_plot(self):
+        return PlotTarget.from_task(self, prefix="rel")
+
+    @output
+    def absolute_loc_sorted_by_percent_loc_plot(self):
+        return PlotTarget.from_task(self, prefix="abs-sorted-by-rel")
+
+    @output
+    def absolute_loc_assembly(self):
+        return PlotTarget.from_task(self, prefix="abs-asm")
+
+    @output
+    def absolute_loc_headers(self):
+        return PlotTarget.from_task(self, prefix="abs-hdr")
+
+    @output
+    def absolute_loc_sources(self):
+        return PlotTarget.from_task(self, prefix="abs-src")
 
 
-class CheriBSDLineChangesByType(PlotTask):
-    pass
+class CheriBSDLineChangesByComponent(PlotTask):
+    """
+    Produce an histogram sorted by the component with highest diff.
+
+    Components are matched by path. This kind of plot is useful as it shows the
+    distribution of kernel changes with intermediate granularity.
+    File granularity is too confusing, while directory hierarchy may miss the
+    relationship between different kernel components.
+    This uses the same reporting histogram as cloc-by-file.
+    There are two outputs, one using absolute diff numbers, the other using
+    the changed LoC percentage with respect with total component lines.
+    """
+    public = True
+    task_namespace = "kernel-history"
+    task_name = "cheribsd-cloc-by-component"
+
+    components = {"vm": []}
+
+    @dependency
+    def loc_diff(self):
+        return LoadLoCData(self.session, self.analysis_config)
+
+    def run(self):
+        N = 50
+        df = self.loc_diff.diff_df.get()
+        data_df = generalized_xs(df, how="same", complement=True)
+        # Filter top N files
+        data_df["total"] = data_df.groupby("file")["code"].transform("sum")
+        top_loc = data_df.sort_values(by=["total"], ascending=False)
+        nhow = len(top_loc.index.unique("how"))
+
+        total_loc = data_df.groupby("file").sum().sort_values(by=["code"], ascending=False)
+        top_loc = total_loc.iloc[:N]
+        data_df = data_df.loc[data_df.index.isin(top_loc.index, level="file")]
+        # Need to prepare the frame by pivoting how into columns and retaining only
+        # the code column
+        show_df = data_df.reset_index()
+        show_df["file"] = show_df["file"].str.removeprefix("sys/")
+        show_df = show_df.pivot(index="file", columns="how", values="code")
+        sns.set_theme()
+
+        with new_figure(self.plot.path) as fig:
+            ax = fig.subplots()
+            show_df.reset_index().plot(x="file", stacked=True, kind="barh", ax=ax)
+            ax.tick_params(axis="y", labelsize="xx-small")
+
+    @output
+    def plot(self):
+        return PlotTarget.from_task(self)
