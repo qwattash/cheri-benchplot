@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+from matplotlib import rc_context
 
 from .analysis import AnalysisTask
 from .artefact import AnalysisFileTarget
@@ -50,3 +51,16 @@ class PlotTask(AnalysisTask):
         else:
             name = f"{self.task_id}.pdf"
         return PlotTarget(self.session.get_plot_root_path() / name)
+
+    def run(self):
+        with rc_context():
+            self.run_plot()
+
+    def run_plot(self):
+        """
+        Plot task body.
+
+        This runs within a matplotlib RC parameter context, so that local
+        RC params are not propagated.
+        """
+        raise NotImplementedError("Must override")
