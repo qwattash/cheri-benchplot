@@ -20,7 +20,7 @@ def new_figure(dest: Path | list[Path], **kwargs):
     if isinstance(dest, Path):
         dest = [dest]
     for path in dest:
-        fig.savefig(path)
+        fig.savefig(path, bbox_inches="tight")
     plt.close(fig)
 
 

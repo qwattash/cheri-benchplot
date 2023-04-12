@@ -10,7 +10,7 @@ import seaborn as sns
 from git import Repo
 from git.exc import BadName
 
-from pycheribenchplot.core.analysis import AnalysisTask
+from pycheribenchplot.core.analysis import AnalysisTask, BenchmarkDataLoadTask
 from pycheribenchplot.core.artefact import (AnalysisFileTarget, DataFrameTarget, LocalFileTarget)
 from pycheribenchplot.core.config import Config
 from pycheribenchplot.core.pandas_util import generalized_xs
@@ -19,7 +19,8 @@ from pycheribenchplot.core.plot_util.mosaic import mosaic_treemap
 from pycheribenchplot.core.task import (DataGenTask, SessionDataGenTask, dependency, output)
 from pycheribenchplot.core.util import SubprocessHelper, resolve_system_command
 
-from .model import LoCCountModel, LoCDiffModel
+from .cdb import CheriBSDCompilationDB
+from .model import (AllCompilationDBModel, CompilationDBModel, LoCCountModel, LoCDiffModel)
 
 
 def to_file_type(path: str):
@@ -40,8 +41,6 @@ class CheriBSDKernelLineChangesConfig(Config):
     freebsd_baseline: Optional[str] = None
     #: The freebsd head holding the CHERI changes to compare
     freebsd_head: Optional[str] = None
-    #: Filter the diff based on the files found in the compilation DB
-    restrict_to_compilation_db: bool = False
 
 
 class CheriBSDKernelLineChanges(SessionDataGenTask):
@@ -175,6 +174,20 @@ class CheriBSDKernelLineChanges(SessionDataGenTask):
         return LocalFileTarget.from_task(self, prefix="cloc-baseline", ext="json")
 
 
+@dataclass
+class LoCDataConfig(Config):
+    #: Filter the diff based on the files found in the compilation DB
+    restrict_to_compilation_db: bool = False
+
+
+class CompilationDBLoad(BenchmarkDataLoadTask):
+    task_namespace = "kernel-history"
+    task_name = "cheribsd-loc-cdb-load"
+    exec_task = CheriBSDCompilationDB
+    target_key = "compilation-db"
+    model = CompilationDBModel
+
+
 class LoadLoCData(AnalysisTask):
     """
     Load line of code changes by file.
@@ -183,15 +196,41 @@ class LoadLoCData(AnalysisTask):
     """
     task_namespace = "kernel-history"
     task_name = "load-loc-data"
+    task_config_class = LoCDataConfig
+
+    def dependencies(self):
+        yield from super().dependencies()
+        if self.config.restrict_to_compilation_db:
+            self._cdb_load = []
+            for ctx in self.session.benchmark_matrix.to_numpy().ravel():
+                task = CompilationDBLoad(ctx, self.analysis_config)
+                self._cdb_load.append(task)
+                yield task
+
+    def _load_compilation_db(self):
+        """
+        Fetch all compilation DBs and merge them
+        """
+        cdb_set = []
+        for loader in self._cdb_load:
+            cdb_set.append(loader.output_map["df"].get())
+        df = pd.concat(cdb_set).groupby("files").first().reset_index()
+        return AllCompilationDBModel.to_schema(self.session).validate(df)
 
     def run(self):
         # Should have a way to properly fetch the configured datagen task here
         cloc_task = CheriBSDKernelLineChanges(self.session, task_config=CheriBSDKernelLineChangesConfig())
-        df = pd.read_json(cloc_task.cloc.path, orient="table")
-        self.diff_df.assign(df)
 
-        df = pd.read_json(cloc_task.cloc_baseline.path, orient="table")
-        self.baseline_df.assign(df)
+        diff_df = pd.read_json(cloc_task.cloc.path, orient="table")
+        baseline_df = pd.read_json(cloc_task.cloc_baseline.path, orient="table")
+        if self.config.restrict_to_compilation_db:
+            cdb = self._load_compilation_db()
+            # Filter by compilation DB files
+            diff_df = diff_df.loc[diff_df.index.isin(cdb["files"], level="file")]
+            baseline_df = baseline_df.loc[baseline_df.index.isin(cdb["files"], level="file")]
+
+        self.diff_df.assign(diff_df)
+        self.baseline_df.assign(baseline_df)
 
     @output
     def diff_df(self):
@@ -218,10 +257,11 @@ class CheriBSDLineChangesSummary(AnalysisTask):
     public = True
     task_namespace = "kernel-history"
     task_name = "cheribsd-loc-diff-summary"
+    task_config_class = LoCDataConfig
 
     @dependency
     def loc_diff(self):
-        return LoadLoCData(self.session, self.analysis_config)
+        return LoadLoCData(self.session, self.analysis_config, task_config=self.config)
 
     def run(self):
         df = self.loc_diff.diff_df.get()
@@ -279,12 +319,13 @@ class CheriBSDLineChangesByPath(PlotTask):
     public = True
     task_namespace = "kernel-history"
     task_name = "cheribsd-cloc-by-path"
+    task_config_class = LoCDataConfig
 
     @dependency
     def loc_diff(self):
-        return LoadLoCData(self.session, self.analysis_config)
+        return LoadLoCData(self.session, self.analysis_config, task_config=self.config)
 
-    def run(self):
+    def run_plot(self):
         df = self.loc_diff.diff_df.get()
         # Don't care how the lines changed
         data_df = generalized_xs(df, how="same", complement=True)
@@ -319,10 +360,11 @@ class CheriBSDLineChangesByFile(PlotTask):
     public = True
     task_namespace = "kernel-history"
     task_name = "cheribsd-cloc-by-file"
+    task_config_class = LoCDataConfig
 
     @dependency
     def loc_diff(self):
-        return LoadLoCData(self.session, self.analysis_config)
+        return LoadLoCData(self.session, self.analysis_config, task_config=self.config)
 
     def _prepare_bars(self, df, sort_by, values_col):
         """
@@ -458,36 +500,93 @@ class CheriBSDLineChangesByComponent(PlotTask):
     public = True
     task_namespace = "kernel-history"
     task_name = "cheribsd-cloc-by-component"
+    task_config_class = LoCDataConfig
 
-    components = {"vm": []}
+    components = {
+        "platform": r"sys/(riscv|arm|amd|x86|i386|power)",
+        "vm": r"sys/vm/(?!uma)",
+        "net": r"sys/net",
+        "alloc": r"(sys/(vm/uma|kern/.*vmem)|sys/sys/vmem)",
+        "dev": r"sys/dev",
+        "kern": r"(sys/kern/(?!.*vmem|vfs)|sys/sys/(?!vmem))",
+        "compat": r"sys/compat",
+        "vfs": r"sys/kern/vfs",
+        "fs": r"sys/fs",
+        "cheri": r"sys/cheri"
+    }
 
     @dependency
     def loc_diff(self):
-        return LoadLoCData(self.session, self.analysis_config)
+        return LoadLoCData(self.session, self.analysis_config, task_config=self.config)
 
-    def run(self):
-        N = 50
+    def run_plot(self):
         df = self.loc_diff.diff_df.get()
-        data_df = generalized_xs(df, how="same", complement=True)
-        # Filter top N files
-        data_df["total"] = data_df.groupby("file")["code"].transform("sum")
-        top_loc = data_df.sort_values(by=["total"], ascending=False)
-        nhow = len(top_loc.index.unique("how"))
+        df = generalized_xs(df, how="same", complement=True)
+        base_df = self.loc_diff.baseline_df.get()
 
-        total_loc = data_df.groupby("file").sum().sort_values(by=["code"], ascending=False)
-        top_loc = total_loc.iloc[:N]
-        data_df = data_df.loc[data_df.index.isin(top_loc.index, level="file")]
-        # Need to prepare the frame by pivoting how into columns and retaining only
-        # the code column
-        show_df = data_df.reset_index()
-        show_df["file"] = show_df["file"].str.removeprefix("sys/")
-        show_df = show_df.pivot(index="file", columns="how", values="code")
+        # Ensure we have the proper theme
         sns.set_theme()
+        # Use tab10 colors, added => green, modified => orange, removed => red
+        cmap = sns.color_palette(as_cmap=True)
+        # ordered as green, orange, red
+        colors = [cmap[2], cmap[1], cmap[3]]
+
+        # Produce the dataframe containing counts for each component
+        index = pd.MultiIndex.from_product([self.components.keys(), ["added", "modified", "removed"]],
+                                           names=["component", "how"])
+        data_set = []
+        all_matches = None
+        all_base_matches = None
+        for name, filter_ in self.components.items():
+            matches = df.index.get_level_values("file").str.match(filter_)
+            base_matches = base_df.index.get_level_values("file").str.match(filter_)
+            if all_matches is None:
+                all_matches = matches
+                all_base_matches = base_matches
+            else:
+                all_matches = (all_matches | matches)
+                all_base_matches = (all_base_matches | base_matches)
+            changed_sloc = df.loc[matches].groupby("how").sum()
+            changed_sloc["component"] = name
+            changed_sloc["baseline"] = base_df.loc[base_matches]["code"].sum()
+            data_set.append(changed_sloc)
+        # Catch-all set
+        other = df.loc[~all_matches].groupby("how").sum()
+        other["component"] = "other"
+        other["baseline"] = base_df.loc[~all_base_matches]["code"].sum()
+        data_set.append(other)
+        # Finally merge everything
+        data_df = pd.concat(data_set)
+        data_df["percent"] = 100 * data_df["code"] / data_df["baseline"]
 
         with new_figure(self.plot.path) as fig:
-            ax = fig.subplots()
-            show_df.reset_index().plot(x="file", stacked=True, kind="barh", ax=ax)
-            ax.tick_params(axis="y", labelsize="xx-small")
+            ax_l, ax_r = fig.subplots(1, 2, sharey=True)
+            # Absolute SLoC on the left
+            show_df = data_df.reset_index().pivot(index="component", columns="how", values="code")
+            show_df.reset_index().plot(x="component",
+                                       y=["added", "modified", "removed"],
+                                       stacked=True,
+                                       kind="barh",
+                                       ax=ax_l,
+                                       color=colors,
+                                       legend=False)
+            ax_l.tick_params(axis="y", labelsize="x-small")
+            ax_l.set_xlabel("# of lines")
+
+            # Percent SLoC on the right
+            show_df = data_df.reset_index().pivot(index="component", columns="how", values="percent")
+            show_df.reset_index().plot(x="component",
+                                       y=["added", "modified", "removed"],
+                                       stacked=True,
+                                       kind="barh",
+                                       ax=ax_r,
+                                       color=colors,
+                                       legend=False)
+            ax_r.set_xlabel("% of lines")
+
+            # The legend is shared at the top center
+            handles, labels = ax_l.get_legend_handles_labels()
+            fig.legend(handles, labels, ncol=3, loc="upper center", bbox_to_anchor=(0.5, 1.08))
 
     @output
     def plot(self):

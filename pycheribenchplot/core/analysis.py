@@ -11,7 +11,7 @@ from .artefact import DataFrameTarget
 from .benchmark import Benchmark
 from .config import AnalysisConfig, Config
 from .model import DataModel
-from .task import ExecutionTask, SessionTask
+from .task import ExecutionTask, SessionExecutionTask, SessionTask
 
 
 class AnalysisTask(SessionTask):
@@ -42,9 +42,11 @@ class BenchmarkAnalysisTask(AnalysisTask):
     task_namespace = "analysis.benchmark"
 
     def __init__(self, benchmark: Benchmark, analysis_config: AnalysisConfig, task_config: Config = None):
-        super().__init__(benchmark.session, analysis_config, task_config=task_config)
         #: The associated benchmark context
         self.benchmark = benchmark
+
+        # Borg initialization occurs here
+        super().__init__(benchmark.session, analysis_config, task_config=task_config)
 
     @property
     def uuid(self):

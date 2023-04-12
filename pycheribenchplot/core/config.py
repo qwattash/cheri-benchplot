@@ -866,4 +866,4 @@ class AnalysisConfig(Config):
     use_builtin_symbolizer: bool = True
 
     #: Specify analysis passes to run
-    handlers: List[TaskTargetConfig] = dc.field(default_factory=list)
+    tasks: List[TaskTargetConfig] = dc.field(default_factory=list)

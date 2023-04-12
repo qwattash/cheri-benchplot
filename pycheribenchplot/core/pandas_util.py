@@ -53,4 +53,28 @@ def generalized_xs(df: pd.DataFrame,
             result = result.droplevel(levels)
         else:
             result = result.reset_index()
-    return result
+    return result.copy()
+
+
+def broadcast_xs(df: pd.DataFrame, chunk: pd.DataFrame) -> pd.DataFrame:
+    """
+    Given a dataframe and a cross-section from it, with some missing index levels, generate
+    the complete series or frame with the cross-section aligned to the parent frame.
+    This is useful to perform an intermediate operations on a subset (e.g. the baseline frame)
+    and then replicate the values for the rest of the datasets.
+    """
+    if df.index.nlevels > 1 and set(chunk.index.names).issubset(df.index.names):
+        # First reorder the levels so that the shared levels between df and chunk are at the
+        # front of df index names lis
+        _, r = df.align(chunk, axis=0)
+        return r.reorder_levels(df.index.names)
+    else:
+        if chunk.index.nlevels > 1:
+            raise TypeError("Can not broadcast multiindex into flat index")
+        nrepeat = len(df) / len(chunk)
+        if nrepeat != int(nrepeat):
+            raise TypeError("Can not broadcast non-alignable chunk")
+        # Just repeat the chunk along the frame
+        df = df.copy()
+        df.loc[:] = chunk.values.repeat(nrepeat, axis=0)
+        return df

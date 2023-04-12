@@ -28,8 +28,9 @@ class CheriBSDCompilationDB(DataGenTask):
     We use the strace command here to detect every file ever touched by the compilation
     process. This allows to pick up both C sources, headers and anything else.
     """
+    public = True
     task_namespace = "kernel-history"
-    task_name = "cheribuild-trace"
+    task_name = "cheribuild-cdb-trace"
     task_config_class = CompilationDBConfig
 
     def __init__(self, session, script, task_config=None):

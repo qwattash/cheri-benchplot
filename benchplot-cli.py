@@ -94,7 +94,11 @@ def handle_command(user_config: BenchplotUserConfig, args):
         else:
             analysis_config = AnalysisConfig()
             for task in args.task:
-                analysis_config.handlers.append(TaskTargetConfig(handler=task))
+                analysis_config.tasks.append(TaskTargetConfig(handler=task))
+        if not analysis_config.tasks:
+            logger.error("Invalid analysis configuration, one of the -a or "
+                         "-t options must be used")
+            exit(1)
         session.analyse(analysis_config)
     elif args.command == "clean":
         # XXX add safety net question?
@@ -154,7 +158,6 @@ def main():
         "-t",
         "--task",
         type=str,
-        required=True,
         action="append",
         help="Task names to run for the analysis. This is a convenience shorthand for the full analysis configuration")
     sub_analyse.add_argument("--clean", action="store_true", help="Wipe analysis outputs before running")

@@ -276,7 +276,7 @@ class Task(Borg, metaclass=TaskRegistry):
         :return: sequence of dependencies
         """
         registered = [getattr(self, attr) for attr in self._deps_registry]
-        yield from registered
+        yield from filter(lambda d: d is not None, registered)
 
     def outputs(self) -> typing.Iterable[tuple[str, Target]]:
         """
@@ -419,11 +419,13 @@ class BenchmarkTask(Task):
     These tasks do not reference a specific benchmark ID or benchmark group ID.
     """
     def __init__(self, benchmark: "Benchmark", task_config: Config = None):
-        super().__init__(task_config=task_config)
         #: Associated benchmark context
         self.benchmark = benchmark
         #: Task logger is a child of the benchmark logger
         self.logger = new_logger(f"{self.task_name}", parent=self.benchmark.logger)
+
+        # Borg initialization occurs here
+        super().__init__(task_config=task_config)
 
     @property
     def session(self):

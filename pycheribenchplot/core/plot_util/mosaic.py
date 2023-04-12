@@ -47,15 +47,14 @@ def _mosaic_treemap_level(level: int, df: pd.DataFrame, bbox: BBox, args: Treema
     rects_df = pd.DataFrame(rects)
     # add padding to rectangles, the padding is scaled by width and height so that
     # it is always 0.5% of the dimension.
-    # If a rectangle is too small, complain.
+    # If a rectangle is too small, skip padding.
     pad_x = width / 200
     pad_y = height / 200
-    rects_df["x"] += pad_x / 2
-    rects_df["dx"] -= pad_x
-    rects_df["y"] += pad_y / 2
-    rects_df["dy"] -= pad_y
-    if (rects_df["dx"] <= 0).any() or (rects_df["dy"] <= 0).any():
-        raise ValueError("Can not insert enough padding")
+    if (rects_df["dx"] - pad_x > 0).all() and (rects_df["dy"] - pad_y > 0).all():
+        rects_df["x"] += pad_x / 2
+        rects_df["dx"] -= pad_x
+        rects_df["y"] += pad_y / 2
+        rects_df["dy"] -= pad_y
 
     # Now we can draw the rectangles
     show_df = pd.concat([grouped.reset_index(), rects_df], axis=1)

@@ -421,7 +421,7 @@ class Session:
                 raise
             self.logger.info("Using alternative baseline %s (%s)", baseline_conf.instance.name, self.baseline_g_uuid)
 
-        for task_spec in analysis_config.handlers:
+        for task_spec in analysis_config.tasks:
             resolved = TaskRegistry.resolve_task(task_spec.handler)
             if not resolved:
                 self.logger.error("Invalid task name specification %s", task_spec.handler)
@@ -435,6 +435,7 @@ class Session:
                 else:
                     options = task_spec.task_options
                 task = task_klass(self, analysis_config, task_config=options)
+                self.logger.debug("Schedule analysis task %s with opts %s", task, options)
                 self.scheduler.add_task(task)
         self.logger.info("Session %s start analysis", self.name)
         self.scheduler.run()
