@@ -418,7 +418,7 @@ class TargetLoadTask(BenchmarkTask, TargetLoadTaskMixin):
 
     @output
     def df(self):
-        return DataFrameTarget(self, self.model)
+        return DataFrameTarget(self, self.model, output_id=f"loaded-df-for-{super().task_id}")
 
 
 class TargetSessionLoadTask(SessionTask, TargetLoadTaskMixin):
@@ -449,4 +449,4 @@ class TargetSessionLoadTask(SessionTask, TargetLoadTaskMixin):
 
     @output
     def df(self):
-        return DataFrameTarget(self, self.model)
+        return DataFrameTarget(self, self.model, output_id=f"loaded-df-for-{super().task_id}")
