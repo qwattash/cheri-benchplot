@@ -4,12 +4,12 @@ import re
 import typing
 from collections import defaultdict
 from contextlib import ExitStack, contextmanager
+from dataclasses import dataclass
 from queue import Queue
 from threading import Condition, Event, Lock, Semaphore, Thread
 
 import networkx as nx
 
-from .artefact import Target, TargetRef
 from .borg import Borg
 from .config import Config
 from .util import new_logger
@@ -20,6 +20,18 @@ class WorkerShutdown(Exception):
     Special exception that triggers the worker thread loop shutdown.
     """
     pass
+
+
+@dataclass
+class TargetRef:
+    """
+    Internal helper for targets
+    """
+
+    #: The unique key for the target
+    name: str
+    #: The attribute name for the target in the Task subclass.
+    attr: str
 
 
 class TaskRegistry(type):
@@ -214,7 +226,7 @@ class Task(Borg, metaclass=TaskRegistry):
         return self._completed.is_set()
 
     @property
-    def output_map(self) -> dict[str, Target]:
+    def output_map(self) -> dict[str, "Target"]:
         """
         Return the output descriptors for the task.
         See note on :attr:`Task.collected_outputs`.
@@ -278,7 +290,7 @@ class Task(Borg, metaclass=TaskRegistry):
         registered = [getattr(self, attr) for attr in self._deps_registry]
         yield from filter(lambda d: d is not None, registered)
 
-    def outputs(self) -> typing.Iterable[tuple[str, Target]]:
+    def outputs(self) -> typing.Iterable[tuple[str, "Target"]]:
         """
         Produce the set of :class:`Target` objects that describe the outputs
         that are produced by this task.
