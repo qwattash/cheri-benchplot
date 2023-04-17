@@ -3,6 +3,7 @@ import multiprocessing as mp
 import re
 import typing
 from collections import defaultdict
+from collections.abc import Iterable
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from queue import Queue
@@ -287,8 +288,11 @@ class Task(Borg, metaclass=TaskRegistry):
 
         :return: sequence of dependencies
         """
-        registered = [getattr(self, attr) for attr in self._deps_registry]
-        yield from filter(lambda d: d is not None, registered)
+        for attr in self._deps_registry:
+            deps = getattr(self, attr)
+            if not isinstance(deps, Iterable):
+                deps = [deps]
+            yield from filter(lambda d: d is not None, deps)
 
     def outputs(self) -> typing.Iterable[tuple[str, "Target"]]:
         """
@@ -340,7 +344,11 @@ class dependency:
     def __get__(self, instance, owner=None):
         assert instance is not None
         assert self._fn is not None
-        return self._fn(instance)
+        result = self._fn(instance)
+        # Normalize any generator or iterable to a list, keep single value unchanged
+        if isinstance(result, Iterable) and not isinstance(result, list):
+            return list(result)
+        return result
 
     def __call__(self, fn):
         """
