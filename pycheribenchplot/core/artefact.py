@@ -59,12 +59,21 @@ class DataFrameTarget(Target):
             self.schema = model.to_schema(task.session)
         else:
             self.schema = None
+        #: The dataframe currently assigned
         self._df = None
+        # Original model for checking
+        self._model = model
 
-        if output_id is None:
-            output_id = model.__class__.__name__.lower()
+        if output_id is None and model is not None:
+            output_id = model.__name__.lower()
         # Borg state initialization occurs here
         super().__init__(task, output_id)
+
+        # Sanity check to verify that the model is consistent
+        if model and self._model != model:
+            task.logger.error("DataFrameTarget ID collision detected for %s, output_id=%s", self.borg_state_id,
+                              output_id)
+            raise RuntimeError("DataFrameTarget Target ID collision")
 
     def assign(self, df: pd.DataFrame):
         if self.schema:
@@ -219,9 +228,9 @@ class LocalFileTarget(FileTarget):
         benchmark_data_root = benchmark.get_benchmark_data_path()
         if self.use_iterations:
             base_paths = map(benchmark.get_benchmark_iter_data_path, range(benchmark.config.iterations))
-            return [base / path for base in base_paths]
+            return [base / self._file_name for base in base_paths]
         else:
-            return [benchmark_data_root / path]
+            return [benchmark_data_root / self._file_name]
 
     def paths(self):
         if self._task.is_session_task():
