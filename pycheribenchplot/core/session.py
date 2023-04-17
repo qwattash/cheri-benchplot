@@ -352,6 +352,15 @@ class Session:
         """
         return self.session_root_path / "assets"
 
+    def all_benchmarks(self) -> list[Benchmark]:
+        """
+        Helper method to iterate over benchmark contexts.
+
+        :return: A list containing all benchmark contexts from the
+        benchmark matrix.
+        """
+        return list(self.benchmark_matrix.to_numpy().ravel())
+
     def clean_all(self):
         """
         Clean all output files, including benchmark data.
