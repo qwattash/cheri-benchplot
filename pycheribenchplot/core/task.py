@@ -366,7 +366,7 @@ class output:
     This should be used in place of the :meth:`Task.outputs()` and
     :attr:`Task.output_map` if there are no special requirements.
 
-    This decorator acts as a property decorator that caches its output.
+    This decorator acts as a property decorator.
     There is only one instance for each task output target, which is held here,
     further references to it may be obtained from the :class:`Task` class for
     convenience.
@@ -378,7 +378,6 @@ class output:
         """
         self._fn = fn
         self._key = name
-        self._target_instance = None
 
     def __set_name__(self, owner, name):
         """
@@ -394,9 +393,7 @@ class output:
     def __get__(self, instance, owner=None):
         assert instance is not None
         assert self._fn is not None
-        if self._target_instance is None:
-            self._target_instance = self._fn(instance)
-        return self._target_instance
+        return self._fn(instance)
 
     def __call__(self, fn):
         """
