@@ -155,23 +155,23 @@ class CheriBSDKernelLineChanges(SessionDataGenTask):
 
     @output
     def raw_cloc_baseline(self):
-        return LocalFileTarget.from_task(self, prefix="raw-cloc-baseline", ext="json")
+        return LocalFileTarget(self, prefix="raw-cloc-baseline", ext="json")
 
     @output
     def raw_cloc_head(self):
-        return LocalFileTarget.from_task(self, prefix="raw-cloc-head", ext="json")
+        return LocalFileTarget(self, prefix="raw-cloc-head", ext="json")
 
     @output
     def raw_cloc_diff(self):
-        return LocalFileTarget.from_task(self, prefix="raw-cloc-diff", ext="json")
+        return LocalFileTarget(self, prefix="raw-cloc-diff", ext="json")
 
     @output
     def cloc(self):
-        return LocalFileTarget.from_task(self, prefix="cloc", ext="json")
+        return LocalFileTarget(self, prefix="cloc", ext="json")
 
     @output
     def cloc_baseline(self):
-        return LocalFileTarget.from_task(self, prefix="cloc-baseline", ext="json")
+        return LocalFileTarget(self, prefix="cloc-baseline", ext="json")
 
 
 @dataclass
@@ -346,7 +346,7 @@ class CheriBSDLineChangesByPath(PlotTask):
 
     @output
     def plot(self):
-        return PlotTarget.from_task(self)
+        return PlotTarget(self)
 
 
 class CheriBSDLineChangesByFile(PlotTask):
@@ -458,31 +458,31 @@ class CheriBSDLineChangesByFile(PlotTask):
 
     @output
     def absolute_loc_plot(self):
-        return PlotTarget.from_task(self, prefix="abs")
+        return PlotTarget(self, prefix="abs")
 
     @output
     def percent_loc_sorted_by_absolute_loc_plot(self):
-        return PlotTarget.from_task(self, prefix="rel-sorted-by-abs")
+        return PlotTarget(self, prefix="rel-sorted-by-abs")
 
     @output
     def percent_loc_plot(self):
-        return PlotTarget.from_task(self, prefix="rel")
+        return PlotTarget(self, prefix="rel")
 
     @output
     def absolute_loc_sorted_by_percent_loc_plot(self):
-        return PlotTarget.from_task(self, prefix="abs-sorted-by-rel")
+        return PlotTarget(self, prefix="abs-sorted-by-rel")
 
     @output
     def absolute_loc_assembly(self):
-        return PlotTarget.from_task(self, prefix="abs-asm")
+        return PlotTarget(self, prefix="abs-asm")
 
     @output
     def absolute_loc_headers(self):
-        return PlotTarget.from_task(self, prefix="abs-hdr")
+        return PlotTarget(self, prefix="abs-hdr")
 
     @output
     def absolute_loc_sources(self):
-        return PlotTarget.from_task(self, prefix="abs-src")
+        return PlotTarget(self, prefix="abs-src")
 
 
 class CheriBSDLineChangesByComponent(PlotTask):
@@ -590,4 +590,4 @@ class CheriBSDLineChangesByComponent(PlotTask):
 
     @output
     def plot(self):
-        return PlotTarget.from_task(self)
+        return PlotTarget(self)

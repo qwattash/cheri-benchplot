@@ -7,7 +7,7 @@ import pandas as pd
 from pycheribenchplot.core.analysis import BenchmarkDataLoadTask
 from pycheribenchplot.core.artefact import LocalFileTarget
 from pycheribenchplot.core.config import Config
-from pycheribenchplot.core.task import DataGenTask
+from pycheribenchplot.core.task import DataGenTask, output
 from pycheribenchplot.core.util import SubprocessHelper, resolve_system_command
 
 
@@ -78,7 +78,7 @@ class CheriBSDCompilationDB(DataGenTask):
         compilation_db = self._do_cheribuild(build_root)
         file_set = self._extract_files(compilation_db)
         df = pd.DataFrame({"files": list(file_set)})
-        df.to_json(self.output_map["compilation-db"].path)
+        df.to_json(self.compilation_db.path)
 
     def run(self):
         """
@@ -95,5 +95,6 @@ class CheriBSDCompilationDB(DataGenTask):
         else:
             self._do_run(self.session.user_config.build_path)
 
-    def outputs(self):
-        yield "compilation-db", LocalFileTarget.from_task(self, ext="json")
+    @output
+    def compilation_db(self):
+        return LocalFileTarget(self, ext="json")

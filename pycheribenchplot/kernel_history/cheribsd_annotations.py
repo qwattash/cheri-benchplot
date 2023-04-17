@@ -6,14 +6,15 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
+import seaborn as sns
 
-from pycheribenchplot.core.analysis import AnalysisTask, BenchmarkDataLoadTask
+from pycheribenchplot.core.analysis import AnalysisTask
 from pycheribenchplot.core.artefact import DataFrameTarget, LocalFileTarget
 from pycheribenchplot.core.config import Config
-from pycheribenchplot.core.plot import PlotTask, new_figure
-from pycheribenchplot.core.task import DataGenTask
+from pycheribenchplot.core.plot import PlotTarget, PlotTask, new_figure
+from pycheribenchplot.core.task import DataGenTask, dependency, output
 from pycheribenchplot.core.util import resolve_system_command
-from pycheribenchplot.kernel_history.cdb import CompilationDBConfig
+from pycheribenchplot.kernel_history.cdb import (CheriBSDCompilationDB, CompilationDBConfig)
 from pycheribenchplot.kernel_history.model import (AllCompilationDBModel, AllFileChangesModel, CompilationDBModel,
                                                    RawFileChangesModel)
 
@@ -53,9 +54,9 @@ class CheriBSDKernelFileChanges(DataGenTask):
             raw_data = raw_data[idx:].strip()
         return chunks
 
-    def dependencies(self):
-        self._compilationdb = CheriBSDCompilationDB(self.benchmark, self.script, task_config=self.config.compilationdb)
-        yield self._compilationdb
+    @dependency
+    def cheribuild_trace(self):
+        return CheriBSDCompilationDB(self.benchmark, self.script, task_config=self.config.compilationdb)
 
     def run(self):
         self.logger.debug("Extracting kernel changes")
@@ -64,7 +65,7 @@ class CheriBSDKernelFileChanges(DataGenTask):
                               self._cheribsd_changes_awkscript)
             raise RuntimeError("Can not extract kernel changes")
 
-        cdb_df = pd.read_json(self._compilationdb.output_map["compilation-db"].path)
+        cdb_df = pd.read_json(self.cheribuild_trace.compilation_db.path)
         kernel_files = [Path(entry) for entry in cdb_df["files"]]
 
         # For each of the files, we extract the changes annotations, if any
@@ -86,50 +87,33 @@ class CheriBSDKernelFileChanges(DataGenTask):
         df["changes"] = df.get("changes", None).map(lambda v: v if isinstance(v, list) else [])
         df["changes_purecap"] = df.get("changes_purecap", None).map(lambda v: v if isinstance(v, list) else [])
         df["hybrid_specific"] = df.get("hybrid_specific", False).fillna(False)
-        df.set_index(["file"], inplace=True)
 
-        df.to_json(self.output_map["changes"].path, orient="table", index=True)
+        df.to_json(self.changes.path, index=False)
 
-    def outputs(self):
-        yield "changes", LocalFileTarget.from_task(self, ext="json")
-        # re-export dependency output
-        yield "compilation-db", self._compilationdb.output_map["compilation-db"]
+    @output
+    def changes(self):
+        return LocalFileTarget(self, ext="json", model=RawFileChangesModel)
 
-
-class CheriBSDFilesLoad(BenchmarkDataLoadTask):
-    task_namespace = "kernel-history"
-    task_name = "cheribsd-files-load"
-    exec_task = CheriBSDKernelFileChanges
-    target_key = "changes"
-    model = RawFileChangesModel
-
-    def _load_one_json(self, path, **kwargs):
-        kwargs["orient"] = "table"
-        return super()._load_one_json(path, **kwargs)
-
-
-class CompilationDBLoad(BenchmarkDataLoadTask):
-    task_namespace = "kernel-history"
-    task_name = "cheribsd-cdb-load"
-    exec_task = CheriBSDKernelFileChanges
-    target_key = "compilation-db"
-    model = CompilationDBModel
+    @output
+    def compilation_db(self):
+        return self.cheribuild_trace.compilation_db
 
 
 class CheriBSDAllFileChanges(AnalysisTask):
     task_namespace = "kernel-history"
     task_name = "cheribsd-files-union"
 
-    def dependencies(self):
-        self._changes_load = []
-        self._cdb_load = []
-        for ctx in self.session.benchmark_matrix.to_numpy().ravel():
-            task = CheriBSDFilesLoad(ctx, self.analysis_config)
-            self._changes_load.append(task)
-            yield task
-            task = CompilationDBLoad(ctx, self.analysis_config)
-            self._cdb_load.append(task)
-            yield task
+    @dependency
+    def load_files(self):
+        for b in self.session.all_benchmarks():
+            exec_task = b.load_exec_task(CheriBSDKernelFileChanges)
+            yield exec_task.changes.get_loader()
+
+    @dependency
+    def load_cdb(self):
+        for b in self.session.all_benchmarks():
+            exec_task = b.load_exec_task(CheriBSDKernelFileChanges)
+            yield exec_task.compilation_db.get_loader()
 
     def run(self):
         # Files changed
@@ -137,10 +121,10 @@ class CheriBSDAllFileChanges(AnalysisTask):
         # Compilation db files
         cdb_set = []
 
-        for loader in self._changes_load:
-            df_set.append(loader.output_map["df"].get())
-        for loader in self._cdb_load:
-            cdb_set.append(loader.output_map["df"].get())
+        for loader in self.load_files:
+            df_set.append(loader.df.get())
+        for loader in self.load_cdb:
+            cdb_set.append(loader.df.get())
 
         merged = pd.concat(df_set)
         # Ensure that the changes columns are hashable
@@ -153,12 +137,16 @@ class CheriBSDAllFileChanges(AnalysisTask):
 
         cdb_df = pd.concat(cdb_set).groupby("files").first().reset_index()
 
-        self.output_map["df"].assign(df)
-        self.output_map["compilation-db"].assign(cdb_df)
+        self.df.assign(df)
+        self.compilation_db.assign(cdb_df)
 
-    def outputs(self):
-        yield "df", DataFrameTarget(AllFileChangesModel.to_schema(self.session))
-        yield "compilation-db", DataFrameTarget(AllCompilationDBModel.to_schema(self.session))
+    @output
+    def df(self):
+        return DataFrameTarget(self, AllFileChangesModel)
+
+    @output
+    def compilation_db(self):
+        return DataFrameTarget(self, AllCompilationDBModel)
 
 
 class CheriBSDChangesByType(PlotTask):
@@ -169,13 +157,13 @@ class CheriBSDChangesByType(PlotTask):
     task_namespace = "kernel-history"
     task_name = "cheribsd-changes-plot"
 
-    def dependencies(self):
-        self._files = CheriBSDAllFileChanges(self.session, self.analysis_config)
-        yield self._files
+    @dependency
+    def merged_annotations(self):
+        return CheriBSDAllFileChanges(self.session, self.analysis_config)
 
-    def run(self):
-        df = self._files.output_map["df"].get()
-        cdb_df = self._files.output_map["compilation-db"].get()
+    def run_plot(self):
+        df = self.merged_annotations.df.get()
+        cdb_df = self.merged_annotations.compilation_db.get()
 
         df["all_changes"] = (df["changes"] + df["changes_purecap"]).map(set)
         changed_files = len(df)
@@ -189,22 +177,31 @@ class CheriBSDChangesByType(PlotTask):
         data_df = data_df.rename({"all_changes": "Type of change"}, axis=1)
         data_df["% of all files"] = data_df[count_label] * 100 / total_files
 
-        with new_figure(self.output_map["changes"].path) as fig:
+        sns.set_theme()
+
+        with new_figure(self.changes.path) as fig:
             ax = fig.subplots()
             sns.barplot(ax=ax, data=data_df, x="Type of change", y=count_label, color="steelblue")
             ax.set_xticklabels(ax.get_xticklabels(), rotation=35, ha="right")
 
-        with new_figure(self.output_map["rel-changes"].path) as fig:
+        with new_figure(self.rel_changes.path) as fig:
             ax = fig.subplots()
             sns.barplot(ax=ax, data=data_df, x="Type of change", y="% of changed files", color="steelblue")
             ax.set_xticklabels(ax.get_xticklabels(), rotation=35, ha="right")
 
-        with new_figure(self.output_map["rel-total-changes"].path) as fig:
+        with new_figure(self.rel_total_changes.path) as fig:
             ax = fig.subplots()
             sns.barplot(ax=ax, data=data_df, x="Type of change", y="% of all files", color="steelblue")
             ax.set_xticklabels(ax.get_xticklabels(), rotation=35, ha="right")
 
-    def outputs(self):
-        yield "changes", self._plot_output("changes")
-        yield "rel-changes", self._plot_output("rel-changes")
-        yield "rel-total-changes", self._plot_output("rel-total-changes")
+    @output
+    def changes(self):
+        return PlotTarget(self, prefix="changes")
+
+    @output
+    def rel_changes(self):
+        return PlotTarget(self, prefix="rel-changes")
+
+    @output
+    def rel_total_changes(self):
+        return PlotTarget(self, prefix="rel-total-changes")
