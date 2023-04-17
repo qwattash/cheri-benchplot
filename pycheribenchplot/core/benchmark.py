@@ -278,7 +278,6 @@ class Benchmark:
         :return: The top-level execution task
         """
         exec_task = BenchmarkExecTask(self, task_config=exec_config)
-        self.logger.info("Initialize top-level benchmark task %s", exec_task)
         return exec_task
 
     def load_exec_task(self,
@@ -317,4 +316,5 @@ class Benchmark:
             self.get_benchmark_iter_data_path(i).mkdir(exist_ok=True)
 
         exec_task = self.build_exec_task(exec_config)
+        self.logger.info("Initialize top-level benchmark task %s", exec_task)
         scheduler.add_task(exec_task)
