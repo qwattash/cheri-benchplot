@@ -179,17 +179,17 @@ class CheriBSDChangesByType(PlotTask):
 
         sns.set_theme()
 
-        with new_figure(self.changes.path) as fig:
+        with new_figure(self.changes.paths()) as fig:
             ax = fig.subplots()
             sns.barplot(ax=ax, data=data_df, x="Type of change", y=count_label, color="steelblue")
             ax.set_xticklabels(ax.get_xticklabels(), rotation=35, ha="right")
 
-        with new_figure(self.rel_changes.path) as fig:
+        with new_figure(self.rel_changes.paths()) as fig:
             ax = fig.subplots()
             sns.barplot(ax=ax, data=data_df, x="Type of change", y="% of changed files", color="steelblue")
             ax.set_xticklabels(ax.get_xticklabels(), rotation=35, ha="right")
 
-        with new_figure(self.rel_total_changes.path) as fig:
+        with new_figure(self.rel_total_changes.paths()) as fig:
             ax = fig.subplots()
             sns.barplot(ax=ax, data=data_df, x="Type of change", y="% of all files", color="steelblue")
             ax.set_xticklabels(ax.get_xticklabels(), rotation=35, ha="right")

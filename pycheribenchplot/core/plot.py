@@ -26,9 +26,24 @@ def new_figure(dest: Path | list[Path], **kwargs):
 
 class PlotTarget(AnalysisFileTarget):
     """
-    Target pointing to a plot path
+    Target pointing to a plot path.
+
+    The plot target assumes that the associated task is an analysis task.
     """
-    pass
+    def __init__(self, task: Task, prefix: str = "", ext: str | None = None):
+        super().__init__(task, prefix=prefix, ext=ext)
+        if ext:
+            self._plot_ext = [ext]
+        else:
+            self._plot_ext = self._task.analysis_config.plot.plot_output_format
+
+    def paths(self):
+        files = []
+        for ext in self._plot_ext:
+            if not ext.startswith("."):
+                ext = f".{ext}"
+            files.append(self._file_name.with_suffix(ext))
+        return [self._task.session.get_plot_root_path() / fname for fname in files]
 
 
 class PlotTask(AnalysisTask):
