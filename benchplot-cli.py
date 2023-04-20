@@ -25,7 +25,7 @@ def add_session_spec_options(parser):
     session_name = parser.add_argument("session_path", type=Path, help="Path or name of the target session")
 
 
-def resolve_session(user_config, session_path):
+def resolve_session(user_config: BenchplotUserConfig, session_path: Path) -> Session:
     session = Session.from_path(user_config, session_path)
     if not session:
         logger.error("Session %s does not exist", session_path)
@@ -33,14 +33,14 @@ def resolve_session(user_config, session_path):
     return session
 
 
-def list_session(session):
+def list_session(session: Session):
     configurations = session.config.configurations
     print(f"Session {session.config.name} ({session.config.uuid}):")
     for c in session.config.configurations:
         print("\t", c)
 
 
-def list_tasks(session):
+def list_tasks(session: Session):
     """
     Helper to display public analysis tasks for a given session
     """
@@ -50,7 +50,7 @@ def list_tasks(session):
         print("\t", spec_line)
 
 
-def list_generators(session):
+def list_generators(session: Session):
     """
     Helper to list all generator tasks that may be used in a session configuration.
     If a session is given, this will list the generators in that session.
@@ -61,6 +61,19 @@ def list_generators(session):
             continue
         spec_line = f"{task_class.task_namespace}.{task_class.task_name} ({task_class.__name__})"
         print("\t", spec_line)
+
+
+def print_task_info(session: Session, task_name: str):
+    """
+    Helper that prints out detailed information about a task.
+
+    Given a task name, this will show its dependencies and outputs.
+    """
+    task_types = TaskRegistry.resolve_task(task_name)
+    if not task_types:
+        logger.error("Invalid task name %s. The task name may be '<namespace>.<task_name>' or '<namespace>.*'.",
+                     task_name)
+        return
 
 
 def handle_command(user_config: BenchplotUserConfig, args):
@@ -109,12 +122,23 @@ def handle_command(user_config: BenchplotUserConfig, args):
             session = resolve_session(user_config, args.session_path)
         else:
             session = None
-        if args.what == "info":
+        if args.what == "session":
+            if session is None:
+                logger.error("Missing session path")
+                parser.print_help()
+                exit(1)
             list_session(session)
         elif args.what == "tasks":
             list_tasks(session)
         elif args.what == "generators":
             list_generators(session)
+        elif args.what == "task":
+            if not args.task:
+                logger.warning("No -t,--task specified, you should indicate at least "
+                               "one task to show information about")
+            for task_name in args.task:
+                print_task_info(session, task_name)
+
     elif args.command == "bundle":
         session = resolve_session(user_config, args.session_path)
         session.bundle()
@@ -154,19 +178,27 @@ def main():
     sub_analyse = sub.add_parser("analyse", help="process benchmarks and generate plots")
     add_session_spec_options(sub_analyse)
     sub_analyse.add_argument("-a", "--analysis-config", type=Path, help="Analysis configuration file", default=None)
-    sub_analyse.add_argument(
-        "-t",
-        "--task",
-        type=str,
-        action="append",
-        help="Task names to run for the analysis. This is a convenience shorthand for the full analysis configuration")
+    sub_analyse.add_argument("-t",
+                             "--task",
+                             type=str,
+                             action="append",
+                             help="Task names to run for the analysis. This is a convenience shorthand "
+                             "for the full analysis configuration")
     sub_analyse.add_argument("--clean", action="store_true", help="Wipe analysis outputs before running")
 
     sub_clean = sub.add_parser("clean", help="clean output directory")
     add_session_spec_options(sub_clean)
 
     sub_list = sub.add_parser("show", help="Show session contents and other information")
-    sub_list.add_argument("what", choices=["info", "tasks", "generators"], help="What to show")
+    sub_list.add_argument("what",
+                          choices=["session", "task", "tasks", "generators"],
+                          help="Display information about something.")
+    sub_list.add_argument("-t",
+                          "--task",
+                          type=str,
+                          action="append",
+                          help="Name of the task for which information is requested, when relevant",
+                          required=False)
     sub_list.add_argument("session_path", type=Path, help="Path of the target session", nargs='?')
 
     sub_bundle = sub.add_parser("bundle", help="create a session archive")
