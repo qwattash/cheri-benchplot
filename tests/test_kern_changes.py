@@ -15,7 +15,7 @@ from pycheribenchplot.kernel_history.model import *
 @pytest.fixture
 def fake_kernel_changes(fake_simple_benchmark):
     """
-    Produce a dataframe mimicking the output of CheriBSDKernelFileChanges.
+    Produce a dataframe mimicking the output of CheriBSDKernelAnnotations.
 
     XXX this may possibly be randomised from the model
     """
@@ -154,24 +154,24 @@ def test_raw_dataset_validate(fake_kernel_changes, fake_simple_benchmark):
 def test_kernel_file_changes_union(mocker, fake_session, fake_kernel_changes, other_kernel_changes, fake_cdb,
                                    other_cdb):
     """
-    Verify that CheriBSDAllFileChanges produces the union of the annotations and
+    Verify that CheriBSDAnnotationsUnion produces the union of the annotations and
     compilation DB datasets.
     """
     # Prepare two sets of changes as if they were loaded by two different loader tasks
-    mock_files_dep = mocker.patch.object(CheriBSDAllFileChanges, "load_files", new_callable=PropertyMock)
+    mock_files_dep = mocker.patch.object(CheriBSDAnnotationsUnion, "load_files", new_callable=PropertyMock)
     mock_load_task_0 = Mock()
     mock_load_task_1 = Mock()
     mock_load_task_0.df.get.return_value = fake_kernel_changes.copy()
     mock_load_task_1.df.get.return_value = other_kernel_changes.copy()
     mock_files_dep.return_value = [mock_load_task_0, mock_load_task_1]
-    mock_cdb_dep = mocker.patch.object(CheriBSDAllFileChanges, "load_cdb", new_callable=PropertyMock)
+    mock_cdb_dep = mocker.patch.object(CheriBSDAnnotationsUnion, "load_cdb", new_callable=PropertyMock)
     mock_cdb_task_0 = Mock()
     mock_cdb_task_1 = Mock()
     mock_cdb_task_0.df.get.return_value = fake_cdb.copy()
     mock_cdb_task_1.df.get.return_value = other_cdb.copy()
     mock_cdb_dep.return_value = [mock_cdb_task_0, mock_cdb_task_1]
 
-    task = CheriBSDAllFileChanges(fake_session, AnalysisConfig())
+    task = CheriBSDAnnotationsUnion(fake_session, AnalysisConfig())
     task.run()
 
     annotations = task.df.get()

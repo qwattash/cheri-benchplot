@@ -13,13 +13,11 @@
         }]
     },
     "benchmark_config": [{
-        "name": "cheribsd-history",
-        "desc": "CheriBSD source code changes",
+        "name": "cheribsd-subobj",
+        "desc": "CheriBSD subobject bounds statistics",
         "iterations": 1,
         "generators": [{
-            "handler": "kernel-history.cheribsd-changes"
-        }, {
-            "handler": "kernel-history.cheribuild-cdb-trace",
+            "handler": "kernel-static.cheribsd-subobject-bounds-stats",
             "task_options": {
                 "ephemeral_build_root": false
             }

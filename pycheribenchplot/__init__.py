@@ -8,15 +8,15 @@ matplotlib.use("pdf")
 # import pycheribenchplot.drcachesim.analysis
 # import pycheribenchplot.drcachesim.plot
 import pycheribenchplot.generic.task
-import pycheribenchplot.kernel_history.analysis
+import pycheribenchplot.kernel_history
+import pycheribenchplot.kernel_static
 import pycheribenchplot.kernel_vuln.analysis
 import pycheribenchplot.netperf.analysis
 import pycheribenchplot.netperf.plot
-# import pycheribenchplot.kernel_static.dataset
-# import pycheribenchplot.kernel_static.plot
+import pycheribenchplot.netperf.task
+
 # import pycheribenchplot.netperf.analysis
 # import pycheribenchplot.netperf.dataset
-import pycheribenchplot.netperf.task
 
 # import pycheribenchplot.netstat.dataset
 # import pycheribenchplot.pmc.analysis

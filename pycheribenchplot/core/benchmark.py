@@ -280,7 +280,7 @@ class Benchmark:
         exec_task = BenchmarkExecTask(self, task_config=exec_config)
         return exec_task
 
-    def load_exec_task(self,
+    def find_exec_task(self,
                        task_class: Type[ExecutionTask | SessionExecutionTask]) -> ExecutionTask | SessionExecutionTask:
         """
         Find the given execution task configured for the current benchmark context.

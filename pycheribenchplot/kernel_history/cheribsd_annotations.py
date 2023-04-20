@@ -7,43 +7,34 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from git import Repo
 
 from pycheribenchplot.core.analysis import AnalysisTask
 from pycheribenchplot.core.artefact import DataFrameTarget, LocalFileTarget
 from pycheribenchplot.core.config import Config
 from pycheribenchplot.core.plot import PlotTarget, PlotTask, new_figure
-from pycheribenchplot.core.task import DataGenTask, dependency, output
+from pycheribenchplot.core.task import SessionDataGenTask, dependency, output
 from pycheribenchplot.core.util import resolve_system_command
 from pycheribenchplot.kernel_history.cdb import (CheriBSDCompilationDB, CompilationDBConfig)
-from pycheribenchplot.kernel_history.model import (AllCompilationDBModel, AllFileChangesModel, CompilationDBModel,
-                                                   RawFileChangesModel)
+from pycheribenchplot.kernel_history.model import (AllCompilationDBModel, CheriBSDAnnotationsModel, CompilationDBModel)
 
 
-@dataclass
-class KernelFileChangesConfig(Config):
-    compilationdb: Optional[CompilationDBConfig] = field(default_factory=CompilationDBConfig)
-
-
-class CheriBSDKernelFileChanges(DataGenTask):
+class CheriBSDKernelAnnotations(SessionDataGenTask):
     """
     This task extracts cheribsd kernel changes tags using the tooling in cheribsd.
     For this to work, the cheribsd source tree must be synchronized to the kernel version we are running.
-
-    Note that this is done for each benchmark in the benchmark matrix, because we want to extract
-    separate information about each kernel configuration.
-    The data can always be aggregated afterwards because we retain the source file of the annotations.
     """
     public = True
     task_namespace = "kernel-history"
     task_name = "cheribsd-changes"
-    task_config_class = KernelFileChangesConfig
 
-    def __init__(self, benchmark, script, task_config=None):
-        super().__init__(benchmark, script, task_config=task_config)
+    def __init__(self, session, task_config=None):
+        super().__init__(session, task_config=task_config)
         awkscript = Path("tools") / "tools" / "cheri-changes" / "extract-cheri-changes.awk"
         #: The awk script that generates the cheri-changes json output
         self._cheribsd_changes_awkscript = self.session.user_config.cheribsd_path / awkscript
         self._awk = resolve_system_command("awk")
+        self._repo = Repo(self.session.user_config.cheribsd_path)
 
     def _decode_changes(self, raw_data: str) -> list:
         decoder = json.JSONDecoder()
@@ -54,10 +45,6 @@ class CheriBSDKernelFileChanges(DataGenTask):
             raw_data = raw_data[idx:].strip()
         return chunks
 
-    @dependency
-    def cheribuild_trace(self):
-        return CheriBSDCompilationDB(self.benchmark, self.script, task_config=self.config.compilationdb)
-
     def run(self):
         self.logger.debug("Extracting kernel changes")
         if not self._cheribsd_changes_awkscript.exists():
@@ -65,84 +52,74 @@ class CheriBSDKernelFileChanges(DataGenTask):
                               self._cheribsd_changes_awkscript)
             raise RuntimeError("Can not extract kernel changes")
 
-        cdb_df = pd.read_json(self.cheribuild_trace.compilation_db.path)
-        kernel_files = [Path(entry) for entry in cdb_df["files"]]
-
-        # For each of the files, we extract the changes annotations, if any
-        # We chunk the list in groups of 20 files to lower the number of calls to awk
-        chunks = np.array_split(np.array(kernel_files), len(kernel_files) / 20)
+        # Scan all files for annotations
         json_chunks = []
         awk_cmd = [self._awk, "-f", self._cheribsd_changes_awkscript]
-        for chunk in chunks:
-            cmd = awk_cmd + [self.session.user_config.cheribsd_path / p for p in chunk]
+        for path in self._repo.git.grep("CHERI CHANGES", l=True).splitlines():
+            cmd = awk_cmd + [self.session.user_config.cheribsd_path / path]
             result = subprocess.run(cmd, capture_output=True)
             if result.returncode != 0:
-                self.logger.error("Failed to extract CheriBSD changes from %s: %s", chunk, result.stderr)
+                self.logger.error("Failed to extract CheriBSD changes from %s: %s", path, result.stderr)
                 raise RuntimeError("Failed to run awk")
-            json_chunks.extend(self._decode_changes(result.stdout.decode("utf-8")))
+            data = json.loads(result.stdout.decode("utf-8"))
+            json_chunks.extend(data)
 
         # Build a dataframe that we can verify
         df = pd.DataFrame.from_records(json_chunks)
-
+        df["file"] = df["file"].map(lambda path: Path(path).relative_to(self.session.user_config.cheribsd_path)).map(
+            str)
         df["changes"] = df.get("changes", None).map(lambda v: v if isinstance(v, list) else [])
         df["changes_purecap"] = df.get("changes_purecap", None).map(lambda v: v if isinstance(v, list) else [])
         df["hybrid_specific"] = df.get("hybrid_specific", False).fillna(False)
 
-        df.to_json(self.changes.path, index=False)
+        df.to_json(self.changes.path)
 
     @output
     def changes(self):
-        return LocalFileTarget(self, ext="json", model=RawFileChangesModel)
-
-    @output
-    def compilation_db(self):
-        return self.cheribuild_trace.compilation_db
+        return LocalFileTarget(self, ext="json", model=CheriBSDAnnotationsModel)
 
 
-class CheriBSDAllFileChanges(AnalysisTask):
+class CheriBSDAnnotationsUnion(AnalysisTask):
     task_namespace = "kernel-history"
-    task_name = "cheribsd-files-union"
+    task_name = "cheribsd-annotations-union"
 
     @dependency
-    def load_files(self):
-        for b in self.session.all_benchmarks():
-            exec_task = b.load_exec_task(CheriBSDKernelFileChanges)
-            yield exec_task.changes.get_loader()
+    def load_annotations(self):
+        exec_task = self.session.find_exec_task(CheriBSDKernelAnnotations)
+        return exec_task.changes.get_loader()
 
     @dependency
     def load_cdb(self):
         for b in self.session.all_benchmarks():
-            exec_task = b.load_exec_task(CheriBSDKernelFileChanges)
+            exec_task = b.find_exec_task(CheriBSDCompilationDB)
             yield exec_task.compilation_db.get_loader()
 
     def run(self):
-        # Files changed
-        df_set = []
-        # Compilation db files
         cdb_set = []
+        df = self.load_annotations.df.get()
 
-        for loader in self.load_files:
-            df_set.append(loader.df.get())
+        # Merge the CompilationDB data
         for loader in self.load_cdb:
             cdb_set.append(loader.df.get())
-
-        merged = pd.concat(df_set)
-        # Ensure that the changes columns are hashable
-        merged["changes"] = merged["changes"].map(sorted).map(tuple)
-        merged["changes_purecap"] = merged["changes_purecap"].map(sorted).map(tuple)
-        df = merged.groupby(level="file").first()
-        # Verify that the groups are consistent, otherwise we have invalid input data
-        check = (merged.groupby(level="file").nunique() <= 1).all().all()
-        assert check, "Invalid file changes data, conflicting changes tags found"
-
         cdb_df = pd.concat(cdb_set).groupby("files").first().reset_index()
 
-        self.df.assign(df)
+        # Filter annotations by compilation DB
+        ann_df = cdb_df.merge(df.reset_index(), left_on="files", right_on="file", how="inner")
+        ann_df.set_index("file", inplace=True)
+
+        # Ensure that the changes columns are hashable
+        ann_df["changes"] = ann_df["changes"].map(sorted).map(tuple)
+        ann_df["changes_purecap"] = ann_df["changes_purecap"].map(sorted).map(tuple)
+        # Verify that the groups are consistent, otherwise we have invalid input data
+        check = (ann_df.groupby(level="file").nunique() <= 1).all().all()
+        assert check, "Invalid file changes data, conflicting changes tags found"
+
+        self.df.assign(ann_df)
         self.compilation_db.assign(cdb_df)
 
     @output
     def df(self):
-        return DataFrameTarget(self, AllFileChangesModel)
+        return DataFrameTarget(self, CheriBSDAnnotationsModel)
 
     @output
     def compilation_db(self):
@@ -159,7 +136,7 @@ class CheriBSDChangesByType(PlotTask):
 
     @dependency
     def merged_annotations(self):
-        return CheriBSDAllFileChanges(self.session, self.analysis_config)
+        return CheriBSDAnnotationsUnion(self.session, self.analysis_config)
 
     def run_plot(self):
         df = self.merged_annotations.df.get()
@@ -205,3 +182,33 @@ class CheriBSDChangesByType(PlotTask):
     @output
     def rel_total_changes(self):
         return PlotTarget(self, prefix="rel-total-changes")
+
+
+class CheckMissingAnnotation(AnalysisTask):
+    """
+    Simple lint task that verifies that the CheriBSD annotations agree
+    with the CheriBSD git diff.
+    """
+    public = True
+    task_namespace = "kernel-history"
+    task_name = "cheribsd-annotation-check"
+
+    @dependency
+    def load_annotations(self):
+        exec_task = self.session.find_exec_task(CheriBSDKernelAnnotations)
+        return exec_task.changes.get_loader()
+
+    @dependency
+    def load_cloc(self):
+        for b in self.session.all_benchmarks():
+            exec_task = b.find_exec_task(CheriBSDCompilationDB)
+            yield exec_task.compilation_db.get_loader()
+
+    def run(self):
+        # Sanity check: warn about files in the compilation db that do not
+        # annotations
+        pass
+
+    @output
+    def failures(self):
+        return LocalFileTarget(self, ext="csv")

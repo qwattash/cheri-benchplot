@@ -1,13 +1,13 @@
 import dataclasses as dc
 import multiprocessing as mp
 import re
-import typing
 from collections import defaultdict
 from collections.abc import Iterable
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from queue import Queue
 from threading import Condition, Event, Lock, Semaphore, Thread
+from typing import Any, Callable, ContextManager, Hashable, Iterable, Type
 
 import networkx as nx
 
@@ -46,7 +46,7 @@ class TaskRegistry(type):
     public_tasks = defaultdict(dict)
     all_tasks = defaultdict(dict)
 
-    def __new__(mcls, name: str, bases: tuple[typing.Type], kdict: dict):
+    def __new__(mcls, name: str, bases: tuple[Type], kdict: dict):
         """
         Add two registry attributes to each task class.
         The output_registry maintains a set of output generators for the class.
@@ -56,7 +56,7 @@ class TaskRegistry(type):
         kdict["_deps_registry"] = []
         return super().__new__(mcls, name, bases, kdict)
 
-    def __init__(self, name: str, bases: tuple[typing.Type], kdict: dict):
+    def __init__(self, name: str, bases: tuple[Type], kdict: dict):
         super().__init__(name, bases, kdict)
         if self.task_name is None or self.task_namespace is None:
             # Skip, this is an abstract task
@@ -79,7 +79,7 @@ class TaskRegistry(type):
         cls._output_registry[ref.name] = ref.attr
 
     @classmethod
-    def resolve_exec_task(cls, task_spec: str) -> typing.Type["Task"] | None:
+    def resolve_exec_task(cls, task_spec: str) -> Type["Task"] | None:
         """
         Find the exec task named by the given task specifier.
 
@@ -102,7 +102,7 @@ class TaskRegistry(type):
         return task
 
     @classmethod
-    def resolve_task(cls, task_spec: str) -> list[typing.Type["Task"]]:
+    def resolve_task(cls, task_spec: str) -> list[Type["Task"]]:
         """
         Find the task named by the given task specifier.
 
@@ -153,7 +153,7 @@ class Task(Borg, metaclass=TaskRegistry):
     #: Human-readable task identifier, used for task identification
     task_name = None
     #: If set, use the given Config class to unpack the task configuration
-    task_config_class: typing.Type[Config] = None
+    task_config_class: Type[Config] = None
 
     def __init__(self, task_config: Config = None):
         assert self.task_name is not None, f"Attempted to use task with uninitialized name {self.__class__.__name__}"
@@ -202,19 +202,33 @@ class Task(Borg, metaclass=TaskRegistry):
     def is_exec_task(cls):
         return False
 
+    @classmethod
+    def is_session_task(cls) -> bool:
+        """
+        Helper to determine whether a Task should be treated like a :class:`SessionTask`.
+        """
+        return False
+
+    @classmethod
+    def is_benchmark_task(cls) -> bool:
+        """
+        Helper to determine whether a Task should be treated like a :class:`BenchmarkTask`.
+        """
+        return False
+
     @property
     def session(self):
         raise NotImplementedError("Subclasses should override")
 
     @property
-    def task_id(self) -> typing.Hashable:
+    def task_id(self) -> Hashable:
         """
         Return the unique task identifier.
         """
         raise NotImplementedError("Subclass should override")
 
     @property
-    def borg_state_id(self) -> typing.Hashable:
+    def borg_state_id(self) -> Hashable:
         return self.task_id
 
     @property
@@ -241,18 +255,6 @@ class Task(Borg, metaclass=TaskRegistry):
             self.collected_outputs = dict(self.outputs())
         return self.collected_outputs
 
-    def is_session_task(self) -> bool:
-        """
-        Helper to determine whether a Task should be treated like a :class:`SessionTask`.
-        """
-        return False
-
-    def is_benchmark_task(self) -> bool:
-        """
-        Helper to determine whether a Task should be treated like a :class:`BenchmarkTask`.
-        """
-        return False
-
     def wait(self):
         """
         Wait for the task to complete.
@@ -273,7 +275,7 @@ class Task(Borg, metaclass=TaskRegistry):
         self.failed = ex
         self._completed.set()
 
-    def resources(self) -> typing.Iterable["ResourceManager.ResourceRequest"]:
+    def resources(self) -> Iterable["ResourceManager.ResourceRequest"]:
         """
         Produce a set of resources that are consumed by this task.
         Once the resources are available, they will be reserved and
@@ -282,7 +284,7 @@ class Task(Borg, metaclass=TaskRegistry):
         """
         yield from []
 
-    def dependencies(self) -> typing.Iterable["Task"]:
+    def dependencies(self) -> Iterable["Task"]:
         """
         Produce the set of :class:`Task` objects that this task depends upon.
 
@@ -294,7 +296,7 @@ class Task(Borg, metaclass=TaskRegistry):
                 deps = [deps]
             yield from filter(lambda d: d is not None, deps)
 
-    def outputs(self) -> typing.Iterable[tuple[str, "Target"]]:
+    def outputs(self) -> Iterable[tuple[str, "Target"]]:
         """
         Produce the set of :class:`Target` objects that describe the outputs
         that are produced by this task.
@@ -330,7 +332,7 @@ class dependency:
     with the same ID, regardless of how many times the dependency property
     is accessed, therefore there is no need to cache here a single instance.
     """
-    def __init__(self, fn: typing.Callable | None = None):
+    def __init__(self, fn: Callable | None = None):
         self._fn = fn
 
     def __set_name__(self, owner, name):
@@ -371,7 +373,7 @@ class output:
     further references to it may be obtained from the :class:`Task` class for
     convenience.
     """
-    def __init__(self, fn: typing.Callable | None = None, name: str | None = None):
+    def __init__(self, fn: Callable | None = None, name: str | None = None):
         """
         :param name: Override the name of the output, the name of the decorated
         function is used otherwise.
@@ -417,6 +419,10 @@ class SessionTask(Task):
         # Borg initialization occurs here
         super().__init__(task_config=task_config)
 
+    @classmethod
+    def is_session_task(cls):
+        return True
+
     @property
     def session(self):
         return self._session
@@ -424,9 +430,6 @@ class SessionTask(Task):
     @property
     def task_id(self):
         return f"{self.task_namespace}.{self.task_name}-{self.session.uuid}"
-
-    def is_session_task(self):
-        return True
 
 
 class BenchmarkTask(Task):
@@ -444,6 +447,10 @@ class BenchmarkTask(Task):
         # Borg initialization occurs here
         super().__init__(task_config=task_config)
 
+    @classmethod
+    def is_benchmark_task(cls):
+        return True
+
     @property
     def session(self):
         return self.benchmark.session
@@ -451,9 +458,6 @@ class BenchmarkTask(Task):
     @property
     def task_id(self):
         return f"{self.task_namespace}.{self.task_name}-{self.benchmark.uuid}"
-
-    def is_benchmark_task(self):
-        return True
 
 
 class ExecutionTask(BenchmarkTask):
@@ -552,9 +556,9 @@ class ResourceManager:
         This is sortable and comparable.
         """
         name: str
-        pool: typing.Hashable | None
-        acquire_args: dict[str, typing.Any]
-        _resource: typing.Any = dc.field(init=False, default=None)
+        pool: Hashable | None
+        acquire_args: dict[str, Any]
+        _resource: Any = dc.field(init=False, default=None)
 
         def __lt__(self, other):
             return self.name < other.name
@@ -580,7 +584,7 @@ class ResourceManager:
             return self._resource
 
     @classmethod
-    def request(cls, pool: typing.Hashable = None, **kwargs) -> ResourceRequest:
+    def request(cls, pool: Hashable = None, **kwargs) -> ResourceRequest:
         assert cls.resource_name is not None, f"{cls} is missing resource name?"
         return cls.ResourceRequest(cls.resource_name, pool, kwargs)
 
@@ -597,7 +601,7 @@ class ResourceManager:
     def __str__(self):
         return f"{self.__class__.__name__}[{self.resource_name}]"
 
-    def _acquire(self, pool: typing.Hashable):
+    def _acquire(self, pool: Hashable):
         """
         Reserve an item slot in the underlying resource pool
         """
@@ -605,7 +609,7 @@ class ResourceManager:
             return
         self._limit_guard.acquire()
 
-    def _release(self, pool: typing.Hashable):
+    def _release(self, pool: Hashable):
         """
         Release an item slot to the underlying resource pool
         """
@@ -613,13 +617,13 @@ class ResourceManager:
             return
         self._limit_guard.release()
 
-    def _get_resource(self, req: ResourceRequest) -> typing.Any:
+    def _get_resource(self, req: ResourceRequest) -> Any:
         """
         Produce a resource item after a slot is acquired.
         """
         raise NotImplementedError("Must override")
 
-    def _put_resource(self, r: typing.Any, req: ResourceRequest):
+    def _put_resource(self, r: Any, req: ResourceRequest):
         """
         Return a resource item to the manager after the client is done with it
         """
@@ -630,7 +634,7 @@ class ResourceManager:
         return self.limit is None or self.limit == 0
 
     @contextmanager
-    def acquire(self, req: ResourceRequest) -> typing.ContextManager[typing.Any]:
+    def acquire(self, req: ResourceRequest) -> ContextManager[Any]:
         """
         Acquire a resource, optionally specifying an internal pool that
         may be used to improve allocation.
@@ -863,7 +867,7 @@ class TaskScheduler:
             else:
                 sched = nx.topological_sort(self._task_graph)
             run_sched = [self._task_graph.nodes[t]["task"] for t in reversed(list(sched))]
-            self.logger.debug("Resolved benchmark schedule %s", run_sched)
+            self.logger.debug("Resolved benchmark schedule:\n%s", "\n".join(map(str, run_sched)))
             return run_sched
         except nx.NetworkXUnfeasible:
             for cycle in nx.simple_cycles(self._task_graph):

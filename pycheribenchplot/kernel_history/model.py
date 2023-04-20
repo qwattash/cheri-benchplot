@@ -6,12 +6,12 @@ from pycheribenchplot.core.model import DataModel, GlobalModel
 from pycheribenchplot.core.util import new_logger
 
 
-class CommonFileChangesModel(SchemaModel):
+class CheriBSDAnnotationsModel(GlobalModel):
     """
-    Common fields that record changes to cheribsd files
+    Shape of the dataframe containing CheriBSD annotation information
     """
     filename: Index[str] = Field(alias="file", check_name=True)
-    target_type: Series[str] = Field(isin=["header", "kernel", "lib", "prog"])
+    target_type: Series[str] = Field(isin=["header", "kernel", "lib", "prog", "test"])
     updated: Series[str]
     changes: Series[object]
     changes_purecap: Series[object]
@@ -38,21 +38,6 @@ class CommonFileChangesModel(SchemaModel):
         for fname in offending_files:
             logger.error("%s has CHERI changes annotation but have no changes category", fname)
         return ~nulls
-
-
-class RawFileChangesModel(DataModel, CommonFileChangesModel):
-    """
-    Cheribsd file changes for a specific kernel configuration
-    """
-    pass
-
-
-class AllFileChangesModel(GlobalModel, CommonFileChangesModel):
-    """
-    Aggregate cheribsd file changes model.
-    This is the union of all the :class:`RawFileChangesModel`s.
-    """
-    pass
 
 
 class CompilationDBModel(DataModel):

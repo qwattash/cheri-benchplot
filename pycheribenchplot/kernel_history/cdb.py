@@ -1,6 +1,7 @@
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import pandas as pd
 
@@ -33,8 +34,8 @@ class CheriBSDCompilationDB(DataGenTask):
     task_name = "cheribuild-cdb-trace"
     task_config_class = CompilationDBConfig
 
-    def __init__(self, session, script, task_config=None):
-        super().__init__(session, script, task_config=task_config)
+    def __init__(self, benchmark, script, task_config=None):
+        super().__init__(benchmark, script, task_config=task_config)
         #: Path to cheribuild script
         self._cheribuild = self.session.user_config.cheribuild_path / "cheribuild.py"
         #: strace is required for this
@@ -88,7 +89,6 @@ class CheriBSDCompilationDB(DataGenTask):
         we touch. Both the FPGA/Morello HW and QEMU targets are built. We only build the
         kernels, in a temporary directory to ensure reproducibility.
         """
-
         if self.config.ephemeral_build_root:
             with TemporaryDirectory() as build_dir:
                 self._do_run(Path(build_dir))

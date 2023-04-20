@@ -10,6 +10,7 @@ from pathlib import Path
 from uuid import UUID
 
 import pandas as pd
+from marshmallow.exceptions import ValidationError
 from tabulate import tabulate
 
 from .analysis import AnalysisTask
@@ -18,7 +19,7 @@ from .config import (AnalysisConfig, BenchplotUserConfig, Config, ExecTargetConf
                      TaskTargetConfig, TemplateConfigContext)
 from .instance import InstanceManager
 from .model import UUIDType
-from .task import TaskRegistry, TaskScheduler
+from .task import SessionExecutionTask, TaskRegistry, TaskScheduler
 from .util import new_logger
 
 #: Constant name of the generated session configuration file
@@ -138,7 +139,12 @@ class Session:
         # Existence of the exec task is ensured by configuration validation
         exec_task = TaskRegistry.resolve_exec_task(config.handler)
         if exec_task.task_config_class:
-            return exec_task.task_config_class.schema().load(config.task_options)
+            try:
+                return exec_task.task_config_class.schema().load(config.task_options)
+            except ValidationError as err:
+                self.logger.error("Invalid task options, %s validation failed: %s", exec_task.task_config_class,
+                                  err.normalized_messages())
+                raise err
         return config.task_options
 
     def _resolve_config_template(self, config: SessionRunConfig) -> SessionRunConfig:
@@ -449,3 +455,15 @@ class Session:
         self.logger.info("Session %s start analysis", self.name)
         self.scheduler.run()
         self.logger.info("Session %s analysis finished", self.name)
+
+    def find_exec_task(self, task_class: typing.Type[SessionExecutionTask]) -> SessionExecutionTask:
+        """
+        Find a session-wide execution task and return a task instance.
+
+        This can be used by analysis tasks to load generator dependencies.
+        """
+        task = self.all_benchmarks()[0].find_exec_task(task_class)
+        if not task.is_session_task() or not task.is_exec_task():
+            self.logger.error("The task %s is not a SessionExecutionTask", task_class)
+            raise TypeError("Invalid task type")
+        return task

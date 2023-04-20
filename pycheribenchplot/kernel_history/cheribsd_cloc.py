@@ -10,9 +10,10 @@ import seaborn as sns
 from git import Repo
 from git.exc import BadName
 
-from pycheribenchplot.core.analysis import AnalysisTask, BenchmarkDataLoadTask
+from pycheribenchplot.core.analysis import AnalysisTask
 from pycheribenchplot.core.artefact import (AnalysisFileTarget, DataFrameTarget, LocalFileTarget)
 from pycheribenchplot.core.config import Config
+from pycheribenchplot.core.model import check_data_model
 from pycheribenchplot.core.pandas_util import generalized_xs
 from pycheribenchplot.core.plot import PlotTarget, PlotTask, new_figure
 from pycheribenchplot.core.plot_util.mosaic import mosaic_treemap
@@ -87,11 +88,13 @@ class CheriBSDKernelLineChanges(SessionDataGenTask):
         """
         Only retain files in sys/* that are not tests.
         Also remove subrepo-openzfs diff which causes noise.
+
+        TODO: drm code should diff with https://github.com/evadot/drm-subtree
         """
         paths = df.index.get_level_values("file")
         in_sys = paths.str.startswith("sys/")
         is_test = paths.str.contains(r"tests?")
-        is_valid_ext = paths.str.contains(r"\.[chSsm]$")
+        is_valid_ext = paths.str.contains(r"\.[chSsmy]$")
         # The openzfs and drm patches add a whole subtree, which pollutes the diff
         # with non-cheri changes.
         is_subrepo_zfs = paths.str.contains(r"subrepo-openzfs")
@@ -141,7 +144,8 @@ class CheriBSDKernelLineChanges(SessionDataGenTask):
             df_set.append(df)
         df = pd.concat(df_set)
         df = self._filter_files(df)
-        df.to_json(self.cloc.path, orient="table")
+        # Dump, reset the index because otherwise we lose the name of the index levels
+        df.reset_index().to_json(self.cloc.path)
 
         # Prepare the baseline LoC count dataframe
         with open(self.raw_cloc_baseline.path, "r") as raw_cloc:
@@ -151,7 +155,8 @@ class CheriBSDKernelLineChanges(SessionDataGenTask):
         df = pd.DataFrame(raw_data).transpose()
         df.index.name = "file"
         df = self._filter_files(df)
-        df.to_json(self.cloc_baseline.path, orient="table")
+        # Dump, see above
+        df.reset_index().to_json(self.cloc_baseline.path)
 
     @output
     def raw_cloc_baseline(self):
@@ -167,25 +172,17 @@ class CheriBSDKernelLineChanges(SessionDataGenTask):
 
     @output
     def cloc(self):
-        return LocalFileTarget(self, prefix="cloc", ext="json")
+        return LocalFileTarget(self, prefix="cloc", ext="json", model=LoCDiffModel)
 
     @output
     def cloc_baseline(self):
-        return LocalFileTarget(self, prefix="cloc-baseline", ext="json")
+        return LocalFileTarget(self, prefix="cloc-baseline", ext="json", model=LoCCountModel)
 
 
 @dataclass
 class LoCDataConfig(Config):
     #: Filter the diff based on the files found in the compilation DB
     restrict_to_compilation_db: bool = False
-
-
-class CompilationDBLoad(BenchmarkDataLoadTask):
-    task_namespace = "kernel-history"
-    task_name = "cheribsd-loc-cdb-load"
-    exec_task = CheriBSDCompilationDB
-    target_key = "compilation-db"
-    model = CompilationDBModel
 
 
 class LoadLoCData(AnalysisTask):
@@ -198,31 +195,39 @@ class LoadLoCData(AnalysisTask):
     task_name = "load-loc-data"
     task_config_class = LoCDataConfig
 
-    def dependencies(self):
-        yield from super().dependencies()
-        if self.config.restrict_to_compilation_db:
-            self._cdb_load = []
-            for ctx in self.session.benchmark_matrix.to_numpy().ravel():
-                task = CompilationDBLoad(ctx, self.analysis_config)
-                self._cdb_load.append(task)
-                yield task
+    @dependency
+    def compilation_db(self):
+        if not self.config.restrict_to_compilation_db:
+            return []
+        load_tasks = []
+        for b in self.session.all_benchmarks():
+            task = b.find_exec_task(CheriBSDCompilationDB)
+            load_tasks.append(task.compilation_db.get_loader())
+        return load_tasks
 
-    def _load_compilation_db(self):
+    @dependency
+    def cloc_count(self):
+        task = self.session.find_exec_task(CheriBSDKernelLineChanges)
+        return task.cloc.get_loader()
+
+    @dependency
+    def cloc_baseline(self):
+        task = self.session.find_exec_task(CheriBSDKernelLineChanges)
+        return task.cloc_baseline.get_loader()
+
+    @check_data_model
+    def _load_compilation_db(self) -> AllCompilationDBModel:
         """
         Fetch all compilation DBs and merge them
         """
         cdb_set = []
-        for loader in self._cdb_load:
-            cdb_set.append(loader.output_map["df"].get())
-        df = pd.concat(cdb_set).groupby("files").first().reset_index()
-        return AllCompilationDBModel.to_schema(self.session).validate(df)
+        for loader in self.compilation_db:
+            cdb_set.append(loader.df.get())
+        return pd.concat(cdb_set).groupby("files").first().reset_index()
 
     def run(self):
-        # Should have a way to properly fetch the configured datagen task here
-        cloc_task = CheriBSDKernelLineChanges(self.session, task_config=CheriBSDKernelLineChangesConfig())
-
-        diff_df = pd.read_json(cloc_task.cloc.path, orient="table")
-        baseline_df = pd.read_json(cloc_task.cloc_baseline.path, orient="table")
+        diff_df = self.cloc_count.df.get()
+        baseline_df = self.cloc_baseline.df.get()
         if self.config.restrict_to_compilation_db:
             cdb = self._load_compilation_db()
             # Filter by compilation DB files
@@ -234,11 +239,11 @@ class LoadLoCData(AnalysisTask):
 
     @output
     def diff_df(self):
-        return DataFrameTarget(LoCDiffModel.to_schema(self.session))
+        return DataFrameTarget(self, LoCDiffModel)
 
     @output
     def baseline_df(self):
-        return DataFrameTarget(LoCCountModel.to_schema(self.session))
+        return DataFrameTarget(self, LoCCountModel)
 
 
 class CheriBSDLineChangesSummary(AnalysisTask):
@@ -305,11 +310,11 @@ class CheriBSDLineChangesSummary(AnalysisTask):
 
     @output
     def table(self):
-        return AnalysisFileTarget.from_task(self, ext="csv")
+        return AnalysisFileTarget(self, ext="csv")
 
     @output
     def changed_files(self):
-        return AnalysisFileTarget.from_task(self, prefix="all-files", ext="csv")
+        return AnalysisFileTarget(self, prefix="all-files", ext="csv")
 
 
 class CheriBSDLineChangesByPath(PlotTask):
