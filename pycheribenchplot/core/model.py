@@ -1,3 +1,4 @@
+import functools
 import inspect
 import typing
 import uuid
@@ -151,7 +152,7 @@ def _resolve_validator(type_target: typing.Type, value: typing.Any) -> typing.Ty
         return None
 
 
-def check_data_model(warn=False) -> typing.Callable:
+def check_data_model(fn: typing.Callable = None, warn: bool = False) -> typing.Callable:
     """
     Class method decorator designed to decorate DatasetTask transformations.
 
@@ -159,6 +160,9 @@ def check_data_model(warn=False) -> typing.Callable:
     The caveat is that normally models do not contain the dynamic fields generated for each session from config,
     this makes sure that the schema is generated using the correct session from the current DatasetTask instance.
     """
+    if fn is None:
+        return functools.partial(check_data_model, warn=warn)
+
     @wrapt.decorator
     def wrapper(wrapped, instance, args, kwargs):
         assert instance is not None, "@check_data_model() must be used on a DatasetTask method"
@@ -202,4 +206,4 @@ def check_data_model(warn=False) -> typing.Callable:
                     raise
         return result
 
-    return wrapper
+    return wrapper(fn)

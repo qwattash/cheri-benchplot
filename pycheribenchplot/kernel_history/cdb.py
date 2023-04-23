@@ -60,7 +60,8 @@ class CheriBSDCompilationDB(DataGenTask):
 
     def _do_cheribuild(self, build_root: Path) -> Path:
         instance_config = self.benchmark.config.instance
-        target = f"cheribsd-{instance_config.cheri_target.value}"
+        cheri_target = instance_config.cheri_target.value
+        target = f"cheribsd-{cheri_target}"
         kernel = instance_config.kernel
 
         strace_file = build_root / "strace-output.txt"
@@ -69,6 +70,9 @@ class CheriBSDCompilationDB(DataGenTask):
             "--build-root", build_root, "--clean", "--skip-update", "--skip-buildworld", "--skip-install", target,
             f"--{target}/kernel-config", kernel
         ]
+        if instance_config.platform.is_fpga():
+            mfs_image = self.session.user_config.sdk_path / f"cheribsd-mfs-root-{cheri_target}.img"
+            cbuild_opts += [f"--{target}/mfs-root-image", mfs_image]
         cbuild_cmd = [self._cheribuild] + cbuild_opts
         build_cmd = SubprocessHelper(self._strace, strace_opts + cbuild_cmd)
         build_cmd.run()

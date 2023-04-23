@@ -78,7 +78,7 @@ class CheriBSDKernelLineChanges(SessionDataGenTask):
                 raise
         else:
             try:
-                resolved = self._repo.commit(ref)
+                resolved = self._repo.commit(ref).hexsha
             except BadName:
                 self.logger.exception("Invalid cheribsd ref %s", ref)
                 raise
@@ -182,7 +182,7 @@ class CheriBSDKernelLineChanges(SessionDataGenTask):
 @dataclass
 class LoCDataConfig(Config):
     #: Filter the diff based on the files found in the compilation DB
-    restrict_to_compilation_db: bool = False
+    restrict_to_compilation_db: bool = True
 
 
 class LoadLoCData(AnalysisTask):
@@ -234,6 +234,10 @@ class LoadLoCData(AnalysisTask):
             diff_df = diff_df.loc[diff_df.index.isin(cdb["files"], level="file")]
             baseline_df = baseline_df.loc[baseline_df.index.isin(cdb["files"], level="file")]
 
+            # Store a sorted version of the compilation DB for debugging
+            cdb["type"] = cdb["files"].map(to_file_type)
+            cdb.sort_values(by=["type", "files"]).set_index("type", append=True).to_csv(self.debug_all_files.path)
+
         self.diff_df.assign(diff_df)
         self.baseline_df.assign(baseline_df)
 
@@ -244,6 +248,10 @@ class LoadLoCData(AnalysisTask):
     @output
     def baseline_df(self):
         return DataFrameTarget(self, LoCCountModel)
+
+    @output
+    def debug_all_files(self):
+        return AnalysisFileTarget(self, prefix="debug", ext="csv")
 
 
 class CheriBSDLineChangesSummary(AnalysisTask):
@@ -282,26 +290,46 @@ class CheriBSDLineChangesSummary(AnalysisTask):
         # Determine file types
         data_df["Type"] = data_df.index.get_level_values("file").map(to_file_type)
         baseline_df["Type"] = baseline_df.index.get_level_values("file").map(to_file_type)
+        # Determine dev vs nodev
+        nodev = ~data_df.index.get_level_values("file").str.startswith("sys/dev")
+        nodev_df = data_df.loc[nodev]
+        baseline_nodev = ~baseline_df.index.get_level_values("file").str.startswith("sys/dev")
+        baseline_nodev_df = baseline_df.loc[baseline_nodev]
         # Group by type and sum the "code" column
         data_count = data_df.groupby("Type")["code"].sum()
+        data_nodev_count = nodev_df.groupby("Type")["code"].sum()
+
         baseline_count = baseline_df.groupby("Type")["code"].sum()
+        baseline_nodev_count = baseline_nodev_df.groupby("Type")["code"].sum()
+
         data_nfiles = data_df.groupby("Type").size()
+        data_nodev_nfiles = nodev_df.groupby("Type").size()
+
         baseline_nfiles = baseline_df.groupby("Type").size()
+        baseline_nodev_nfiles = baseline_nodev_df.groupby("Type").size()
 
         # add a row with the grand total
         data_count.loc["total"] = data_count.sum()
+        data_nodev_count.loc["total"] = data_nodev_count.sum()
         baseline_count.loc["total"] = baseline_count.sum()
+        baseline_nodev_count.loc["total"] = baseline_nodev_count.sum()
         data_nfiles.loc["total"] = data_nfiles.sum()
+        data_nodev_nfiles.loc["total"] = data_nodev_nfiles.sum()
         baseline_nfiles.loc["total"] = baseline_nfiles.sum()
+        baseline_nodev_nfiles.loc["total"] = baseline_nodev_nfiles.sum()
 
         # Finally, build the stats frame
         stats = {
             "Total SLoC": baseline_count,
             "Changed SLoC": data_count,
             "% Changed SLoC": 100 * data_count / baseline_count,
+            "Total SLoC w/o drivers": baseline_nodev_count,
+            "Changed SLoC w/o drivers": data_nodev_count,
             "Total files": baseline_nfiles,
             "Changed files": data_nfiles,
-            "% Changed files": 100 * data_nfiles / baseline_nfiles
+            "% Changed files": 100 * data_nfiles / baseline_nfiles,
+            "Total files w/o drivers": baseline_nodev_nfiles,
+            "Changed files w/o drivers": data_nodev_nfiles
         }
 
         stats_df = pd.DataFrame(stats).round(1)
@@ -508,23 +536,36 @@ class CheriBSDLineChangesByComponent(PlotTask):
     task_config_class = LoCDataConfig
 
     components = {
-        "platform": r"sys/(riscv|arm|amd|x86|i386|power)",
+        "platform": r"sys/(riscv|arm)",
         "vm": r"sys/vm/(?!uma)",
         "net": r"sys/net",
         "alloc": r"(sys/(vm/uma|kern/.*vmem)|sys/sys/vmem)",
         "dev": r"sys/dev",
         "kern": r"(sys/kern/(?!.*vmem|vfs)|sys/sys/(?!vmem))",
-        "compat": r"sys/compat",
+        "compat": r"sys/compat(?!/freebsd64)",
+        "compat64": r"sys/compat/freebsd64",
         "vfs": r"sys/kern/vfs",
         "fs": r"sys/fs",
         "cheri": r"sys/cheri"
+    }
+
+    # Extra filters that are useful to ensure the sanity of the results
+    # but should not go in the main plot
+    extra_components = {
+        "all_platforms": r"sys/(riscv|arm|amd|x86|i386|power)",
     }
 
     @dependency
     def loc_diff(self):
         return LoadLoCData(self.session, self.analysis_config, task_config=self.config)
 
-    def run_plot(self):
+    def _filter_component(self, name, filter_, data_df, base_df) -> pd.DataFrame:
+        return changed_sloc
+
+    def _do_plot(self, component_map: dict, target: PlotTarget):
+        """
+        Produce the plot given a set of component filters and a target where to emit the plot
+        """
         df = self.loc_diff.diff_df.get()
         df = generalized_xs(df, how="same", complement=True)
         base_df = self.loc_diff.baseline_df.get()
@@ -540,9 +581,10 @@ class CheriBSDLineChangesByComponent(PlotTask):
         index = pd.MultiIndex.from_product([self.components.keys(), ["added", "modified", "removed"]],
                                            names=["component", "how"])
         data_set = []
+        extra_set = []
         all_matches = None
         all_base_matches = None
-        for name, filter_ in self.components.items():
+        for name, filter_ in component_map.items():
             matches = df.index.get_level_values("file").str.match(filter_)
             base_matches = base_df.index.get_level_values("file").str.match(filter_)
             if all_matches is None:
@@ -564,7 +606,7 @@ class CheriBSDLineChangesByComponent(PlotTask):
         data_df = pd.concat(data_set)
         data_df["percent"] = 100 * data_df["code"] / data_df["baseline"]
 
-        with new_figure(self.plot.path) as fig:
+        with new_figure(target.paths()) as fig:
             ax_l, ax_r = fig.subplots(1, 2, sharey=True)
             # Absolute SLoC on the left
             show_df = data_df.reset_index().pivot(index="component", columns="how", values="code")
@@ -593,6 +635,16 @@ class CheriBSDLineChangesByComponent(PlotTask):
             handles, labels = ax_l.get_legend_handles_labels()
             fig.legend(handles, labels, ncol=3, loc="upper center", bbox_to_anchor=(0.5, 1.08))
 
+    def run_plot(self):
+        self._do_plot(self.components, self.plot)
+        debug_components = dict(self.components)
+        debug_components.update(self.extra_components)
+        self._do_plot(debug_components, self.debug_plot)
+
     @output
     def plot(self):
         return PlotTarget(self)
+
+    @output
+    def debug_plot(self):
+        return PlotTarget(self, prefix="debug")

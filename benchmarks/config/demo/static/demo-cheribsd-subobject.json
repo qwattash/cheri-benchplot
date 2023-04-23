@@ -1,12 +1,12 @@
 {
     "instance_config": {
         "instances": [{
-            "kernel": "CHERI-PURECAP-QEMU",
+            "kernel": "CHERI-PURECAP-QEMU-SUBOBJECT-STATS",
             "baseline": true,
             "cheri_target": "riscv64-purecap",
             "kernelabi": "purecap"
         }, {
-            "kernel": "GENERIC-MORELLO-PURECAP",
+            "kernel": "GENERIC-MORELLO-PURECAP-SUBOBJECT-STATS",
             "baseline": false,
             "cheri_target": "morello-purecap",
             "kernelabi": "purecap"

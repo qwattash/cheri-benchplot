@@ -403,6 +403,9 @@ class InstancePlatform(Enum):
     def __str__(self):
         return self.value
 
+    def is_fpga(self):
+        return self == InstancePlatform.VCU118
+
 
 class InstanceCheriBSD(Enum):
     LOCAL_NATIVE = "native"
