@@ -40,12 +40,11 @@ def lazy_nested_config_field():
     # Note that we need to levels of metadata: the first is for the dataclass field
     # that is picked up by marshmallow_dataclass, the second is the keyword argument
     # 'metadata' passed to the underlying marshmallow field constructor.
-    # return dc.field(default_factory=dict, metadata={"metadata": {"late_config_bind": True}})
-    return dc.field(default_factory=dict, metadata={"late_config_bind": True})
+    return dc.field(default_factory=dict, metadata={"metadata": {"late_config_bind": True}})
 
 
 def is_lazy_nested_config(f: dc.Field):
-    return f.metadata.get("late_config_bind", False)
+    return f.metadata.get("metadata", {}).get("late_config_bind", False)
 
 
 class PathField(mfields.Field):
