@@ -114,7 +114,7 @@ class BenchmarkExecTask(Task):
         for output_key, output in task.outputs():
             if not output.is_file() or not output.needs_extraction():
                 continue
-            for remote_path, host_path in zip(output.remote_paths, output.paths):
+            for remote_path, host_path in zip(output.remote_paths(), output.paths()):
                 self.logger.debug("Extract %s guest: %s => host: %s", output_key, remote_path, host_path)
                 instance.extract_file(remote_path, host_path)
 

@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from fixtures.task_helpers import mock_task_registry
+from fixtures.task_helpers import mock_task_registry, snap_task_registry
 
 from pycheribenchplot.core.benchmark import Benchmark
 from pycheribenchplot.core.config import (AnalysisConfig, BenchmarkRunConfig, BenchplotUserConfig, SessionRunConfig)
@@ -200,15 +200,21 @@ def benchplot_user_config(pytestconfig):
 
 @pytest.fixture
 def fake_session_factory(tmp_path):
+    cleanup = []
+
     def factory(config: dict = None):
         if config is None:
             config = fake_session_conf
         sess_config = SessionRunConfig.schema().load(config)
         session = Session(BenchplotUserConfig(), sess_config, session_path=tmp_path)
         session.analysis_config = AnalysisConfig()
+        cleanup.append(session)
         return session
 
-    return factory
+    yield factory
+
+    for s in cleanup:
+        s.clean_all()
 
 
 @pytest.fixture

@@ -4,10 +4,11 @@ import pandas as pd
 import pytest
 from pandera.typing import Index, Series
 
-from pycheribenchplot.core.analysis import BenchmarkDataLoadTask
+from pycheribenchplot.core.analysis import AnalysisTask, BenchmarkDataLoadTask
+from pycheribenchplot.core.artefact import DataFrameTarget, LocalFileTarget
 from pycheribenchplot.core.config import AnalysisConfig
 from pycheribenchplot.core.model import DataModel
-from pycheribenchplot.core.task import (AnalysisTask, DataFrameTarget, ExecutionTask, LocalFileTarget)
+from pycheribenchplot.core.task import ExecutionTask
 
 
 class DummyExecTask(ExecutionTask):
@@ -18,7 +19,7 @@ class DummyExecTask(ExecutionTask):
         pass
 
     def outputs(self):
-        yield "test-target", LocalFileTarget.from_benchmark(self.benchmark, "fake-path.csv")
+        yield "test-target", LocalFileTarget(self, file_path="fake-path.csv")
 
 
 class DummyModel(DataModel):
@@ -91,7 +92,7 @@ def test_simple_load_task(csv_file_content, fake_analysis_session):
     Test loading data from a simple CSV file.
     This exercises the common dataframe load task with data validation.
     """
-    aconf = AnalysisConfig.schema().load({"handlers": [{"handler": "test.analysis-load.fake-analysis-main"}]})
+    aconf = AnalysisConfig.schema().load({"tasks": [{"handler": "test.analysis-load.fake-analysis-main"}]})
     fake_analysis_session.analyse(aconf)
 
     assert not fake_analysis_session.scheduler.failed_tasks

@@ -3,7 +3,8 @@ from unittest.mock import ANY, call
 
 import pytest
 
-from pycheribenchplot.core.task import (ResourceManager, Target, Task, TaskScheduler, dependency, output)
+from pycheribenchplot.core.artefact import Target
+from pycheribenchplot.core.task import (ResourceManager, Task, TaskScheduler, dependency, output)
 
 
 class FakeInvalidTask(Task):
@@ -371,8 +372,9 @@ def test_clone_tasks_state(fake_session):
 
 def test_output_collector(mock_task_registry):
     class SimpleTarget(Target):
-        def __init__(self, name):
+        def __init__(self, task, name):
             self.test_key = name
+            super().__init__(task, name)
 
     class TaskA(Task):
         task_namespace = "test"
@@ -391,11 +393,11 @@ def test_output_collector(mock_task_registry):
 
         @output
         def my_output(self):
-            return SimpleTarget("my-output-target")
+            return SimpleTarget(self, "my-output-target")
 
         @output(name="override-name")
         def my_override_output(self):
-            return SimpleTarget("my-override-target")
+            return SimpleTarget(self, "my-override-target")
 
     task = TaskA()
 
@@ -403,6 +405,7 @@ def test_output_collector(mock_task_registry):
     assert "my_output" in TaskA._output_registry
     assert "override-name" in TaskA._output_registry
 
+    # outputs is a list [(key, target), ...]
     outputs = list(task.outputs())
     assert len(outputs) == 2
     assert outputs[0][0] == "my_output"
@@ -410,13 +413,20 @@ def test_output_collector(mock_task_registry):
     assert outputs[1][0] == "override-name"
     assert outputs[1][1].test_key == "my-override-target"
 
-    assert task.output_map["my_output"] == outputs[0][1]
-    assert task.output_map["override-name"] == outputs[1][1]
+    # Check the output borg property when accessing outputs again
+    assert task.output_map["my_output"].borg_state_id == outputs[0][1].borg_state_id
+    assert task.output_map["my_output"].__dict__ == outputs[0][1].__dict__
+    assert task.output_map["override-name"].borg_state_id == outputs[1][1].borg_state_id
+    assert task.output_map["override-name"].__dict__ == outputs[1][1].__dict__
 
     assert task.my_output.test_key == "my-output-target"
-    assert task.my_output == task.my_output
+    assert task.my_output.borg_state_id == task.my_output.borg_state_id
+    assert task.my_output.__dict__ == task.my_output.__dict__
     assert task.my_override_output.test_key == "my-override-target"
-    assert task.my_override_output == task.my_override_output
+    assert task.my_override_output.borg_state_id == task.my_override_output.borg_state_id
+    assert task.my_override_output.__dict__ == task.my_override_output.__dict__
+    assert task.my_output.borg_state_id != task.my_override_output.borg_state_id
+    assert task.my_output.__dict__ != task.my_override_output.__dict__
 
 
 def test_dependency_collector(mock_task_registry):

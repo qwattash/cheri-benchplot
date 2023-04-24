@@ -95,14 +95,22 @@ class FileTarget(Target):
                  prefix: str = "",
                  ext: str | None = None,
                  use_iterations: bool = False,
-                 model: BaseDataModel | None = None):
+                 model: BaseDataModel | None = None,
+                 file_path: Path | str | None = None):
         self.use_iterations = use_iterations
         self._loader_model = model
         # Prepare paths
-        name = re.sub(r"\.", "-", task.task_id)
-        if prefix:
-            name = f"{prefix}-{name}"
-        self._file_name = Path(name)
+        if file_path is None:
+            name = re.sub(r"\.", "-", task.task_id)
+            if prefix:
+                name = f"{prefix}-{name}"
+            self._file_name = Path(name)
+        else:
+            # Normalize to path
+            file_path = Path(file_path)
+            if prefix:
+                file_path = file_path.with_name(f"{prefix}-{file_path.name}")
+            self._file_name = file_path
         if ext:
             if not ext.startswith("."):
                 ext = "." + ext

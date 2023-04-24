@@ -84,9 +84,11 @@ class MachineGroupAnalysisTask(AnalysisTask):
         :param g_uuid: The machine configuration ID for this group.
         :param task_config: Optional task configuration.
         """
-        super().__init__(session, analysis_config, task_config=task_config)
         #: The associated group uuid
         self.g_uuid = g_uuid
+
+        # Borg state initialization occurs here
+        super().__init__(session, analysis_config, task_config=task_config)
 
     @property
     def task_id(self):
@@ -109,11 +111,13 @@ class ParamGroupAnalysisTask(AnalysisTask):
                  analysis_config: AnalysisConfig,
                  parameters: dict[str, any],
                  task_config: Config = None):
-        super().__init__(session, analysis_config, task_config=task_config)
         #: The baseline group uuid
         self.baseline = session.baseline_g_uuid
         #: The set of parameters identifying the target benchmark matrix row
         self.parameters = parameters
+
+        # Borg state initialization occurs here
+        super().__init__(session, analysis_config, task_config=task_config)
 
     @property
     def task_id(self):
@@ -141,8 +145,10 @@ class BenchmarkDataLoadTask(BenchmarkAnalysisTask):
     model: typing.Type[DataModel] = None
 
     def __init__(self, benchmark: Benchmark, analysis_config: AnalysisConfig, **kwargs):
-        super().__init__(benchmark, analysis_config, **kwargs)
         self._df = []
+
+        # Borg state initialization occurs here
+        super().__init__(benchmark, analysis_config, **kwargs)
 
     def _parameter_index_columns(self):
         if self.benchmark.config.parameters:
@@ -241,7 +247,7 @@ class BenchmarkDataLoadTask(BenchmarkAnalysisTask):
             raise KeyError(f"{self.target_key} is not in task output_map")
         if not target.is_file():
             raise NotImplementedError("BenchmarkDataLoadTask only supports loading from files")
-        for i, path in enumerate(target.paths):
+        for i, path in enumerate(target.paths()):
             if not path.exists():
                 self.logger.error("Can not load %s, does not exist", path)
                 raise FileNotFoundError(f"{path} does not exist")
@@ -255,7 +261,7 @@ class BenchmarkDataLoadTask(BenchmarkAnalysisTask):
         Note that the target data will be valid only after the Task.completed
         flag has been set.
         """
-        yield "df", DataFrameTarget(self.model.to_schema(self.session))
+        yield "df", DataFrameTarget(self, self.model)
 
 
 class StatsByParamGroupTask(ParamGroupAnalysisTask):
@@ -275,9 +281,11 @@ class StatsByParamGroupTask(ParamGroupAnalysisTask):
     extra_group_keys: list[str] = []
 
     def __init__(self, session, analysis_config, parameters, **kwargs):
-        super().__init__(session, analysis_config, parameters, **kwargs)
         self._merged_df = None
         self._df = None
+
+        # Borg state initialization occurs here
+        super().__init__(session, analysis_config, parameters, **kwargs)
 
     def _make_load_depend(self, benchmark: Benchmark):
         return self.load_task(benchmark, self.analysis_config)
@@ -449,8 +457,8 @@ class StatsByParamGroupTask(ParamGroupAnalysisTask):
         self.output_map["df"].assign(delta_df)
 
     def outputs(self):
-        yield "merged_df", DataFrameTarget(self.load_task.model.to_schema(self.session))
-        yield "df", DataFrameTarget(self.model.to_schema(self.session))
+        yield "merged_df", DataFrameTarget(self, self.load_task.model)
+        yield "df", DataFrameTarget(self, self.model)
 
 
 def StatsField(name, **kwargs):
@@ -474,11 +482,13 @@ class StatsForAllParamSetsTask(AnalysisTask):
     model: typing.Type[DataModel] = None
 
     def __init__(self, session, analysis_config, **kwargs):
-        super().__init__(session, analysis_config, **kwargs)
         #: The merged dataframe with all unaggregated data.
         self._merged_df = None
         #: The output dataframe, after the task is completed.
         self._df = None
+
+        # Borg state initialization occurs here
+        super().__init__(session, analysis_config, **kwargs)
 
     def _output_df(self) -> pd.DataFrame:
         """
@@ -507,5 +517,5 @@ class StatsForAllParamSetsTask(AnalysisTask):
         self.output_map["df"].assign(stats_frames)
 
     def outputs(self):
-        yield "merged_df", DataFrameTarget(self.stats_task.load_task.model.to_schema(self.session))
-        yield "df", DataFrameTarget(self.model.to_schema(self.session))
+        yield "merged_df", DataFrameTarget(self, self.stats_task.load_task.model)
+        yield "df", DataFrameTarget(self, self.model)

@@ -38,13 +38,13 @@ def netperf_config():
 
 
 @pytest.fixture
-def netperf_session(fake_session_factory, netperf_config):
+def netperf_session(snap_task_registry, fake_session_factory, netperf_config):
     session = fake_session_factory(netperf_config)
     return session
 
 
 @pytest.fixture
-def netperf_args_session(fake_session_factory, netperf_config):
+def netperf_args_session(snap_task_registry, fake_session_factory, netperf_config):
     bench = netperf_config["configurations"][0]["benchmark"]
     # Add netperf options
     bench["task_options"] = {"netperf_options": ["--foo", "--bar"], "netserver_options": ["-x", "-y"]}
@@ -53,7 +53,7 @@ def netperf_args_session(fake_session_factory, netperf_config):
 
 
 @pytest.fixture
-def netperf_qemu_session(fake_session_factory, netperf_config):
+def netperf_qemu_session(snap_task_registry, fake_session_factory, netperf_config):
     bench = netperf_config["configurations"][0]["benchmark"]
     # Add netperf options and qemu tracing
     bench["task_options"] = {"profile": {"qemu_trace": "perfetto", "qemu_trace_categories": ["instructions"]}}
