@@ -37,3 +37,21 @@ class SubobjectBoundsUnionModel(GlobalModel):
     size: Series[pd.Int64Dtype] = Field(nullable=True)
     kind: Series[str] = Field(isin=["o", "s", "c", "h", "g", "?"])
     alignment_bits: Series[pd.Int64Dtype] = Field(nullable=True)
+
+
+class ImpreciseSubobjectModel(DataModel):
+    """
+    Representation of the structure fields with imprecise subobject bounds.
+
+    These are extracted from clang-tidy output into this format.
+    """
+    path: Index[str]
+    line: Index[int]
+    column: Index[int]
+    field: Index[str]
+    field_type: Index[str]
+    container: Index[str]
+    offset: Series[pd.Int64Dtype] = Field(nullable=True)
+    size: Series[pd.Int64Dtype] = Field(nullable=True)
+    aligned_offset: Series[pd.Int64Dtype] = Field(nullable=True)
+    aligned_top: Series[pd.Int64Dtype] = Field(nullable=True)
