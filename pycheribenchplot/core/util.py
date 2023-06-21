@@ -119,6 +119,8 @@ class SubprocessHelper:
         self._subprocess = None
         #: Workers lock
         self._lock = Lock()
+        #: Level at which to log subprocess stderr
+        self._stderr_loglevel = logging.WARNING
 
     def __bool__(self):
         with self._lock:
@@ -159,6 +161,14 @@ class SubprocessHelper:
         assert self._subprocess is None, "Can not add observers after starting"
         self._err_observers.append(handler)
 
+    def set_stderr_loglevel(self, level: int):
+        """
+        Set level at which to log the subprocess stderr.
+
+        By default this is set to WARNING.
+        """
+        self._stderr_loglevel = level
+
     def run(self, **popen_kwargs):
         """
         Syncrhonously run the command and process output.
@@ -178,7 +188,7 @@ class SubprocessHelper:
                                             stderr=subprocess.PIPE,
                                             **popen_kwargs)
         self._out_observers.append(lambda line: self.logger.debug(line.strip()))
-        self._err_observers.append(lambda line: self.logger.warning(line.strip()))
+        self._err_observers.append(lambda line: self.logger.log(self._stderr_loglevel, line.strip()))
         self._out_worker = Thread(target=self._do_io, args=(self._subprocess.stdout, self._out_observers))
         self._out_worker.start()
         self._err_worker = Thread(target=self._do_io, args=(self._subprocess.stderr, self._err_observers))
