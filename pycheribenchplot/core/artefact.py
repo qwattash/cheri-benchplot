@@ -7,7 +7,7 @@ import pandera as pa
 from typing_extensions import Self
 
 from .borg import Borg
-from .model import BaseDataModel
+from .model import BaseDataModel, DerivedSchemaBuilder
 from .task import BenchmarkTask, SessionTask, Task, output
 
 
@@ -54,7 +54,7 @@ class DataFrameTarget(Target):
     """
     Target wrapping an output dataframe from a task.
     """
-    def __init__(self, task: Task, model: pa.SchemaModel | None, output_id: str | None = None):
+    def __init__(self, task: Task, model: BaseDataModel | DerivedSchemaBuilder | None, output_id: str | None = None):
         if model:
             self.schema = model.to_schema(task.session)
         else:
@@ -65,7 +65,7 @@ class DataFrameTarget(Target):
         self._model = model
 
         if output_id is None and model is not None:
-            output_id = model.__name__.lower()
+            output_id = model.get_name()
         # Borg state initialization occurs here
         super().__init__(task, output_id)
 

@@ -52,6 +52,16 @@ def fake_task(session_config, fake_session_factory):
     return task
 
 
+test_frame = pd.DataFrame({
+    "dataset_id": ["8bc941a3-f6d6-4d37-b193-4738f1da3dae"],
+    "dataset_gid": ["2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb"],
+    "iteration": [5],
+    "param0": [10],
+    "param1": ["param1-value"],
+    "foo": [0xdead],
+    "bar": [0xbeef]
+}).set_index(["dataset_id", "dataset_gid", "iteration", "param0", "param1", "foo"])
+
 # Simple dataframe to expect for each test
 expect = pd.DataFrame({
     "dataset_id": [uuid.UUID("8bc941a3-f6d6-4d37-b193-4738f1da3dae")],
@@ -70,17 +80,7 @@ def test_dynamic_model_fields(session_config, fake_session_factory):
 
     assert type(m) == pa.DataFrameSchema
 
-    test_data = pd.DataFrame({
-        "dataset_id": ["8bc941a3-f6d6-4d37-b193-4738f1da3dae"],
-        "dataset_gid": ["2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb"],
-        "iteration": [5],
-        "param0": [10],
-        "param1": ["param1-value"],
-        "foo": [0xdead],
-        "bar": [0xbeef]
-    }).set_index(["dataset_id", "dataset_gid", "iteration", "param0", "param1", "foo"])
-
-    result = m.validate(test_data)
+    result = m.validate(test_frame.copy())
     assert result.columns == expect.columns
     assert result.index == expect.index
     assert (result == expect).all().all()
@@ -92,16 +92,8 @@ def test_dynamic_model_fields_extra_cols(session_config, fake_session_factory):
 
     assert type(m) == pa.DataFrameSchema
 
-    test_data = pd.DataFrame({
-        "dataset_id": ["8bc941a3-f6d6-4d37-b193-4738f1da3dae"],
-        "dataset_gid": ["2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb"],
-        "iteration": [5],
-        "param0": [10],
-        "param1": ["param1-value"],
-        "foo": [0xdead],
-        "bar": [0xbeef],
-        "useless_column": ["should-not-be-here"]
-    }).set_index(["dataset_id", "dataset_gid", "iteration", "param0", "param1", "foo"])
+    test_data = test_frame.copy()
+    test_data["useless_column"] = ["should-not-be-here"]
 
     result = m.validate(test_data)
     assert result.columns == expect.columns
@@ -115,16 +107,9 @@ def test_dynamic_model_fields_extra_index(session_config, fake_session_factory):
 
     assert type(m) == pa.DataFrameSchema
 
-    test_data = pd.DataFrame({
-        "dataset_id": ["8bc941a3-f6d6-4d37-b193-4738f1da3dae"],
-        "dataset_gid": ["2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb"],
-        "iteration": [5],
-        "param0": [10],
-        "param1": ["param1-value"],
-        "foo": [0xdead],
-        "bar": [0xbeef],
-        "useless_index": ["should-not-be-here"]
-    }).set_index(["dataset_id", "dataset_gid", "iteration", "param0", "param1", "foo", "useless_index"])
+    test_data = test_frame.copy()
+    test_data["useless_index"] = ["should-not-be-here"]
+    test_data.set_index(["useless_index"], append=True, inplace=True)
 
     with pytest.raises(ValueError):
         m.validate(test_data)
@@ -136,15 +121,8 @@ def test_dynamic_model_fields_index_order(session_config, fake_session_factory):
 
     assert type(m) == pa.DataFrameSchema
 
-    test_data = pd.DataFrame({
-        "dataset_id": ["8bc941a3-f6d6-4d37-b193-4738f1da3dae"],
-        "dataset_gid": ["2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb"],
-        "iteration": [5],
-        "param0": [10],
-        "param1": ["param1-value"],
-        "foo": [0xdead],
-        "bar": [0xbeef]
-    }).set_index(["dataset_id", "dataset_gid", "iteration", "foo", "param0", "param1"])
+    test_data = test_frame.reset_index()
+    test_data = test_data.set_index(["dataset_id", "dataset_gid", "iteration", "foo", "param0", "param1"])
 
     with pytest.raises(pa.errors.SchemaError):
         m.validate(test_data)
@@ -156,15 +134,9 @@ def test_dynamic_model_fields_column_order(session_config, fake_session_factory)
 
     assert type(m) == pa.DataFrameSchema
 
-    test_data = pd.DataFrame({
-        "bar": [0xbeef],
-        "dataset_id": ["8bc941a3-f6d6-4d37-b193-4738f1da3dae"],
-        "param0": [10],
-        "foo": [0xdead],
-        "param1": ["param1-value"],
-        "dataset_gid": ["2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb"],
-        "iteration": [5]
-    }).set_index(["dataset_id", "dataset_gid", "iteration", "param0", "param1", "foo"])
+    test_data = test_frame.reset_index()
+    test_data = test_data.reindex(columns=["bar", "dataset_id", "param0", "foo", "param1", "dataset_gid", "iteration"])
+    test_data = test_data.set_index(["dataset_id", "dataset_gid", "iteration", "param0", "param1", "foo"])
 
     result = m.validate(test_data)
     assert result.columns == expect.columns
@@ -176,15 +148,8 @@ def test_data_model_decorator_check_input(fake_task):
     """
     Test dataframe type check and coercion on arguments
     """
-    test_data = pd.DataFrame({
-        "dataset_id": ["8bc941a3-f6d6-4d37-b193-4738f1da3dae"],
-        "dataset_gid": ["2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb"],
-        "iteration": [5],
-        "param0": [10],
-        "param1": ["param1-value"],
-        "foo": [0xdead],
-        "bar": [0xbeef]
-    }).set_index(["dataset_id", "dataset_gid", "iteration", "param0", "param1", "foo"])
+    test_data = test_frame.copy()
+
     result = fake_task.transform_noop(test_data)
 
     assert result.columns == expect.columns
@@ -208,17 +173,28 @@ def test_data_model_decorator_check_output(fake_task):
     """
     Test dataframe type check and coercion on the return path
     """
-    test_data = pd.DataFrame({
-        "dataset_id": ["8bc941a3-f6d6-4d37-b193-4738f1da3dae"],
-        "dataset_gid": ["2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb"],
-        "iteration": [5],
-        "param0": [10],
-        "param1": ["param1-value"],
-        "foo": [0xdead],
-        "bar": [0xbeef]
-    }).set_index(["dataset_id", "dataset_gid", "iteration", "param0", "param1", "foo"])
+    test_data = test_frame.copy()
+
     result = fake_task.transform_return(test_data)
 
     assert result.columns == expect.columns
     assert result.index == expect.index
     assert (result == expect).all().all()
+
+
+def test_model_groupby_uuid_schema(fake_task):
+    """
+    Test derived dataframe schema generation.
+
+    This checks that the schema index is modified correctly.
+    """
+    test_data = test_frame.groupby(["dataset_id"]).first()
+
+    derived = FakeModel.as_groupby(["dataset_id"])
+    schema = derived.to_schema(fake_task.session)
+
+    result = schema.validate(test_data)
+
+    assert result.columns == expect.columns
+    assert result.index.names == ["dataset_id"]
+    assert (result.index == expect.index.get_level_values("dataset_id")).all()

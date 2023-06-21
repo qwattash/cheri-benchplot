@@ -7,11 +7,15 @@ import numpy as np
 import pandas as pd
 import typing_inspect
 import wrapt
-from pandera import Column, Field, SchemaModel
+from pandera import Column, DataFrameSchema, Field, SchemaModel
 from pandera.dtypes import immutable
 from pandera.engines import numpy_engine, pandas_engine
 from pandera.errors import SchemaError
 from pandera.typing import DataFrame, Index, Series
+from typing_extensions import Self
+
+# Helper type
+SchemaTransform = typing.Callable[[DataFrameSchema], DataFrameSchema]
 
 
 @pandas_engine.Engine.register_dtype
@@ -42,7 +46,13 @@ class BaseDataModel(SchemaModel):
         raise NotImplementedError("Must override")
 
     @classmethod
-    def to_schema(cls, session: "Session" = None):
+    def get_name(cls) -> str:
+        # Maybe this should instead return the schema name
+        # computed by the pandera schema model
+        return cls.__name__.lower()
+
+    @classmethod
+    def to_schema(cls, session: "Session") -> DataFrameSchema:
         """
         Generate a dataframe or series schema.
         This takes care to add the dataset index fields, including the dynamic parameters
@@ -89,6 +99,32 @@ class BaseDataModel(SchemaModel):
         coerce = True
 
 
+class DerivedSchemaBuilder:
+    """
+    Proxy schema generator.
+
+    This only supports the to_schema() function from the SchemaModel interface.
+    The resulting schema is modified according to a transformation function.
+    """
+    def __init__(self, id_: str, base_model: typing.Type[BaseDataModel | Self], transform: SchemaTransform):
+        #: Identifier used to distinguish the derived schema
+        self._id = id_
+        #: The underlying model that provides the schema
+        self._model = base_model
+        #: Schema transformation
+        self._transform = transform
+
+    def __eq__(self, other):
+        return self._model == other._model and self._id == other._id
+
+    def get_name(self) -> str:
+        return self._model.get_name() + f"-{self._id}"
+
+    def to_schema(self, session: "Session") -> DataFrameSchema:
+        base_schema = self._model.to_schema(session)
+        return self._transform(base_schema)
+
+
 class GlobalModel(BaseDataModel):
     """
     A data model that is not associated to any specific benchmark run or group.
@@ -110,6 +146,28 @@ class DataModel(BaseDataModel):
     # The iteration number may be null if there is no iteration associated to the data, meaning
     # that it is collected for the whole set of iterations of the benchmark.
     iteration: Index[int] = Field(nullable=True, title="Iteration number")
+
+    @classmethod
+    def as_groupby(cls, by: list | str) -> DerivedSchemaBuilder:
+        """
+        Produce a schema for a variation of this model that reflects a groupby operation.
+
+        The groupby operation may elide any of the dataset_id, dataset_gid and iteration
+        index levels. Additional groupby indexes may be specified.
+        """
+        # Normalize to list
+        if type(by) == str:
+            by = [by]
+
+        assert by, "At least an index level must be specified to create groupby DataModel"
+        derived_suffix = "groupby-" + "-".join(by)
+
+        def index_transform(schema):
+            index_names = list(schema.index.names)
+            drop = [n for n in index_names if n not in by]
+            return schema.reset_index(drop, drop=True)
+
+        return DerivedSchemaBuilder(derived_suffix, cls, index_transform)
 
     @classmethod
     def dynamic_index_position(cls):
