@@ -316,5 +316,5 @@ class Benchmark:
             self.get_benchmark_iter_data_path(i).mkdir(exist_ok=True)
 
         exec_task = self.build_exec_task(exec_config)
-        self.logger.info("Initialize top-level benchmark task %s", exec_task)
+        self.logger.debug("Initialize top-level benchmark task %s", exec_task)
         scheduler.add_task(exec_task)
