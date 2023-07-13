@@ -1,4 +1,26 @@
+from typing import Callable
+
 import pandas as pd
+
+
+def map_index(df: pd.DataFrame, level: str, fn: Callable[any, [any]], inplace: bool = False) -> pd.DataFrame:
+    """
+    Convenience function to apply a mapping function to a multi-index level.
+    """
+    if inplace:
+        out_df = df
+    else:
+        out_df = df.copy()
+
+    level_pos = df.index.names.index(level)
+    if level_pos < 0:
+        raise ValueError(f"Index level {level} not present in dataframe")
+    if len(df.index.names) > 1:
+        # MultiIndex
+        out_df.index = df.index.map(lambda idx: idx[0:level_pos] + (fn(idx[level_pos]), ) + idx[level_pos + 1:])
+    else:
+        out_df.index = df.index.map(fn)
+    return out_df
 
 
 def generalized_xs(df: pd.DataFrame,

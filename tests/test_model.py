@@ -34,6 +34,22 @@ class FakeDatasetTask:
     def transform_no_return(self, frame_in: DataFrame[FakeModel]):
         return frame_in
 
+    @check_data_model
+    def transform_tuple_return(self, frame_in: typing.Any) -> tuple[DataFrame[FakeModel], DataFrame[FakeModel]]:
+        return (frame_in, frame_in)
+
+    @check_data_model
+    def transform_tuple_return_fail(self, frame_in: typing.Any) -> tuple[DataFrame[FakeModel], DataFrame[FakeModel]]:
+        return (frame_in, frame_in.reset_index("foo"))
+
+    @check_data_model
+    def transform_list_return(self, frame_in: typing.Any) -> list[DataFrame[FakeModel]]:
+        return [frame_in, frame_in]
+
+    @check_data_model
+    def transform_list_return_fail(self, frame_in: typing.Any) -> list[DataFrame[FakeModel]]:
+        return [frame_in, frame_in.reset_index("foo")]
+
 
 @pytest.fixture
 def session_config(single_benchmark_config):
@@ -180,6 +196,36 @@ def test_data_model_decorator_check_output(fake_task):
     assert result.columns == expect.columns
     assert result.index == expect.index
     assert (result == expect).all().all()
+
+
+def test_data_model_decorator_check_tuple_output(fake_task):
+    """
+    Test dataframe type check and coercion on the return path for tuples/lists
+    """
+    test_data = test_frame.copy()
+
+    def check(df):
+        assert df.columns == expect.columns
+        assert df.index == expect.index
+        assert (df == expect).all().all()
+
+    result = fake_task.transform_tuple_return(test_data)
+
+    assert len(result) == 2
+    check(result[0])
+    check(result[1])
+
+    result = fake_task.transform_list_return(test_data)
+
+    assert len(result) == 2
+    check(result[0])
+    check(result[1])
+
+    with pytest.raises(pa.errors.SchemaError):
+        fake_task.transform_tuple_return_fail(test_data)
+
+    with pytest.raises(pa.errors.SchemaError):
+        fake_task.transform_list_return_fail(test_data)
 
 
 def test_model_groupby_uuid_schema(fake_task):

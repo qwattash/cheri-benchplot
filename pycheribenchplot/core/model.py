@@ -2,6 +2,7 @@ import functools
 import inspect
 import typing
 import uuid
+from typing import Any, Type
 
 import numpy as np
 import pandas as pd
@@ -106,7 +107,7 @@ class DerivedSchemaBuilder:
     This only supports the to_schema() function from the SchemaModel interface.
     The resulting schema is modified according to a transformation function.
     """
-    def __init__(self, id_: str, base_model: typing.Type[BaseDataModel | Self], transform: SchemaTransform):
+    def __init__(self, id_: str, base_model: Type[BaseDataModel | Self], transform: SchemaTransform):
         #: Identifier used to distinguish the derived schema
         self._id = id_
         #: The underlying model that provides the schema
@@ -188,26 +189,49 @@ class ParamGroupDataModel(BaseDataModel):
         return "dataset_gid"
 
 
-def _resolve_validator(type_target: typing.Type, value: typing.Any) -> typing.Type[DataModel] | None:
+def _validate_data_model(session: "Session", type_target: Type, value: Any) -> Any:
     if type_target == inspect.Signature.empty:
-        return None
-    if not typing_inspect.is_generic_type(type_target):
-        return None
+        return value
 
+    target_origin = typing.get_origin(type_target)
     if typing_inspect.is_union_type(type_target):
         if typing_inspect.is_optional_type(type_target):
             type_target = typing.get_args(type_target)[0]
         else:
             # Dynamically resolve union type?
-            return None
+            return value
+    elif typing_inspect.is_tuple_type(type_target):
+        tuple_args = typing.get_args(type_target)
+        if not isinstance(value, tuple):
+            raise TypeError("Invalid return type, expected tuple")
+        validated = []
+        for type_arg, item in zip(tuple_args, value):
+            validated.append(_validate_data_model(session, type_arg, item))
+        return tuple(validated)
+    elif target_origin and issubclass(target_origin, list):
+        item_type = typing.get_args(type_target)[0]
+        if not isinstance(value, list):
+            raise TypeError("Invalid return type, expected list")
+        return [_validate_data_model(session, item_type, item) for item in value]
+
+    if not typing_inspect.is_generic_type(type_target):
+        return value
 
     type_base = typing.get_origin(type_target)
-    if issubclass(DataFrame, type_base):
-        return typing.get_args(type_target)[0]
-    elif issubclass(Series, type_base):
-        return typing.get_args(type_target)[0]
+    if issubclass(type_base, DataFrame):
+        model = typing.get_args(type_target)[0]
+    elif issubclass(type_base, Series):
+        model = typing.get_args(type_target)[0]
     else:
-        return None
+        return value
+
+    schema = model.to_schema(session=session)
+    try:
+        checked = schema.validate(value)
+        return checked
+    except:
+        print("failed")
+        raise
 
 
 def check_data_model(fn: typing.Callable = None, warn: bool = False) -> typing.Callable:
@@ -236,32 +260,24 @@ def check_data_model(fn: typing.Callable = None, warn: bool = False) -> typing.C
             log_function = instance.logger.error
 
         def validate_arg(name, value):
-            data_model = _resolve_validator(sig.parameters[name].annotation, value)
-            if data_model is None:
-                return value
-            schema = data_model.to_schema(session=instance.session)
             try:
-                return schema.validate(value)
+                return _validate_data_model(instance.session, sig.parameters[name].annotation, value)
             except SchemaError as ex:
-                print(ex)
-                log_function("%s: argument '%s' failed validation against %s because %s", wrapped_name, name,
-                             data_model, ex)
+                log_function("%s: argument '%s' failed validation because %s", wrapped_name, name, ex)
                 if not warn:
                     raise
+            return value
 
         checked_args = tuple(validate_arg(arg_name, arg_value) for arg_name, arg_value in bound_args.items())
         checked_kwargs = {arg_name: validate_arg(arg_name, arg_value) for arg_name, arg_value in bound_kwargs.items()}
         result = wrapped(*checked_args, **checked_kwargs)
 
-        data_model = _resolve_validator(sig.return_annotation, result)
-        if data_model:
-            schema = data_model.to_schema(session=instance.session)
-            try:
-                return schema.validate(result)
-            except SchemaError as ex:
-                log_function("%s: returned value failed validation against %s because %s", wrapped_name, data_model, ex)
-                if not warn:
-                    raise
+        try:
+            return _validate_data_model(instance.session, sig.return_annotation, result)
+        except SchemaError as ex:
+            log_function("%s: returned value failed validation because %s", wrapped_name, ex)
+            if not warn:
+                raise
         return result
 
     return wrapper(fn)
