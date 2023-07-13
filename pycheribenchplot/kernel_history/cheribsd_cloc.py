@@ -10,17 +10,16 @@ import seaborn as sns
 from git import Repo
 from git.exc import BadName
 
-from pycheribenchplot.core.analysis import AnalysisTask
-from pycheribenchplot.core.artefact import (AnalysisFileTarget, DataFrameTarget, LocalFileTarget)
-from pycheribenchplot.core.config import Config
-from pycheribenchplot.core.model import check_data_model
-from pycheribenchplot.core.pandas_util import generalized_xs
-from pycheribenchplot.core.plot import PlotTarget, PlotTask, new_figure
-from pycheribenchplot.core.plot_util.mosaic import mosaic_treemap
-from pycheribenchplot.core.task import (DataGenTask, SessionDataGenTask, dependency, output)
-from pycheribenchplot.core.util import SubprocessHelper, resolve_system_command
-
-from .cdb import CheriBSDCompilationDB
+from ..core.analysis import AnalysisTask
+from ..core.artefact import (AnalysisFileTarget, DataFrameTarget, LocalFileTarget)
+from ..core.config import Config
+from ..core.model import check_data_model
+from ..core.pandas_util import generalized_xs
+from ..core.plot import PlotTarget, PlotTask, new_figure
+from ..core.plot_util.mosaic import mosaic_treemap
+from ..core.task import DataGenTask, SessionDataGenTask, dependency, output
+from ..core.util import SubprocessHelper, resolve_system_command
+from .cheribsd_build import CheriBSDCompilationDB
 from .model import (AllCompilationDBModel, CompilationDBModel, LoCCountModel, LoCDiffModel)
 
 
@@ -42,6 +41,28 @@ class CheriBSDKernelLineChangesConfig(Config):
     freebsd_baseline: Optional[str] = None
     #: The freebsd head holding the CHERI changes to compare
     freebsd_head: Optional[str] = None
+    #: DRM subtree reference repo path (relative to cheri repositories path),
+    #: should be a clone of https://github.com/evadot/drm-subtree
+    drm_subtree_repo: str = "drm-subtree"
+    #: ZFS subtree reference repo path (relative to cheri repositories path),
+    #: should be a clone of https://github.com/CTSRD-CHERI/zfs.git
+    zfs_subtree_repo: str = "zfs"
+
+
+@dataclass
+class ClocSubtreeParams:
+    #: subtree path
+    subtree: str
+    #: raw baseline LoC file
+    raw_cloc_baseline_path: Path
+    #: raw LoC file for the changed version to compare
+    raw_cloc_head_path: Path
+    #: raw diff LoC file
+    raw_cloc_diff_path: Path
+    #: baseline ref
+    baseline_ref: str
+    #: head ref
+    head_ref: str
 
 
 class CheriBSDKernelLineChanges(SessionDataGenTask):
@@ -88,8 +109,6 @@ class CheriBSDKernelLineChanges(SessionDataGenTask):
         """
         Only retain files in sys/* that are not tests.
         Also remove subrepo-openzfs diff which causes noise.
-
-        TODO: drm code should diff with https://github.com/evadot/drm-subtree
         """
         paths = df.index.get_level_values("file")
         in_sys = paths.str.startswith("sys/")
@@ -101,37 +120,28 @@ class CheriBSDKernelLineChanges(SessionDataGenTask):
         is_drm = paths.str.startswith("sys/dev/drm")
         return df.loc[in_sys & is_valid_ext & ~is_drm & ~is_test & ~is_subrepo_zfs].copy()
 
-    def run(self):
+    def _get_common_cloc_args(self):
         concurrency = self.session.config.concurrent_workers
-        with TemporaryDirectory() as out_dir:
-            outfile = Path(out_dir) / "cloc"
-            cloc_args = [
-                "--skip-uniqueness",
-                # f"--processes={concurrency}",
-                f"--report-file={outfile}",
-                "--exclude-content=DO NOT EDIT",
-                "--file-encoding=UTF-8",
-                "--fullpath",
-                "--match-d=sys",
-                "--by-file",
-                "--json",
-                "--git",
-                "--count-and-diff",
-                self.config.freebsd_baseline,
-                self.config.freebsd_head
-            ]
-            cloc_cmd = SubprocessHelper(self._cloc, cloc_args)
-            cloc_cmd.run(cwd=self.session.user_config.cheribsd_path)
+        args = [
+            "--skip-uniqueness",
+            # f"--processes={concurrency}",
+            "--exclude-content=DO NOT EDIT",
+            "--file-encoding=UTF-8",
+            "--fullpath",
+            "--by-file",
+            "--json",
+            "--git",
+            "--count-and-diff"
+        ]
+        return args
 
-            # cloc generates multiple files, move them to the real outputs
-            shutil.copy(outfile.with_suffix("." + self.config.freebsd_baseline), self.raw_cloc_baseline.path)
-            shutil.copy(outfile.with_suffix("." + self.config.freebsd_head), self.raw_cloc_head.path)
-            shutil.copy(outfile.with_suffix(f".diff.{self.config.freebsd_baseline}.{self.config.freebsd_head}"),
-                        self.raw_cloc_diff.path)
-
-        # Prepare the diff LoC count dataframe
-        with open(self.raw_cloc_diff.path, "r") as raw_cloc:
+    def _compute_diff_loc(self, raw_diff_path: Path) -> pd.DataFrame:
+        """
+        Normalize the diff per file into a dataframe
+        """
+        with open(raw_diff_path, "r") as raw_cloc:
             raw_data = json.load(raw_cloc)
+
         df_set = []
         for key in ["added", "same", "modified", "removed"]:
             chunk = raw_data[key]
@@ -143,18 +153,119 @@ class CheriBSDKernelLineChanges(SessionDataGenTask):
             df.set_index("how", append=True, inplace=True)
             df_set.append(df)
         df = pd.concat(df_set)
-        df = self._filter_files(df)
-        # Dump, reset the index because otherwise we lose the name of the index levels
-        df.reset_index().to_json(self.cloc.path)
+        return df
 
-        # Prepare the baseline LoC count dataframe
-        with open(self.raw_cloc_baseline.path, "r") as raw_cloc:
+    def _compute_loc(self, raw_path: Path) -> pd.DataFrame:
+        """
+        Normalize baseline count per file into a dataframe
+        """
+        with open(raw_path, "r") as raw_cloc:
             raw_data = json.load(raw_cloc)
         raw_data.pop("header")
         raw_data.pop("SUM")
         df = pd.DataFrame(raw_data).transpose()
         df.index.name = "file"
-        df = self._filter_files(df)
+        return df
+
+    def cloc_subtree(self,
+                     params: ClocSubtreeParams,
+                     extra_args: list[str] = None) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """
+        Extract cloc stats for a subtree
+        """
+        with TemporaryDirectory() as out_dir:
+            outfile = Path(out_dir) / "cloc"
+            cloc_args = self._get_common_cloc_args()
+            if extra_args:
+                cloc_args += extra_args
+            cloc_args += [f"--report-file={outfile}", params.baseline_ref, params.head_ref]
+
+            cloc_cmd = SubprocessHelper(self._cloc, cloc_args)
+            cloc_cmd.run(cwd=self.session.user_config.cheribsd_path)
+
+            # cloc generates multiple files, move them to the real outputs
+            baseline_suffix = str(params.baseline_ref).replace("/", "_")
+            head_suffix = str(params.head_ref).replace("/", "_")
+            shutil.copy(outfile.with_suffix("." + baseline_suffix), params.raw_cloc_baseline_path)
+            shutil.copy(outfile.with_suffix("." + head_suffix), params.raw_cloc_head_path)
+            shutil.copy(outfile.with_suffix(f".diff.{baseline_suffix}.{head_suffix}"), params.raw_cloc_diff_path)
+
+        # Prepare the diff LoC count dataframe
+        diff_df = self._compute_diff_loc(params.raw_cloc_diff_path)
+
+        # Fixup the paths to always be relative to the main cheribsd repo
+        def patch_path(pathstr: str):
+            if not params.subtree:
+                return pathstr
+            path = Path(pathstr)
+            if path.is_absolute() and Path(params.baseline_ref).exists():
+                path = path.relative_to(params.baseline_ref)
+            return params.subtree + "/" + str(path)
+
+        tmp_df = diff_df.reset_index()
+        tmp_df["file"] = tmp_df["file"].map(patch_path)
+        diff_df = tmp_df.set_index(["file", "how"])
+
+        # Prepare the baseline LoC count dataframe
+        baseline_df = self._compute_loc(params.raw_cloc_baseline_path)
+        tmp_df = baseline_df.reset_index()
+        tmp_df["file"] = tmp_df["file"].map(patch_path)
+        baseline_df = tmp_df.set_index("file")
+
+        return (diff_df, baseline_df)
+
+    def cloc_kernel(self):
+        """
+        Run cloc over the main kernel sources
+        """
+        params = ClocSubtreeParams(subtree=None,
+                                   raw_cloc_baseline_path=self.raw_cloc_baseline.path,
+                                   raw_cloc_head_path=self.raw_cloc_head.path,
+                                   raw_cloc_diff_path=self.raw_cloc_diff.path,
+                                   baseline_ref=self.config.freebsd_baseline,
+                                   head_ref=self.config.freebsd_head)
+        diff_df, baseline_df = self.cloc_subtree(params, extra_args=["--match-d=sys"])
+
+        # Need to filter out directories we are surely not interested in
+        # The rest will be returned and optionally can be further filtered
+        # during analysis.
+        return (self._filter_files(diff_df), self._filter_files(baseline_df))
+
+    def cloc_drm(self):
+        """
+        Run cloc for the DRM subtree
+        """
+        params = ClocSubtreeParams(subtree="sys/dev/drm",
+                                   raw_cloc_baseline_path=self.raw_cloc_drm_baseline.path,
+                                   raw_cloc_head_path=self.raw_cloc_drm_head.path,
+                                   raw_cloc_diff_path=self.raw_cloc_drm_diff.path,
+                                   baseline_ref=self.session.user_config.src_path / self.config.drm_subtree_repo,
+                                   head_ref=self.config.freebsd_head + ":sys/dev/drm")
+        return self.cloc_subtree(params)
+
+    def cloc_zfs(self):
+        """
+        Run cloc for the ZFS subtree
+        """
+        params = ClocSubtreeParams(subtree="sys/contrib/subrepo-openzfs",
+                                   raw_cloc_baseline_path=self.raw_cloc_zfs_baseline.path,
+                                   raw_cloc_head_path=self.raw_cloc_zfs_head.path,
+                                   raw_cloc_diff_path=self.raw_cloc_zfs_diff.path,
+                                   baseline_ref=self.session.user_config.src_path / self.config.zfs_subtree_repo,
+                                   head_ref=self.config.freebsd_head + ":sys/contrib/subrepo-openzfs")
+        return self.cloc_subtree(params)
+
+    def run(self):
+        df_pairs = []
+        df_pairs.append(self.cloc_kernel())
+        df_pairs.append(self.cloc_drm())
+        df_pairs.append(self.cloc_zfs())
+
+        df = pd.concat([pair[0] for pair in df_pairs])
+        # Dump, reset the index because otherwise we lose the name of the index levels
+        df.reset_index().to_json(self.cloc.path)
+
+        df = pd.concat([pair[1] for pair in df_pairs])
         # Dump, see above
         df.reset_index().to_json(self.cloc_baseline.path)
 
@@ -169,6 +280,30 @@ class CheriBSDKernelLineChanges(SessionDataGenTask):
     @output
     def raw_cloc_diff(self):
         return LocalFileTarget(self, prefix="raw-cloc-diff", ext="json")
+
+    @output
+    def raw_cloc_drm_baseline(self):
+        return LocalFileTarget(self, prefix="raw-cloc-drm-baseline", ext="json")
+
+    @output
+    def raw_cloc_drm_head(self):
+        return LocalFileTarget(self, prefix="raw-cloc-drm-head", ext="json")
+
+    @output
+    def raw_cloc_drm_diff(self):
+        return LocalFileTarget(self, prefix="raw-cloc-drm-diff", ext="json")
+
+    @output
+    def raw_cloc_zfs_baseline(self):
+        return LocalFileTarget(self, prefix="raw-cloc-zfs-baseline", ext="json")
+
+    @output
+    def raw_cloc_zfs_head(self):
+        return LocalFileTarget(self, prefix="raw-cloc-zfs-head", ext="json")
+
+    @output
+    def raw_cloc_zfs_diff(self):
+        return LocalFileTarget(self, prefix="raw-cloc-zfs-diff", ext="json")
 
     @output
     def cloc(self):
@@ -236,7 +371,8 @@ class LoadLoCData(AnalysisTask):
 
             # Store a sorted version of the compilation DB for debugging
             cdb["type"] = cdb["files"].map(to_file_type)
-            cdb.sort_values(by=["type", "files"]).set_index("type", append=True).to_csv(self.debug_all_files.path)
+            out_cdb = cdb.sort_values(by=["type", "files"]).set_index("type", append=True)
+            out_cdb.to_csv(self.debug_all_files.path)
 
         self.diff_df.assign(diff_df)
         self.baseline_df.assign(baseline_df)
@@ -540,13 +676,15 @@ class CheriBSDLineChangesByComponent(PlotTask):
         "vm": r"sys/vm/(?!uma)",
         "net": r"sys/net",
         "alloc": r"(sys/(vm/uma|kern/.*vmem)|sys/sys/vmem)",
-        "dev": r"sys/dev",
+        "dev": r"sys/dev(?!/drm)",
         "kern": r"(sys/kern/(?!.*vmem|vfs)|sys/sys/(?!vmem))",
         "compat": r"sys/compat(?!/freebsd64)",
         "compat64": r"sys/compat/freebsd64",
         "vfs": r"sys/kern/vfs",
         "fs": r"sys/fs",
-        "cheri": r"sys/cheri"
+        "cheri": r"sys/cheri",
+        "drm": r"sys/dev/drm",
+        "zfs": r"sys/contrib/subrepo-openzfs"
     }
 
     # Extra filters that are useful to ensure the sanity of the results
@@ -587,6 +725,8 @@ class CheriBSDLineChangesByComponent(PlotTask):
         for name, filter_ in component_map.items():
             matches = df.index.get_level_values("file").str.match(filter_)
             base_matches = base_df.index.get_level_values("file").str.match(filter_)
+            self.logger.debug("Component %s ('%s') matched %d diff entries and %d baseline entries", name, filter_,
+                              matches.sum(), base_matches.sum())
             if all_matches is None:
                 all_matches = matches
                 all_base_matches = base_matches

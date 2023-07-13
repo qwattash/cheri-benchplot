@@ -9,14 +9,14 @@ import pandas as pd
 import seaborn as sns
 from git import Repo
 
-from pycheribenchplot.core.analysis import AnalysisTask
-from pycheribenchplot.core.artefact import DataFrameTarget, LocalFileTarget
-from pycheribenchplot.core.config import Config
-from pycheribenchplot.core.plot import PlotTarget, PlotTask, new_figure
-from pycheribenchplot.core.task import SessionDataGenTask, dependency, output
-from pycheribenchplot.core.util import resolve_system_command
-from pycheribenchplot.kernel_history.cdb import (CheriBSDCompilationDB, CompilationDBConfig)
-from pycheribenchplot.kernel_history.model import (AllCompilationDBModel, CheriBSDAnnotationsModel, CompilationDBModel)
+from ..core.analysis import AnalysisTask
+from ..core.artefact import DataFrameTarget, LocalFileTarget
+from ..core.config import Config
+from ..core.plot import PlotTarget, PlotTask, new_figure
+from ..core.task import SessionDataGenTask, dependency, output
+from ..core.util import resolve_system_command
+from .cheribsd_build import CheriBSDCompilationDB
+from .model import (AllCompilationDBModel, CheriBSDAnnotationsModel, CompilationDBModel)
 
 
 class CheriBSDKernelAnnotations(SessionDataGenTask):
