@@ -7,13 +7,9 @@ matplotlib.use("pdf")
 # import pycheribenchplot.core.procstat
 # import pycheribenchplot.drcachesim.analysis
 # import pycheribenchplot.drcachesim.plot
-import pycheribenchplot.generic.task
-import pycheribenchplot.kernel_history
-import pycheribenchplot.kernel_static
-import pycheribenchplot.kernel_vuln.analysis
-import pycheribenchplot.netperf.analysis
-import pycheribenchplot.netperf.plot
-import pycheribenchplot.netperf.task
+from . import c18n, generic, kernel_history, kernel_static
+from .kernel_vuln import analysis
+from .netperf import analysis, plot, task
 
 # import pycheribenchplot.netperf.analysis
 # import pycheribenchplot.netperf.dataset
