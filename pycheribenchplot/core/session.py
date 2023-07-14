@@ -50,7 +50,7 @@ class Session:
         :return: A new session instance
         """
         if session_path.exists():
-            benchplot_logger.logger.error("Session directory already exists for session %s", session_path)
+            benchplot_logger.error("Session directory already exists for session %s", session_path)
             raise ValueError("New session path already exists")
         run_config = SessionRunConfig.generate(user_config, config)
         run_config.name = session_path.name

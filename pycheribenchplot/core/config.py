@@ -543,7 +543,7 @@ class CommonBenchmarkConfig(TemplateConfig):
     #: The name of the benchmark
     name: str
     #: The number of iterations to run
-    iterations: int
+    iterations: int = 1
     #: Benchmark configuration
     #: .. deprecated:: 1.2
     #:    Use :attr:`generators` instead.
