@@ -13,6 +13,7 @@ import networkx as nx
 
 from .borg import Borg
 from .config import Config
+from .error import MissingDependency, TaskNotFound
 from .util import new_logger
 
 
@@ -332,8 +333,10 @@ class dependency:
     with the same ID, regardless of how many times the dependency property
     is accessed, therefore there is no need to cache here a single instance.
     """
-    def __init__(self, fn: Callable | None = None):
+    def __init__(self, fn: Callable | None = None, optional: bool = False):
         self._fn = fn
+        self._optional = optional
+        self._dependency_name = None
 
     def __set_name__(self, owner, name):
         """
@@ -342,11 +345,19 @@ class dependency:
         assert issubclass(owner, Task), ("@dependency decorator may be used "
                                          "only within Task classes")
         owner.register_dependency(name)
+        self._dependency_name = name
 
     def __get__(self, instance, owner=None):
         assert instance is not None
         assert self._fn is not None
-        result = self._fn(instance)
+        try:
+            result = self._fn(instance)
+        except TaskNotFound:
+            result = None
+        if not self._optional and not result:
+            instance.logger.error("Missing required dependency %s", self._dependency_name)
+            raise MissingDependency(f"Failed to resolve dependency")
+
         # Normalize any generator or iterable to a list, keep single value unchanged
         if isinstance(result, Iterable) and not isinstance(result, list):
             return list(result)
@@ -357,7 +368,7 @@ class dependency:
         Invoked when the decorator is called with arguments.
         Just return the descriptor with the correct arguments.
         """
-        return dependency(fn=fn)
+        return dependency(fn=fn, optional=self._optional)
 
 
 class output:
@@ -395,7 +406,12 @@ class output:
     def __get__(self, instance, owner=None):
         assert instance is not None
         assert self._fn is not None
-        return self._fn(instance)
+        result = self._fn(instance)
+
+        # Normalize generators and iterables to a list
+        if isinstance(result, Iterable) and not isinstance(result, list):
+            result = list(result)
+        return result
 
     def __call__(self, fn):
         """

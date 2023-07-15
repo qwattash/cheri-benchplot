@@ -6,6 +6,23 @@ import pandas as pd
 def map_index(df: pd.DataFrame, level: str, fn: Callable[any, [any]], inplace: bool = False) -> pd.DataFrame:
     """
     Convenience function to apply a mapping function to a multi-index level.
+
+    Example:
+    ```
+    df = pd.DataFrame({"a": [10,20,30], "b": [100, 200, 300]}).set_index("a", append=True)
+            b
+      a
+    0 10  100
+    1 20  200
+    2 30  300
+
+    df = map_index(df, "a", lambda v: v - 1)
+            b
+      a
+    0 9   100
+    1 19  200
+    2 29  300
+    ```
     """
     if inplace:
         out_df = df

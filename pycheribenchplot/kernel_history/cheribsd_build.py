@@ -45,7 +45,7 @@ class CheriBSDBuild(DataGenTask):
         return path_match[0]
 
     def _make_subprocess(self, build_root: Path, cbuild_opts: list) -> SubprocessHelper:
-        build_cmd = SubprocessHelper(self._cheribuild, cbuild_opts)
+        return SubprocessHelper(self._cheribuild, cbuild_opts)
 
     def _do_build(self, build_root: Path):
         instance_config = self.benchmark.config.instance

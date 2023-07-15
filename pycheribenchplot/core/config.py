@@ -19,7 +19,6 @@ from git import Repo
 from marshmallow import Schema, ValidationError, validates_schema
 from marshmallow.validate import And, OneOf, Predicate
 from marshmallow_dataclass import NewType, class_schema
-from marshmallow_enum import EnumField
 from typing_inspect import get_args, get_origin, is_generic_type
 
 

@@ -9,10 +9,13 @@ import pandas as pd
 
 from .config import AnalysisConfig, Config, ExecTargetConfig
 from .elf import AddressSpaceManager, DWARFHelper
+from .error import TaskNotFound
 from .instance import InstanceManager
 from .shellgen import ScriptBuilder
 from .task import (ExecutionTask, SessionExecutionTask, Task, TaskRegistry, TaskScheduler)
 from .util import new_logger, timing
+
+AnyExecTask = ExecutionTask | SessionExecutionTask
 
 
 class BenchmarkExecMode(Enum):
@@ -280,8 +283,7 @@ class Benchmark:
         exec_task = BenchmarkExecTask(self, task_config=exec_config)
         return exec_task
 
-    def find_exec_task(self,
-                       task_class: Type[ExecutionTask | SessionExecutionTask]) -> ExecutionTask | SessionExecutionTask:
+    def find_exec_task(self, task_class: Type[AnyExecTask]) -> AnyExecTask:
         """
         Find the given execution task configured for the current benchmark context.
 
@@ -299,8 +301,7 @@ class Benchmark:
                     raise RuntimeError("Invalid exec task instance")
                 return task
         # XXX Recursively look into dependencies
-        self.logger.error("Task %s is not a generator in this session", task_class)
-        raise ValueError("Task %s can not be found among the session generators", task_class)
+        raise TaskNotFound("Task %s can not be found among the session generators", task_class)
 
     def schedule_exec_tasks(self, scheduler: TaskScheduler, exec_config: ExecTaskConfig):
         """
