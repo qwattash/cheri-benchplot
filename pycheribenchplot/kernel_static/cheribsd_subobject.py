@@ -8,13 +8,13 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
+from ..compile_db import CheriBSDBuild
 from ..core.analysis import AnalysisTask
 from ..core.artefact import (AnalysisFileTarget, DataFrameTarget, LocalFileTarget)
 from ..core.config import InstanceKernelABI
 from ..core.plot import PlotTarget, PlotTask, new_figure
 from ..core.task import dependency, output
 from ..core.util import SubprocessHelper
-from ..kernel_history.cheribsd_build import CheriBSDBuild
 from .model import (ImpreciseSubobjectModel, SetboundsKind, SubobjectBoundsModel, SubobjectBoundsUnionModel)
 
 

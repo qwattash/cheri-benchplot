@@ -15,8 +15,7 @@ from ..core.config import Config
 from ..core.plot import PlotTarget, PlotTask, new_figure
 from ..core.task import SessionDataGenTask, dependency, output
 from ..core.util import resolve_system_command
-from .cheribsd_build import CheriBSDCompilationDB
-from .model import (AllCompilationDBModel, CheriBSDAnnotationsModel, CompilationDBModel)
+from .model import CheriBSDAnnotationsModel
 
 
 class CheriBSDKernelAnnotations(SessionDataGenTask):

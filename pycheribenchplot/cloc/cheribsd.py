@@ -160,7 +160,7 @@ class ExtractLoCCheriBSD(ExtractLoCBase):
         return LocalFileTarget(self, prefix="cloc-baseline", ext="csv", model=LoCCountModel)
 
 
-class CheriBSDLineChangesByComponent(PlotTask):
+class CheriBSDLoCDiffByComponent(PlotTask):
     """
     Produce an histogram sorted by the component with highest diff.
 
