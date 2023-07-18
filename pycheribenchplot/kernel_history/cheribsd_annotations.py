@@ -9,6 +9,7 @@ import pandas as pd
 import seaborn as sns
 from git import Repo
 
+from ..compile_db import CompilationDB, CompilationDBModel
 from ..core.analysis import AnalysisTask
 from ..core.artefact import DataFrameTarget, LocalFileTarget
 from ..core.config import Config
@@ -90,7 +91,7 @@ class CheriBSDAnnotationsUnion(AnalysisTask):
     @dependency
     def load_cdb(self):
         for b in self.session.all_benchmarks():
-            exec_task = b.find_exec_task(CheriBSDCompilationDB)
+            exec_task = b.find_exec_task(CompilationDB)
             yield exec_task.compilation_db.get_loader()
 
     def run(self):
@@ -100,10 +101,13 @@ class CheriBSDAnnotationsUnion(AnalysisTask):
         # Merge the CompilationDB data
         for loader in self.load_cdb:
             cdb_set.append(loader.df.get())
-        cdb_df = pd.concat(cdb_set).groupby("files").first().reset_index()
+        # Make sure we only grab cheribsd kernel compilation DB data
+        cdb_df = pd.concat(cdb_set).xs("cheribsd", level="target", drop_level=False)
+        # Merge everything that was built under the same target, i.e. remove duplicates
+        cdb_df = cdb_df.groupby(["target", "file"]).first().reset_index("file")
 
         # Filter annotations by compilation DB
-        ann_df = cdb_df.merge(df.reset_index(), left_on="files", right_on="file", how="inner")
+        ann_df = cdb_df.merge(df, left_on="file", right_on="file", how="inner")
         ann_df.set_index("file", inplace=True)
 
         # Ensure that the changes columns are hashable
@@ -122,7 +126,7 @@ class CheriBSDAnnotationsUnion(AnalysisTask):
 
     @output
     def compilation_db(self):
-        return DataFrameTarget(self, AllCompilationDBModel)
+        return DataFrameTarget(self, CompilationDBModel.as_groupby(["target", "file"]))
 
 
 class CheriBSDChangesByType(PlotTask):
@@ -200,12 +204,13 @@ class CheckMissingAnnotation(AnalysisTask):
     @dependency
     def load_cloc(self):
         for b in self.session.all_benchmarks():
-            exec_task = b.find_exec_task(CheriBSDCompilationDB)
+            exec_task = b.find_exec_task(CompilationDB)
             yield exec_task.compilation_db.get_loader()
 
     def run(self):
         # Sanity check: warn about files in the compilation db that do not
         # annotations
+        # XXX TODO
         pass
 
     @output

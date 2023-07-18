@@ -3,7 +3,7 @@ from typing import Callable
 import pandas as pd
 
 
-def map_index(df: pd.DataFrame, level: str, fn: Callable[any, [any]], inplace: bool = False) -> pd.DataFrame:
+def map_index(df: pd.DataFrame, level: str, fn: Callable[[any], any], inplace: bool = False) -> pd.DataFrame:
     """
     Convenience function to apply a mapping function to a multi-index level.
 
@@ -117,3 +117,18 @@ def broadcast_xs(df: pd.DataFrame, chunk: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
         df.loc[:] = chunk.values.repeat(nrepeat, axis=0)
         return df
+
+
+def apply_or(fn: Callable[[any], any], default: any = False):
+    """
+    Helper to apply fallible functions to a series or dataframe.
+
+    If the function fails with an exception, the default value is returned instead.
+    """
+    def _inner(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except:
+            return default
+
+    return _inner

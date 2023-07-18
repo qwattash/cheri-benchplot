@@ -2,21 +2,26 @@ import functools
 import inspect
 import typing
 import uuid
-from typing import Any, Type
+from typing import Any, Callable, Type
 
+import hypothesis as hp
 import numpy as np
 import pandas as pd
+import pandera as pa
+import pandera.strategies as st
 import typing_inspect
 import wrapt
-from pandera import Column, DataFrameSchema, Field, SchemaModel
+from pandera import (Check, Column, DataFrameSchema, DataType, Field, SchemaModel)
 from pandera.dtypes import immutable
 from pandera.engines import numpy_engine, pandas_engine
 from pandera.errors import SchemaError
 from pandera.typing import DataFrame, Index, Series
 from typing_extensions import Self
 
+from .pandas_util import apply_or
+
 # Helper type
-SchemaTransform = typing.Callable[[DataFrameSchema], DataFrameSchema]
+SchemaTransform = Callable[[DataFrameSchema], DataFrameSchema]
 
 
 @pandas_engine.Engine.register_dtype
@@ -24,12 +29,26 @@ SchemaTransform = typing.Callable[[DataFrameSchema], DataFrameSchema]
 class UUIDType(numpy_engine.Object):
     """
     Pandera data type for UUID values
+    XXX we may move to having string UUID values instead...
     """
     def check(self, pandera_dtype, data_container):
         return data_container.map(lambda v: isinstance(v, uuid.UUID))
 
     def coerce(self, series: pd.Series) -> pd.Series:
         return series.map(lambda uid: uid if isinstance(uid, uuid.UUID) else uuid.UUID(uid))
+
+
+def uuid_strategy(pa_dtype: DataType, strategy: st.SearchStrategy | None, *args):
+    if strategy is None:
+        return st.pandas_dtype_strategy(pa_dtype, strategy=hp.strategies.just(uuid.uuid4()))
+    # This would be useful if we have generators for valid and invalid UUIDs and
+    # this would filter them by validity
+    raise NotImplementedError("Chaining not supported yet")
+
+
+@pa.extensions.register_check_method(strategy=uuid_strategy)
+def is_valid_uuid(pandas_obj, *args) -> pd.Series:
+    return pandas_obj.map(apply_or(lambda v: type(v) == uuid.UUID or uuid.UUID(v), False))
 
 
 class BaseDataModel(SchemaModel):
@@ -89,6 +108,36 @@ class BaseDataModel(SchemaModel):
         index_names[offset:offset] = extra_columns.keys()
         return s.set_index(index_names)
 
+    @classmethod
+    def strategy(cls, session: "Session" = None, **kwargs):
+        """
+        Similar to the base hypothesis strategy generator.
+
+        If the session is not given, this will return a partial factory function
+        that can be used to generate the final strategy with a given session.
+        """
+        def proxy_strategy(lazy_session: "Session"):
+            return cls.to_schema(lazy_session).strategy(**kwargs)
+
+        if session:
+            return proxy_strategy(session)
+        return proxy_strategy
+
+    @classmethod
+    def example(cls, session: "Session" = None, **kwargs) -> Callable[["Session"], pd.DataFrame] | pd.DataFrame:
+        """
+        Similar to the base example generator.
+
+        If the session is not given, this will return a partial factory function
+        that can be used to generate the final example with a given session.
+        """
+        def proxy_example(lazy_session: "Session"):
+            return cls.to_schema(lazy_session).example(**kwargs)
+
+        if session:
+            return proxy_example(session)
+        return proxy_example
+
     class Config:
         """
         :noindex:
@@ -142,8 +191,8 @@ class DataModel(BaseDataModel):
     Input data is generally loaded and assembled from the benchmark output files.
     We will should always have the full IDs here.
     """
-    dataset_id: Index[UUIDType] = Field(nullable=False, title="benchmark run ID")
-    dataset_gid: Index[UUIDType] = Field(nullable=False, title="platform ID")
+    dataset_id: Index[UUIDType] = Field(nullable=False, title="benchmark run ID", is_valid_uuid=True)
+    dataset_gid: Index[UUIDType] = Field(nullable=False, title="platform ID", is_valid_uuid=True)
     # The iteration number may be null if there is no iteration associated to the data, meaning
     # that it is collected for the whole set of iterations of the benchmark.
     iteration: Index[int] = Field(nullable=True, title="Iteration number")
@@ -234,7 +283,7 @@ def _validate_data_model(session: "Session", type_target: Type, value: Any) -> A
         raise
 
 
-def check_data_model(fn: typing.Callable = None, warn: bool = False) -> typing.Callable:
+def check_data_model(fn: Callable = None, warn: bool = False) -> Callable:
     """
     Class method decorator designed to decorate DatasetTask transformations.
 

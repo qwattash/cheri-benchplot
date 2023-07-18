@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 from pandas.testing import assert_frame_equal
 
+from pycheribenchplot.compile_db import CompilationDBModel
 from pycheribenchplot.core.analysis import AnalysisTask
 from pycheribenchplot.core.config import AnalysisConfig
 from pycheribenchplot.kernel_history.cheribsd_annotations import *
@@ -95,20 +96,24 @@ def fake_cdb(fake_simple_benchmark):
     Produce a fake compilation DB consistent with the fake_kernel_changes
     """
     data = {
-        "files": [
+        "uuid": [str(fake_simple_benchmark.uuid)] * 4,
+        "g_uuid": [str(fake_simple_benchmark.g_uuid)] * 4,
+        "iterations": [-1] * 4,
+        "target": ["cheribsd"] * 4,
+        "file": [
             "cheribsd/sys/fs/smbfs/smbfs_vfsops.c",
             "cheribsd/sys/netinet/udp_usrreq.c",
             "cheribsd/sys/kern/subr_pctrie.c",
             "cheribsd/sys/kern/subr_vmem.c",
         ]
     }
-    return pd.read_json(json.dumps(data))
+    return pd.read_json(json.dumps(data)).set_index(["uuid", "g_uuid", "iterations", "target"])
 
 
 @pytest.fixture
 def other_cdb(fake_cdb):
     df = fake_cdb.copy()
-    df.iat[0, df.columns.get_loc("files")] = "cheribsd/sys/bbb_file.c"
+    df.iat[0, df.columns.get_loc("file")] = "cheribsd/sys/bbb_file.c"
     return df
 
 
@@ -159,5 +164,5 @@ def test_kernel_file_changes_union(mocker, fake_session, fake_kernel_changes, fa
         "cheribsd/sys/fs/smbfs/smbfs_vfsops.c", "cheribsd/sys/netinet/udp_usrreq.c", "cheribsd/sys/kern/subr_pctrie.c",
         "cheribsd/sys/kern/subr_vmem.c", "cheribsd/sys/bbb_file.c"
     }
-    assert set(cdb["files"]) == expect_cdb_files
+    assert set(cdb["file"]) == expect_cdb_files
     assert len(cdb) == len(expect_cdb_files)
