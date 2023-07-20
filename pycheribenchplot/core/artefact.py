@@ -261,11 +261,26 @@ class AnalysisFileTarget(LocalFileTarget):
     """
     def __init__(self, task: Task, prefix: str = "", ext: str | None = None):
         if not task.is_session_task():
-            raise TypeError("AnalysisFileTarget does not support benchmark analysis tasks")
+            raise TypeError("AnalysisFileTarget does not support datarun-wide analysis tasks")
         super().__init__(task, prefix=prefix, ext=ext, use_iterations=False)
 
     def paths(self):
         return [self._task.session.get_plot_root_path() / self._file_name]
+
+
+class DataRunAnalysisFileTarget(LocalFileTarget):
+    """
+    A target that identifies the product of an analysis task specific to a benchmark run.
+
+    The file is emitted in the datarun analysis output directory.
+    """
+    def __init__(self, task: Task, prefix: str = "", ext: str | None = None):
+        if not task.is_benchmark_task():
+            raise TypeError("DataRunAnalysisFileTarget does not support session-wide analysis tasks")
+        super().__init__(task, prefix=prefix, ext=ext, use_iterations=False)
+
+    def paths(self):
+        return [self._task.benchmark.get_plot_path() / self._file_name]
 
 
 class TargetLoadTaskMixin:
@@ -299,7 +314,7 @@ class TargetLoadTaskMixin:
         :param path: The target path.
         :return: A dataframe containing the data.
         """
-        if path.suffix == ".csv":
+        if path.suffix == ".csv" or path.name.endswith(".csv.gz"):
             df = self._load_one_csv(path)
         elif path.suffix == ".json":
             df = self._load_one_json(path)

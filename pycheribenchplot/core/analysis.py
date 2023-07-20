@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 from pandera import Field
 
-from .artefact import DataFrameTarget
+from .artefact import DataFrameTarget, DataRunAnalysisFileTarget
 from .benchmark import Benchmark
 from .config import AnalysisConfig, Config
 from .model import DataModel
@@ -47,6 +47,10 @@ class BenchmarkAnalysisTask(AnalysisTask):
 
         # Borg initialization occurs here
         super().__init__(benchmark.session, analysis_config, task_config=task_config)
+
+    @classmethod
+    def is_benchmark_task(cls):
+        return True
 
     @property
     def uuid(self):

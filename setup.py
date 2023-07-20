@@ -29,10 +29,11 @@ setup(name="pycheribenchplot",
           "typing_extensions>=4.7.0",
           "multi-await>=1.0.0",
           "pyserial>=3.5",
+          "hypothesis>=6.81.0",
+          "cxxfilt>=0.3.0",
       ],
       extras_require={"dev": [
           "pytest",
           "pytest-mock",
           "pytest-timeout",
-          "hypothesis",
       ]})

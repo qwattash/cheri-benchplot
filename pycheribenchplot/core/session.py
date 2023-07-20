@@ -1,17 +1,18 @@
 import logging
 import re
 import shutil
-import typing
 from collections import defaultdict, namedtuple
 from contextlib import AbstractContextManager
 from dataclasses import asdict, fields
 from enum import Enum
 from pathlib import Path
+from typing import Type
 from uuid import UUID
 
 import pandas as pd
 from marshmallow.exceptions import ValidationError
 from tabulate import tabulate
+from typing_extensions import Self
 
 from .analysis import AnalysisTask
 from .benchmark import Benchmark, BenchmarkExecMode, ExecTaskConfig
@@ -19,12 +20,12 @@ from .config import (AnalysisConfig, BenchplotUserConfig, Config, ExecTargetConf
                      TaskTargetConfig, TemplateConfigContext)
 from .instance import InstanceManager
 from .model import UUIDType
-from .task import SessionExecutionTask, TaskRegistry, TaskScheduler
+from .task import (ExecutionTask, SessionExecutionTask, TaskRegistry, TaskScheduler)
 from .util import new_logger
 
 #: Constant name of the generated session configuration file
 SESSION_RUN_FILE = "session-run.json"
-#: Constant name to mark the benchmark matrix index as unparameterized
+#: Constant name to mark the datarun matrix index as unparameterized
 UNPARAMETERIZED_INDEX_NAME = "RESERVED__unparameterized_index"
 benchplot_logger = logging.getLogger("cheri-benchplot")
 
@@ -40,7 +41,7 @@ class Session:
     to run and how.
     """
     @classmethod
-    def make_new(cls, user_config: BenchplotUserConfig, config: PipelineConfig, session_path: Path) -> "Session":
+    def make_new(cls, user_config: BenchplotUserConfig, config: PipelineConfig, session_path: Path) -> Self:
         """
         Create a new session and initialize the directory hierarchy
 
@@ -73,7 +74,7 @@ class Session:
         return False
 
     @classmethod
-    def from_path(cls, user_config: BenchplotUserConfig, path: Path) -> typing.Optional["Session"]:
+    def from_path(cls, user_config: BenchplotUserConfig, path: Path) -> Self | None:
         """
         Load a session from the given path.
 
@@ -127,7 +128,7 @@ class Session:
     def __str__(self):
         return f"Session({self.uuid}) [{self.name}]"
 
-    def _resolve_exec_task_options(self, config: ExecTargetConfig) -> typing.Optional[Config]:
+    def _resolve_exec_task_options(self, config: ExecTargetConfig) -> Config | None:
         """
         Resolve the configuration type for a :class:`ExecTargetConfig` containing run options.
 
@@ -184,7 +185,7 @@ class Session:
         """
         Resolve the baseline benchmark run group ID.
         This is necessary to identify the benchmark run that we compare against
-        (actually the column in the benchmark matrix we compare against).
+        (actually the column in the datarun matrix we compare against).
 
         :return: The baseline group ID.
         """
@@ -202,9 +203,9 @@ class Session:
         self.logger.debug("Benchmark baseline %s (%s)", baseline_conf.instance.name, baseline)
         return baseline
 
-    def _resolve_benchmark_matrix(self) -> typing.Tuple[pd.DataFrame, UUID]:
+    def _resolve_benchmark_matrix(self) -> tuple[pd.DataFrame, UUID]:
         """
-        Generate the benchmark matrix from the benchmark configurations.
+        Generate the datarun matrix from the generators configurations.
         In the resulting dataframe:
          - rows are different parameterizations of the benchmark, indexed by param keys.
          - columns are different instances on which the benchmark is run, indexed by dataset_gid.
@@ -286,7 +287,7 @@ class Session:
         else:
             return list(names)
 
-    def get_public_tasks(self) -> list[typing.Type[AnalysisTask]]:
+    def get_public_tasks(self) -> list[Type[AnalysisTask]]:
         """
         Return the public tasks available for this session.
 
@@ -456,7 +457,7 @@ class Session:
         self.scheduler.run()
         self.logger.info("Session %s analysis finished", self.name)
 
-    def find_exec_task(self, task_class: typing.Type[SessionExecutionTask]) -> SessionExecutionTask:
+    def find_exec_task(self, task_class: Type[SessionExecutionTask]) -> SessionExecutionTask:
         """
         Find a session-wide execution task and return a task instance.
 
@@ -467,3 +468,18 @@ class Session:
             self.logger.error("The task %s is not a SessionExecutionTask", task_class)
             raise TypeError("Invalid task type")
         return task
+
+    def find_all_exec_tasks(self, task_class: Type[ExecutionTask]) -> list[ExecutionTask]:
+        """
+        Find all execution tasks of a given type and return them as a list.
+
+        This can be used by analysis tasks to load generator dependencies.
+        """
+        tasks = []
+        for bench in self.all_benchmarks():
+            task = bench.find_exec_task(task_class)
+            if not task.is_benchmark_task() or not task.is_exec_task():
+                self.logger.error("The task %s is not an ExecutionTask", task_class)
+                raise TypeError("Invalid task type")
+            tasks.append(task)
+        return tasks

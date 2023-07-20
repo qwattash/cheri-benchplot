@@ -1,6 +1,8 @@
-from typing import Callable
+from typing import Callable, TypeVar
 
 import pandas as pd
+
+T = TypeVar("T")
 
 
 def map_index(df: pd.DataFrame, level: str, fn: Callable[[any], any], inplace: bool = False) -> pd.DataFrame:
@@ -119,15 +121,16 @@ def broadcast_xs(df: pd.DataFrame, chunk: pd.DataFrame) -> pd.DataFrame:
         return df
 
 
-def apply_or(fn: Callable[[any], any], default: any = False):
+def apply_or(fn: Callable[[any], T], default: T, *partial_args, **partial_kwargs):
     """
     Helper to apply fallible functions to a series or dataframe.
 
     If the function fails with an exception, the default value is returned instead.
     """
     def _inner(*args, **kwargs):
+        kwargs.update(partial_kwargs)
         try:
-            return fn(*args, **kwargs)
+            return fn(*(partial_args + args), **kwargs)
         except:
             return default
 
