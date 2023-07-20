@@ -14,3 +14,11 @@ class MissingDependency(RuntimeError):
 
     This may happen if a non-optional dependency is not found.
     """
+
+
+class ToolArgparseError(RuntimeError):
+    """
+    Exception signaling a failure in argument processing.
+
+    This is used in the CLI/GUI tool helpers during argument handling.
+    """

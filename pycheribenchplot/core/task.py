@@ -731,7 +731,7 @@ class TaskScheduler:
         #: task completion barrier
         self._pending_tasks_cv = Condition()
         #: number of worker threads to run
-        self.num_workers = session.config.concurrent_workers or (mp.cpu_count() * 5)
+        self.num_workers = session.config.concurrent_workers or mp.cpu_count()
         #: resource managers
         self._rman = {}
 
