@@ -11,8 +11,7 @@ import pandas as pd
 import seaborn as sns
 
 from ..core.analysis import AnalysisTask, BenchmarkAnalysisTask
-from ..core.artefact import (DataFrameTarget, DataRunAnalysisFileTarget,
-                             LocalFileTarget)
+from ..core.artefact import (DataFrameTarget, DataRunAnalysisFileTarget, LocalFileTarget)
 from ..core.config import Config, ConfigPath, validate_path_exists
 from ..core.pandas_util import generalized_xs
 from ..core.plot import PlotTarget, PlotTask, new_figure
@@ -217,12 +216,11 @@ class C18NTransitionGraph(PlotTask):
             if name == "c":
                 name = "c.so"
             return name
-        df["compartment"] = df["compartment"].map(simplify_name)
 
+        df["compartment"] = df["compartment"].map(simplify_name)
 
         if self.config.drop_redundant:
             to_drop = df["compartment"].isin(["c.so", "thr.so", "ld-elf-c18n.so"])
-            to_drop |= df["parent"].isin(["c.so", "thr.so", "ld-elf-c18n.so"])
             df = df.loc[~to_drop]
 
         # Need to determine the source compartment for each "enter" entry
@@ -230,6 +228,7 @@ class C18NTransitionGraph(PlotTask):
         self.logger.info("Computing transition graph")
 
         enter_stack = [binary_name]
+
         def fill_graph(row):
             if row["op"] == "enter":
                 current = enter_stack[-1]
