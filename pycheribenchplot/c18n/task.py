@@ -218,13 +218,14 @@ class C18NTransitionGraph(PlotTask):
 
         if self.config.drop_redundant:
             to_drop = df["compartment"].isin(["c.so", "thr.so", "ld-elf-c18n.so"])
+            to_drop |= df["parent"].isin(["c.so", "thr.so", "ld-elf-c18n.so"])
             df = df.loc[~to_drop]
 
         # Need to determine the source compartment for each "enter" entry
         # while we are scanning, add entries to the graph
         self.logger.info("Computing transition graph")
-        enter_stack = [binary_name]
 
+        enter_stack = [binary_name]
         def fill_graph(row):
             if row["op"] == "enter":
                 current = enter_stack[-1]
@@ -292,6 +293,14 @@ class C18NAnnotateTrace(BenchmarkAnalysisTask):
             ext += ".gz"
         return DataRunAnalysisFileTarget(self, ext=ext)
 
+    @output
+    def trace_df(self):
+        return DataFrameTarget(self, None)
+
+    @output
+    def html_output(self):
+        return DataRunAnalysisFileTarget(self, prefix="webview", ext="html")
+
     def run(self):
         df = self.data.df.get()
         srcs = df.index.unique("trace_source")
@@ -308,6 +317,10 @@ class C18NAnnotateTrace(BenchmarkAnalysisTask):
         # of the ENTER we are leaving
         df.loc[df["op"] == "leave", "depth"] += 1
 
+        # It is now possible to find the parent sequence for each element
+        df.reset_index("sequence", inplace=True)
+        df["parent_sequence"] = df[["sequence", "depth"]].groupby("depth").shift(1).fillna(-1)
+
         def demangler(v):
             if v == "<unknown>":
                 return v
@@ -318,22 +331,25 @@ class C18NAnnotateTrace(BenchmarkAnalysisTask):
             assert False, "Not Reached"
 
         df["symbol"] = df["symbol"].map(demangler)
-        df["address"] = df["address"].map(lambda v: f"0x{int(v):x}", na_action="ignore").fillna("")
-
-        space = "  "
-        dump = (
-            df["depth"].map(lambda d: space * d) +
-            (df["address"] + " " + df["op"].str.upper() + " " + df["compartment"] + ":" + df["symbol"]).str.strip() +
-            "\n")
-
-        self.logger.info("Writeback trace")
+        df["address"] = df["address"].map(lambda v: f"0x{int(v):x}", na_action="ignore")
+        df["address"] = df["address"].fillna("")
 
         if self.config.compress_output:
             openfn = gzip.open
         else:
             openfn = open
-        with openfn(self.annotated.path, "wt") as outfile:
-            outfile.writelines(dump)
+
+        if not self.config.skip_file_output:
+            space = "  "
+            dump = df["depth"].map(lambda d: space * d)
+            dump += (df["address"] + " " + df["op"].str.upper()).str.strip()
+            dump += (" " + df["compartment"] + ":" + df["symbol"] + "\n")
+
+            self.logger.info("Writeback trace")
+            with openfn(self.annotated.path, "wt") as outfile:
+                outfile.writelines(dump)
+
+        self.trace_df.assign(df)
 
 
 class C18NTraceAnnotation(AnalysisTask):

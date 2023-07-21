@@ -59,7 +59,7 @@ def test_instance_config():
 
     assert default.kernel == "GENERIC"
     assert default.baseline == False
-    assert default.name == "qemu-riscv64-purecap-hybrid-GENERIC"
+    assert default.name == "qemu UserABI:riscv64-purecap KernABI:hybrid KernConf:GENERIC"
     assert default.platform == InstancePlatform.QEMU
     assert default.cheri_target == InstanceCheriBSD.RISCV64_PURECAP
     assert default.kernelabi == InstanceKernelABI.HYBRID
