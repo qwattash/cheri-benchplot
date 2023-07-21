@@ -3,7 +3,7 @@ from setuptools import find_packages, setup
 setup(name="pycheribenchplot",
       version="1.2",
       packages=find_packages(),
-      scripts=["benchplot-cli.py"],
+      scripts=["benchplot-cli.py", "benchplot-gui.py"],
       install_requires=[
           "paramiko>=3.2.0",
           "marshmallow-dataclass[enum,union]>=8.5.8",
@@ -31,6 +31,7 @@ setup(name="pycheribenchplot",
           "pyserial>=3.5",
           "hypothesis>=6.81.0",
           "cxxfilt>=0.3.0",
+          "pyqt6>=6.5.1"
       ],
       extras_require={"dev": [
           "pytest",

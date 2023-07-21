@@ -16,11 +16,13 @@ from typing_extensions import Self
 
 from .analysis import AnalysisTask
 from .benchmark import Benchmark, BenchmarkExecMode, ExecTaskConfig
-from .config import (AnalysisConfig, BenchplotUserConfig, Config, ExecTargetConfig, PipelineConfig, SessionRunConfig,
+from .config import (AnalysisConfig, BenchplotUserConfig, Config,
+                     ExecTargetConfig, PipelineConfig, SessionRunConfig,
                      TaskTargetConfig, TemplateConfigContext)
 from .instance import InstanceManager
 from .model import UUIDType
-from .task import (ExecutionTask, SessionExecutionTask, TaskRegistry, TaskScheduler)
+from .task import (ExecutionTask, SessionExecutionTask, TaskRegistry,
+                   TaskScheduler)
 from .util import new_logger
 
 #: Constant name of the generated session configuration file
@@ -111,6 +113,8 @@ class Session:
         #: Session root path, where all the session data will be stored
         self.session_root_path = session_root_path.expanduser().absolute()
         self._ensure_dir_tree()
+        #: Mapping from g_uuid to platform configurations. Note that this should be readonly.
+        self.platform_map = {}
         #: A dataframe that organises the set of benchmarks to run or analyse.
         self.benchmark_matrix = self._resolve_benchmark_matrix()
         #: Benchmark baseline instance group UUID.
@@ -218,6 +222,7 @@ class Session:
         for benchmark_config in self.config.configurations:
             self.logger.debug("Found benchmark run config %s", benchmark_config)
             instances[benchmark_config.g_uuid] = benchmark_config.instance.name
+            self.platform_map[benchmark_config.g_uuid] = benchmark_config.instance
             for k, p in benchmark_config.parameters.items():
                 parameters[k].append(p)
         if parameters:

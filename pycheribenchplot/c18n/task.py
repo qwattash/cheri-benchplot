@@ -11,11 +11,13 @@ import pandas as pd
 import seaborn as sns
 
 from ..core.analysis import AnalysisTask, BenchmarkAnalysisTask
-from ..core.artefact import (DataFrameTarget, DataRunAnalysisFileTarget, LocalFileTarget)
+from ..core.artefact import (DataFrameTarget, DataRunAnalysisFileTarget,
+                             LocalFileTarget)
 from ..core.config import Config, ConfigPath, validate_path_exists
 from ..core.pandas_util import generalized_xs
 from ..core.plot import PlotTarget, PlotTask, new_figure
 from ..core.task import DataGenTask, dependency, output
+from .gui import C18NTraceInspector
 from .model import C18NDomainTransitionTraceModel
 
 
@@ -31,6 +33,8 @@ class TraceImportConfig(Config):
 class PrettifyTraceConfig(Config):
     #: Compress the trace output
     compress_output: bool = True
+    #: Do not generate the text file, only useful for GUI output
+    skip_file_output: bool = False
 
 
 @dataclass
@@ -213,8 +217,8 @@ class C18NTransitionGraph(PlotTask):
             if name == "c":
                 name = "c.so"
             return name
-
         df["compartment"] = df["compartment"].map(simplify_name)
+
 
         if self.config.drop_redundant:
             to_drop = df["compartment"].isin(["c.so", "thr.so", "ld-elf-c18n.so"])
@@ -352,7 +356,7 @@ class C18NAnnotateTrace(BenchmarkAnalysisTask):
         self.trace_df.assign(df)
 
 
-class C18NTraceAnnotation(AnalysisTask):
+class C18NTraceAnnotation(AnalysisTask, C18NTraceInspector):
     """
     Schedule trace annotation for all traces
     """
