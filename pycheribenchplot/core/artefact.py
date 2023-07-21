@@ -410,6 +410,9 @@ class TargetLoadTaskMixin:
             # We could support empty data but there is no use case for it now.
             self.logger.error("No data has been loaded for %s", self)
             raise ValueError("Loader did not find any data")
+        if len(df_set) == 1:
+            # Skip concatenation. If the frame is large, time saving is significant
+            return df_set[0]
         return pd.concat(df_set)
 
 

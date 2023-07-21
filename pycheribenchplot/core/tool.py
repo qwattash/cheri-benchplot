@@ -4,9 +4,10 @@ import logging
 from json.decoder import JSONDecodeError
 from pathlib import Path
 from traceback import print_exception
-from typing import Type
+from typing import Callable, Type
 
 from marshmallow.exceptions import ValidationError
+from typing_extensions import Self
 
 from .config import BenchplotUserConfig, Config
 from .error import ToolArgparseError
@@ -24,8 +25,8 @@ class SubCommand:
     name: str = None
 
     def __init__(self):
-        #: Logger, initialized upon option registration
-        self.logger = None
+        #: Parent handler, initialized when the subcommand is added to the parent object
+        self.parent: Self | None = None
 
     def _parse_config(self, path: Path | None, config_model: Type[Config], use_default: bool = False) -> Config:
         """
@@ -57,16 +58,19 @@ class SubCommand:
         """
         session = Session.from_path(user_config, args.target)
         if not session and not missing_ok:
-            logger.error("Session %s does not exist", args.target)
+            self.logger.error("Session %s does not exist", args.target)
             raise FileNotFoundError(f"Session not found at {args.target}")
         return session
 
-    def register_options(self, logger, parser):
+    @property
+    def logger(self):
+        return self.parent.logger
+
+    def register_options(self, parser):
         """
         Register options for this command to the parser.
-        A logger is specified so that any sub-logger can be initialized here.
         """
-        self.logger = logger
+        pass
 
     def handle(self, user_config: BenchplotUserConfig, args: ap.Namespace):
         """
@@ -79,10 +83,12 @@ class CommandLineTool:
     """
     Helper class to manage command line parsing and benchplot initialization.
     """
-    def __init__(self, name):
+    def __init__(self, name: str):
         self.parser = ap.ArgumentParser(description=f"CHERI plot and data analysis tool {name}")
         #: User-friendly name for the tool help
         self.name = name
+        #: SubCommand that handles setup if no subcommand is registered or no subcommand is specified on the CLI.
+        self._default_handler = None
         #: Subcommands registered
         self._subcommands = {}
         #: Subcommands parser builder
@@ -135,13 +141,32 @@ class CommandLineTool:
     def _handle_command(self, user_config: BenchplotUserConfig, args: ap.Namespace):
         """
         Dispatch the command specified by the command line to the respective handler.
+
+        If no subcommand is specified, run the default handler
         """
-        try:
-            subcmd = self._subcommands[args.command]
-        except KeyError:
-            self.parser.print_help()
-            exit(1)
-        subcmd.handle(user_config, args)
+        if self._subcommands:
+            try:
+                subcmd = self._subcommands[args.command]
+            except KeyError:
+                if self._default_handler:
+                    self._default_handler.handle(user_config, args)
+                    return
+                else:
+                    self.parser.print_help()
+                    exit(1)
+            subcmd.handle(user_config, args)
+        else:
+            assert self._default_handler, "Default handler must be set if no subcommand is registered"
+            self._default_handler.handle(user_config, args)
+
+    def set_default_handler(self, cmd: SubCommand):
+        """
+        Set the default handler that will be called when no subcommand are registered
+        or no command is given on the command line.
+        """
+        cmd.parent = self
+        cmd.register_options(self.parser)
+        self._default_handler = cmd
 
     def add_subcommand(self, cmd: SubCommand):
         """
@@ -152,20 +177,18 @@ class CommandLineTool:
 
         assert self._subp is not None, "Subcommand missing name"
         assert cmd.name not in self._subcommands, "Duplicate subcommand"
+        cmd.parent = self
         self._subcommands[cmd.name] = cmd
 
         cmd_help = inspect.cleandoc(inspect.getdoc(cmd))
         sub = self._subp.add_parser(cmd.name, help=cmd_help)
-        cmd.register_options(self.logger, sub)
+        cmd.register_options(sub)
 
     def setup(self):
         """
         Parse arguments and setup the common options
         """
         args = self.parser.parse_args()
-        if args.command is None:
-            self.parser.print_help()
-            exit(1)
 
         self.logger = setup_logging(args.verbose, args.logfile)
         self.logger.debug("Loading user config %s", args.config)
@@ -193,7 +216,10 @@ class CommandLineTool:
             self.parser.print_help()
             exit(1)
         except Exception as ex:
-            self.logger.error("Failed to run command '%s'", args.command)
+            if self._subcommands:
+                self.logger.error("Failed to run command '%s'", args.command)
+            else:
+                self.logger.error("Failed to run %s", self.name)
             if args.verbose:
                 print_exception(ex)
             exit(1)

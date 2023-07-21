@@ -32,8 +32,8 @@ class SessionSubCommand(SubCommand):
                             nargs="?",
                             help="Path to the target session, defaults to the current working directory.")
 
-    def register_options(self, logger, parser):
-        super().register_options(logger, parser)
+    def register_options(self, parser):
+        super().register_options(parser)
 
         session_subparsers = parser.add_subparsers(help="Action", dest="session_action")
 
@@ -88,7 +88,7 @@ class SessionSubCommand(SubCommand):
             session.delete()
             session = Session.make_new(user_config, config, args.target)
         else:
-            logger.error("Session %s already exists", args.target)
+            self.logger.error("Session %s already exists", args.target)
             raise FileExistsError(f"Session {args.target} already exists")
 
     def handle_run(self, user_config, args):
@@ -116,8 +116,8 @@ class SessionSubCommand(SubCommand):
             for task in args.task:
                 analysis_config.tasks.append(TaskTargetConfig(handler=task))
         if not analysis_config.tasks:
-            logger.error("Invalid analysis configuration, one of the -a or "
-                         "-t options must be used")
+            self.logger.error("Invalid analysis configuration, one of the -a or "
+                              "-t options must be used")
             raise RuntimeError("Malformed configuration")
         session.analyse(analysis_config)
 
@@ -139,8 +139,8 @@ class TaskInfoSubCommand(SubCommand):
     """
     name = "info"
 
-    def register_options(self, logger, parser):
-        super().register_options(logger, parser)
+    def register_options(self, parser):
+        super().register_options(parser)
 
         parser.add_argument("what",
                             choices=["session", "task", "tasks", "generators"],

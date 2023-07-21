@@ -487,7 +487,8 @@ class InstanceConfig(TemplateConfig):
     def __post_init__(self):
         super().__post_init__()
         if self.name is None:
-            self.name = f"{self.platform}-{self.cheri_target}-{self.kernelabi}-{self.kernel}"
+            self.name = (f"{self.platform} UserABI:{self.cheri_target} "
+                         "KernABI:{self.kernelabi} KernConf:{self.kernel}")
 
     def __str__(self):
         return f"{self.name}"

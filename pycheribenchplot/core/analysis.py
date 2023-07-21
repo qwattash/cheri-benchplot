@@ -38,6 +38,9 @@ class BenchmarkAnalysisTask(AnalysisTask):
     Base class for analysis tasks that operate on a single benchmark context.
     These generally used to perform per-benchmark operations such as loading
     benchmark output data, pre-processing and preliminary aggregation.
+
+    XXX These tasks must be scheduled by a session-wide :class:`AnalysisTask` as currently the
+    session analysis system is not smart enough to create multiple of these tasks.
     """
     task_namespace = "analysis.benchmark"
 
