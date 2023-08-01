@@ -1,34 +1,27 @@
 
-#include <boost/python.hpp>
-#include <boost/python/register_ptr_to_python.hpp>
-#include <boost/python/suite/indexing/map_indexing_suite.hpp>
+#include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 
 #include "dwarf.h"
 
-using namespace boost::python;
+namespace py = pybind11;
 using namespace cheri_benchplot;
 
-BOOST_PYTHON_MODULE(pydwarf)
+PYBIND11_MODULE(pydwarf, m)
 {
   // Expose the main interface class
-  class_<DWARFHelper, boost::noncopyable>("DWARFHelper", init<std::string>())
-      .def("collect_typeinfo", &DWARFHelper::collectTypeInfo);
+  py::class_<DWARFHelper>(m, "DWARFHelper")
+      .def(py::init<std::string>())
+      .def("collect_type_info", &DWARFHelper::collectTypeInfo);
 
-  // Helper to wrap string => type info map
-  class_<OwnedTypeInfo::TypeInfoByName>("PyTypeInfoByName")
-      .def(map_indexing_suite<OwnedTypeInfo::TypeInfoByName>());
+  // Container that exposes collected type information for a dwarf object file.
+  py::class_<TypeInfoContainer>(m, "TypeInfoContainer")
+      .def("find_composite", &TypeInfoContainer::findComposite)
+      .def("iter_composite", [](const TypeInfoContainer &Ref) {
+        return py::make_iterator(Ref.beginComposite(), Ref.endComposite());
+      }, py::keep_alive<0, 1>());
 
-  // Helper to wrap offset => type info map
-  class_<OwnedTypeInfo::TypeInfoByOffset>("PyTypeInfoByOffset")
-      .def(map_indexing_suite<OwnedTypeInfo::TypeInfoByOffset>());
-
-  class_<OwnedTypeInfo>("OwnedTypeInfo")
-      .def("get_composite_types", &OwnedTypeInfo::getCompositeTypeInfo,
-           return_value_policy<copy_const_reference>())
-      .def("get_all_types", &OwnedTypeInfo::getAllTypeInfo,
-           return_value_policy<copy_const_reference>());
-
-  class_<TypeInfo, std::shared_ptr<TypeInfo>>("TypeInfo")
+  py::class_<TypeInfo>(m, "TypeInfo")
       .def_readonly("file", &TypeInfo::File)
       .def_readonly("line", &TypeInfo::Line)
       .def_readonly("size", &TypeInfo::Size)
@@ -38,7 +31,7 @@ BOOST_PYTHON_MODULE(pydwarf)
       .def_readonly("layout", &TypeInfo::Layout)
       .def_readonly("aliases", &TypeInfo::AliasNames);
 
-  class_<Member>("Member")
+  py::class_<Member>(m, "Member")
       .def_readonly("name", &Member::Name)
       .def_readonly("offset", &Member::Offset)
       .def_readonly("size", &Member::Size)

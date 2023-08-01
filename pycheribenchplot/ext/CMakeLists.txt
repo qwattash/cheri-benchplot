@@ -26,11 +26,12 @@ llvm_map_components_to_libnames(llvm_libs
   Support)
 separate_arguments(LLVM_DEFINITIONS_LIST NATIVE_COMMAND ${LLVM_DEFINITIONS})
 
-find_package(Boost REQUIRED CONFIG COMPONENTS python)
+# find_package(Boost REQUIRED CONFIG COMPONENTS python)
+find_package(pybind11 CONFIG REQUIRED)
 find_package(Python3 REQUIRED COMPONENTS Development)
-message(STATUS "Found Boost ${Boost_VERSION}")
-message(STATUS "Using Boost headers ${Boost_INCLUDE_DIRS}")
-message(STATUS "Using Boost libraries ${Boost_LIBRARY_DIRS}")
+message(STATUS "Found PyBind11 ${pybind11_VERSION}")
+message(STATUS "Using PyBind11 headers ${pybind11_INCLUDE_DIRS}")
+message(STATUS "Using PyBind11 defs ${pybind11_DEFINITIONS}")
 message(STATUS "Found Python ${Python3_VERSION}")
 message(STATUS "Using Python headers ${Python3_INCLUDE_DIRS}")
 
@@ -45,13 +46,10 @@ target_link_libraries(dwarf_lib ${llvm_libs})
 target_compile_options(dwarf_lib PRIVATE "-fPIC" "-fno-rtti" "-fno-exceptions")
 
 add_library(pydwarf MODULE "pydwarf.cc")
-target_include_directories(pydwarf PUBLIC ${Boost_INCLUDE_DIR} ${Python3_INCLUDE_DIRS})
-target_link_directories(pydwarf PUBLIC ${Boost_LIBRARY_DIR_RELEASE} ${Python3_LIBRARIES})
-target_link_libraries(pydwarf PRIVATE dwarf_lib Boost::python)
-
-add_executable(dwarftest "test.cc")
-target_link_libraries(dwarftest dwarf_lib)
-
+target_include_directories(pydwarf PUBLIC ${pybind11_INCLUDE_DIRS} ${Python3_INCLUDE_DIRS})
+target_compile_definitions(pydwarf PUBLIC ${pybind11_DEFINITIONS})
+target_link_directories(pydwarf PUBLIC ${Python3_LIBRARIES})
+target_link_libraries(pydwarf PRIVATE dwarf_lib)
 
 install(TARGETS pydwarf
   LIBRARY

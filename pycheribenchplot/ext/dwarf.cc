@@ -132,11 +132,11 @@ llvm::Expected<bool> visitDie(V &Visitor, llvm::DWARFDie &Die) {
 #undef HANDLE_DW_TAG
 }
 
-class TypeLayoutVisitor : public DieVisitorBase {
+class TypeLayoutVisitor : public DieVisitorBase, public TypeInfoContainer {
 public:
   using TypeInfoPtr = std::shared_ptr<TypeInfo>;
 
-  TypeLayoutVisitor(llvm::DWARFContext &DICtx) : DieVisitorBase(DICtx) {
+  TypeLayoutVisitor(llvm::DWARFContext &DICtx) : DieVisitorBase(DICtx), TypeInfoContainer() {
     const llvm::DWARFObject &DWObj = DICtx.getDWARFObj();
     ArchIsLittleEndian = DWObj.isLittleEndian();
 
@@ -164,9 +164,9 @@ public:
   virtual llvm::Expected<bool> visit_union_type(llvm::DWARFDie &Die) override;
   virtual llvm::Expected<bool> visit_typedef(llvm::DWARFDie &Die) override;
 
-  OwnedTypeInfo toOwnedInfo() {
-    return OwnedTypeInfo(std::move(CompositeTypeInfoByName), std::move(TypeInfoByOffset));
-  }
+  virtual std::optional<TypeInfo> findComposite(std::string name) const override;
+  virtual Iterator beginComposite() const override;
+  virtual Iterator endComposite() const override;
 
 private:
   llvm::Expected<bool> visitComposite(const llvm::DWARFDie &Die);
@@ -454,10 +454,11 @@ TypeLayoutVisitor::visitComposite(const llvm::DWARFDie &Die) {
   }
   std::shared_ptr<TypeInfo> TI = *TIOrErr;
 
-  if (CompositeTypeInfoByName.find(TI->TypeName) !=
-      CompositeTypeInfoByName.end()) {
-    return makeError(
-        format("Duplicate definition for %s", TI->TypeName.c_str()));
+  auto Item = CompositeTypeInfoByName.find(TI->TypeName);
+  if (Item != CompositeTypeInfoByName.end()) {
+    if (TI->File != Item->second->File || TI->Line != Item->second->Line) {
+      return makeError(format("Duplicate definition for %s", TI->TypeName.c_str()));
+    }
   }
   CompositeTypeInfoByName[TI->TypeName] = TI;
 
@@ -505,6 +506,22 @@ llvm::Expected<bool> TypeLayoutVisitor::visit_typedef(llvm::DWARFDie &Die) {
   return false;
 }
 
+std::optional<TypeInfo> TypeLayoutVisitor::findComposite(std::string name) const {
+  auto Item = CompositeTypeInfoByName.find(name);
+  if (Item != CompositeTypeInfoByName.end()) {
+    return *(Item->second);
+  }
+  return std::nullopt;
+}
+
+TypeLayoutVisitor::Iterator TypeLayoutVisitor::beginComposite() const {
+  return Iterator(CompositeTypeInfoByName.begin());
+}
+
+TypeLayoutVisitor::Iterator TypeLayoutVisitor::endComposite() const {
+  return Iterator(CompositeTypeInfoByName.end());
+}
+
 } // namespace
 
 namespace cheri_benchplot {
@@ -515,7 +532,7 @@ public:
 
   // int getABIPointerSize() const;
   // int getABICapabilitySize() const;
-  OwnedTypeInfo collectTypeInfo();
+  std::unique_ptr<TypeInfoContainer> collectTypeInfo();
 
 private:
   InfoOrError makeTypeInfo(llvm::DWARFDie &Die);
@@ -553,9 +570,9 @@ DWARFHelper::HelperImpl::HelperImpl(std::string Path) : Path(Path) {
          "Unsupported DWARF version, use 4 or above");
 }
 
-OwnedTypeInfo DWARFHelper::HelperImpl::collectTypeInfo() {
+std::unique_ptr<TypeInfoContainer> DWARFHelper::HelperImpl::collectTypeInfo() {
 
-  TypeLayoutVisitor V(*DICtx);
+  auto V = std::make_unique<TypeLayoutVisitor>(*DICtx);
 
   for (auto &Unit : DICtx->info_section_units()) {
 
@@ -566,7 +583,7 @@ OwnedTypeInfo DWARFHelper::HelperImpl::collectTypeInfo() {
       assert(Unit->getVersion() >= 4 && "Unsupported DWARF version");
 
       llvm::DWARFDie CUDie = Unit->getUnitDIE(false);
-      auto Result = V.beginUnit(CUDie);
+      auto Result = V->beginUnit(CUDie);
       if (auto E = Result.takeError()) {
         llvm::errs() << "Can not visit Unit" << E << "\n";
         llvm::consumeError(std::move(E));
@@ -576,7 +593,7 @@ OwnedTypeInfo DWARFHelper::HelperImpl::collectTypeInfo() {
       // Iterate over DIEs in the unit
       llvm::DWARFDie Child = CUDie.getFirstChild();
       while (Child) {
-        auto StopOrErr = visitDie(V, Child);
+        auto StopOrErr = visitDie(*V, Child);
 
         if (auto E = StopOrErr.takeError()) {
           llvm::errs() << "Can not visit DIE: " << E << "\n";
@@ -589,14 +606,17 @@ OwnedTypeInfo DWARFHelper::HelperImpl::collectTypeInfo() {
     }
   }
 
-  return std::move(V.toOwnedInfo());
+  return V;
 }
 
 DWARFHelper::DWARFHelper(std::string Path)
     : Impl{std::make_unique<DWARFHelper::HelperImpl>(Path)} {}
-DWARFHelper::~DWARFHelper() = default;
-OwnedTypeInfo DWARFHelper::collectTypeInfo() { return Impl->collectTypeInfo(); }
 
+DWARFHelper::~DWARFHelper() = default;
+
+std::unique_ptr<TypeInfoContainer> DWARFHelper::collectTypeInfo() {
+  return Impl->collectTypeInfo();
+}
 
 TypeInfoFlags operator|(TypeInfoFlags &L, const TypeInfoFlags &R) {
   return static_cast<TypeInfoFlags>(static_cast<int>(L) | static_cast<int>(R));

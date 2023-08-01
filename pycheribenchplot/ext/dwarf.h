@@ -2,8 +2,11 @@
 
 #pragma once
 
+#include <cstddef>
+#include <iterator>
 #include <map>
 #include <memory>
+#include <optional>
 #include <ostream>
 #include <set>
 #include <string>
@@ -12,6 +15,7 @@
 namespace cheri_benchplot {
 
 enum TypeInfoFlags {
+  kNone = 0,
   kIsAnonymous = 1,
   kIsStruct = 1 << 1,
   kIsUnion = 1 << 2,
@@ -58,26 +62,45 @@ struct TypeInfo {
   TypeInfo() = default;
 };
 
-class OwnedTypeInfo {
- public:
-  using TypeInfoByName = std::map<std::string, std::shared_ptr<TypeInfo>>;
-  using TypeInfoByOffset = std::map<unsigned long, std::shared_ptr<TypeInfo>>;
+struct TypeInfoContainer {
+  struct Iterator {
+    using iterator_category = std::forward_iterator_tag;
+    using difference_type = std::ptrdiff_t;
+    using value_type = TypeInfo;
+    using pointer = TypeInfo*;
+    using reference = TypeInfo&;
 
-  OwnedTypeInfo() = default;
-  OwnedTypeInfo(TypeInfoByName &&CompositeTI, TypeInfoByOffset &&AllTI)
-      : CompositeTypeInfo(CompositeTI), AllTypeInfo(AllTI) {}
+    explicit Iterator(std::map<std::string, std::shared_ptr<TypeInfo>>::const_iterator &&Iter)
+        : Inner(Iter) {}
 
-  const TypeInfoByName& getCompositeTypeInfo() const {
-    return CompositeTypeInfo;
-  }
+    Iterator& operator++() {
+      ++Inner;
+      return *this;
+    }
+    Iterator operator++(int) {
+      Iterator Retval = *this;
+      ++(*this);
+      return Retval;
+    }
+    bool operator==(Iterator Other) const {
+      return Inner == Other.Inner;
+    }
+    bool operator!=(Iterator Other) const {
+      return Inner != Other.Inner;
+    }
+    reference operator*() const {
+      return *(Inner->second);
+    }
+   private:
+    std::map<std::string, std::shared_ptr<TypeInfo>>::const_iterator Inner;
+  };
 
-  const TypeInfoByOffset& getAllTypeInfo() const {
-    return AllTypeInfo;
-  }
+  TypeInfoContainer() = default;
+  virtual ~TypeInfoContainer() = default;
 
- private:
-  TypeInfoByName CompositeTypeInfo;
-  TypeInfoByOffset AllTypeInfo;
+  virtual std::optional<TypeInfo> findComposite(std::string name) const = 0;
+  virtual Iterator beginComposite() const = 0;
+  virtual Iterator endComposite() const = 0;
 };
 
 /// Top level DWARF parser
@@ -90,7 +113,7 @@ public:
 
   // int getABIPointerSize() const;
   // int getABICapabilitySize() const;
-  OwnedTypeInfo collectTypeInfo();
+  std::unique_ptr<TypeInfoContainer> collectTypeInfo();
 
 private:
   std::unique_ptr<HelperImpl> Impl;
