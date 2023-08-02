@@ -54,3 +54,12 @@ target_link_libraries(pydwarf PRIVATE dwarf_lib)
 install(TARGETS pydwarf
   LIBRARY
   DESTINATION "lib")
+
+add_library(pychericap MODULE "pychericap.cc")
+target_include_directories(pychericap PUBLIC "${PROJECT_SOURCE_DIR}/cheri-compressed-cap")
+target_include_directories(pychericap PUBLIC ${pybind11_INCLUDE_DIRS} ${Python3_INCLUDE_DIRS})
+target_compile_definitions(pychericap PUBLIC ${pybind11_DEFINITIONS})
+target_link_directories(pychericap PUBLIC ${Python3_LIBRARIES})
+install(TARGETS pychericap
+  LIBRARY
+  DESTINATION "lib")

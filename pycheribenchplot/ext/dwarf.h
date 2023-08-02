@@ -4,7 +4,7 @@
 
 #include <cstddef>
 #include <iterator>
-#include <map>
+#include <unordered_map>
 #include <memory>
 #include <optional>
 #include <ostream>
@@ -22,6 +22,7 @@ enum TypeInfoFlags {
   kIsPtr = 1 << 3,
   kIsFnPtr = 1 << 4,
   kIsArray = 1 << 5,
+  kIsConst = 1 << 6
 };
 
 TypeInfoFlags operator|(TypeInfoFlags &L, const TypeInfoFlags &R);
@@ -32,6 +33,7 @@ struct TypeInfo;
 
 struct Member {
   std::string Name;
+  unsigned long Line;
   unsigned long Offset;
   unsigned long Size;
   unsigned long BitOffset;
@@ -40,6 +42,8 @@ struct Member {
 };
 
 struct TypeInfo {
+  // Unique identifier for the typeinfo, this is the offset in the debug section.
+  unsigned long Handle;
   // File where the type is defined
   std::string File;
   // Line where the type is defined
@@ -63,6 +67,8 @@ struct TypeInfo {
 };
 
 struct TypeInfoContainer {
+  using CompositeTypeMap = std::unordered_map<unsigned long, std::shared_ptr<TypeInfo>>;
+
   struct Iterator {
     using iterator_category = std::forward_iterator_tag;
     using difference_type = std::ptrdiff_t;
@@ -70,7 +76,7 @@ struct TypeInfoContainer {
     using pointer = TypeInfo*;
     using reference = TypeInfo&;
 
-    explicit Iterator(std::map<std::string, std::shared_ptr<TypeInfo>>::const_iterator &&Iter)
+    explicit Iterator(CompositeTypeMap::const_iterator &&Iter)
         : Inner(Iter) {}
 
     Iterator& operator++() {
@@ -92,13 +98,13 @@ struct TypeInfoContainer {
       return *(Inner->second);
     }
    private:
-    std::map<std::string, std::shared_ptr<TypeInfo>>::const_iterator Inner;
+    CompositeTypeMap::const_iterator Inner;
   };
 
   TypeInfoContainer() = default;
   virtual ~TypeInfoContainer() = default;
 
-  virtual std::optional<TypeInfo> findComposite(std::string name) const = 0;
+  virtual std::optional<TypeInfo> findComposite(unsigned long Handle) const = 0;
   virtual Iterator beginComposite() const = 0;
   virtual Iterator endComposite() const = 0;
 };

@@ -1,9 +1,7 @@
-
+#include <iostream>
 #include <cassert>
 #include <cstdint>
-#include <cstdio>
 #include <iterator>
-#include <map>
 #include <mutex>
 #include <optional>
 #include <string_view>
@@ -164,7 +162,7 @@ public:
   virtual llvm::Expected<bool> visit_union_type(llvm::DWARFDie &Die) override;
   virtual llvm::Expected<bool> visit_typedef(llvm::DWARFDie &Die) override;
 
-  virtual std::optional<TypeInfo> findComposite(std::string name) const override;
+  virtual std::optional<TypeInfo> findComposite(unsigned long Handle) const override;
   virtual Iterator beginComposite() const override;
   virtual Iterator endComposite() const override;
 
@@ -182,9 +180,9 @@ private:
   bool ArchIsLittleEndian;
   unsigned int ArchPointerSize;
   // Collect type information for composite types
-  std::map<std::string, TypeInfoPtr> CompositeTypeInfoByName;
+  std::unordered_map<unsigned long, TypeInfoPtr> CompositeTypeInfo; 
   // Collect all type information by DIE offset to avoid duplication
-  std::map<unsigned long, TypeInfoPtr> TypeInfoByOffset;
+  std::unordered_map<unsigned long, TypeInfoPtr> TypeInfoByOffset;
 };
 
 /*
@@ -200,8 +198,9 @@ TypeLayoutVisitor::makeTypeInfo(const llvm::DWARFDie &Die, bool Nested) {
   }
   // We don't have one cached, so we have to make a new one
   auto TI = std::make_shared<TypeInfo>();
+  TI->Handle = Die.getOffset();
   // Prevent re-entering for the same Die
-  TypeInfoByOffset[Die.getOffset()] = TI;
+  TypeInfoByOffset[TI->Handle] = TI;
 
   std::vector<llvm::DWARFDie> Chain;
   llvm::DWARFDie Next = Die;
@@ -249,11 +248,13 @@ TypeLayoutVisitor::makeTypeInfo(const llvm::DWARFDie &Die, bool Nested) {
       TI->Size = dwarf::toUnsigned(D.find(dwarf::DW_AT_byte_size),
                                    ArchPointerSize);
       TI->TypeName += " *";
-      TI->Flags |= kIsPtr;
+      // Note, reset the flags because this is now a pointer
+      TI->Flags = kIsPtr;
       break;
     }
     case dwarf::DW_TAG_const_type: {
       TI->TypeName += " const";
+      TI->Flags |= kIsConst;
       break;
     }
     case dwarf::DW_TAG_volatile_type: {
@@ -273,6 +274,7 @@ TypeLayoutVisitor::makeTypeInfo(const llvm::DWARFDie &Die, bool Nested) {
         return makeError("Array type without subrange");
       }
       auto Count = SubrangeDie.find(dwarf::DW_AT_count);
+      auto UpperBound = SubrangeDie.find(dwarf::DW_AT_upper_bound);
       unsigned long NItems = 0;
       if (Count) {
         auto UnsignedCount = dwarf::toUnsigned(*Count);
@@ -280,8 +282,15 @@ TypeLayoutVisitor::makeTypeInfo(const llvm::DWARFDie &Die, bool Nested) {
           return makeError("Unexpected item count type");
         }
         NItems = *UnsignedCount;
+      } else if (UpperBound) {
+        auto UnsignedCount = dwarf::toUnsigned(*UpperBound);
+        if (!UnsignedCount) {
+          return makeError("Unexpected array upper bound type");
+        }
+        NItems = *UnsignedCount + 1;
       }
-      TI->TypeName += format("[%ld]", NItems);
+      TI->TypeName += format(" [%ld]", NItems);
+      TI->ArrayItems = NItems;
       TI->Size = NItems ? TI->Size * NItems : 1;
       TI->Flags |= kIsArray;
       break;
@@ -348,8 +357,8 @@ TypeLayoutVisitor::makeCompositeTypeInfo(const char *Prefix,
   TI->File = Die.getDeclFile(FileLineInfoKind::AbsoluteFilePath);
   TI->Line = Die.getDeclLine();
 
-  TI->TypeName = extractNameOrAnon(Die);
-  TI->TypeName.insert(0, Prefix);
+  TI->BaseName = extractNameOrAnon(Die);
+  TI->TypeName = Prefix + TI->BaseName;
   if (!Die.find(dwarf::DW_AT_name).hasValue()) {
     TI->Flags |= kIsAnonymous;
   }
@@ -375,9 +384,8 @@ TypeLayoutVisitor::makeCompositeTypeInfo(const char *Prefix,
           .Name = dwarf::toString(Child.find(dwarf::DW_AT_name),
                                   DefaultName.c_str()),
           .Offset = Offset,
-          .Size = dwarf::toUnsigned(Child.find(dwarf::DW_AT_byte_size), 0),
-          .BitOffset = BitOffset,
-          .BitSize = dwarf::toUnsigned(Child.find(dwarf::DW_AT_bit_size), 0)};
+          .BitOffset = BitOffset
+      };
 
       auto MType = Child.getAttributeValueAsReferencedDie(dwarf::DW_AT_type)
                        .resolveTypeUnitReference();
@@ -386,6 +394,19 @@ TypeLayoutVisitor::makeCompositeTypeInfo(const char *Prefix,
         return E;
       }
       MI.Type = *MemberInfoOrErr;
+
+      auto ByteSize = Child.find(dwarf::DW_AT_byte_size);
+      if (ByteSize) {
+        MI.Size = dwarf::toUnsigned(ByteSize, 0);
+      } else {
+        MI.Size = (*MemberInfoOrErr)->Size;
+      }
+      auto BitSize = Child.find(dwarf::DW_AT_bit_size);
+      if (BitSize) {
+        MI.BitSize = dwarf::toUnsigned(BitSize, 0);
+      } else {
+        MI.BitSize = MI.Size * 8;
+      }
 
       TI->Layout.push_back(MI);
     }
@@ -454,13 +475,11 @@ TypeLayoutVisitor::visitComposite(const llvm::DWARFDie &Die) {
   }
   std::shared_ptr<TypeInfo> TI = *TIOrErr;
 
-  auto Item = CompositeTypeInfoByName.find(TI->TypeName);
-  if (Item != CompositeTypeInfoByName.end()) {
-    if (TI->File != Item->second->File || TI->Line != Item->second->Line) {
-      return makeError(format("Duplicate definition for %s", TI->TypeName.c_str()));
-    }
+  // Skip duplicate definitions
+  auto Item = CompositeTypeInfo.find(TI->Handle);
+  if (Item == CompositeTypeInfo.end()) {
+    CompositeTypeInfo[TI->Handle] = TI;
   }
-  CompositeTypeInfoByName[TI->TypeName] = TI;
 
   return false;
 }
@@ -494,32 +513,29 @@ llvm::Expected<bool> TypeLayoutVisitor::visit_typedef(llvm::DWARFDie &Die) {
 
   /*
    * If the typedef is aliasing a structure/union name,
-   * we create another entry in the CompositeTypeInfoByName map.
+   * we create another entry in the CompositeTypeInfo map.
    * Otherwise, just ignore the typedef as it is not interesting here.
    */
   std::shared_ptr<TypeInfo> TI = *TIOrErr;
-  // if ((TI->Flags & kIsStruct) || (TI->Flags & kIsUnion)) {
-  //   CompositeTypeInfoByName[*Name] = TI;
-  // }
   TI->AliasNames.insert(*Name);
 
   return false;
 }
 
-std::optional<TypeInfo> TypeLayoutVisitor::findComposite(std::string name) const {
-  auto Item = CompositeTypeInfoByName.find(name);
-  if (Item != CompositeTypeInfoByName.end()) {
+std::optional<TypeInfo> TypeLayoutVisitor::findComposite(unsigned long Handle) const {
+  auto Item = CompositeTypeInfo.find(Handle);
+  if (Item != CompositeTypeInfo.end()) {
     return *(Item->second);
   }
   return std::nullopt;
 }
 
 TypeLayoutVisitor::Iterator TypeLayoutVisitor::beginComposite() const {
-  return Iterator(CompositeTypeInfoByName.begin());
+  return Iterator(CompositeTypeInfo.begin());
 }
 
 TypeLayoutVisitor::Iterator TypeLayoutVisitor::endComposite() const {
-  return Iterator(CompositeTypeInfoByName.end());
+  return Iterator(CompositeTypeInfo.end());
 }
 
 } // namespace
@@ -661,8 +677,9 @@ std::ostream &operator<<(std::ostream &OS,
 
 std::ostream &operator<<(std::ostream &OS,
                               const TypeInfo &TI) {
-  OS << TI.TypeName << " at " << TI.File << ":" << TI.Line
-     << " totalSize=" << TI.Size << "\n";
+  OS << TI.TypeName << " unqualified='" << TI.BaseName << "'" <<
+      " at " << TI.File << ":" << TI.Line <<
+      " totalSize=" << TI.Size << "\n";
   if (!TI.AliasNames.empty()) {
     OS << "aka: ";
     for (auto &Name : TI.AliasNames) {
