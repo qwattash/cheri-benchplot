@@ -1,9 +1,11 @@
+from collections import namedtuple
 from enum import Enum
 
 import pandas as pd
 from pandera import Field, SchemaModel, check, dataframe_check
 from pandera.typing import Index, Series
 
+from ..core.elf.dwarf import DWARFStructLayoutModel
 from ..core.model import DataModel, GlobalModel
 
 
@@ -39,19 +41,40 @@ class SubobjectBoundsUnionModel(GlobalModel):
     alignment_bits: Series[pd.Int64Dtype] = Field(nullable=True)
 
 
-class ImpreciseSubobjectModel(DataModel):
+class ImpreciseSubobjectInfoModel(DataModel):
     """
-    Representation of the structure fields with imprecise subobject bounds.
+    Concise information about structures with imprecise sub-object bounds.
 
-    These are extracted from clang-tidy output into this format.
+    This is used to generate more detailed information about the members layout.
     """
-    path: Index[str]
+    type_id: Index[int]
+    file: Index[str]
     line: Index[int]
-    column: Index[int]
-    field: Index[str]
-    field_type: Index[str]
-    container: Index[str]
-    offset: Series[pd.Int64Dtype] = Field(nullable=True)
-    size: Series[pd.Int64Dtype] = Field(nullable=True)
-    aligned_offset: Series[pd.Int64Dtype] = Field(nullable=True)
-    aligned_top: Series[pd.Int64Dtype] = Field(nullable=True)
+    type_name: Index[str]
+    member_offset: Index[int]
+
+    member_name: Series[str]
+    member_aligned_base: Series[int]
+    member_aligned_top: Series[int]
+
+
+#: Helper to keep records for the ImpreciseSubobjectInfoModel consistent
+ImpreciseSubobjectInfoModelRecord = namedtuple("ImpreciseSubobjectInfoModelRecord", [
+    "type_id", "file", "line", "type_name", "member_offset", "member_name", "member_aligned_base", "member_aligned_top"
+])
+
+
+class ImpreciseSubobjectLayoutModel(DWARFStructLayoutModel):
+    """
+    Augment the structure layout with capability aliasing information
+    """
+    #: Identifies a struct member as being the owner of an alias group.
+    alias_group_id: Series[pd.Int64Dtype] = Field(nullable=True)
+    #: Identifies the aligned base of a member that owns an alias group.
+    alias_aligned_base: Series[pd.Int64Dtype] = Field(nullable=True)
+    #: Idnetifies the aligned top of a member that owns an alias group.
+    alias_aligned_top: Series[pd.Int64Dtype] = Field(nullable=True)
+    #: Describe groups of fields that are aliased with the same imprecise capability.
+    #: Alias groups are incrementally numbered and are unique for each type_id,
+    #: i.e. for each root structure type.
+    alias_groups: Series[list] = Field(nullable=True)

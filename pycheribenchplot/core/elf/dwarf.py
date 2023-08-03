@@ -721,43 +721,6 @@ class _DWARFInfoSource:
 ################################### OLD STUFF ABOVE
 
 
-class DWARFTypeInfoModel(DataModel):
-    """
-    Describe a dataframe holding type information for a binary belonging to a benchmark run.
-
-    Structure members are unrolled into the member_name and member_offset fields.
-    """
-    #: Path to the file where the type is defined, relative to source root
-    src_file: Index[str]
-    #: Line where the type is defined
-    src_line: Index[int]
-    #: Line of the member definition
-    member_line: Index[int]
-    #: Offset of the member in the structure
-    member_offset: Index[int]
-
-    #: Total size of the type, variable-length structures only have the minimum size.
-    size: Series[int]
-    #: Size of the member, excluding any external padding
-    member_size: Series[int]
-    #: Size of the type of the member, this can be different from memebr_size, e.g. arrays.
-    member_type_size: Series[int]
-    #: Name of the base type without any CV qualifiers or pointer/reference.
-    base_name: Series[str]
-    #: Full type name
-    type_name: Series[str]
-    #: Name of the structure/union member.
-    member_name: Series[str]
-    #: Full name of the type of the member (e.g. struct foo*)
-    member_type_name: Series[str]
-    #: Member information flags
-    member_flags: Series[int]
-    #: Number of array items
-    member_array_items: Series[int]
-    #: Any typedef of the type, mostly used to record different typedefs.
-    aliases: Series[list[str]]
-
-
 class DWARFStructLayoutModel(DataModel):
     """
     Contains a dump of structure and union data layouts.
@@ -789,6 +752,56 @@ DWARFStructLayoutRecord = namedtuple("DWARFStructLayoutRecord", [
 ])
 
 
+class NestedMemberVisitor:
+    """
+    Abstraction for an algorithm that visits nested members of a DWARF structure layout.
+
+    This can be used for other algorithms that rely on the
+    DWARFInfoSource.parse_struct_layout().
+    """
+    def __init__(self, root: pydwarf.TypeInfo):
+        self.root = root
+
+    def visit_member(self, parent: pydwarf.TypeInfo, member: pydwarf.Member, prefix: str, offset: int):
+        pass
+
+    def visit_empty_struct(self, parent: pydwarf.TypeInfo, prefix: str, offset: int):
+        pass
+
+
+class MemberLayoutVisitor(NestedMemberVisitor):
+    def __init__(self, root):
+        super().__init__(root)
+        #: Accumulate DWARFStructLayoutRecord tuples
+        self.records: list[DWARFStructLayoutRecord] = []
+
+    def visit_member(self, parent, member, prefix, offset):
+        record = DWARFStructLayoutRecord(type_id=self.root.handle,
+                                         base_name=self.root.base_name,
+                                         member_name=prefix + member.name,
+                                         member_offset=offset + member.offset,
+                                         file=self.root.file,
+                                         line=self.root.line,
+                                         size=self.root.size,
+                                         type_name=self.root.type_name,
+                                         member_size=member.size,
+                                         member_type_name=member.type_info.type_name)
+        self.records.append(record)
+
+    def visit_empty_struct(self, parent, prefix, offset):
+        record = DWARFStructLayoutRecord(type_id=self.root.handle,
+                                         base_name=self.root.base_name,
+                                         member_name=prefix + "<empty>",
+                                         member_offset=offset,
+                                         file=self.root.file,
+                                         line=self.root.line,
+                                         size=self.root.size,
+                                         type_name=self.root.type_name,
+                                         member_size=np.nan,
+                                         member_type_name=None)
+        self.records.append(record)
+
+
 class DWARFInfoSource:
     """
     Wrapper around the LLVM native dwarf extraction library.
@@ -800,51 +813,24 @@ class DWARFInfoSource:
         self._helper = pydwarf.DWARFHelper(str(path))
         self._arch_pointer_size = arch_pointer_size
 
-    def _parse_struct_layout_nested(self,
-                                    root: pydwarf.TypeInfo,
-                                    type_info: pydwarf.TypeInfo | None = None,
-                                    prefix: str = "",
-                                    offset: int = 0) -> list[DWARFStructLayoutRecord]:
+    def _do_visit_nested_layout(self, visitor: NestedMemberVisitor, curr: pydwarf.TypeInfo, prefix: str, offset: int):
         """
-        Extract all members from a given TypeInfo object, recursively handling any nested structure.
-
-        Note that the records returned by this function must be in the 
+        Visit nested members by linearizing the structure layout.
         """
-        if type_info is None:
-            type_info = root
-
         records = []
-        for member in type_info.layout:
-            if (member.type_info.flags & pydwarf.TypeInfoFlags.kIsStruct
-                    or member.type_info.flags & pydwarf.TypeInfoFlags.kIsUnion):
-                records += self._parse_struct_layout_nested(root, member.type_info, prefix + f"{member.name}.",
-                                                            offset + member.offset)
+        for member in curr.layout:
+            if (member.type_info.flags & (pydwarf.TypeInfoFlags.kIsStruct | pydwarf.TypeInfoFlags.kIsUnion)):
+                self._do_visit_nested_layout(visitor, member.type_info, prefix + f"{member.name}.",
+                                             offset + member.offset)
             else:
-                record = DWARFStructLayoutRecord(type_id=root.handle,
-                                                 base_name=root.base_name,
-                                                 member_name=prefix + member.name,
-                                                 member_offset=offset + member.offset,
-                                                 file=root.file,
-                                                 line=root.line,
-                                                 size=root.size,
-                                                 type_name=root.type_name,
-                                                 member_size=member.size,
-                                                 member_type_name=member.type_info.type_name)
-                records.append(record)
-        if len(type_info.layout) == 0:
-            # Special case for empty structures / unions. Always emit one entry with missing member name
-            record = DWARFStructLayoutRecord(type_id=root.handle,
-                                             base_name=root.base_name,
-                                             member_name=prefix + "<empty>",
-                                             member_offset=offset,
-                                             file=root.file,
-                                             line=root.line,
-                                             size=root.size,
-                                             type_name=root.type_name,
-                                             member_size=np.nan,
-                                             member_type_name=None)
-            records.append(record)
-        return records
+                visitor.visit_member(curr, member, prefix, offset)
+        if len(curr.layout) == 0:
+            # Special case for empty structures / unions.
+            # Always emit one entry with missing member name
+            visitor.visit_empty_struct(curr, prefix, offset)
+
+    def visit_nested_layout(self, visitor: NestedMemberVisitor):
+        self._do_visit_nested_layout(visitor, visitor.root, "", 0)
 
     def load_type_info(self) -> pydwarf.TypeInfoContainer:
         return self._helper.collect_type_info()
@@ -858,11 +844,14 @@ class DWARFInfoSource:
         """
         records = []
         if root:
-            records = self._parse_struct_layout_nested(root)
+            v = MemberLayoutVisitor(root)
+            self.visit_nested_layout(v)
+            records = v.records
         else:
             for type_info in container.iter_composite():
-                records += self._parse_struct_layout_nested(type_info)
-
+                v = MemberLayoutVisitor(type_info)
+                self.visit_nested_layout(v)
+                records += v.records
         df = pd.DataFrame.from_records(records, columns=DWARFStructLayoutRecord._fields)
         return df.set_index(["type_id", "base_name", "member_name", "member_offset"])
 

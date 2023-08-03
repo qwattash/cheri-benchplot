@@ -8,23 +8,70 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
-from ..compile_db import CheriBSDBuild
+from ..compile_db import (BuildConfig, Builder, CheriBSDBuild, CheriBSDBuildHelper)
 from ..core.analysis import AnalysisTask
 from ..core.artefact import (AnalysisFileTarget, DataFrameTarget, LocalFileTarget)
 from ..core.config import InstanceKernelABI
+from ..core.elf.dwarf import DWARFManager, NestedMemberVisitor
 from ..core.plot import PlotTarget, PlotTask, new_figure
-from ..core.task import dependency, output
+from ..core.task import DataGenTask, dependency, output
 from ..core.util import SubprocessHelper
-from .model import (ImpreciseSubobjectModel, SetboundsKind, SubobjectBoundsModel, SubobjectBoundsUnionModel)
+from ..ext import pychericap, pydwarf
+from .model import (ImpreciseSubobjectInfoModel, ImpreciseSubobjectInfoModelRecord, ImpreciseSubobjectLayoutModel,
+                    SetboundsKind, SubobjectBoundsModel, SubobjectBoundsUnionModel)
 
 
-class CheriBSDSubobjectStats(CheriBSDBuild):
+class CheriBSDSubobjectStats(DataGenTask):
     """
-    Extract sub-object bounds from the kernel build
+    Extract sub-object bounds from the kernel build.
+
+    When this generator is used, a cheribsd kernel is built for every
+    platform instance configuration in the pipeline.
+    The task will collect clang-generated sub-object bounds statistics.
+    Note that this relies on the cheribsd kernel configuration to instruct
+    the kernel build to emit sub-object bounds information.
+    This can be easily accomplished by adding the following line to the desired
+    kernel configuration:
+
+    .. code-block::
+
+        makeoptions     CHERI_SUBOBJECT_BOUNDS_STATS
+
+
+    Example configuration:
+
+    .. code-block:: json
+
+        {
+            "instance_config": {
+                "instances": [{
+                    "kernel": "KERNEL-CONFIG-WITH-SUBOBJ-STATS",
+                    "cheri_target": "riscv64-purecap",
+                    "kernelabi": "purecap"
+                }, {
+                    "kernel": "KERNEL-CONFIG-WITH-SUBOBJ-STATS",
+                    "cheri_target": "morello-purecap",
+                    "kernelabi": "purecap"
+                }]
+            },
+            "benchmark_config": [{
+                "name": "example",
+                "generators": [{ "handler": "kernel-static.cheribsd-subobject-stats" }]
+            }]
+        }
+
     """
     public = True
     task_namespace = "kernel-static"
-    task_name = "cheribsd-subobject-bounds-stats"
+    task_name = "cheribsd-subobject-stats"
+    task_config_class = BuildConfig
+
+    def __init__(self, benchmark, script, task_config):
+        if not task_config.target:
+            task_config.target = "cheribsd"
+            task_config.builder = Builder.CheriBuild
+        assert task_config.target == "cheribsd"
+        super().__init__(benchmark, script, task_config)
 
     def _extract_kernel_stats(self, build_root) -> pd.DataFrame:
         """
@@ -32,7 +79,7 @@ class CheriBSDSubobjectStats(CheriBSDBuild):
 
         Load the statistics into a temporary dataframe to be merged with the module data.
         """
-        build_path = self._kernel_build_path(build_root)
+        build_path = self.cheribsd.kernel_build_path(build_root)
         path = build_path / "kernel-subobject-bounds-stats.csv"
         if not path.exists():
             self.logger.error("Missing csetbounds stats for %s", self.benchmark)
@@ -43,7 +90,7 @@ class CheriBSDSubobjectStats(CheriBSDBuild):
         return df
 
     def _extract_module_stats(self, build_root) -> list[pd.DataFrame]:
-        build_path = self._kernel_build_path(build_root)
+        build_path = self.cheribsd.kernel_build_path(build_root)
         df_set = []
         for path in build_path.glob("modules/**/kernel-subobject-bounds-stats.csv"):
             df = pd.read_csv(path)
@@ -51,20 +98,25 @@ class CheriBSDSubobjectStats(CheriBSDBuild):
             df_set.append(df)
         return df_set
 
-    def _do_build(self, build_root: Path):
-        instance_config = self.benchmark.config.instance
+    @dependency
+    def cheribsd(self):
+        return CheriBSDBuildHelper(self.benchmark, self.script, self.config)
 
+    @output
+    def subobject_stats(self):
+        return LocalFileTarget(self, ext="csv", model=SubobjectBoundsModel)
+
+    def run(self):
+        instance_config = self.benchmark.config.instance
         if instance_config.kernelabi != InstanceKernelABI.PURECAP:
             # It makes no sense to build this because no subobject stats will
             # ever be emitted, just make an empty file
             self.subobject_stats.path.touch()
             return
-        super()._do_build(build_root)
 
-    def _extract(self, build_root: Path):
         # Extract the files from the build dir
-        df_set = [self._extract_kernel_stats(build_root)]
-        df_set.extend(self._extract_module_stats(build_root))
+        df_set = [self._extract_kernel_stats(self.cheribsd.build_root)]
+        df_set.extend(self._extract_module_stats(self.cheribsd.build_root))
         df = pd.concat(df_set)
 
         # Patch the alignment_bits and size for unknown values
@@ -75,106 +127,163 @@ class CheriBSDSubobjectStats(CheriBSDBuild):
 
         df.to_csv(self.subobject_stats.path)
 
-    @output
-    def subobject_stats(self):
-        return LocalFileTarget(self, ext="csv", model=SubobjectBoundsModel)
 
-
-class CheriBSDImpreciseSubobject(CheriBSDBuild):
+class ImpreciseSubobjectVisitor(NestedMemberVisitor):
     """
-    Run a static analysis to determine whether there are nested structures with
-    unrepresentable sub-object bounds.
+    Visit a DWARFInfoSource layout and extract imprecise sub-object members
+    """
+    def __init__(self, benchmark, logger, root):
+        super().__init__(root)
+        self.logger = logger
+        self.records: list[ImpreciseSubobjectInfoModelRecord] = []
+
+        instance_config = benchmark.config.instance
+        if instance_config.cheri_target.is_riscv():
+            # XXX support/detect riscv32
+            self.cap_format = pychericap.CompressedCap128
+        elif instance_config.cheri_target.is_morello():
+            self.cap_format = pychericap.CompressedCap128m
+        else:
+            self.logger.error("DWARF TypeInfo extraction unsupported for %s", instance_config.cheri_target)
+            raise RuntimeError(f"Unsupported instance target {instance_config.cheri_target}")
+
+    def _check_imprecise(self, member: "Member", offset: int) -> tuple[int, int] | None:
+        """
+        Check if a specific member of a structure is representable.
+
+        If it is not representable, return a tuple (new_base, new_top)
+        """
+        offset = offset + member.offset
+        subobject_cap = self.cap_format.make_max_bounds_cap(offset)
+        subobject_cap.setbounds(member.size)
+
+        if subobject_cap.base() < offset or subobject_cap.top() > offset + member.size:
+            return (subobject_cap.base(), subobject_cap.top())
+        return None
+
+    def visit_member(self, parent, member, prefix, offset):
+        result = self._check_imprecise(member, offset)
+        if not result:
+            return
+        self.logger.debug("Found imprecise member %s of type %s base=%d top=%d", member.name, self.root.type_name,
+                          result[0], result[1])
+        record = ImpreciseSubobjectInfoModelRecord(type_id=self.root.handle,
+                                                   file=self.root.file,
+                                                   line=self.root.line,
+                                                   type_name=self.root.base_name,
+                                                   member_offset=offset + member.offset,
+                                                   member_name=prefix + member.name,
+                                                   member_aligned_base=result[0],
+                                                   member_aligned_top=result[1])
+        self.records.append(record)
+
+
+class CheriBSDExtractImpreciseSubobject(DataGenTask):
+    """
+    Extract CheriBSD DWARF type information for aggregate data types.
     """
     public = True
     task_namespace = "kernel-static"
-    task_name = "cheribsd-imprecise-subobject-bounds"
+    task_name = "cheribsd-extract-imprecise-subobject"
+    task_config_class = BuildConfig
 
-    def __init__(self, benchmark, script, task_config=None):
-        super().__init__(benchmark, script, task_config=task_config)
-        # Complain if doing this for morello for now.
-        target = self.benchmark.config.instance.cheri_target
-        if target.is_morello():
-            self.logger.error("Imprecise subobject unsupported for Morello clang-tidy")
-            raise NotImplementedError("Not supported")
-        #: Path to clang-tidy
-        self._clang_tidy = self.session.user_config.sdk_path / "sdk" / "bin" / "clang-tidy"
-        if not self._clang_tidy.exists():
-            self.logger.error("Missing clang-tidy in Cheri SDK: %s", self._clang_tidy)
-            raise RuntimeError("Missing CHERI tool")
+    def __init__(self, benchmark, script, task_config):
+        if not task_config.target:
+            task_config.target = "cheribsd"
+            task_config.builder = Builder.CheriBuild
+        assert task_config.target == "cheribsd"
+        super().__init__(benchmark, script, task_config)
 
-    def _extract(self, build_root: Path):
-        objdir = self._kernel_build_path(build_root)
-        compdb = objdir / "compile_commands.json"
-
-        # Read compilation DB to find all files we care about
-        with open(compdb, "r") as compfd:
-            db_data = json.load(compfd)
-        all_files = [e["file"] for e in db_data if "file" in e and Path(e["file"]).suffix == ".c"]
-        tidy_options = [
-            "-p", objdir, "-checks=-*,misc-cheri-representable-subobject", "--system-headers", "-header-filter=.*"
-        ] + all_files
-
-        tidy_lines = []
-
-        def collect_tidy_output(data):
-            tidy_lines.append(data)
-
-        tidy_cmd = SubprocessHelper(self._clang_tidy, tidy_options)
-        tidy_cmd.set_stderr_loglevel(logging.DEBUG)
-        tidy_cmd.observe_stdout(collect_tidy_output)
-        tidy_cmd.run(cwd=objdir)
-
-        # Parse the output
-        base_matcher = re.compile(r"(?P<path>[/a-zA-Z0-9_.-]+):(?P<line>[0-9]+):(?P<column>[0-9]+):.*"
-                                  "Field '(?P<field>[a-zA-Z0-9_]+)'.*"
-                                  "\('(?P<field_type>[a-zA-Z0-9\[\]_ \t*&]+)'.*\).*"
-                                  "at (?P<offset>[0-9]+).*"
-                                  "in '(?P<container>[a-zA-Z0-9_]+)'.*"
-                                  "size (?P<size>[0-9]+).*"
-                                  "offset.*aligned to (?P<aligned_offset>[0-9]+)")
-        size_matcher = re.compile(r"(?P<path>[/a-zA-Z0-9_.-]+):(?P<line>[0-9]+):(?P<column>[0-9]+):.*"
-                                  "Field '(?P<field>[a-zA-Z0-9_]+)'.*"
-                                  "\('(?P<field_type>[a-zA-Z0-9\[\]_ \t*&]+)'.*\).*"
-                                  "at (?P<offset>[0-9]+).*"
-                                  "in '(?P<container>[a-zA-Z0-9_]+)'.*"
-                                  "size (?P<size>[0-9]+).*"
-                                  "top.*aligned to (?P<aligned_top>[0-9]+)")
-
-        base_groups = []
-        size_groups = []
-        for line in tidy_lines:
-            base_m = base_matcher.match(line)
-            if base_m:
-                base_groups.append(base_m.groupdict())
-            size_m = size_matcher.match(line)
-            if size_m:
-                size_groups.append(size_m.groupdict())
-            if not base_m and not size_m and "warning:" in line:
-                self.logger.warning("Unmatched clang-tidy warning: %s", line)
-
-        srcdir = self.session.user_config.cheribsd_path
-        base_df = pd.DataFrame(base_groups)
-        size_df = pd.DataFrame(size_groups)
-
-        assert not (base_df.empty and size_df.empty), "Missing inputs"
-        if base_df.empty:
-            df = size_df
-            df["aligned_offset"] = np.nan
-        elif size_df.empty:
-            df = base_df
-            df["aligned_size"] = np.nan
-        else:
-            df = pd.merge(base_df,
-                          size_df,
-                          how="outer",
-                          on=["path", "line", "column", "field", "field_type", "container", "offset", "size"])
-        df["path"] = df["path"].map(lambda p: Path(p).relative_to(srcdir))
-        df = df.set_index(["path", "line", "column", "field", "field_type", "container"])
-        df.to_csv(self.imprecise_warnings.path)
+    @dependency
+    def cheribsd(self):
+        return CheriBSDBuildHelper(self.benchmark, self.script, self.config)
 
     @output
-    def imprecise_warnings(self):
-        return LocalFileTarget(self, ext="csv", model=ImpreciseSubobjectModel)
+    def imprecise_members(self):
+        return LocalFileTarget(self, ext="csv", model=ImpreciseSubobjectInfoModel)
+
+    @output
+    def struct_layout(self):
+        return LocalFileTarget(self, ext="csv", model=ImpreciseSubobjectLayoutModel)
+
+    def _find_imprecise_subobjects(self, dw: "DWARFInfoSource", info: "TypeInfoContainer") -> pd.DataFrame:
+        """
+        Scan all the resolved structures and find sub-object bounds that are not
+        representable.
+        """
+        all_imprecise = []
+        for type_info in info.iter_composite():
+            v = ImpreciseSubobjectVisitor(self.benchmark, self.logger, type_info)
+            dw.visit_nested_layout(v)
+            all_imprecise += v.records
+
+        df = pd.DataFrame.from_records(all_imprecise, columns=ImpreciseSubobjectInfoModelRecord._fields)
+        df.set_index(["type_id", "file", "line", "type_name", "member_offset"], inplace=True)
+        return df
+
+    def _extract_layout(self, dw: "DWARFInfoSource", info: "TypeInfoContainer",
+                        imprecise: pd.DataFrame) -> pd.DataFrame:
+        """
+        Emit the layout of each structure containing imprecise sub-object bounds.
+
+        For each member aliased by the imprecise capabilities, record that it is being
+        aliased and by which field(s).
+        """
+        layouts = []
+        for type_id, members in imprecise.groupby("type_id"):
+            type_info = info.find_composite(type_id)
+            if not type_info:
+                raise RuntimeError("Invalid type ID")
+            layout_df = dw.parse_struct_layout(info, type_info)
+            layout_df["alias_group_id"] = np.nan
+            layout_df["alias_aligned_base"] = np.nan
+            layout_df["alias_aligned_top"] = np.nan
+            layout_df["alias_groups"] = None
+
+            # Paint the layout with imprecise members
+            members["alias_group_id"] = range(len(members))
+            for m_index, m in members.iterrows():
+                # Find the location of member m in the layout_df
+                # This relies on index ordering
+                assert members.index.names[-1] == "member_offset"
+                m_offset = m_index[-1]
+                m_in_layout, _ = layout_df.index.get_loc_level((m_offset, m["member_name"]),
+                                                               level=["member_offset", "member_name"],
+                                                               drop_level=False)
+                # Mark all members that alias with m bounds (except m)
+                offsets = layout_df.index.get_level_values("member_offset")
+                overlap_base = offsets + layout_df["member_size"] > m["member_aligned_base"]
+                overlap_top = offsets < m["member_aligned_top"]
+                overlap = overlap_base & overlap_top & ~m_in_layout
+                layout_df.loc[overlap, "alias_groups"] = layout_df.loc[overlap, "alias_groups"].apply(
+                    lambda g: g.append(m["alias_group_id"]) if g is not None else [m["alias_group_id"]])
+
+                # And set the alias fields
+                assert m_in_layout.sum() == 1, "Can not find unique imprecise member in layout"
+                layout_df.loc[m_in_layout, "alias_group_id"] = m["alias_group_id"]
+                layout_df.loc[m_in_layout, "alias_aligned_base"] = m["member_aligned_base"]
+                layout_df.loc[m_in_layout, "alias_aligned_top"] = m["member_aligned_top"]
+
+            layouts.append(layout_df)
+
+        return pd.concat(layouts, axis=0)
+
+    def run(self):
+        kernel_elf = self.cheribsd.kernel_build_path(self.cheribsd.build_root) / "kernel.full"
+        if not kernel_elf.exists():
+            self.logger.error("Missing kernel image at %s", kernel_elf)
+            raise RuntimeError("Missing kernel image")
+        # XXX the kernel pointer size should become unnecessary at some point
+        dw = self.benchmark.dwarf.register_object("kernel",
+                                                  kernel_elf,
+                                                  arch_pointer_size=self.benchmark.config.instance.kernel_pointer_size)
+        info = dw.load_type_info()
+        df = self._find_imprecise_subobjects(dw, info)
+        df.to_csv(self.imprecise_members.path)
+
+        # Now, for every structure with imprecise members, we do a full dump of the structure
+        layout_df = self._extract_layout(dw, info, df)
+        layout_df.to_csv(self.struct_layout.path)
 
 
 class CheriBSDSubobjectStatsUnion(AnalysisTask):
