@@ -109,4 +109,5 @@ setup(name="pycheribenchplot",
           "pytest",
           "pytest-mock",
           "pytest-timeout",
+          "sphinx",
       ]})
