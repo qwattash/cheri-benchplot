@@ -9,3 +9,4 @@ dist
 build
 pycheribenchplot/ext/lib
 *.egg-info
+.hypothesis
