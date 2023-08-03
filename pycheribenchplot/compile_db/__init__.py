@@ -1,2 +1,2 @@
 from .model import CompilationDBModel
-from .task import CheriBSDBuild, CompilationDB
+from .task import (BuildConfig, Builder, CheriBSDBuild, CheriBSDBuildHelper, CompilationDB)

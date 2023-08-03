@@ -28,7 +28,7 @@ class BuildConfig(Config):
     #: Target to build, depends on the builder, required
     target: str = None
     #: Always do a clean build
-    clean_build: bool = True
+    clean_build: bool = False
     #: Use a temporary build directory instead of the default one
     ephemeral_build_root: bool = False
     # Hidden debug option to skip the build step and only extract
@@ -52,11 +52,18 @@ class BuildTask(DataGenTask):
     task_config_class = BuildConfig
 
     def __init__(self, benchmark, script, task_config=None):
+        assert task_config.target is not None, "missing target"
+        assert task_config.builder is not None, "missing builder"
         # Required for task_id
         self._target = task_config.target
         super().__init__(benchmark, script, task_config=task_config)
 
         self._cheribuild = self.session.user_config.cheribuild_path / "cheribuild.py"
+        if not hasattr(self, "build_root"):
+            self.build_root = self.session.user_config.build_path
+            if self.config.ephemeral_build_root:
+                self._tmp_handle = TemporaryDirectory()
+                self.build_root = Path(self._tmp_handle.name)
 
     @property
     def task_id(self):
@@ -101,12 +108,7 @@ class BuildTask(DataGenTask):
         raise NotImplementedError("Must override")
 
     def run(self):
-        if self.config.ephemeral_build_root:
-            with TemporaryDirectory() as build_dir:
-                tmp_path = Path(build_dir)
-                self._do_build(tmp_path)
-        else:
-            self._do_build(self.session.user_config.build_path)
+        self._do_build(self.build_root)
 
 
 class CheriBSDBuild(BuildTask):
@@ -124,7 +126,7 @@ class CheriBSDBuild(BuildTask):
             opts += [f"--{target_prefix}/mfs-root-image", mfs_image]
         return opts
 
-    def _kernel_build_path(self, build_root: Path) -> Path:
+    def kernel_build_path(self, build_root: Path) -> Path:
         """
         Retrieve the kernel build directory from the build root directory
         """
@@ -136,6 +138,16 @@ class CheriBSDBuild(BuildTask):
             raise FileNotFoundError("Missing kernel build directory")
         assert len(path_match) == 1
         return path_match[0]
+
+
+class CheriBSDBuildHelper(CheriBSDBuild):
+    """
+    Common internal task for building the CheriBSD kernel
+    """
+    task_name = "cheribsd-common"
+
+    def _extract(self, build_root):
+        return
 
 
 class CheriBSDCompilationDB(CheriBSDBuild):
@@ -158,6 +170,12 @@ class CheriBSDCompilationDB(CheriBSDBuild):
             self._tracer = resolve_system_command("truss", self.logger)
         else:
             raise NotImplementedError("Unsupported OS")
+        # Force clean builds
+        if not self.config.clean_build:
+            self.logger.warning("Task configuration does not enable clean builds "
+                                "but a clean build is required to build the compilation DB. "
+                                "Automatically switching on the clean_build flag.")
+            self.config.clean_build = True
 
     def _build_trace_output(self, build_root: Path) -> Path:
         return build_root / "cdb-trace-output.txt"
