@@ -8,7 +8,7 @@ from typing import Type
 import pandas as pd
 
 from .config import AnalysisConfig, Config, ExecTargetConfig
-from .elf import AddressSpaceManager, DWARFHelper
+from .elf import AddressSpaceManager, DWARFManager
 from .error import TaskNotFound
 from .instance import InstanceManager
 from .shellgen import ScriptBuilder
@@ -199,7 +199,7 @@ class Benchmark:
         # Symbol mapping handler for this benchmark instance
         self.sym_resolver = AddressSpaceManager(self)
         # Dwarf information extraction helper
-        self.dwarf_helper = DWARFHelper(self)
+        self.dwarf = DWARFManager(self)
 
     def __str__(self):
         return f"{self.config.name}({self.uuid})"
@@ -214,6 +214,14 @@ class Benchmark:
     @property
     def g_uuid(self):
         return self.config.g_uuid
+
+    @property
+    def parameters(self) -> dict[str, any]:
+        """
+        Helper to inspect the user-definied parameterization for this benchmark instance.
+        This is the index in the datagen matrix corresponding to this benchmark's row.
+        """
+        return self.config.parameters
 
     @property
     def user_config(self):
