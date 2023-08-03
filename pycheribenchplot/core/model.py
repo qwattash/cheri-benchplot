@@ -20,6 +20,9 @@ from typing_extensions import Self
 
 from .pandas_util import apply_or
 
+#: Constant name to mark the datarun matrix index as unparameterized
+UNPARAMETERIZED_INDEX_NAME = "RESERVED__unparameterized_index"
+
 # Helper type
 SchemaTransform = Callable[[DataFrameSchema], DataFrameSchema]
 
@@ -86,7 +89,7 @@ class BaseDataModel(SchemaModel):
         index_names = list(s.index.names)
         param_index = session.benchmark_matrix.index
         extra_columns = {}
-        if param_index.names[0] != "RESERVED__unparameterized_index":
+        if param_index.names[0] != UNPARAMETERIZED_INDEX_NAME:
             for param in param_index.names:
                 try:
                     dt = param_index.dtypes[param]
@@ -172,7 +175,7 @@ class DerivedSchemaBuilder:
 
     def to_schema(self, session: "Session") -> DataFrameSchema:
         base_schema = self._model.to_schema(session)
-        return self._transform(base_schema)
+        return self._transform(session, base_schema)
 
 
 class GlobalModel(BaseDataModel):
@@ -195,7 +198,7 @@ class DataModel(BaseDataModel):
     dataset_gid: Index[UUIDType] = Field(nullable=False, title="platform ID", is_valid_uuid=True)
     # The iteration number may be null if there is no iteration associated to the data, meaning
     # that it is collected for the whole set of iterations of the benchmark.
-    iteration: Index[int] = Field(nullable=True, title="Iteration number")
+    iteration: Index[pd.Int64Dtype] = Field(nullable=True, title="Iteration number")
 
     @classmethod
     def as_groupby(cls, by: list | str) -> DerivedSchemaBuilder:
@@ -212,12 +215,31 @@ class DataModel(BaseDataModel):
         assert by, "At least an index level must be specified to create groupby DataModel"
         derived_suffix = "groupby-" + "-".join(by)
 
-        def index_transform(schema):
+        def index_transform(session, schema):
             index_names = list(schema.index.names)
             drop = [n for n in index_names if n not in by]
             return schema.reset_index(drop, drop=True)
 
         return DerivedSchemaBuilder(derived_suffix, cls, index_transform)
+
+    @classmethod
+    def as_raw_model(cls):
+        """
+        Produce a schema for a variation of this model that does not contain implicit
+        index and columns.
+
+        This is useful to validate data before the per-benchmark and per-session
+        identifiers are added.
+        """
+        def index_transform(session, schema):
+            index_names = list(schema.index.names)
+            param_names = session.benchmark_matrix.index.names
+            if param_names[0] == UNPARAMETERIZED_INDEX_NAME:
+                param_names = []
+            drop = ["dataset_id", "dataset_gid", "iteration"] + param_names
+            return schema.reset_index(drop, drop=True)
+
+        return DerivedSchemaBuilder("raw-model-", cls, index_transform)
 
     @classmethod
     def dynamic_index_position(cls):

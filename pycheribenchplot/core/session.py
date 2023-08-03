@@ -16,19 +16,15 @@ from typing_extensions import Self
 
 from .analysis import AnalysisTask
 from .benchmark import Benchmark, BenchmarkExecMode, ExecTaskConfig
-from .config import (AnalysisConfig, BenchplotUserConfig, Config,
-                     ExecTargetConfig, PipelineConfig, SessionRunConfig,
+from .config import (AnalysisConfig, BenchplotUserConfig, Config, ExecTargetConfig, PipelineConfig, SessionRunConfig,
                      TaskTargetConfig, TemplateConfigContext)
 from .instance import InstanceManager
-from .model import UUIDType
-from .task import (ExecutionTask, SessionExecutionTask, TaskRegistry,
-                   TaskScheduler)
+from .model import UNPARAMETERIZED_INDEX_NAME
+from .task import (ExecutionTask, SessionExecutionTask, TaskRegistry, TaskScheduler)
 from .util import new_logger
 
 #: Constant name of the generated session configuration file
 SESSION_RUN_FILE = "session-run.json"
-#: Constant name to mark the datarun matrix index as unparameterized
-UNPARAMETERIZED_INDEX_NAME = "RESERVED__unparameterized_index"
 benchplot_logger = logging.getLogger("cheri-benchplot")
 
 
