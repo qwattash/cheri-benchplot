@@ -143,7 +143,7 @@ class TaskInfoSubCommand(SubCommand):
         super().register_options(parser)
 
         parser.add_argument("what",
-                            choices=["session", "task", "tasks", "generators"],
+                            choices=["session", "task", "tasks", "generators", "config"],
                             help="Display information about something.")
         parser.add_argument("-t",
                             "--task",
@@ -151,6 +151,11 @@ class TaskInfoSubCommand(SubCommand):
                             action="append",
                             required=False,
                             help="Name of the task for which information is requested, when relevant")
+        parser.add_argument("-u",
+                            type=Path,
+                            default=False,
+                            required=False,
+                            help="Generate a default user configuration file")
         parser.add_argument("target", type=Path, default=Path.cwd(), nargs="?", help="Path of the target session.")
 
     def handle_session(self, user_config, args):
@@ -201,6 +206,21 @@ class TaskInfoSubCommand(SubCommand):
                     "'<namespace>.<task_name>' or '<namespace>.*'.", task_name)
             print("TODO not implemented")
 
+    def handle_config_info(self, user_config, args):
+        """
+        Help information about configurations.
+
+        Without any arguments, this will dump the existing user config,
+        or a default one if none is found.
+        """
+        if args.u:
+            if args.u.exists():
+                self.logger.warning("User configuration file already exists: %s", args.u)
+            with open(args.u, "w+") as outconfig:
+                outconfig.write(BenchplotUserConfig().emit_json())
+        else:
+            print(user_config.emit_json())
+
     def handle(self, user_config, args):
         if args.what == "session":
             self.handle_session(user_config, args)
@@ -210,6 +230,8 @@ class TaskInfoSubCommand(SubCommand):
             self.handle_generators(user_config, args)
         elif args.what == "task":
             self.handle_spec(user_config, args)
+        elif args.what == "config":
+            self.handle_config_info(user_config, args)
         else:
             raise ValueError(f"Invalid key {args.what}")
 
