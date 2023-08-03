@@ -1,2 +1,2 @@
-from .dwarf import DWARFHelper
+from .dwarf import DWARFManager
 from .symbolizer import AddressSpaceManager, SymInfo

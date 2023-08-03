@@ -22,7 +22,8 @@ enum TypeInfoFlags {
   kIsPtr = 1 << 3,
   kIsFnPtr = 1 << 4,
   kIsArray = 1 << 5,
-  kIsConst = 1 << 6
+  kIsConst = 1 << 6,
+  kIsDecl = 1 << 7
 };
 
 TypeInfoFlags operator|(TypeInfoFlags &L, const TypeInfoFlags &R);

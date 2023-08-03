@@ -291,7 +291,7 @@ TypeLayoutVisitor::makeTypeInfo(const llvm::DWARFDie &Die, bool Nested) {
       }
       TI->TypeName += format(" [%ld]", NItems);
       TI->ArrayItems = NItems;
-      TI->Size = NItems ? TI->Size * NItems : 1;
+      TI->Size = TI->Size * NItems;
       TI->Flags |= kIsArray;
       break;
     }
@@ -324,14 +324,12 @@ TypeLayoutVisitor::makeTypeInfo(const llvm::DWARFDie &Die, bool Nested) {
       break;
     }
     case dwarf::DW_TAG_enumeration_type: {
-      auto Name = extractName(D);
-      if (!Name)
-        return makeError("Anonymous enum not yet supported");
+      auto Name = extractNameOrAnon(D);
       auto Size = dwarf::toUnsigned(D.find(dwarf::DW_AT_byte_size));
       if (!Size)
         return makeError("Enum type without a size");
-      TI->TypeName = "enum " + *Name;
-      TI->BaseName = "enum " + *Name;
+      TI->TypeName = "enum " + Name;
+      TI->BaseName = "enum " + Name;
       TI->Size = *Size;
       break;
     }
@@ -349,9 +347,19 @@ TypeLayoutVisitor::makeCompositeTypeInfo(const char *Prefix,
                                          const llvm::DWARFDie &Die,
                                          bool Nested,
                                          TypeInfoPtr TI) {
+  // This is a forward declaration, mark it as such.
+  // Do not generate anything else because it will not be used. We could
+  // resolve forward declarations after all typeinfo are collected if we needed.
+  if (Die.find(dwarf::DW_AT_declaration)) {
+    TI->BaseName = extractNameOrAnon(Die);
+    TI->TypeName = Prefix + TI->BaseName;
+    TI->Flags |= kIsDecl;
+    return llvm::Error::success();
+  }
+
   auto MaybeSize = dwarf::toUnsigned(Die.find(dwarf::DW_AT_byte_size));
   if (!MaybeSize) {
-    return makeError("Missing struct size");
+    return makeError(format("Missing struct size at %lx", Die.getOffset()));
   }
   TI->Size = *MaybeSize;
   TI->File = Die.getDeclFile(FileLineInfoKind::AbsoluteFilePath);
@@ -612,7 +620,7 @@ std::unique_ptr<TypeInfoContainer> DWARFHelper::HelperImpl::collectTypeInfo() {
         auto StopOrErr = visitDie(*V, Child);
 
         if (auto E = StopOrErr.takeError()) {
-          llvm::errs() << "Can not visit DIE: " << E << "\n";
+          llvm::errs() << "Can not visit DIE at " << Child.getOffset() << ": " << E << "\n";
           llvm::consumeError(std::move(E));
         } else if (*StopOrErr) {
           break;

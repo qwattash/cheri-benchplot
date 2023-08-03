@@ -30,6 +30,7 @@ PYBIND11_MODULE(pydwarf, m)
       .value("kIsFnPtr", TypeInfoFlags::kIsFnPtr)
       .value("kIsArray", TypeInfoFlags::kIsArray)
       .value("kIsConst", TypeInfoFlags::kIsConst)
+      .value("kIsDecl", TypeInfoFlags::kIsDecl)
       .export_values();
 
   py::class_<TypeInfo, std::shared_ptr<TypeInfo>>(m, "TypeInfo")

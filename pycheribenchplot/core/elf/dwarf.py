@@ -1,7 +1,6 @@
-import itertools as it
 import subprocess
 import typing
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 from dataclasses import dataclass, field, fields, replace
 from enum import Flag, IntFlag, auto
 from functools import reduce
@@ -9,9 +8,13 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pandera as pa
 from elftools.elf.elffile import ELFFile
+from pandera.typing import DataFrame, Index, Series
 from sortedcontainers import SortedDict
 
+from ...ext import pydwarf
+from ..model import DataModel
 from ..util import new_logger
 
 
@@ -648,7 +651,7 @@ class Addr2lineResolver:
         self.addr2line.wait()
 
 
-class DWARFInfoSource:
+class _DWARFInfoSource:
     """
     Helper to access DWARF debug information for an ELF file.
     This currently relies on the capabilities of pyelftools and
@@ -715,7 +718,156 @@ class DWARFInfoSource:
         return resolved
 
 
-class DWARFHelper:
+################################### OLD STUFF ABOVE
+
+
+class DWARFTypeInfoModel(DataModel):
+    """
+    Describe a dataframe holding type information for a binary belonging to a benchmark run.
+
+    Structure members are unrolled into the member_name and member_offset fields.
+    """
+    #: Path to the file where the type is defined, relative to source root
+    src_file: Index[str]
+    #: Line where the type is defined
+    src_line: Index[int]
+    #: Line of the member definition
+    member_line: Index[int]
+    #: Offset of the member in the structure
+    member_offset: Index[int]
+
+    #: Total size of the type, variable-length structures only have the minimum size.
+    size: Series[int]
+    #: Size of the member, excluding any external padding
+    member_size: Series[int]
+    #: Size of the type of the member, this can be different from memebr_size, e.g. arrays.
+    member_type_size: Series[int]
+    #: Name of the base type without any CV qualifiers or pointer/reference.
+    base_name: Series[str]
+    #: Full type name
+    type_name: Series[str]
+    #: Name of the structure/union member.
+    member_name: Series[str]
+    #: Full name of the type of the member (e.g. struct foo*)
+    member_type_name: Series[str]
+    #: Member information flags
+    member_flags: Series[int]
+    #: Number of array items
+    member_array_items: Series[int]
+    #: Any typedef of the type, mostly used to record different typedefs.
+    aliases: Series[list[str]]
+
+
+class DWARFStructLayoutModel(DataModel):
+    """
+    Contains a dump of structure and union data layouts.
+
+    Note that not all information is dumped here. This data model should be sufficient
+    to determine padding, alignment and sub-object representablity.
+
+    There is one row for each member, nested structures are unrolled and the
+    member name is prefixed by the parent names with the C++ style :: scope operator.
+    Offsets are adjusted to reflect the parent structure offset.
+    """
+    type_id: Index[int]
+    base_name: Index[str]
+    member_name: Index[str]
+    member_offset: Index[pd.Int64Dtype] = pa.Field(nullable=True)
+
+    file: Series[str]
+    line: Series[int]
+    size: Series[int]
+    type_name: Series[str]
+    member_size: Series[pd.Int64Dtype] = pa.Field(nullable=True)
+    member_type_name: Series[str] = pa.Field(nullable=True)
+
+
+#: Helper to keep records  for the DWARFStructLayoutInfoModel consistent
+DWARFStructLayoutRecord = namedtuple("DWARFStructLayoutRecord", [
+    "type_id", "file", "line", "base_name", "member_name", "member_offset", "size", "type_name", "member_size",
+    "member_type_name"
+])
+
+
+class DWARFInfoSource:
+    """
+    Wrapper around the LLVM native dwarf extraction library.
+    """
+    def __init__(self, benchmark, path: Path, arch_pointer_size: int):
+        self.benchmark = benchmark
+        self.logger = benchmark.logger
+        self.path = path
+        self._helper = pydwarf.DWARFHelper(str(path))
+        self._arch_pointer_size = arch_pointer_size
+
+    def _parse_struct_layout_nested(self,
+                                    root: pydwarf.TypeInfo,
+                                    type_info: pydwarf.TypeInfo | None = None,
+                                    prefix: str = "",
+                                    offset: int = 0) -> list[DWARFStructLayoutRecord]:
+        """
+        Extract all members from a given TypeInfo object, recursively handling any nested structure.
+
+        Note that the records returned by this function must be in the 
+        """
+        if type_info is None:
+            type_info = root
+
+        records = []
+        for member in type_info.layout:
+            if (member.type_info.flags & pydwarf.TypeInfoFlags.kIsStruct
+                    or member.type_info.flags & pydwarf.TypeInfoFlags.kIsUnion):
+                records += self._parse_struct_layout_nested(root, member.type_info, prefix + f"{member.name}.",
+                                                            offset + member.offset)
+            else:
+                record = DWARFStructLayoutRecord(type_id=root.handle,
+                                                 base_name=root.base_name,
+                                                 member_name=prefix + member.name,
+                                                 member_offset=offset + member.offset,
+                                                 file=root.file,
+                                                 line=root.line,
+                                                 size=root.size,
+                                                 type_name=root.type_name,
+                                                 member_size=member.size,
+                                                 member_type_name=member.type_info.type_name)
+                records.append(record)
+        if len(type_info.layout) == 0:
+            # Special case for empty structures / unions. Always emit one entry with missing member name
+            record = DWARFStructLayoutRecord(type_id=root.handle,
+                                             base_name=root.base_name,
+                                             member_name=prefix + "<empty>",
+                                             member_offset=offset,
+                                             file=root.file,
+                                             line=root.line,
+                                             size=root.size,
+                                             type_name=root.type_name,
+                                             member_size=np.nan,
+                                             member_type_name=None)
+            records.append(record)
+        return records
+
+    def load_type_info(self) -> pydwarf.TypeInfoContainer:
+        return self._helper.collect_type_info()
+
+    def parse_struct_layout(self,
+                            container: pydwarf.TypeInfoContainer,
+                            root: pydwarf.TypeInfo | None = None) -> DataFrame[DWARFStructLayoutModel]:
+        """
+        Recursively dump the structure layout. Optionally, this can be restricted to a single TypeInfo node
+        instead of parsing everything.
+        """
+        records = []
+        if root:
+            records = self._parse_struct_layout_nested(root)
+        else:
+            for type_info in container.iter_composite():
+                records += self._parse_struct_layout_nested(type_info)
+
+        df = pd.DataFrame.from_records(records, columns=DWARFStructLayoutRecord._fields)
+        return df.set_index(["type_id", "base_name", "member_name", "member_offset"])
+
+
+class DWARFManager:
     """
     Manages DWARF information for all object files imported by a
     benchmark instance.
@@ -728,13 +880,14 @@ class DWARFHelper:
         self.benchmark = benchmark
         self.objects = {}
 
-    def register_object(self, obj_key: str, path: Path, arch_pointer_size=8):
+    def register_object(self, obj_key: str, path: Path, arch_pointer_size=8) -> DWARFInfoSource:
         if obj_key in self.objects:
             # Check that the path also matches
             if self.objects[obj_key].path == path:
                 return
         assert obj_key not in self.objects, "Duplicate DWARF object source"
         self.objects[obj_key] = DWARFInfoSource(self.benchmark, path, arch_pointer_size=arch_pointer_size)
+        return self.objects[obj_key]
 
     def get_object(self, obj_key: str) -> typing.Optional[DWARFInfoSource]:
         return self.objects.get(obj_key, None)
