@@ -3,6 +3,7 @@ General purpose matplotlib helpers
 """
 from contextlib import contextmanager
 from pathlib import Path
+from uuid import UUID
 
 import matplotlib.pyplot as plt
 from matplotlib import rc_context
@@ -66,6 +67,13 @@ class PlotTask(AnalysisTask):
         else:
             name = f"{self.task_id}.pdf"
         return PlotTarget(self.session.get_plot_root_path() / name)
+
+    def g_uuid_to_label(self, g_uuid: UUID):
+        """
+        Helper that maps group UUIDs to a human-readable label that describes the instance
+        """
+        gid_column = self.session.benchmark_matrix[g_uuid]
+        return gid_column[0].config.instance.name
 
     def run(self):
         with rc_context():

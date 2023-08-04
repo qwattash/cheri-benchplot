@@ -46,21 +46,24 @@ class ImpreciseSubobjectInfoModel(DataModel):
     Concise information about structures with imprecise sub-object bounds.
 
     This is used to generate more detailed information about the members layout.
+    Note that the index mirrors :class:`DWARFStructLayoutModel`.
     """
-    type_id: Index[int]
     file: Index[str]
     line: Index[int]
     type_name: Index[str]
+    member_name: Index[str]
     member_offset: Index[int]
 
-    member_name: Series[str]
+    type_id: Series[int]
+    member_size: Series[int]
     member_aligned_base: Series[int]
     member_aligned_top: Series[int]
 
 
-#: Helper to keep records for the ImpreciseSubobjectInfoModel consistent
+#: Helper to keep records for :class:`ImpreciseSubobjectInfoModel` consistent
 ImpreciseSubobjectInfoModelRecord = namedtuple("ImpreciseSubobjectInfoModelRecord", [
-    "type_id", "file", "line", "type_name", "member_offset", "member_name", "member_aligned_base", "member_aligned_top"
+    "type_id", "file", "line", "type_name", "member_offset", "member_name", "member_size", "member_aligned_base",
+    "member_aligned_top"
 ])
 
 
@@ -77,4 +80,4 @@ class ImpreciseSubobjectLayoutModel(DWARFStructLayoutModel):
     #: Describe groups of fields that are aliased with the same imprecise capability.
     #: Alias groups are incrementally numbered and are unique for each type_id,
     #: i.e. for each root structure type.
-    alias_groups: Series[list] = Field(nullable=True)
+    alias_groups: Series[object] = Field(nullable=True)

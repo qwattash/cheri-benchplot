@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+import seaborn.objects as so
 
 from ..compile_db import (BuildConfig, Builder, CheriBSDBuild, CheriBSDBuildHelper)
 from ..core.analysis import AnalysisTask
@@ -173,6 +174,7 @@ class ImpreciseSubobjectVisitor(NestedMemberVisitor):
                                                    type_name=self.root.base_name,
                                                    member_offset=offset + member.offset,
                                                    member_name=prefix + member.name,
+                                                   member_size=member.size,
                                                    member_aligned_base=result[0],
                                                    member_aligned_top=result[1])
         self.records.append(record)
@@ -200,11 +202,11 @@ class CheriBSDExtractImpreciseSubobject(DataGenTask):
 
     @output
     def imprecise_members(self):
-        return LocalFileTarget(self, ext="csv", model=ImpreciseSubobjectInfoModel)
+        return LocalFileTarget(self, ext="csv", prefix="imprecise", model=ImpreciseSubobjectInfoModel)
 
     @output
     def struct_layout(self):
-        return LocalFileTarget(self, ext="csv", model=ImpreciseSubobjectLayoutModel)
+        return LocalFileTarget(self, ext="csv", prefix="layout", model=ImpreciseSubobjectLayoutModel)
 
     def _find_imprecise_subobjects(self, dw: "DWARFInfoSource", info: "TypeInfoContainer") -> pd.DataFrame:
         """
@@ -218,8 +220,8 @@ class CheriBSDExtractImpreciseSubobject(DataGenTask):
             all_imprecise += v.records
 
         df = pd.DataFrame.from_records(all_imprecise, columns=ImpreciseSubobjectInfoModelRecord._fields)
-        df.set_index(["type_id", "file", "line", "type_name", "member_offset"], inplace=True)
-        return df
+        df.set_index(["file", "line", "type_name", "member_name", "member_offset"], inplace=True)
+        return df[~df.index.duplicated(keep="first")]
 
     def _extract_layout(self, dw: "DWARFInfoSource", info: "TypeInfoContainer",
                         imprecise: pd.DataFrame) -> pd.DataFrame:
@@ -246,8 +248,10 @@ class CheriBSDExtractImpreciseSubobject(DataGenTask):
                 # Find the location of member m in the layout_df
                 # This relies on index ordering
                 assert members.index.names[-1] == "member_offset"
+                assert members.index.names[-2] == "member_name"
                 m_offset = m_index[-1]
-                m_in_layout, _ = layout_df.index.get_loc_level((m_offset, m["member_name"]),
+                m_name = m_index[-2]
+                m_in_layout, _ = layout_df.index.get_loc_level((m_offset, m_name),
                                                                level=["member_offset", "member_name"],
                                                                drop_level=False)
                 # Mark all members that alias with m bounds (except m)
@@ -265,7 +269,6 @@ class CheriBSDExtractImpreciseSubobject(DataGenTask):
                 layout_df.loc[m_in_layout, "alias_aligned_top"] = m["member_aligned_top"]
 
             layouts.append(layout_df)
-
         return pd.concat(layouts, axis=0)
 
     def run(self):
@@ -410,23 +413,31 @@ class ImpreciseSetboundsUnion(AnalysisTask):
     task_namespace = "kernel-static"
     task_name = "imprecise-subobject-bounds-union"
 
-    # Note this assumes that the data is independent of any parameterization
-    group_keys = ["dataset_gid", "path", "line", "column", "field", "field_type", "container"]
+    @dependency
+    def layout_data(self):
+        for b in self.session.all_benchmarks():
+            task = b.find_exec_task(CheriBSDExtractImpreciseSubobject)
+            yield task.struct_layout.get_loader()
 
     @dependency
-    def raw_imprecise_bounds(self):
+    def imprecise_members(self):
         for b in self.session.all_benchmarks():
-            task = b.find_exec_task(CheriBSDImpreciseSubobject)
-            yield task.imprecise_warnings.get_loader()
+            task = b.find_exec_task(CheriBSDExtractImpreciseSubobject)
+            yield task.imprecise_members.get_loader()
 
     def run(self):
-        df = pd.concat([loader.df.get() for loader in self.raw_imprecise_bounds])
-        df = df.groupby(self.group_keys).first()
-        self.warnings_union.assign(df)
+        df = pd.concat([loader.df.get() for loader in self.layout_data])
+        self.all_layouts.assign(df)
+        df = pd.concat([loader.df.get() for loader in self.imprecise_members])
+        self.all_imprecise_members.assign(df)
 
     @output
-    def warnings_union(self):
-        return DataFrameTarget(self, ImpreciseSubobjectModel.as_groupby(self.group_keys))
+    def all_layouts(self):
+        return DataFrameTarget(self, ImpreciseSubobjectLayoutModel)
+
+    @output
+    def all_imprecise_members(self):
+        return DataFrameTarget(self, ImpreciseSubobjectInfoModel)
 
 
 class ImpreciseSetboundsPlot(PlotTask):
@@ -445,30 +456,54 @@ class ImpreciseSetboundsPlot(PlotTask):
         return ImpreciseSetboundsUnion(self.session, self.analysis_config)
 
     def run_plot(self):
-        df = self.data.warnings_union.get()
+        df = self.data.all_imprecise_members.get()
+
+        def shorten_name(n):
+            if n.startswith("<anon>"):
+                match = re.match(r"<anon>\.(.*)\.([0-9]+)", n)
+                if not match:
+                    return n
+                path = Path(match.group(1))
+                n = str(path.relative_to(self.session.user_config.src_path)) + "." + match.group(2)
+            return n
+
+        levels = df.index.names
+        df = df.reset_index("type_name")
+        df["type_name"] = df["type_name"].map(shorten_name)
+        df = df.set_index("type_name", append=True).reorder_levels(levels)
 
         # Normalize base and size with respect to the "requested" base offset
         # and size
-        df["aligned_size"] = df["aligned_top"] - df[["offset", "aligned_offset"]].min(axis=1)
-        df["front_padding"] = (df["offset"] - df["aligned_offset"]).fillna(0)
-        df["back_padding"] = (df["aligned_size"] - df["size"] - df["front_padding"]).fillna(0)
+        member_offset = df.index.get_level_values("member_offset")
+        df["aligned_size"] = df["member_aligned_top"] - df["member_aligned_base"]
+        df["base_rounding"] = member_offset - df["member_aligned_base"]
+        df["top_rounding"] = df["member_aligned_top"] - (member_offset + df["member_size"])
 
-        assert (df["front_padding"] >= 0).all()
-        assert (df["back_padding"] >= 0).all()
+        assert (df["base_rounding"] >= 0).all()
+        assert (df["top_rounding"] >= 0).all()
 
         sns.set_theme()
-        import seaborn.objects as so
 
         with new_figure(self.imprecise_fields_plot.paths()) as fig:
             ax = fig.subplots()
             show_df = df.reset_index().melt(id_vars=df.index.names,
-                                            value_vars=["front_padding", "back_padding"],
-                                            var_name="padding_type")
-            show_df["label"] = show_df["container"] + "::" + show_df["field"]
-            so.Plot(show_df, x="label", y="value", color="padding_type").on(ax).add(so.Bar(), so.Stack()).plot()
+                                            value_vars=["base_rounding", "top_rounding"],
+                                            var_name="source_of_imprecision")
+            show_df["legend"] = (show_df["source_of_imprecision"] + " " +
+                                 show_df["dataset_gid"].map(self.g_uuid_to_label))
+            show_df["label"] = show_df["type_name"] + "::" + show_df["member_name"]
+            (so.Plot(show_df, y="label", x="value", color="legend").on(ax).add(so.Bar(),
+                                                                               so.Dodge(by=["dataset_gid"]),
+                                                                               so.Stack(),
+                                                                               dataset_gid=show_df["dataset_gid"],
+                                                                               orient="y").plot())
+            # Hack to remove the legend as we can not easily move it
+            legend = fig.legends[0]
+            legend.set_bbox_to_anchor((0., 1.02, 1., .102))
+
             ax.set_xlabel("Sub-object field")
             ax.set_ylabel("Capability imprecision (Bytes)")
-            plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor", fontsize="x-small")
+            # plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor", fontsize="x-small")
 
     @output
     def imprecise_fields_plot(self):

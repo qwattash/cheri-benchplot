@@ -325,11 +325,13 @@ TypeLayoutVisitor::makeTypeInfo(const llvm::DWARFDie &Die, bool Nested) {
     }
     case dwarf::DW_TAG_enumeration_type: {
       auto Name = extractNameOrAnon(D);
+      TI->TypeName = "enum " + Name;
+      TI->BaseName = "enum " + Name;
+      if (Die.find(dwarf::DW_AT_declaration))
+        continue;
       auto Size = dwarf::toUnsigned(D.find(dwarf::DW_AT_byte_size));
       if (!Size)
         return makeError("Enum type without a size");
-      TI->TypeName = "enum " + Name;
-      TI->BaseName = "enum " + Name;
       TI->Size = *Size;
       break;
     }

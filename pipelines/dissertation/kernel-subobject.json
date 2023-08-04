@@ -22,7 +22,7 @@
                 "ephemeral_build_root": false
             }
         }, {
-            "handler": "kernel-static.cheribsd-type-info"
+            "handler": "kernel-static.cheribsd-extract-imprecise-subobject"
         }]
     }]
 }

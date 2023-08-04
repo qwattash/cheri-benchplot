@@ -731,14 +731,22 @@ class DWARFStructLayoutModel(DataModel):
     There is one row for each member, nested structures are unrolled and the
     member name is prefixed by the parent names with the C++ style :: scope operator.
     Offsets are adjusted to reflect the parent structure offset.
+
+    Note that the type ID is not really an itentifier for our purposes. There may be
+    multiple DWARF entries that refer to the same structure. This may happen if the same
+    structure imported and defined in multiple compilation units.
+    The index of this model should be unique, any duplicates must be removed as they
+    are expected to refer to the same structure.
+    The members are uniquely identified by the combination of (offset, name) which should
+    be sufficient for linearized union members that share the same offset.
     """
-    type_id: Index[int]
+    file: Series[str]
+    line: Series[int]
     base_name: Index[str]
     member_name: Index[str]
     member_offset: Index[pd.Int64Dtype] = pa.Field(nullable=True)
 
-    file: Series[str]
-    line: Series[int]
+    type_id: Series[int]
     size: Series[int]
     type_name: Series[str]
     member_size: Series[pd.Int64Dtype] = pa.Field(nullable=True)
@@ -853,7 +861,9 @@ class DWARFInfoSource:
                 self.visit_nested_layout(v)
                 records += v.records
         df = pd.DataFrame.from_records(records, columns=DWARFStructLayoutRecord._fields)
-        return df.set_index(["type_id", "base_name", "member_name", "member_offset"])
+        df.set_index(["file", "line", "base_name", "member_name", "member_offset"], inplace=True)
+        df = df[~df.index.duplicated(keep="first")]
+        return df
 
 
 class DWARFManager:
