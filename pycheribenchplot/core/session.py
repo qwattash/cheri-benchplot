@@ -128,26 +128,6 @@ class Session:
     def __str__(self):
         return f"Session({self.uuid}) [{self.name}]"
 
-    def _resolve_exec_task_options(self, config: ExecTargetConfig) -> Config | None:
-        """
-        Resolve the configuration type for a :class:`ExecTargetConfig` containing run options.
-
-        :param config: A single dataset configuration
-        :return: A Config object to be used as the new :attr:`ExecTargetConfig.task_options`.
-        If the exec task does not specify a task_config_class, return a dict with the same content as
-        the original run_options dict.
-        """
-        # Existence of the exec task is ensured by configuration validation
-        exec_task = TaskRegistry.resolve_exec_task(config.handler)
-        if exec_task.task_config_class:
-            try:
-                return exec_task.task_config_class.schema().load(config.task_options)
-            except ValidationError as err:
-                self.logger.error("Invalid task options, %s validation failed: %s", exec_task.task_config_class,
-                                  err.normalized_messages())
-                raise err
-        return config.task_options
-
     def _resolve_config_template(self, config: SessionRunConfig) -> SessionRunConfig:
         """
         Resolves the templates for the given session run configuration,
@@ -155,13 +135,7 @@ class Session:
         """
         ctx = ConfigContext()
         ctx.add_namespace(self.user_config, "user")
-        new_config = config.bind(ctx)
-
-        # Resolve task_options for each TaskTargetConfig
-        for bench_conf in new_config.configurations:
-            for task_conf in bench_conf.generators:
-                task_conf.task_options = self._resolve_exec_task_options(task_conf)
-        return new_config
+        return config.bind(ctx)
 
     def _resolve_baseline(self):
         """

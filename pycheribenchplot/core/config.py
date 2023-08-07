@@ -28,24 +28,32 @@ from .error import ConfigurationError
 logger = logging.getLogger("cheri-benchplot")
 
 
-def _template_safe(temp: str, **kwargs):
-    try:
-        return temp.format(**kwargs)
-    except KeyError:
-        return temp
-
-
-def lazy_nested_config_field():
+def resolve_task_options(task_spec: str, task_options: dict, is_exec: bool = False) -> Type["Task"]:
     """
-    Create a field marked as lazily-resolved configuration type.
-    This is used for parts of configuration objects that have a configuration type
-    assigned at runtime from a Task.
-    This prevents the data from being modified when binding template values.
+    Helper to lazily coerce task options to the correct type.
     """
-    # Note that we need to levels of metadata: the first is for the dataclass field
-    # that is picked up by marshmallow_dataclass, the second is the keyword argument
-    # 'metadata' passed to the underlying marshmallow field constructor.
-    return dc.field(default_factory=dict, metadata={"metadata": {"late_config_bind": True}})
+    # Need to lazily import this to avoid circular dependencies
+    from .task import TaskRegistry
+
+    if is_exec:
+        task_class = TaskRegistry.resolve_exec_task(task_spec)
+        if not task_class:
+            raise ConfigurationError(f"Invalid task spec: {task_spec}")
+    else:
+        matches = TaskRegistry.resolve_task(task_spec)
+        if not matches:
+            raise ConfigurationError(f"Invalid task spec: {task_spec}")
+        if len(matches) > 1:
+            raise ConfigurationError(f"Task handler should be unique: {task_spec}")
+        task_class = matches[0]
+    if task_class.task_config_class:
+        conf_class = task_class.task_config_class
+        try:
+            return conf_class.schema().load(task_options)
+        except ValidationError as err:
+            logger.error("Invalid task options, %s validation failed: %s", conf_class, err.normalized_messages())
+            raise err
+    return task_options
 
 
 class PathField(mfields.Field):
@@ -84,9 +92,11 @@ class TaskSpecField(mfields.Field):
 
     def _validate_taskspec(self, value):
         from .task import TaskRegistry
-        task = TaskRegistry.resolve_task(value)
-        if not task:
+        matches = TaskRegistry.resolve_task(value)
+        if not matches:
             raise ValidationError(f"Task specifier {value} does not name any public tasks")
+        if len(matches) > 1:
+            raise ValidationError(f"Task specifier {value} must identify an unique task")
 
     def _deserialize(self, value, attr, data, **kwargs):
         value = str(value)
@@ -105,9 +115,31 @@ class ExecTaskSpecField(TaskSpecField):
     """
     def _validate_taskspec(self, value):
         from .task import TaskRegistry
-        task = TaskRegistry.resolve_exec_task(value)
-        if not task:
+        matches = TaskRegistry.resolve_exec_task(value)
+        if not matches:
             raise ValidationError(f"Task specifier {value} does not name any public tasks")
+
+
+class LazyNestedConfigField(mfields.Field):
+    """
+    Field used to mark lazily-resolved nested configurations.
+
+    This is used for task-dependent configuration types that are not known statically.
+    This fields treats its data as a dictionary, however, upon serialization, it accepts
+    an arbitrary dataclass that is converted to a dict.
+    Note that this automatically defaults to an empty dictionary.
+    """
+    def _serialize(self, value, attr, obj, **kwargs):
+        if value is None:
+            return {}
+        if dc.is_dataclass(value) and isinstance(value, Config):
+            return type(value).schema().dump(value)
+        return value
+
+    def _deserialize(self, value, attr, data, **kwargs):
+        if value is None:
+            return {}
+        return value
 
 
 # Helper type for dataclasses to use the PathField
@@ -115,6 +147,7 @@ ConfigTaskSpec = NewType("ConfigTaskSpec", str, field=TaskSpecField)
 ConfigExecTaskSpec = NewType("ConfigExecTaskSpec", str, field=ExecTaskSpecField)
 ConfigPath = NewType("ConfigPath", Path, field=PathField)
 ConfigAny = NewType("ConfigAny", any, field=mfields.Raw)
+LazyNestedConfig = NewType("LazyNestedConfig", dict[str, any], field=LazyNestedConfigField)
 
 
 class ConfigContext:
@@ -285,7 +318,7 @@ class Config:
         if dc.is_dataclass(dtype) and issubclass(dtype, Config):
             # If it is a nested dataclass, just forward it
             return value.bind(context)
-        elif metadata and metadata.get("late_config_bind", False):
+        elif dtype == LazyNestedConfig:
             # If it is a lazy_nested_config field, treat this either as a dataclass or a dict
             if dc.is_dataclass(value):
                 return value.bind(context)
@@ -642,7 +675,15 @@ class TaskTargetConfig(Config):
     handler: ConfigTaskSpec
 
     #: Extra options for the dataset handler, depend on the handler
-    task_options: Dict[str, ConfigAny] = lazy_nested_config_field()
+    task_options: LazyNestedConfig = dc.field(default_factory=dict)
+
+    def __post_init__(self):
+        super().__post_init__()
+        # Resolve the lazy task options if this is not already a Config
+        if dc.is_dataclass(self.task_options):
+            assert isinstance(self.task_options, Config), f"Task options must inherit from Config"
+        else:
+            self.task_options = resolve_task_options(self.handler, self.task_options, is_exec=False)
 
 
 @dc.dataclass
@@ -655,7 +696,15 @@ class ExecTargetConfig(Config):
     handler: ConfigExecTaskSpec
 
     #: Extra options for the dataset handler, depend on the handler
-    task_options: Dict[str, ConfigAny] = lazy_nested_config_field()
+    task_options: LazyNestedConfig = dc.field(default_factory=dict)  # Dict[str, ConfigAny] = lazy_nested_config_field()
+
+    def __post_init__(self):
+        super().__post_init__()
+        # Resolve the lazy task options if this is not already a Config
+        if dc.is_dataclass(self.task_options):
+            assert isinstance(self.task_options, Config), f"Task options must inherit from Config"
+        else:
+            self.task_options = resolve_task_options(self.handler, self.task_options, is_exec=True)
 
 
 @dc.dataclass
@@ -883,30 +932,6 @@ class SessionRunConfig(CommonSessionConfig):
                                           "concurrent_instances")
 
     @classmethod
-    def _resolve_task_options(cls, config: ExecTargetConfig) -> Config | dict:
-        """
-        Resolve the configuration type for a :class:`ExecTargetConfig` containing run options.
-
-        :param config: A single dataset configuration
-        :return: A Config object to be used as the new :attr:`ExecTargetConfig.task_options`.
-        If the exec task does not specify a task_config_class, return a dict with the same content as
-        the original task_options dict.
-        """
-        # Lazily import TaskRegistry to avoid circular dependencies
-        from .task import TaskRegistry
-
-        # Existence of the exec task is ensured by configuration validation
-        task_class = TaskRegistry.resolve_exec_task(config.handler)
-        if task_class.task_config_class:
-            try:
-                return task_class.task_config_class.schema().load(config.task_options)
-            except ValidationError as err:
-                logger.error("Invalid task options, %s validation failed: %s", task_class.task_config_class,
-                             err.normalized_messages())
-                raise err
-        return config.task_options
-
-    @classmethod
     def _resolve_template(cls, session_config: Self) -> Self:
         """
         Resolve all template substitutions, except the user_config substitutions that must
@@ -932,9 +957,6 @@ class SessionRunConfig(CommonSessionConfig):
             # Register parameterization keys, note that these may happen shadow
             # other names, but let it be for now
             ctx.add_values(**bench_conf.parameters)
-            # Resolve task_options for each TaskTargetConfig
-            for task_conf in bench_conf.generators:
-                task_conf.task_options = cls._resolve_task_options(task_conf)
             # Finally do the binding
             new_bench_conf.append(bench_conf.bind(ctx))
         new_config.configurations = new_bench_conf
