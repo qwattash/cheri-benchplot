@@ -7,11 +7,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..core.analysis import BenchmarkAnalysis
-from ..core.config import ConfigPath, DatasetName, TemplateConfig
+from ..core.config import Config, ConfigPath, DatasetName
 
 
 @dataclass
-class DrCacheSimConfig(TemplateConfig):
+class DrCacheSimConfig(Config):
     drrun_path: ConfigPath = Path("dynamorio/bin64/drrun")
     remove_saved_results: bool = False
     LL_cache_sizes: typing.List[str] = field(default_factory=list)

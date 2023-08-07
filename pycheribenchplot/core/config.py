@@ -1,25 +1,31 @@
-import argparse as ap
 import collections
 import dataclasses as dc
 import functools as ft
 import itertools as it
 import json
 import logging
+import re
 import shutil
 from collections import OrderedDict
 from datetime import date, datetime
 from enum import Enum, auto
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Union
+from typing import Dict, List, Optional, Set, Type, Union
 from uuid import UUID, uuid4
 
 import marshmallow.fields as mfields
-import numpy as np
 from git import Repo
 from marshmallow import Schema, ValidationError, validates_schema
 from marshmallow.validate import And, OneOf, Predicate
 from marshmallow_dataclass import NewType, class_schema
+from typing_extensions import Self
 from typing_inspect import get_args, get_origin, is_generic_type
+
+from .error import ConfigurationError
+
+# Global configuration logger
+# We do not drag around a custom logger during configuration
+logger = logging.getLogger("cheri-benchplot")
 
 
 def _template_safe(temp: str, **kwargs):
@@ -40,10 +46,6 @@ def lazy_nested_config_field():
     # that is picked up by marshmallow_dataclass, the second is the keyword argument
     # 'metadata' passed to the underlying marshmallow field constructor.
     return dc.field(default_factory=dict, metadata={"metadata": {"late_config_bind": True}})
-
-
-def is_lazy_nested_config(f: dc.Field):
-    return f.metadata.get("metadata", {}).get("late_config_bind", False)
 
 
 class PathField(mfields.Field):
@@ -115,13 +117,102 @@ ConfigPath = NewType("ConfigPath", Path, field=PathField)
 ConfigAny = NewType("ConfigAny", any, field=mfields.Raw)
 
 
+class ConfigContext:
+    """
+    Base class for context that can be used to bind Config to.
+
+    The context describes the mapping between keys and values.
+    The substitution occurs in two steps:
+    1. lookup the key in the static parameters
+    2. search for any namespace matching the first part of a hierarchical key
+       and recursively resolve the following parts of a dotted name.
+
+    The "None" namespace is considered the default namespace in which to look up
+    substitution keys.
+    """
+    def __init__(self):
+        self._template_params = {}
+        self._namespaces = {}
+        self._nresolved = 0
+
+    @property
+    def resolved_count(self) -> int:
+        """
+        Return the number of keys that have been resolved.
+
+        This can be used to detect when we are done with recursive
+        resolution.
+        """
+        return self._nresolved
+
+    def add_values(self, **kwargs):
+        """
+        Add one or more static template substitution values.
+
+        :param **kwargs: Key-value pairs for template substitution
+        """
+        self._template_params.update(kwargs)
+
+    def add_namespace(self, config: "Config", name: str | None = None):
+        """
+        Add a source configuration object that is used to look up referenced keys.
+
+        :param config: An existing configuration object, may contain
+            unresolved templates.
+        :param name: Name to use in the template keys to refer to this namespace.
+            For example, if we set name = "user" for :class:`BenchplotUserConfig`, the value for
+            :attr:`BenchplotUserConfig.sdk_path` can be referenced as "{user.sdk_path}".
+        """
+        self._namespaces[name] = config
+
+    def find(self, key: str) -> str | None:
+        """
+        Resolve a dot-separated key to the corresponding substitution value.
+
+        :param key: The key to lookup.
+        :return: The template substitution or None
+        """
+        try:
+            value = self._template_params[key]
+            self._nresolved += 1
+            return value
+        except KeyError:
+            pass
+
+        parts = key.split(".")
+        try:
+            ns = self._namespaces[parts[0]]
+        except KeyError:
+            try:
+                ns = self._namespaces[None]
+            except KeyError:
+                return None
+        for name in parts[1:]:
+            try:
+                ns = getattr(ns, name)
+            except AttributeError:
+                return None
+        if isinstance(ns, Config):
+            return None
+        self._nresolved += 1
+        return str(ns)
+
+
 @dc.dataclass
 class Config:
     """
-    Base class for JSON-based configuration file parsing.
+    XXX merge with the basic config.
+    Base class for configuration data structure that support template substitution.
+    Note that this should be used across the whole hierarchy of nested configurations
+    to have the expected behaviour.
     Each field in this dataclass is deserialized from a json file, with support to
     nested configuration dataclasses.
     Types of the fields are normalized to the type annotation given in the dataclass.
+
+    Note that the substitution process is designed to be incremental.
+    Some template substitutions may become available later during initialization, therefore
+    any unmatched template string will be retained unchanged after a call to
+    :meth:`Config.bind`.
     """
     class Meta:
         ordered = True
@@ -140,90 +231,108 @@ class Config:
             data = json.load(jsonfile)
         return cls.schema().load(data)
 
-    def emit_json(self) -> str:
-        """
-        Custom logic to emit json.
-        This is required as in older python version pathlib objects are not serializable.
-        """
-        schema = self.schema()
-        return json.dumps(schema.dump(self), indent=4)
-
     def __post_init__(self):
         return
 
+    def _bind_value(self, context: ConfigContext, dtype: Type, value: any) -> any:
+        """
+        Resolve all template keys in this configuration value and produce the substituted value.
 
-class TemplateConfigContext:
-    """
-    Base class for context that can be used to bind TemplateConfig to.
-    """
-    def __init__(self):
-        self._template_params = {}
-
-    def register_template_subst(self, **kwargs):
-        for key, value in kwargs.items():
-            self._template_params[key] = value
-
-    def conf_template_params(self):
-        return dict(self._template_params)
-
-
-@dc.dataclass
-class TemplateConfig(Config):
-    def _bind_one(self, context, dtype, value):
+        :param context: The template configuration context
+        :param dtype: Type annotation of the field
+        :param value: Current value of the field. At this point, this is assumed to be
+        a string-like object or a nested configuration.
+        :return: The substituted value
+        """
         if value is None:
-            return value
-        params = context.conf_template_params()
-        if dtype == str:
-            return _template_safe(value, **params)
-        elif dc.is_dataclass(dtype) and issubclass(dtype, TemplateConfig):
+            return None
+        if dtype == ConfigAny or dtype == any:
+            dtype = type(value)
+        if dc.is_dataclass(dtype) and issubclass(dtype, Config):
             return value.bind(context)
-        elif dtype == Path or dtype == ConfigPath:
-            str_path = _template_safe(str(value), **params)
-            return Path(str_path)
-        return value
 
-    def bind_field(self, context, f: dc.Field, value):
+        if dtype == str:
+            template = value
+        elif dtype == Path or dtype == ConfigPath:
+            # Path-like object expected here
+            template = str(value)
+            dtype = Path
+        else:
+            # Anything else is assumed to never contain things to bind
+            return value
+
+        # Now we can query the context for substitution keys to resolve.
+        chunks = []
+        last_match = 0
+        for m in re.finditer(r"\{([a-zA-Z0-9_.]+)\}", template):
+            key = m.group(1)
+            subst = context.find(key)
+            if subst is None:
+                continue
+            chunks.append(template[last_match:m.start()])
+            chunks.append(str(subst))
+            last_match = m.end()
+
+        chunks.append(template[last_match:])
+        return dtype("".join(chunks))
+
+    def _bind_field(self, context: ConfigContext, dtype: Type, value: any, metadata: dict | None = None) -> any:
         """
         Run the template substitution on a config field.
-        If the field is a collection or a nested TemplateConfig, we recursively bind
+        If the field is a collection or a nested Config, we recursively bind
         each value.
         """
-        origin = get_origin(f.type)
-        if dc.is_dataclass(f.type):
-            # Forward the nested bind if the dataclass is a TemplateConfig
-            return self._bind_one(context, f.type, value)
-        elif f.type == ConfigPath:
-            return self._bind_one(context, f.type, value)
-        elif is_lazy_nested_config(f):
-            # Signals that the field contains a lazily resolved TemplateConfig, if there is one
-            # recurse the binding, else skip it.
+        if dc.is_dataclass(dtype) and issubclass(dtype, Config):
+            # If it is a nested dataclass, just forward it
+            return value.bind(context)
+        elif metadata and metadata.get("late_config_bind", False):
+            # If it is a lazy_nested_config field, treat this either as a dataclass or a dict
             if dc.is_dataclass(value):
-                return self._bind_one(context, type(value), value)
-            return value
-        elif origin is Union:
-            args = get_args(f.type)
+                return value.bind(context)
+            else:
+                return self._bind_generic(context, dict, value)
+        elif is_generic_type(dtype):
+            # Recurse through the type
+            return self._bind_generic(context, dtype, value)
+        else:
+            # Handle as a single value
+            return self._bind_value(context, dtype, value)
+
+    def _bind_generic(self, context: ConfigContext, dtype: Type, value: any) -> any:
+        """
+        Recursively bind values in generic container types.
+        """
+        origin = get_origin(dtype)
+        if origin is Union:
+            args = get_args(dtype)
             if len(args) == 2 and args[1] == type(None):
                 # If we have an optional field, bind with the type argument instead
-                return self._bind_one(context, args[0], value)
+                return self._bind_field(context, args[0], value)
             else:
                 # Common union field, use whatever type we have as the argument as we do not
                 # know how to parse it
-                return self._bind_one(context, type(value), value)
-        elif origin is List or origin is list:
-            arg_type = get_args(f.type)[0]
-            return [self._bind_one(context, arg_type, v) for v in value]
-        elif origin is Dict or origin is dict:
-            arg_type = get_args(f.type)[1]
-            return {key: self._bind_one(context, arg_type, v) for key, v in value.items()}
+                return self._bind_field(context, type(value), value)
+        elif type(value) == list:
+            if origin is List or origin is list:
+                inner_type_fn = lambda v: get_args(dtype)[0]
+            else:
+                inner_type_fn = lambda v: type(v)
+            return [self._bind_field(context, inner_type_fn(v), v) for v in value]
+        elif type(value) == dict:
+            if origin is Dict or origin is dict:
+                inner_type_fn = lambda v: get_args(dtype)[1]
+            else:
+                inner_type_fn = lambda v: type(v)
+            return {key: self._bind_field(context, inner_type_fn(v), v) for key, v in value.items()}
         else:
-            return self._bind_one(context, f.type, value)
+            return self._bind_value(context, dtype, value)
 
-    def bind(self, context):
+    def _bind_config(self, source: Self, context: ConfigContext) -> Self:
         """
         Run a template substitution pass with the given substitution context.
         This will resolve template strings as "{foo}" for template key/value
         substitutions that have been registerd in the contexv via
-        TemplateConfigContext.register_template_subst() and leave the missing
+        ConfigContext.register_template_subst() and leave the missing
         template parameters unchanged for later passes.
         """
         changes = {}
@@ -231,12 +340,42 @@ class TemplateConfig(Config):
             if not f.init:
                 continue
             try:
-                replaced = self.bind_field(context, f, getattr(self, f.name))
+                metadata = f.metadata.get("metadata", {})
+                replaced = self._bind_field(context, f.type, getattr(source, f.name), metadata)
             except Exception as ex:
-                raise ValueError(f"Failed to bind {f.name} with value {getattr(self, f.name)}: {ex}")
+                raise ConfigurationError(f"Failed to bind {f.name} with value "
+                                         f"{getattr(source, f.name)}: {ex}")
             if replaced:
                 changes[f.name] = replaced
-        return dc.replace(self, **changes)
+        return dc.replace(source, **changes)
+
+    def bind(self, context: ConfigContext) -> Self:
+        """
+        Substitute all templates until there is nothing else that we can substitute.
+
+        :param context: The substitution context
+        :return: A new configuration instance with the substituted values.
+        """
+        bound = self
+        max_steps = 10
+        last_matched = context.resolved_count
+        for _ in range(max_steps):
+            bound = self._bind_config(bound, context)
+            if context.resolved_count == last_matched:
+                break
+            last_matched = context.resolved_count
+        else:
+            raise RuntimeError("LOOP")
+            logger.warning("Configuration template binding exceeded recursion depth limit")
+        return bound
+
+    def emit_json(self) -> str:
+        """
+        Custom logic to emit json.
+        This is required as in older python version pathlib objects are not serializable.
+        """
+        schema = self.schema()
+        return json.dumps(schema.dump(self), indent=4)
 
 
 @dc.dataclass
@@ -308,7 +447,7 @@ class BenchplotUserConfig(Config):
 
 
 @dc.dataclass
-class CommonPlatformOptions(TemplateConfig):
+class CommonPlatformOptions(Config):
     """
     Base class for platform-specific options.
     This is internally used during benchmark dataset collection to
@@ -340,7 +479,7 @@ class CommonPlatformOptions(TemplateConfig):
 
 
 @dc.dataclass
-class PlatformOptions(TemplateConfig):
+class PlatformOptions(Config):
     """
     Platform options for an instance.
     This accepts the same fields as :class:`CommonPlatformOptions`, but
@@ -376,7 +515,7 @@ class PlatformOptions(TemplateConfig):
 
 
 @dc.dataclass
-class ProfileConfig(TemplateConfig):
+class ProfileConfig(Config):
     """
     Common profiling options.
     These are inteded to be embedded into benchmark task_options for those benchmarks
@@ -441,7 +580,7 @@ class InstanceKernelABI(Enum):
 
 
 @dc.dataclass
-class InstanceConfig(TemplateConfig):
+class InstanceConfig(Config):
     """
     Configuration for a CheriBSD instance to run benchmarks on.
     XXX-AM May need a custom __eq__() if iterable members are added
@@ -495,7 +634,7 @@ class InstanceConfig(TemplateConfig):
 
 
 @dc.dataclass
-class TaskTargetConfig(TemplateConfig):
+class TaskTargetConfig(Config):
     """
     Specify an analysis task and associated options.
     """
@@ -507,7 +646,7 @@ class TaskTargetConfig(TemplateConfig):
 
 
 @dc.dataclass
-class ExecTargetConfig(TemplateConfig):
+class ExecTargetConfig(Config):
     """
     Specify an execution task name.
     Note that the namespace of this task is also used to resolve compatible analysis tasks.
@@ -533,7 +672,7 @@ class PipelineInstanceConfig(Config):
 
 
 @dc.dataclass
-class CommonBenchmarkConfig(TemplateConfig):
+class CommonBenchmarkConfig(Config):
     """
     Common benchmark configuration parameters.
     This is shared between the user-facing configuration file and the internal
@@ -644,7 +783,7 @@ class BenchmarkRunConfig(CommonBenchmarkConfig):
 
 
 @dc.dataclass
-class CommonSessionConfig(TemplateConfig):
+class CommonSessionConfig(Config):
     """
     Common session configuration.
     This is shared between the user-facing configuration file format and the
@@ -744,7 +883,65 @@ class SessionRunConfig(CommonSessionConfig):
                                           "concurrent_instances")
 
     @classmethod
-    def generate(cls, user_config: BenchplotUserConfig, config: PipelineConfig) -> "SessionRunConfig":
+    def _resolve_task_options(cls, config: ExecTargetConfig) -> Config | dict:
+        """
+        Resolve the configuration type for a :class:`ExecTargetConfig` containing run options.
+
+        :param config: A single dataset configuration
+        :return: A Config object to be used as the new :attr:`ExecTargetConfig.task_options`.
+        If the exec task does not specify a task_config_class, return a dict with the same content as
+        the original task_options dict.
+        """
+        # Lazily import TaskRegistry to avoid circular dependencies
+        from .task import TaskRegistry
+
+        # Existence of the exec task is ensured by configuration validation
+        task_class = TaskRegistry.resolve_exec_task(config.handler)
+        if task_class.task_config_class:
+            try:
+                return task_class.task_config_class.schema().load(config.task_options)
+            except ValidationError as err:
+                logger.error("Invalid task options, %s validation failed: %s", task_class.task_config_class,
+                             err.normalized_messages())
+                raise err
+        return config.task_options
+
+    @classmethod
+    def _resolve_template(cls, session_config: Self) -> Self:
+        """
+        Resolve all template substitutions, except the user_config substitutions that must
+        be resolved at session-load time.
+
+        This produces a new session configuration with the substituted values.
+        Note that this resolves first the common session template keys, then per-dataset
+        configuration keys are introduced and resolved.
+        """
+        ctx = ConfigContext()
+        # Default namespace
+        ctx.add_namespace(session_config)
+        new_config = session_config.bind(ctx)
+
+        # Replace the default namespace as we have an updated version
+        ctx.add_namespace(new_config)
+        # Now scan through all the configurations and subsitute per-dataset fields
+        new_bench_conf = []
+        for bench_conf in new_config.configurations:
+            ctx.add_namespace(bench_conf, "benchmark")
+            # Shorthand for the corresponding instance configuration
+            ctx.add_namespace(bench_conf.instance, "instance")
+            # Register parameterization keys, note that these may happen shadow
+            # other names, but let it be for now
+            ctx.add_values(**bench_conf.parameters)
+            # Resolve task_options for each TaskTargetConfig
+            for task_conf in bench_conf.generators:
+                task_conf.task_options = cls._resolve_task_options(task_conf)
+            # Finally do the binding
+            new_bench_conf.append(bench_conf.bind(ctx))
+        new_config.configurations = new_bench_conf
+        return new_config
+
+    @classmethod
+    def generate(cls, user_config: BenchplotUserConfig, config: PipelineConfig) -> Self:
         """
         Generate a new :class:`SessionRunConfig` from a :class:`PipelineConfig`.
         Manual benchmark parameterization is supported by specifying multiple benchmarks with
@@ -761,7 +958,6 @@ class SessionRunConfig(CommonSessionConfig):
         :return: A new session runfile configuration
         """
         session = SessionRunConfig.from_common_conf(config)
-        logger = logging.getLogger("cheri-benchplot")
         logger.info("Create new session %s", session.uuid)
 
         # Collect benchmarks and the instances
@@ -836,7 +1032,10 @@ class SessionRunConfig(CommonSessionConfig):
         snap_head(user_config.cheribsd_path, "cheribsd")
         snap_head(user_config.qemu_path, "qemu")
         snap_head(user_config.llvm_path, "llvm")
-        return session
+
+        # Now that we are done with generating the configuration, resolve all
+        # templates that do not involve the user configuration
+        return cls._resolve_template(session)
 
 
 @dc.dataclass

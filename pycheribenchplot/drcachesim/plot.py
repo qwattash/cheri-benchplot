@@ -6,12 +6,12 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-from pycheribenchplot.core.config import DatasetName, TemplateConfig
+from pycheribenchplot.core.config import Config, DatasetName
 from pycheribenchplot.core.plot.plot_base import BenchmarkPlot
 
 
 @dataclass
-class CachePlotConfig(TemplateConfig):
+class CachePlotConfig(Config):
     plot_cache_levels: typing.List[str] = field(default_factory=list)
 
 

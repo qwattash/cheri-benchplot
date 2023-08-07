@@ -1,3 +1,10 @@
+class ConfigurationError(RuntimeError):
+    """
+    Error during configuration parsing or manipulation.
+    """
+    pass
+
+
 class TaskNotFound(RuntimeError):
     """
     Exception signaling that a given task could not be found.
@@ -14,6 +21,7 @@ class MissingDependency(RuntimeError):
 
     This may happen if a non-optional dependency is not found.
     """
+    pass
 
 
 class ToolArgparseError(RuntimeError):
@@ -22,3 +30,4 @@ class ToolArgparseError(RuntimeError):
 
     This is used in the CLI/GUI tool helpers during argument handling.
     """
+    pass

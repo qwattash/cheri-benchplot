@@ -16,8 +16,8 @@ from typing_extensions import Self
 
 from .analysis import AnalysisTask
 from .benchmark import Benchmark, BenchmarkExecMode, ExecTaskConfig
-from .config import (AnalysisConfig, BenchplotUserConfig, Config, ExecTargetConfig, PipelineConfig, SessionRunConfig,
-                     TaskTargetConfig, TemplateConfigContext)
+from .config import (AnalysisConfig, BenchplotUserConfig, Config, ConfigContext, ExecTargetConfig, PipelineConfig,
+                     SessionRunConfig, TaskTargetConfig)
 from .instance import InstanceManager
 from .model import UNPARAMETERIZED_INDEX_NAME
 from .task import (ExecutionTask, SessionExecutionTask, TaskRegistry, TaskScheduler)
@@ -153,32 +153,14 @@ class Session:
         Resolves the templates for the given session run configuration,
         using the current user configuration.
         """
-        ctx = TemplateConfigContext()
-        ctx.register_template_subst(**asdict(self.user_config))
-        # Register substitutions for known stable fields in the run configuration
-        ctx.register_template_subst(session=config.uuid)
-        ctx.register_template_subst(session_name=config.name)
+        ctx = ConfigContext()
+        ctx.add_namespace(self.user_config, "user")
         new_config = config.bind(ctx)
-        # Now scan through all the configurations and subsitute per-benchmark/instance fields
-        new_bench_conf = []
+
+        # Resolve task_options for each TaskTargetConfig
         for bench_conf in new_config.configurations:
-            ctx.register_template_subst(uuid=bench_conf.uuid,
-                                        g_uuid=bench_conf.g_uuid,
-                                        iterations=bench_conf.iterations,
-                                        drop_iterations=bench_conf.drop_iterations,
-                                        remote_ouptut_dir=bench_conf.remote_output_dir)
-            ctx.register_template_subst(**bench_conf.parameters)
-            inst_conf = bench_conf.instance
-            ctx.register_template_subst(kernel=inst_conf.kernel,
-                                        baseline=inst_conf.baseline,
-                                        platform=inst_conf.platform.value,
-                                        cheri_target=inst_conf.cheri_target.value,
-                                        kernelabi=inst_conf.kernelabi.value)
-            # Resolve run_options for each TaskTargetConfig
-            for exec_task_conf in bench_conf.generators:
-                exec_task_conf.task_options = self._resolve_exec_task_options(exec_task_conf)
-            new_bench_conf.append(bench_conf.bind(ctx))
-        new_config.configurations = new_bench_conf
+            for task_conf in bench_conf.generators:
+                task_conf.task_options = self._resolve_exec_task_options(task_conf)
         return new_config
 
     def _resolve_baseline(self):

@@ -4,7 +4,6 @@ import re
 from collections import defaultdict
 from collections.abc import Iterable
 from contextlib import ExitStack, contextmanager
-from dataclasses import dataclass
 from queue import Queue
 from threading import Condition, Event, Lock, Semaphore, Thread
 from typing import Any, Callable, ContextManager, Hashable, Iterable, Type
@@ -24,7 +23,7 @@ class WorkerShutdown(Exception):
     pass
 
 
-@dataclass
+@dc.dataclass
 class TargetRef:
     """
     Internal helper for targets
@@ -62,6 +61,9 @@ class TaskRegistry(type):
         if self.task_name is None or self.task_namespace is None:
             # Skip, this is an abstract task
             return
+        if self.task_config_class:
+            assert dc.is_dataclass(self.task_config_class), "Task configuration must be a dataclass"
+            assert issubclass(self.task_config_class, Config), "Task configuration must inherit Config"
         ns = TaskRegistry.all_tasks[self.task_namespace]
         if self.task_name in ns:
             raise ValueError(f"Multiple tasks with the same name: {self}, {ns[self.task_name]}")

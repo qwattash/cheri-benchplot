@@ -5,15 +5,15 @@ from pathlib import Path
 from marshmallow.validate import OneOf
 
 from ..core.artefact import DataFileTarget
-from ..core.config import ConfigPath, ProfileConfig, TemplateConfig
+from ..core.config import Config, ConfigPath, ProfileConfig
 from ..core.task import ExecutionTask
 from ..qemu.task import QEMUTracingSetupTask
 
 
 @dataclass
-class NetperfRunConfig(TemplateConfig):
+class NetperfRunConfig(Config):
     #: Path to netperf/netserver in the guest
-    netperf_path: ConfigPath = Path("opt/{cheri_target}/netperf/bin")
+    netperf_path: ConfigPath = Path("opt/{instance.cheri_target}/netperf/bin")
 
     #: Actual benchmark options
     netperf_options: typing.List[str] = field(default_factory=list)

@@ -202,11 +202,13 @@ def benchplot_user_config(pytestconfig):
 def fake_session_factory(tmp_path):
     cleanup = []
 
-    def factory(config: dict = None):
+    def factory(config: dict = None, user_config: BenchplotUserConfig = None):
         if config is None:
             config = fake_session_conf
         sess_config = SessionRunConfig.schema().load(config)
-        session = Session(BenchplotUserConfig(), sess_config, session_path=tmp_path)
+        if user_config is None:
+            user_config = BenchplotUserConfig()
+        session = Session(user_config, sess_config, session_path=tmp_path)
         session.analysis_config = AnalysisConfig()
         cleanup.append(session)
         return session
