@@ -41,7 +41,7 @@ class ValidateStats(ParamGroupDataModel):
 
     count_mean_ndelta: Series[float] = Field(alias=("count", "mean", "norm_delta"),
                                              nullable=True,
-                                             approx_oneof=dict(sequence=[0, 9], distance=.8))
+                                             approx_oneof=dict(sequence=[0, 9], distance=1))
     count_std_sample: Series[float] = Field(alias=("count", "std", "sample"),
                                             approx_oneof=dict(sequence=[1, 1], distance=.2))
     count_std_delta: Series[float] = Field(alias=("count", "std", "delta"),

@@ -5,6 +5,7 @@ import uuid
 import pandas as pd
 import pandera as pa
 import pytest
+from pandas.testing import assert_frame_equal
 from pandera.typing import DataFrame, Index, Series
 
 from pycheribenchplot.core.model import DataModel, check_data_model
@@ -68,7 +69,7 @@ def fake_task(session_config, fake_session_factory):
     return task
 
 
-test_frame = pd.DataFrame({
+test_frame = (pd.DataFrame({
     "dataset_id": ["8bc941a3-f6d6-4d37-b193-4738f1da3dae"],
     "dataset_gid": ["2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb"],
     "iteration": [5],
@@ -76,10 +77,12 @@ test_frame = pd.DataFrame({
     "param1": ["param1-value"],
     "foo": [0xdead],
     "bar": [0xbeef]
-}).set_index(["dataset_id", "dataset_gid", "iteration", "param0", "param1", "foo"])
+}).astype({
+    "iteration": pd.Int64Dtype()
+}).set_index(["dataset_id", "dataset_gid", "iteration", "param0", "param1", "foo"]))
 
 # Simple dataframe to expect for each test
-expect = pd.DataFrame({
+expect = (pd.DataFrame({
     "dataset_id": [uuid.UUID("8bc941a3-f6d6-4d37-b193-4738f1da3dae")],
     "dataset_gid": [uuid.UUID("2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb")],
     "iteration": [5],
@@ -87,7 +90,9 @@ expect = pd.DataFrame({
     "param1": ["param1-value"],
     "foo": [0xdead],
     "bar": [0xbeef]
-}).set_index(["dataset_id", "dataset_gid", "iteration", "param0", "param1", "foo"])
+}).astype({
+    "iteration": pd.Int64Dtype()
+}).set_index(["dataset_id", "dataset_gid", "iteration", "param0", "param1", "foo"]))
 
 
 def test_dynamic_model_fields(session_config, fake_session_factory):
@@ -97,9 +102,7 @@ def test_dynamic_model_fields(session_config, fake_session_factory):
     assert type(m) == pa.DataFrameSchema
 
     result = m.validate(test_frame.copy())
-    assert result.columns == expect.columns
-    assert result.index == expect.index
-    assert (result == expect).all().all()
+    assert_frame_equal(result, expect)
 
 
 def test_dynamic_model_fields_extra_cols(session_config, fake_session_factory):
@@ -112,9 +115,7 @@ def test_dynamic_model_fields_extra_cols(session_config, fake_session_factory):
     test_data["useless_column"] = ["should-not-be-here"]
 
     result = m.validate(test_data)
-    assert result.columns == expect.columns
-    assert result.index == expect.index
-    assert (result == expect).all().all()
+    assert_frame_equal(result, expect)
 
 
 def test_dynamic_model_fields_extra_index(session_config, fake_session_factory):
@@ -155,9 +156,7 @@ def test_dynamic_model_fields_column_order(session_config, fake_session_factory)
     test_data = test_data.set_index(["dataset_id", "dataset_gid", "iteration", "param0", "param1", "foo"])
 
     result = m.validate(test_data)
-    assert result.columns == expect.columns
-    assert result.index == expect.index
-    assert (result == expect).all().all()
+    assert_frame_equal(result, expect)
 
 
 def test_data_model_decorator_check_input(fake_task):
@@ -167,22 +166,13 @@ def test_data_model_decorator_check_input(fake_task):
     test_data = test_frame.copy()
 
     result = fake_task.transform_noop(test_data)
-
-    assert result.columns == expect.columns
-    assert result.index == expect.index
-    assert (result == expect).all().all()
+    assert_frame_equal(result, expect)
 
     result = fake_task.transform_extra_args(test_data, 100)
-
-    assert result.columns == expect.columns
-    assert result.index == expect.index
-    assert (result == expect).all().all()
+    assert_frame_equal(result, expect)
 
     result = fake_task.transform_no_return(test_data)
-
-    assert result.columns == expect.columns
-    assert result.index == expect.index
-    assert (result == expect).all().all()
+    assert_frame_equal(result, expect)
 
 
 def test_data_model_decorator_check_output(fake_task):
@@ -192,10 +182,7 @@ def test_data_model_decorator_check_output(fake_task):
     test_data = test_frame.copy()
 
     result = fake_task.transform_return(test_data)
-
-    assert result.columns == expect.columns
-    assert result.index == expect.index
-    assert (result == expect).all().all()
+    assert_frame_equal(result, expect)
 
 
 def test_data_model_decorator_check_tuple_output(fake_task):

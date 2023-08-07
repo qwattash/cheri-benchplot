@@ -740,8 +740,8 @@ class DWARFStructLayoutModel(DataModel):
     The members are uniquely identified by the combination of (offset, name) which should
     be sufficient for linearized union members that share the same offset.
     """
-    file: Series[str]
-    line: Series[int]
+    file: Index[str]
+    line: Index[int]
     base_name: Index[str]
     member_name: Index[str]
     member_offset: Index[pd.Int64Dtype] = pa.Field(nullable=True)

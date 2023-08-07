@@ -301,7 +301,6 @@ def _validate_data_model(session: "Session", type_target: Type, value: Any) -> A
         checked = schema.validate(value)
         return checked
     except:
-        print("failed")
         raise
 
 

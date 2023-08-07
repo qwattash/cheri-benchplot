@@ -191,6 +191,7 @@ def test_benchmark_file_target_loader(fake_benchmark_task, sample_content):
     expect_content["dataset_id"] = fake_benchmark_task.benchmark.uuid
     expect_content["dataset_gid"] = fake_benchmark_task.benchmark.g_uuid
     expect_content["iteration"] = -1
+    expect_content["iteration"] = expect_content["iteration"].astype(pd.Int64Dtype())
     expect_content = expect_content.set_index(["dataset_id", "dataset_gid", "iteration", "index"])
 
     target = DataFileTarget(fake_benchmark_task, model=FakeBenchmarkModel, ext="csv")
