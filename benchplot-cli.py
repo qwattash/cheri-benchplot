@@ -2,12 +2,15 @@
 
 import argparse as ap
 import logging
+import re
 import traceback
 import uuid
+from dataclasses import MISSING, fields
 from json.decoder import JSONDecodeError
 from pathlib import Path
 
 from marshmallow.exceptions import ValidationError
+from typing_inspect import is_generic_type
 
 from pycheribenchplot.core.config import (AnalysisConfig, BenchplotUserConfig, PipelineConfig, TaskTargetConfig)
 from pycheribenchplot.core.error import ToolArgparseError
@@ -21,16 +24,6 @@ class SessionSubCommand(SubCommand):
     Manage and ispect sessions.
     """
     name = "session"
-
-    def _register_session_arg(self, parser):
-        """
-        Helper to add the session ID argument to the given parser.
-        """
-        parser.add_argument("target",
-                            type=Path,
-                            default=Path.cwd(),
-                            nargs="?",
-                            help="Path to the target session, defaults to the current working directory.")
 
     def register_options(self, parser):
         super().register_options(parser)
@@ -142,21 +135,25 @@ class TaskInfoSubCommand(SubCommand):
     def register_options(self, parser):
         super().register_options(parser)
 
-        parser.add_argument("what",
-                            choices=["session", "task", "tasks", "generators", "config"],
-                            help="Display information about something.")
-        parser.add_argument("-t",
-                            "--task",
-                            type=str,
-                            action="append",
-                            required=False,
-                            help="Name of the task for which information is requested, when relevant")
-        parser.add_argument("-u",
-                            type=Path,
-                            default=False,
-                            required=False,
-                            help="Generate a default user configuration file")
-        parser.add_argument("target", type=Path, default=Path.cwd(), nargs="?", help="Path of the target session.")
+        info_subparsers = parser.add_subparsers(help="Action", dest="info_action")
+
+        sub_session = info_subparsers.add_parser("session", help="Display information about an existing session")
+        self._register_session_arg(sub_session)
+        sub_session.add_argument("-a",
+                                 "--show-analysis-tasks",
+                                 action="store_true",
+                                 help="Show compatible analysis tasks")
+
+        sub_task = info_subparsers.add_parser("task", help="Display information about a task")
+        sub_task.add_argument("task_spec", nargs="+", help="Name(s) of task(s) to describe")
+
+        sub_config = info_subparsers.add_parser("config", help="Display configuration information")
+        sub_config.add_argument("-u",
+                                "--user",
+                                type=Path,
+                                required=False,
+                                default=None,
+                                help="Generate a default user configuration file")
 
     def handle_session(self, user_config, args):
         """
@@ -168,45 +165,46 @@ class TaskInfoSubCommand(SubCommand):
         for c in session.config.configurations:
             print("\t", c)
 
-    def handle_tasks(self, user_config, args):
-        """
-        Display information about compatible analysis tasks for a session.
-        """
-        session = self._get_session(user_config, args)
-        print("Analysis targets:")
-        for task in session.get_public_tasks():
-            spec_line = f"{task.task_namespace}.{task.task_name} ({task.__name__})"
-            print("\t", spec_line)
+        if args.show_analysis_tasks:
+            print("\tAvailable analysis tasks:\n")
+            for task in session.get_public_tasks():
+                spec_line = f"{task.task_namespace}.{task.task_name} ({task.__name__})"
+                print("\t", spec_line)
 
-    def handle_generators(self, user_config, args):
+    def handle_task(self, user_config, args):
         """
-        List all available data generation tasks.
-
-        These are the tasks that may be used to produce data during a session run.
+        Display task information.
         """
-        print("Generator tasks:")
         for task_class in TaskRegistry.iter_public():
-            if not task_class.is_exec_task():
+            match = False
+            for matcher in args.task_spec:
+                match = re.match(matcher, f"{task_class.task_namespace}.{task_class.task_name}")
+                if match:
+                    break
+            if not match:
                 continue
-            spec_line = f"{task_class.task_namespace}.{task_class.task_name} ({task_class.__name__})"
-            print("\t", spec_line)
+            # Dump the task
+            spec_line = f"# {task_class.task_namespace}.{task_class.task_name} ({task_class.__name__}):\n"
+            spec_line += task_class.__doc__ + "\n"
+            if task_class.task_config_class:
+                ## XXX the config printing logic should probably go in core/config.py
+                conf_name = task_class.task_config_class.__name__
+                spec_line += f"## Using configuration {conf_name}:"
+                spec_line += task_class.task_config_class.__doc__ + "\n"
+                spec_line += "    Configuration fields:\n"
+                for field in fields(task_class.task_config_class):
+                    if field.default != MISSING:
+                        default = "= " + str(field.default)
+                    elif field.default_factory != MISSING:
+                        default = "= <factory>"
+                    else:
+                        default = "<required>"
+                    dtype = field.type if is_generic_type(field.type) else field.type.__name__
+                    dtype = str(dtype).split(".")[-1]
+                    spec_line += f"\t{field.name}: {field.type} {default}\n"
+            print(spec_line)
 
-    def handle_spec(self, user_config, args):
-        """
-        Display detailed information about a task and how it can be used.
-        """
-        if not args.task:
-            self.logger.warning("No -t,--task specified, you should indicate at least "
-                                "one task to show information about")
-        for task_name in args.task:
-            task_types = TaskRegistry.resolve_task(task_name)
-            if not task_types:
-                self.logger.error(
-                    "Invalid task name %s. The task name may be "
-                    "'<namespace>.<task_name>' or '<namespace>.*'.", task_name)
-            print("TODO not implemented")
-
-    def handle_config_info(self, user_config, args):
+    def handle_config(self, user_config, args):
         """
         Help information about configurations.
 
@@ -222,18 +220,11 @@ class TaskInfoSubCommand(SubCommand):
             print(user_config.emit_json())
 
     def handle(self, user_config, args):
-        if args.what == "session":
-            self.handle_session(user_config, args)
-        elif args.what == "tasks":
-            self.handle_tasks(user_config, args)
-        elif args.what == "generators":
-            self.handle_generators(user_config, args)
-        elif args.what == "task":
-            self.handle_spec(user_config, args)
-        elif args.what == "config":
-            self.handle_config_info(user_config, args)
-        else:
-            raise ValueError(f"Invalid key {args.what}")
+        if args.info_action is None:
+            raise ToolArgparseError("Missing info action")
+        handler_name = f"handle_{args.info_action}"
+        handler = getattr(self, handler_name)
+        handler(user_config, args)
 
 
 def main():

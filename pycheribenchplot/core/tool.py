@@ -62,6 +62,16 @@ class SubCommand:
             raise FileNotFoundError(f"Session not found at {args.target}")
         return session
 
+    def _register_session_arg(self, parser):
+        """
+        Helper to add the session ID argument to the given parser.
+        """
+        parser.add_argument("target",
+                            type=Path,
+                            default=Path.cwd(),
+                            nargs="?",
+                            help="Path to the target session, defaults to the current working directory.")
+
     @property
     def logger(self):
         return self.parent.logger
