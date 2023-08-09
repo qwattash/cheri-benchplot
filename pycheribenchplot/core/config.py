@@ -19,7 +19,7 @@ from marshmallow import Schema, ValidationError, validates_schema
 from marshmallow.validate import And, OneOf, Predicate
 from marshmallow_dataclass import NewType, class_schema
 from typing_extensions import Self
-from typing_inspect import get_args, get_origin, is_generic_type
+from typing_inspect import get_args, get_origin, is_generic_type, is_union_type
 
 from .error import ConfigurationError
 
@@ -281,6 +281,7 @@ class Config:
             return None
         if dtype == ConfigAny or dtype == any:
             dtype = type(value)
+
         if dc.is_dataclass(dtype) and issubclass(dtype, Config):
             return value.bind(context)
 
@@ -324,7 +325,7 @@ class Config:
                 return value.bind(context)
             else:
                 return self._bind_generic(context, dict, value)
-        elif is_generic_type(dtype):
+        elif is_generic_type(dtype) or is_union_type(dtype):
             # Recurse through the type
             return self._bind_generic(context, dtype, value)
         else:
@@ -336,10 +337,12 @@ class Config:
         Recursively bind values in generic container types.
         """
         origin = get_origin(dtype)
-        if origin is Union:
+        if is_union_type(dtype):
             args = get_args(dtype)
             if len(args) == 2 and args[1] == type(None):
-                # If we have an optional field, bind with the type argument instead
+                # If we have an optional field, bind with the type argument
+                if value is None:
+                    return value
                 return self._bind_field(context, args[0], value)
             else:
                 # Common union field, use whatever type we have as the argument as we do not
@@ -618,16 +621,25 @@ class InstanceConfig(Config):
     Configuration for a CheriBSD instance to run benchmarks on.
     XXX-AM May need a custom __eq__() if iterable members are added
     """
+    #: Name of the kernel configuration file used
     kernel: str
+    #: Is this the baseline reference platform for analysis?
     baseline: bool = False
+    #: Optional name used for user-facing output such as plot legends
     name: Optional[str] = None
+    #: Platform identifier, this affects the strategy used to run execution tasks
     platform: InstancePlatform = dc.field(default=InstancePlatform.QEMU, metadata={"by_value": True})
+    #: Userspace ABI identifier
     cheri_target: InstanceCheriBSD = dc.field(default=InstanceCheriBSD.RISCV64_PURECAP, metadata={"by_value": True})
+    #: Kernel ABI identifier
     kernelabi: InstanceKernelABI = dc.field(default=InstanceKernelABI.HYBRID, metadata={"by_value": True})
-    # Is the kernel config name managed by cheribuild or is it an extra one
-    # specified via --cheribsd/extra-kernel-configs?
+    #: Is the kernel config name managed by cheribuild or is it an extra one
+    #: specified via --cheribsd/extra-kernel-configs?
     cheribuild_kernel: bool = True
-    # Internal fields, should not appear in the config file and are missing by default
+    #: Additional key-value parameters that can be used in benchmark templates to 'parameterize' on
+    #: the platform axis. These are otherwise unused.
+    parameters: Dict[str, ConfigAny] = dc.field(default_factory=dict)
+    #: Internal fields, should not appear in the config file and are missing by default
     platform_options: PlatformOptions = dc.field(default_factory=PlatformOptions)
 
     @property

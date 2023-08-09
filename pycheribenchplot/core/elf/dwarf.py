@@ -1,3 +1,4 @@
+import re
 import subprocess
 import typing
 from collections import defaultdict, namedtuple
@@ -6,6 +7,7 @@ from enum import Flag, IntFlag, auto
 from functools import reduce
 from pathlib import Path
 
+import networkx as nx
 import numpy as np
 import pandas as pd
 import pandera as pa
@@ -729,7 +731,7 @@ class DWARFStructLayoutModel(DataModel):
     to determine padding, alignment and sub-object representablity.
 
     There is one row for each member, nested structures are unrolled and the
-    member name is prefixed by the parent names with the C++ style :: scope operator.
+    member name is prefixed by the parent names with the C-style '.' scope operator.
     Offsets are adjusted to reflect the parent structure offset.
 
     Note that the type ID is not really an itentifier for our purposes. There may be
@@ -760,7 +762,7 @@ DWARFStructLayoutRecord = namedtuple("DWARFStructLayoutRecord", [
 ])
 
 
-class NestedMemberVisitor:
+class StructLayoutVisitor:
     """
     Abstraction for an algorithm that visits nested members of a DWARF structure layout.
 
@@ -770,20 +772,47 @@ class NestedMemberVisitor:
     def __init__(self, root: pydwarf.TypeInfo):
         self.root = root
 
-    def visit_member(self, parent: pydwarf.TypeInfo, member: pydwarf.Member, prefix: str, offset: int):
+    def visit_member(self, parent: pydwarf.Member | None, curr_type: pydwarf.TypeInfo, member: pydwarf.Member,
+                     prefix: str, offset: int):
+        """
+        Visit a leaf structure member
+
+        :param parent: Parent member of the current type we are inspecting.
+        :param curr_type: The type information of the root structure.
+        :param member: The member information.
+        :param prefix: The scope prefix with respect to the root structure definition.
+        :param offset: The offset of the member.
+        """
         pass
 
-    def visit_empty_struct(self, parent: pydwarf.TypeInfo, prefix: str, offset: int):
+    def visit_empty_struct(self, parent: pydwarf.Member | None, curr_type: pydwarf.TypeInfo, prefix: str, offset: int):
+        """
+        Visit an empty structure. This should be used to insert markers or ignore empty structures.
+
+        :param parent: Parent member of the current type we are inspecting.
+        :param curr_type: The type information of the root structure.
+        :param prefix: The scope prefix with respect to the root structure definition.
+        :param offset: The offset of the empty structure member.
+        """
         pass
 
 
-class MemberLayoutVisitor(NestedMemberVisitor):
-    def __init__(self, root):
+class FlattenLayoutVisitor(StructLayoutVisitor):
+    def __init__(self, benchmark, root):
         super().__init__(root)
         #: Accumulate DWARFStructLayoutRecord tuples
         self.records: list[DWARFStructLayoutRecord] = []
 
-    def visit_member(self, parent, member, prefix, offset):
+        # Normalize anonymous type names to be relative to the user src_path
+        self._type_name = root.base_name
+        if root.base_name.startswith("<anon>"):
+            match = re.match(r"<anon>\.(.*)\.([0-9]+)", root.base_name)
+            if match:
+                path = Path(match.group(1))
+                relpath = path.relative_to(benchmark.user_config.src_path)
+                self._type_name = "<anon>" + str(relpath) + "." + match.group(2)
+
+    def visit_member(self, parent, curr_type, member, prefix, offset):
         record = DWARFStructLayoutRecord(type_id=self.root.handle,
                                          base_name=self.root.base_name,
                                          member_name=prefix + member.name,
@@ -796,9 +825,9 @@ class MemberLayoutVisitor(NestedMemberVisitor):
                                          member_type_name=member.type_info.type_name)
         self.records.append(record)
 
-    def visit_empty_struct(self, parent, prefix, offset):
+    def visit_empty_struct(self, parent, curr_type, prefix, offset):
         record = DWARFStructLayoutRecord(type_id=self.root.handle,
-                                         base_name=self.root.base_name,
+                                         base_name=self._type_name,
                                          member_name=prefix + "<empty>",
                                          member_offset=offset,
                                          file=self.root.file,
@@ -808,6 +837,67 @@ class MemberLayoutVisitor(NestedMemberVisitor):
                                          member_size=np.nan,
                                          member_type_name=None)
         self.records.append(record)
+
+
+class GraphConversionVisitor(StructLayoutVisitor):
+    """
+    Visitor that produces a networkx tree for a dwarf structure description
+
+    Note that this can drop duplicate members that are identified by the tuple
+    <base_name, member_name, member_offset, member_size>.
+    This is done to remove multiple instances of the same structure.
+    """
+    #: Helper type to keep node identifiers consistent
+    #: Note this should be kept in sync with :class:`DWARFStructLayoutModel`
+    NodeID = namedtuple("NodeID", ["file", "line", "base_name", "member_name", "member_offset"])
+
+    def __init__(self, graph: nx.DiGraph, benchmark, root):
+        super().__init__(root)
+
+        self.g = graph
+        self.drop_duplicates = False
+
+        # self._type_name = fixup_anon_name(benchmark, root.base_name)
+        # Normalize anonymous type names to be relative to the user src_path
+        self._root_type_name = root.base_name
+        if root.base_name.startswith("<anon>"):
+            match = re.match(r"<anon>\.(.*)\.([0-9]+)", root.base_name)
+            if match:
+                path = Path(match.group(1))
+                relpath = path.relative_to(benchmark.user_config.src_path)
+                self._root_type_name = "<anon>" + str(relpath) + "." + match.group(2)
+
+        # Create a node for the root
+        self.root_id = self.NodeID(file=root.file,
+                                   line=root.line,
+                                   base_name=self._root_type_name,
+                                   member_name=None,
+                                   member_offset=0)
+        self.g.add_node(self.root_id, type_id=root.handle, type_name=root.type_name, size=root.size)
+
+    def build_node_id(self, member: pydwarf.Member, offset: int):
+        return self.NodeID(file=self.root.file,
+                           line=self.root.line,
+                           base_name=self._root_type_name,
+                           member_name=member.name,
+                           member_offset=offset + member.offset)
+
+    def visit_member(self, parent, curr_type, member, prefix, offset):
+        if parent is None:
+            parent_id = self.root_id
+        else:
+            parent_id = self.build_node_id(parent, offset - parent.offset)
+        node_id = self.build_node_id(member, offset)
+        if node_id in self.g.nodes:
+            # Nothing to do, maybe safety-check for equality
+            return
+
+        attrs = {"type_id": self.root.handle, "type_name": member.type_info.type_name, "size": member.size}
+        self.g.add_node(node_id, **attrs)
+        self.g.add_edge(parent_id, node_id)
+
+    def visit_empty_struct(self, parent, curr_type, member, prefix, offset):
+        pass
 
 
 class DWARFInfoSource:
@@ -821,27 +911,57 @@ class DWARFInfoSource:
         self._helper = pydwarf.DWARFHelper(str(path))
         self._arch_pointer_size = arch_pointer_size
 
-    def _do_visit_nested_layout(self, visitor: NestedMemberVisitor, curr: pydwarf.TypeInfo, prefix: str, offset: int):
+    def _do_visit_layout(self, visitor: StructLayoutVisitor, parent_members: list[pydwarf.Member],
+                         curr: pydwarf.TypeInfo, prefix: str, offset: int):
         """
         Visit nested members by linearizing the structure layout.
+
+        :param visitor: The visitor strategy.
+        :param parent_members: A stack-like list of parent members we are recursing into.
+        :param curr: The type information we have to visit at this stage.
+        :param prefix: Name prefix from the parent members.
+        :param offset: Offset of the current member we have to visit.
         """
         records = []
+        parent = parent_members[-1] if parent_members else None
+
         for member in curr.layout:
+            visitor.visit_member(parent, curr, member, prefix, offset)
             if (member.type_info.flags & (pydwarf.TypeInfoFlags.kIsStruct | pydwarf.TypeInfoFlags.kIsUnion)):
-                self._do_visit_nested_layout(visitor, member.type_info, prefix + f"{member.name}.",
-                                             offset + member.offset)
-            else:
-                visitor.visit_member(curr, member, prefix, offset)
+                # Recurse into the structure/union
+                parent_members.append(member)
+                self._do_visit_layout(visitor, parent_members, member.type_info, prefix + f"{member.name}.",
+                                      offset + member.offset)
+                parent_members.pop()
         if len(curr.layout) == 0:
             # Special case for empty structures / unions.
             # Always emit one entry with missing member name
-            visitor.visit_empty_struct(curr, prefix, offset)
+            visitor.visit_empty_struct(parent, curr, prefix, offset)
 
-    def visit_nested_layout(self, visitor: NestedMemberVisitor):
-        self._do_visit_nested_layout(visitor, visitor.root, "", 0)
+    def visit_layout(self, visitor: StructLayoutVisitor):
+        self._do_visit_layout(visitor, [], visitor.root, "", 0)
 
     def load_type_info(self) -> pydwarf.TypeInfoContainer:
         return self._helper.collect_type_info()
+
+    def build_struct_layout_graph(self, container: pydwarf.TypeInfoContainer) -> nx.DiGraph:
+        """
+        Given a TypeInfoContainer collection, produce a networkx graph that represents its
+        structure.
+
+        This should allow better flexibility with the algorithms we run on the graph.
+        XXX I wonder whether I can do this in C++ directly...
+        """
+        g = nx.DiGraph()
+        roots = []
+
+        for type_info in container.iter_composite():
+            v = GraphConversionVisitor(g, self.benchmark, type_info)
+            self.visit_layout(v)
+            roots.append(v.root_id)
+
+        g.graph["roots"] = roots
+        return g
 
     def parse_struct_layout(self,
                             container: pydwarf.TypeInfoContainer,
@@ -849,16 +969,18 @@ class DWARFInfoSource:
         """
         Recursively dump the structure layout. Optionally, this can be restricted to a single TypeInfo node
         instead of parsing everything.
+
+        XXX rename this as flatten_struct_layout and use the graph as input.
         """
         records = []
         if root:
-            v = MemberLayoutVisitor(root)
-            self.visit_nested_layout(v)
+            v = FlattenLayoutVisitor(self.benchmark, root)
+            self.visit_layout(v)
             records = v.records
         else:
             for type_info in container.iter_composite():
-                v = MemberLayoutVisitor(type_info)
-                self.visit_nested_layout(v)
+                v = FlattenLayoutVisitor(self.benchmark, type_info)
+                self.visit_layout(v)
                 records += v.records
         df = pd.DataFrame.from_records(records, columns=DWARFStructLayoutRecord._fields)
         df.set_index(["file", "line", "base_name", "member_name", "member_offset"], inplace=True)
@@ -896,6 +1018,8 @@ class DWARFManager:
         Create a new dataframe with the same index as the given one, populated with the line numbers
         associated to the addresses in the given column.
         """
+        assert False, "Disabled, must reimplement"
+
         assert as_key_column not in df.index.names
         assert as_key_column in df.columns
         resolved = []

@@ -43,10 +43,10 @@ class SubCommand:
         try:
             config = config_model.load_json(path)
         except JSONDecodeError as ex:
-            logger.error("Malformed configuration %s: %s", path, ex)
+            self.logger.error("Malformed configuration %s: %s", path, ex)
             raise
         except ValidationError as ex:
-            logger.error("Invalid configuration %s: %s", path, ex)
+            self.logger.error("Invalid configuration %s: %s", path, ex)
             raise
         return config
 
@@ -227,7 +227,7 @@ class CommandLineTool:
             exit(1)
         except Exception as ex:
             if self._subcommands:
-                self.logger.error("Failed to run command '%s'", args.command)
+                self.logger.error("Failed to run command '%s': %s", args.command, ex)
             else:
                 self.logger.error("Failed to run %s", self.name)
             if args.verbose:
