@@ -23,7 +23,7 @@ struct test_complex {
     // 8KiB layout boundary
     char buf_after[(1 << 13) - 5];
   } inner;
-  int after[10];
+  char after[10];
 };
 
 struct test_flexible {

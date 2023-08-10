@@ -1,3 +1,4 @@
+import json
 import re
 import subprocess
 import typing
@@ -851,6 +852,32 @@ class GraphConversionVisitor(StructLayoutVisitor):
     #: Note this should be kept in sync with :class:`DWARFStructLayoutModel`
     NodeID = namedtuple("NodeID", ["file", "line", "base_name", "member_name", "member_offset"])
 
+    @classmethod
+    def dump(cls, graph: nx.DiGraph, path: Path):
+        """
+        Write a GML representation of a graph.
+        """
+        graph = nx.convert_node_labels_to_integers(graph, label_attribute="node_id")
+
+        def nodeid_stringizer(value):
+            return json.dumps(value)
+
+        nx.write_gml(graph, path, nodeid_stringizer)
+
+    @classmethod
+    def load(cls, path: Path) -> nx.DiGraph:
+        """
+        Load a GML representation of the structure layout graph
+        """
+        def nodeid_destringizer(value):
+            return json.loads(value)
+
+        g = nx.read_gml(path, destringizer=nodeid_destringizer)
+        nx.relabel_nodes(g, lambda n: cls.NodeID(*g.nodes[n]["node_id"]), copy=False)
+        g.graph["roots"] = [cls.NodeID(*nid) for nid in g.graph["roots"]]
+
+        return g
+
     def __init__(self, graph: nx.DiGraph, benchmark, root):
         super().__init__(root)
 
@@ -896,8 +923,8 @@ class GraphConversionVisitor(StructLayoutVisitor):
         self.g.add_node(node_id, **attrs)
         self.g.add_edge(parent_id, node_id)
 
-    def visit_empty_struct(self, parent, curr_type, member, prefix, offset):
-        pass
+    def visit_empty_struct(self, parent, curr_type, prefix, offset):
+        return
 
 
 class DWARFInfoSource:
@@ -944,7 +971,9 @@ class DWARFInfoSource:
     def load_type_info(self) -> pydwarf.TypeInfoContainer:
         return self._helper.collect_type_info()
 
-    def build_struct_layout_graph(self, container: pydwarf.TypeInfoContainer) -> nx.DiGraph:
+    def build_struct_layout_graph(self,
+                                  container: pydwarf.TypeInfoContainer,
+                                  g: nx.DiGraph | None = None) -> nx.DiGraph:
         """
         Given a TypeInfoContainer collection, produce a networkx graph that represents its
         structure.
@@ -952,7 +981,10 @@ class DWARFInfoSource:
         This should allow better flexibility with the algorithms we run on the graph.
         XXX I wonder whether I can do this in C++ directly...
         """
-        g = nx.DiGraph()
+        if g is None:
+            g = nx.DiGraph()
+        if "roots" not in g.graph:
+            g.graph["roots"] = []
         roots = []
 
         for type_info in container.iter_composite():
@@ -960,7 +992,7 @@ class DWARFInfoSource:
             self.visit_layout(v)
             roots.append(v.root_id)
 
-        g.graph["roots"] = roots
+        g.graph["roots"] += roots
         return g
 
     def parse_struct_layout(self,

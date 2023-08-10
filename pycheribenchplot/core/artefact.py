@@ -96,9 +96,11 @@ class FileTarget(Target):
                  ext: str | None = None,
                  use_iterations: bool = False,
                  model: BaseDataModel | None = None,
-                 file_path: Path | str | None = None):
+                 file_path: Path | str | None = None,
+                 loader: Task | None = None):
         self.use_iterations = use_iterations
         self._loader_model = model
+        self._loader = loader
         # Prepare paths
         if file_path is None:
             name = re.sub(r"\.", "-", task.task_id)
@@ -176,6 +178,12 @@ class FileTarget(Target):
 
         :return: A task that can be depended upon to load the target data.
         """
+        if self._loader:
+            if self._loader.is_session_task():
+                return self._loader(self._task.session, self)
+            elif self._loader.is_benchmark_task():
+                return self._loader(self._task.benchmark, self)
+
         if self._task.is_session_task():
             return TargetSessionLoadTask(self._task.session, self, self._loader_model)
         elif self._task.is_benchmark_task():
