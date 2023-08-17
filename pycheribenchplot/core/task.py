@@ -71,6 +71,11 @@ class TaskRegistry(type):
         if self.public:
             ns = TaskRegistry.public_tasks[self.task_namespace]
             ns[self.task_name] = self
+        for base in bases:
+            if hasattr(base, "_deps_registry"):
+                self._deps_registry.extend(base._deps_registry)
+            if hasattr(base, "_output_registry"):
+                self._output_registry.update(base._output_registry)
 
     def __str__(self):
         return f"<Task {self.__name__}: spec={self.task_namespace}.{self.task_name}>"
