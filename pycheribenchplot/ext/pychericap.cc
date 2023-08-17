@@ -57,12 +57,14 @@ enum class CC128mPerms {
 };
 
 template<typename CCPerms>
-struct CCPermsOps {
+struct CCExtraOps {
 };
 
 template<>
-struct CCPermsOps<CC64Perms> {
-  static void DefinePerms(py::handle PyClass) {
+struct CCExtraOps<cc64_cap> {
+  static constexpr unsigned long MantissaWidth = CC64_MANTISSA_WIDTH;
+
+  static void definePerms(py::handle PyClass) {
     py::enum_<CC64Perms>(PyClass, "Perms", py::arithmetic())
         .value("kPermGlobal", CC64Perms::kPermGlobal)
         .value("kPermExecute", CC64Perms::kPermExecute)
@@ -78,11 +80,17 @@ struct CCPermsOps<CC64Perms> {
         .value("kPermSetCID", CC64Perms::kPermSetCID)
         .export_values();
   }
+
+  static void setAddr(cc64_cap &Cap, typename CompressedCap64::addr_t Cursor) {
+    cc64_set_addr(&Cap, Cursor);
+  }
 };
 
 template<>
-struct CCPermsOps<CC128Perms> {
-  static void DefinePerms(py::handle PyClass) {
+struct CCExtraOps<cc128_cap> {
+  static constexpr unsigned long MantissaWidth = CC128_MANTISSA_WIDTH;
+
+  static void definePerms(py::handle PyClass) {
     py::enum_<CC128Perms>(PyClass, "Perms", py::arithmetic())
         .value("kPermGlobal", CC128Perms::kPermGlobal)
         .value("kPermExecute", CC128Perms::kPermExecute)
@@ -98,11 +106,17 @@ struct CCPermsOps<CC128Perms> {
         .value("kPermSetCID", CC128Perms::kPermSetCID)
         .export_values();
   }
+
+  static void setAddr(cc128_cap &Cap, typename CompressedCap128::addr_t Cursor) {
+    cc128_set_addr(&Cap, Cursor);
+  }
 };
 
 template<>
-struct CCPermsOps<CC128mPerms> {
-  static void DefinePerms(py::handle PyClass) {
+struct CCExtraOps<cc128m_cap> {
+  static constexpr unsigned long MantissaWidth = CC128M_MANTISSA_WIDTH;
+
+  static void definePerms(py::handle PyClass) {
     py::enum_<CC128mPerms>(PyClass, "Perms", py::arithmetic())
         .value("kPermGlobal", CC128mPerms::kPermGlobal)
         .value("kPermExecute", CC128mPerms::kPermExecute)
@@ -120,25 +134,16 @@ struct CCPermsOps<CC128mPerms> {
         .value("kPermMutableLoad", CC128mPerms::kPermMutableLoad)
         .export_values();
   }
+
+  static void setAddr(cc128m_cap &Cap, typename CompressedCap128m::addr_t Cursor) {
+    cc128m_set_addr(&Cap, Cursor);
+  }
 };
 
+template<typename CC, typename CCOps>
+void defineCap(py::handle M, const char *Name) {
 
-void SetAddr(cc64_cap &Cap, typename CompressedCap64::addr_t Cursor) {
-  cc64_set_addr(&Cap, Cursor);
-}
-
-void SetAddr(cc128_cap &Cap, typename CompressedCap128::addr_t Cursor) {
-  cc128_set_addr(&Cap, Cursor);
-}
-
-void SetAddr(cc128m_cap &Cap, typename CompressedCap128m::addr_t Cursor) {
-  cc128m_set_addr(&Cap, Cursor);
-}
-
-
-template<typename CC, typename CCOps, typename CCPerms>
-void DefineCap(py::handle M, const char *Name) {
-
+  using CCExtra = CCExtraOps<CC>;
   using AddrT = typename CCOps::addr_t;
   using LengthT = typename CCOps::length_t;
 
@@ -200,7 +205,7 @@ void DefineCap(py::handle M, const char *Name) {
         return CCOps::setbounds(&Cap, Length);
       })
       .def("setaddr", [](CC &Cap, AddrT Cursor) {
-        SetAddr(Cap, Cursor);
+        CCExtra::setAddr(Cap, Cursor);
       })
       .def_static("make_max_perms_cap", [](AddrT Base, AddrT Cursor, LengthT Top) {
         return CCOps::make_max_perms_cap(Base, Cursor, Top);
@@ -208,7 +213,7 @@ void DefineCap(py::handle M, const char *Name) {
       .def_static("make_max_bounds_cap", [](AddrT Cursor) {
         LengthT MaxTop = std::numeric_limits<AddrT>::max() + 1;
         CC Cap = CCOps::make_max_perms_cap(0, 0, MaxTop);
-        SetAddr(Cap, Cursor);
+        CCExtra::setAddr(Cap, Cursor);
         return Cap;
       })
       .def_static("make_null_derived_cap", [](AddrT Addr) {
@@ -225,13 +230,16 @@ void DefineCap(py::handle M, const char *Name) {
       })
       .def_static("representable_mask", [](AddrT Len) {
         return CCOps::representable_mask(Len);
+      })
+      .def_static("get_mantissa_width", []() {
+        return CCExtra::MantissaWidth;
       });
-  CCPermsOps<CCPerms>::DefinePerms(PyCap);
+  CCExtra::definePerms(PyCap);
 }
 
 PYBIND11_MODULE(pychericap, M)
 {
-  DefineCap<cc64_cap, CompressedCap64, CC64Perms>(M, "CompressedCap64");
-  DefineCap<cc128_cap, CompressedCap128, CC128Perms>(M, "CompressedCap128");
-  DefineCap<cc128m_cap, CompressedCap128m, CC128mPerms>(M, "CompressedCap128m");
+  defineCap<cc64_cap, CompressedCap64>(M, "CompressedCap64");
+  defineCap<cc128_cap, CompressedCap128>(M, "CompressedCap128");
+  defineCap<cc128m_cap, CompressedCap128m>(M, "CompressedCap128m");
 }
