@@ -10,13 +10,14 @@ from matplotlib import rc_context
 
 from .analysis import AnalysisTask
 from .artefact import AnalysisFileTarget
-from .config import AnalysisConfig, Config
+from .config import AnalysisConfig, Config, InstanceConfig
 from .task import Task
 
 
 @contextmanager
 def new_figure(dest: Path | list[Path], **kwargs):
-    fig = plt.figure(constrained_layout=True, **kwargs)
+    kwargs.setdefault("constrained_layout", True)
+    fig = plt.figure(**kwargs)
     yield fig
     if isinstance(dest, Path):
         dest = [dest]
@@ -68,12 +69,19 @@ class PlotTask(AnalysisTask):
             name = f"{self.task_id}.pdf"
         return PlotTarget(self.session.get_plot_root_path() / name)
 
-    def g_uuid_to_label(self, g_uuid: UUID):
+    def get_instance_config(self, g_uuid: UUID) -> InstanceConfig:
+        """
+        Helper to retreive an instance configuration for the given g_uuid.
+        """
+        gid_column = self.session.benchmark_matrix[g_uuid]
+        return gid_column[0].config.instance
+
+    def g_uuid_to_label(self, g_uuid: UUID) -> str:
         """
         Helper that maps group UUIDs to a human-readable label that describes the instance
         """
-        gid_column = self.session.benchmark_matrix[g_uuid]
-        return gid_column[0].config.instance.name
+        instance_config = self.get_instance_config(g_uuid)
+        return instance_config.name
 
     def run(self):
         with rc_context():
