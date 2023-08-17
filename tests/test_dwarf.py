@@ -153,7 +153,8 @@ def test_extract_layout_members_graph(fake_session, dwarf_manager, asset_file, p
     """
     Test the conversion of the typeinfo container to a graph
     """
-    expect_file_path = str(Path("tests/assets/test_dwarf_struct_members.c").absolute())
+    fake_session.user_config.src_path = Path.cwd()
+    expect_file_path = "tests/assets/test_dwarf_struct_members.c"
     dw = dwarf_manager.register_object("k", asset_file)
 
     info = dw.load_type_info()
@@ -317,7 +318,8 @@ def test_extract_layout_members_anon(fake_session, dwarf_manager, asset_file, pt
     """
     Check the extraction of layouts with anonymous structures and unions.
     """
-    expect_file_path = Path("tests/assets/test_dwarf_struct_members_anon.c").absolute()
+    fake_session.user_config.src_path = Path.cwd()
+    expect_file_path = "tests/assets/test_dwarf_struct_members_anon.c"
     dw = dwarf_manager.register_object("k", asset_file)
 
     info = dw.load_type_info()
@@ -384,7 +386,8 @@ def test_extract_layout_members_nesting(fake_session, dwarf_manager, asset_file,
     """
     Check the extraction of layouts with deeply nested structures and union combinations.
     """
-    expect_file_path = Path("tests/assets/test_dwarf_nested.c").absolute()
+    fake_session.user_config.src_path = Path.cwd()
+    expect_file_path = "tests/assets/test_dwarf_nested.c"
     dw = dwarf_manager.register_object("k", asset_file)
 
     info = dw.load_type_info()

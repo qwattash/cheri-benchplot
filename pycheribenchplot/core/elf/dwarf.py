@@ -801,40 +801,57 @@ class StructLayoutVisitor:
 class FlattenLayoutVisitor(StructLayoutVisitor):
     def __init__(self, benchmark, root):
         super().__init__(root)
-        #: Accumulate DWARFStructLayoutRecord tuples
+        self.benchmark = benchmark
+
+        #: Accumulate DWARFStructLayoutRecord tuplesrelpath
         self.records: list[DWARFStructLayoutRecord] = []
 
         # Normalize anonymous type names to be relative to the user src_path
-        self._type_name = root.base_name
-        if root.base_name.startswith("<anon>"):
-            match = re.match(r"<anon>\.(.*)\.([0-9]+)", root.base_name)
-            if match:
-                path = Path(match.group(1))
-                relpath = path.relative_to(benchmark.user_config.src_path)
-                self._type_name = "<anon>" + str(relpath) + "." + match.group(2)
+        self._root_base_name = self._normalize_anon(root.base_name)
+        self._root_type_name = self._normalize_anon(root.type_name)
+        self._root_file = self._normalize_path(root.file)
+
+    def _normalize_anon(self, name: str):
+        if name.find("<anon>") == -1:
+            return name
+        match = re.match(r"(.*)<anon>\.(.*)\.([0-9]+)", name)
+        if not match:
+            return name
+        path = Path(match.group(2))
+        relpath = self._normalize_path(path)
+        return match.group(1) + "<anon>." + str(relpath) + "." + match.group(3)
+
+    def _normalize_path(self, strpath: str):
+        src_root = self.benchmark.user_config.src_path
+        path = Path(strpath)
+        if not path.is_relative_to(src_root):
+            # No changes
+            return strpath
+        return str(path.relative_to(src_root))
 
     def visit_member(self, parent, curr_type, member, prefix, offset):
+        member_type_name = self._normalize_anon(member.type_info.type_name)
         record = DWARFStructLayoutRecord(type_id=self.root.handle,
-                                         base_name=self.root.base_name,
+                                         base_name=self._root_base_name,
                                          member_name=prefix + member.name,
                                          member_offset=offset + member.offset,
-                                         file=self.root.file,
+                                         file=self._root_file,
                                          line=self.root.line,
                                          size=self.root.size,
-                                         type_name=self.root.type_name,
+                                         type_name=self._root_type_name,
                                          member_size=member.size,
-                                         member_type_name=member.type_info.type_name)
+                                         member_type_name=member_type_name)
         self.records.append(record)
 
     def visit_empty_struct(self, parent, curr_type, prefix, offset):
         record = DWARFStructLayoutRecord(type_id=self.root.handle,
-                                         base_name=self._type_name,
+                                         base_name=self._root_base_name,
                                          member_name=prefix + "<empty>",
                                          member_offset=offset,
-                                         file=self.root.file,
+                                         file=self._root_file,
                                          line=self.root.line,
                                          size=self.root.size,
-                                         type_name=self.root.type_name,
+                                         type_name=self._root_type_name,
                                          member_size=np.nan,
                                          member_type_name=None)
         self.records.append(record)
@@ -857,6 +874,7 @@ class GraphConversionVisitor(StructLayoutVisitor):
         """
         Write a GML representation of a graph.
         """
+        # nx.write_gpickle(graph, path)
         graph = nx.convert_node_labels_to_integers(graph, label_attribute="node_id")
 
         def nodeid_stringizer(value):
@@ -869,6 +887,8 @@ class GraphConversionVisitor(StructLayoutVisitor):
         """
         Load a GML representation of the structure layout graph
         """
+
+        # return nx.read_gpickle(graph, path)
         def nodeid_destringizer(value):
             return json.loads(value)
 
@@ -880,30 +900,45 @@ class GraphConversionVisitor(StructLayoutVisitor):
 
     def __init__(self, graph: nx.DiGraph, benchmark, root):
         super().__init__(root)
+        self.benchmark = benchmark
 
         self.g = graph
         self.drop_duplicates = False
 
         # self._type_name = fixup_anon_name(benchmark, root.base_name)
         # Normalize anonymous type names to be relative to the user src_path
-        self._root_type_name = root.base_name
-        if root.base_name.startswith("<anon>"):
-            match = re.match(r"<anon>\.(.*)\.([0-9]+)", root.base_name)
-            if match:
-                path = Path(match.group(1))
-                relpath = path.relative_to(benchmark.user_config.src_path)
-                self._root_type_name = "<anon>" + str(relpath) + "." + match.group(2)
+        self._root_type_name = self._normalize_anon(root.base_name)
+        # Normalize the file name to be relative to the user src_path
+        self._root_file = self._normalize_path(root.file)
 
         # Create a node for the root
-        self.root_id = self.NodeID(file=root.file,
+        self.root_id = self.NodeID(file=self._root_file,
                                    line=root.line,
                                    base_name=self._root_type_name,
                                    member_name=None,
                                    member_offset=0)
         self.g.add_node(self.root_id, type_id=root.handle, type_name=root.type_name, size=root.size)
 
+    def _normalize_anon(self, name: str):
+        if name.find("<anon>") == -1:
+            return name
+        match = re.match(r"(.*)<anon>\.(.*)\.([0-9]+)", name)
+        if not match:
+            return name
+        path = Path(match.group(2))
+        relpath = self._normalize_path(path)
+        return match.group(1) + "<anon>." + str(relpath) + "." + match.group(3)
+
+    def _normalize_path(self, strpath: str):
+        src_root = self.benchmark.user_config.src_path
+        path = Path(strpath)
+        if not path.is_relative_to(src_root):
+            # No changes
+            return strpath
+        return str(path.relative_to(src_root))
+
     def build_node_id(self, member: pydwarf.Member, offset: int):
-        return self.NodeID(file=self.root.file,
+        return self.NodeID(file=self._root_file,
                            line=self.root.line,
                            base_name=self._root_type_name,
                            member_name=member.name,
@@ -919,7 +954,11 @@ class GraphConversionVisitor(StructLayoutVisitor):
             # Nothing to do, maybe safety-check for equality
             return
 
-        attrs = {"type_id": self.root.handle, "type_name": member.type_info.type_name, "size": member.size}
+        attrs = {
+            "type_id": self.root.handle,
+            "type_name": self._normalize_anon(member.type_info.type_name),
+            "size": member.size
+        }
         self.g.add_node(node_id, **attrs)
         self.g.add_edge(parent_id, node_id)
 
