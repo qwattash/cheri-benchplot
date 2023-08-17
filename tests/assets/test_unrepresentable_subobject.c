@@ -11,9 +11,10 @@ struct test_small_subobject {
   void *pointer_value;
 };
 
-struct test_mixed {
-  char pre1[33024];
-  char buf[2941200];
+struct test_age_softc_layout {
+  char before[0x250];
+  char cdata[0x6140];
+  char after[0x190];
 };
 
 struct test_complex {
@@ -34,7 +35,7 @@ struct test_flexible {
 int main() {
   struct test_large_subobject a;
   struct test_small_subobject b;
-  struct test_mixed c;
+  struct test_age_softc_layout c;
   struct test_flexible d;
   struct test_complex e;
 
