@@ -1,3 +1,4 @@
+import gzip
 import logging
 import shutil
 import subprocess
@@ -87,6 +88,30 @@ def resolve_system_command(name: str, logger: logging.Logger | None = None):
         logger.critical("Missing dependency %s, should be in your $PATH", name)
         raise RuntimeError("Missing dependency")
     return Path(path)
+
+
+@contextmanager
+def gzopen(path: Path, mode: str) -> typing.IO:
+    if path.suffix == ".gz":
+        openfn = gzip.open
+        if "b" not in mode and "t" not in mode:
+            mode += "t"
+    else:
+        openfn = open
+    with openfn(path, mode) as fileio:
+        yield fileio
+
+
+@contextmanager
+def gzopen(path: Path, mode: str) -> typing.IO:
+    if path.suffix == ".gz":
+        openfn = gzip.open
+        if "b" not in mode and "t" not in mode:
+            mode += "t"
+    else:
+        openfn = open
+    with openfn(path, mode) as fileio:
+        yield fileio
 
 
 class SubprocessHelper:

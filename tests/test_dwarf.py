@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from pycheribenchplot.core.elf.dwarf import (DWARFManager, DWARFStructLayoutModel, GraphConversionVisitor)
+from pycheribenchplot.core.dwarf import (DWARFManager, DWARFStructLayoutModel, GraphConversionVisitor)
 from pycheribenchplot.ext import pydwarf
 
 

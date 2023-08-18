@@ -5,7 +5,7 @@ import pandas as pd
 from pandera import Field, SchemaModel, check, dataframe_check
 from pandera.typing import Index, Series
 
-from ..core.elf.dwarf import DWARFStructLayoutModel
+from ..core.dwarf import DWARFStructLayoutModel
 from ..core.model import DataModel, GlobalModel
 
 

@@ -1,3 +1,4 @@
+import gzip
 import json
 import re
 import subprocess
@@ -16,9 +17,9 @@ from elftools.elf.elffile import ELFFile
 from pandera.typing import DataFrame, Index, Series
 from sortedcontainers import SortedDict
 
-from ...ext import pydwarf
-from ..model import DataModel
-from ..util import new_logger
+from ..ext import pydwarf
+from .model import DataModel
+from .util import new_logger, gzopen
 
 
 def extract_at_str(die, at_name, default=None):
@@ -874,29 +875,20 @@ class GraphConversionVisitor(StructLayoutVisitor):
         """
         Write a GML representation of a graph.
         """
-        # nx.write_gpickle(graph, path)
-        graph = nx.convert_node_labels_to_integers(graph, label_attribute="node_id")
-
-        def nodeid_stringizer(value):
-            return json.dumps(value)
-
-        nx.write_gml(graph, path, nodeid_stringizer)
+        with gzopen(path, "w") as fd:
+            json.dump(graph, fd, default=nx.node_link_data)
 
     @classmethod
     def load(cls, path: Path) -> nx.DiGraph:
         """
         Load a GML representation of the structure layout graph
         """
-
-        # return nx.read_gpickle(graph, path)
-        def nodeid_destringizer(value):
-            return json.loads(value)
-
-        g = nx.read_gml(path, destringizer=nodeid_destringizer)
-        nx.relabel_nodes(g, lambda n: cls.NodeID(*g.nodes[n]["node_id"]), copy=False)
-        g.graph["roots"] = [cls.NodeID(*nid) for nid in g.graph["roots"]]
-
-        return g
+        with gzopen(path, "r") as fd:
+            data = json.load(fd)
+        data["graph"]["roots"] = [cls.NodeID(*r) for r in data["graph"]["roots"]]
+        for n in data["nodes"]:
+            n["id"] = cls.NodeID(*n["id"])
+        return nx.node_link_graph(data)
 
     def __init__(self, graph: nx.DiGraph, benchmark, root):
         super().__init__(root)

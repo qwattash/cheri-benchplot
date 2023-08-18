@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 from test_dwarf import check_member
 
-from pycheribenchplot.core.elf.dwarf import (DWARFManager, GraphConversionVisitor)
+from pycheribenchplot.core.dwarf import DWARFManager, GraphConversionVisitor
 from pycheribenchplot.subobject.imprecise_subobject import (AllImpreciseMembersPlot, ExtractImpreciseSubobject,
                                                             ExtractImpreciseSubobjectConfig, RequiredSubobjectPrecision)
 
@@ -170,8 +170,14 @@ def test_graph_io(dwarf_manager, extract_task, tmp_path):
     g = dw.build_struct_layout_graph(info)
     extract_task._find_imprecise(g)
 
-    GraphConversionVisitor.dump(g, tmp_path / "test_dump.gml")
-    g2 = GraphConversionVisitor.load(tmp_path / "test_dump.gml")
+    GraphConversionVisitor.dump(g, tmp_path / "test_dump.json")
+    g2 = GraphConversionVisitor.load(tmp_path / "test_dump.json")
+    assert g.graph["roots"] == g2.graph["roots"]
+    assert nx.utils.nodes_equal(g, g2)
+    assert nx.utils.edges_equal(g, g2)
+
+    GraphConversionVisitor.dump(g, tmp_path / "test_dump.json.gz")
+    g2 = GraphConversionVisitor.load(tmp_path / "test_dump.json.gz")
     assert g.graph["roots"] == g2.graph["roots"]
     assert nx.utils.nodes_equal(g, g2)
     assert nx.utils.edges_equal(g, g2)

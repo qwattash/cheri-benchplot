@@ -8,7 +8,8 @@ from typing import Type
 import pandas as pd
 
 from .config import AnalysisConfig, Config, ExecTargetConfig
-from .elf import AddressSpaceManager, DWARFManager
+from .dwarf import DWARFManager
+from .elf import AddressSpaceManager
 from .error import TaskNotFound
 from .instance import InstanceManager
 from .shellgen import ScriptBuilder

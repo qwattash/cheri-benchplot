@@ -14,7 +14,7 @@ import seaborn.objects as so
 from ..core.analysis import AnalysisTask
 from ..core.artefact import (AnalysisFileTarget, DataFrameTarget, LocalFileTarget, Target)
 from ..core.config import Config, ConfigPath, InstanceKernelABI
-from ..core.elf.dwarf import DWARFManager, GraphConversionVisitor
+from ..core.dwarf import DWARFManager, GraphConversionVisitor
 from ..core.plot import PlotTarget, PlotTask, new_figure
 from ..core.task import BenchmarkTask, DataGenTask, dependency, output
 from ..ext import pychericap, pydwarf
