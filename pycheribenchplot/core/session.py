@@ -373,7 +373,7 @@ class Session:
         self.scheduler.run()
         self.logger.info("Session %s run finished", self.name)
 
-    def analyse(self, analysis_config: AnalysisConfig):
+    def analyse(self, analysis_config: AnalysisConfig | None):
         """
         Run the session analysis tasks requested.
         The analysis pipeline is slighly different from the execution pipeline.
@@ -384,6 +384,10 @@ class Session:
 
         :param analysis_config: The analysis configuration
         """
+        if analysis_config is None:
+            # Load analysis configuration from the session
+            analysis_config = self.config.analysis_config
+
         # Override the baseline ID if configured
         if (analysis_config.baseline_gid is not None and analysis_config.baseline_gid != self.baseline_g_uuid):
             self.baseline_g_uuid = analysis_config.baseline_gid

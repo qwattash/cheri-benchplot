@@ -102,16 +102,14 @@ class SessionSubCommand(SubCommand):
         if args.clean:
             session.clean_analysis()
 
+        # Use the analysis configuration from the session by default
+        analysis_config = None
         if args.analysis_config:
             analysis_config = self._parse_config(args.analysis_config, AnalysisConfig)
-        else:
+        elif args.task:
             analysis_config = AnalysisConfig()
             for task in args.task:
                 analysis_config.tasks.append(TaskTargetConfig(handler=task))
-        if not analysis_config.tasks:
-            self.logger.error("Invalid analysis configuration, one of the -a or "
-                              "-t options must be used")
-            raise RuntimeError("Malformed configuration")
         session.analyse(analysis_config)
 
     def handle_bundle(self, user_config, args):

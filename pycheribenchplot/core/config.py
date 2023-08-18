@@ -720,6 +720,38 @@ class ExecTargetConfig(Config):
 
 
 @dc.dataclass
+class PlotConfig(Config):
+    """
+    Plotting configuration.
+    This is separated in case it needs to be propagated separately.
+    """
+    #: Generate multiple split plots instead of combining
+    split_subplots: bool = False
+    #: Output formats
+    plot_output_format: List[str] = dc.field(default_factory=lambda: ["pdf"])
+
+
+@dc.dataclass
+class AnalysisConfig(Config):
+    #: General plot configuration
+    plot: PlotConfig = dc.field(default_factory=PlotConfig)
+
+    #: Constants to show in various plots, depending on the X and Y axes.
+    # The dictionary maps parameters of the benchmark parameterisation to a dict
+    # mapping description -> constant value
+    parameter_constants: Dict[str, dict] = dc.field(default_factory=dict)
+
+    #: Baseline dataset group id, defaults to the baseline instance uuid
+    baseline_gid: Optional[UUID] = None
+
+    #: Use builtin symbolizer instead of addr2line
+    use_builtin_symbolizer: bool = True
+
+    #: Specify analysis passes to run
+    tasks: List[TaskTargetConfig] = dc.field(default_factory=list)
+
+
+@dc.dataclass
 class PipelineInstanceConfig(Config):
     """
     Describe the instances on which the benchmarks will be run.
@@ -870,6 +902,9 @@ class CommonSessionConfig(Config):
 
     #: Extract symbols with elftools instead of llvm
     use_builtin_symbolizer: bool = True
+
+    #: Default analysis task configuration
+    analysis_config: AnalysisConfig = dc.field(default_factory=AnalysisConfig)
 
     def __post_init__(self):
         super().__post_init__()
@@ -1070,35 +1105,3 @@ class SessionRunConfig(CommonSessionConfig):
         # Now that we are done with generating the configuration, resolve all
         # templates that do not involve the user configuration
         return cls._resolve_template(session)
-
-
-@dc.dataclass
-class PlotConfig(Config):
-    """
-    Plotting configuration.
-    This is separated in case it needs to be propagated separately.
-    """
-    #: Generate multiple split plots instead of combining
-    split_subplots: bool = False
-    #: Output formats
-    plot_output_format: List[str] = dc.field(default_factory=lambda: ["pdf"])
-
-
-@dc.dataclass
-class AnalysisConfig(Config):
-    #: General plot configuration
-    plot: PlotConfig = dc.field(default_factory=PlotConfig)
-
-    #: Constants to show in various plots, depending on the X and Y axes.
-    # The dictionary maps parameters of the benchmark parameterisation to a dict
-    # mapping description -> constant value
-    parameter_constants: Dict[str, dict] = dc.field(default_factory=dict)
-
-    #: Baseline dataset group id, defaults to the baseline instance uuid
-    baseline_gid: Optional[UUID] = None
-
-    #: Use builtin symbolizer instead of addr2line
-    use_builtin_symbolizer: bool = True
-
-    #: Specify analysis passes to run
-    tasks: List[TaskTargetConfig] = dc.field(default_factory=list)
