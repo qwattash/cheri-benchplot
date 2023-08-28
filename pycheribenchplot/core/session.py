@@ -407,7 +407,7 @@ class Session:
                 if not issubclass(task_klass, AnalysisTask):
                     self.logger.warning("Analysis process only supports scheduling of AnalysisTasks, skipping %s",
                                         task_klass)
-                if task_klass.task_config_class:
+                if task_klass.task_config_class and isinstance(task_spec.task_options, dict):
                     options = task_klass.task_config_class.schema().load(task_spec.task_options)
                 else:
                     options = task_spec.task_options
