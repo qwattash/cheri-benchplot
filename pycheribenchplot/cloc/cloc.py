@@ -29,6 +29,9 @@ def to_file_type(path: str):
 
 @dataclass
 class LoCAnalysisConfig(Config):
+    """
+    Common analysis configuration for LoC data
+    """
     pass
 
 
