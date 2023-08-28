@@ -19,7 +19,7 @@ from sortedcontainers import SortedDict
 
 from ..ext import pydwarf
 from .model import DataModel
-from .util import new_logger, gzopen
+from .util import gzopen, new_logger
 
 
 def extract_at_str(die, at_name, default=None):
@@ -885,10 +885,9 @@ class GraphConversionVisitor(StructLayoutVisitor):
         """
         with gzopen(path, "r") as fd:
             data = json.load(fd)
-        data["graph"]["roots"] = [cls.NodeID(*r) for r in data["graph"]["roots"]]
-        for n in data["nodes"]:
-            n["id"] = cls.NodeID(*n["id"])
-        return nx.node_link_graph(data)
+        g = nx.relabel_nodes(nx.node_link_graph(data), lambda r: cls.NodeID(*r))
+        g.graph["roots"] = [cls.NodeID(*r) for r in g.graph["roots"]]
+        return g
 
     def __init__(self, graph: nx.DiGraph, benchmark, root):
         super().__init__(root)
