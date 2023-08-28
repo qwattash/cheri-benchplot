@@ -359,15 +359,15 @@ class dependency:
         assert self._fn is not None
         try:
             result = self._fn(instance)
+            # Normalize any generator or iterable to a list, keep single value unchanged
+            if isinstance(result, Iterable) and not isinstance(result, list):
+                return list(result)
         except TaskNotFound:
             result = None
+
         if not self._optional and not result:
             instance.logger.error("Missing required dependency %s", self._dependency_name)
             raise MissingDependency(f"Failed to resolve dependency")
-
-        # Normalize any generator or iterable to a list, keep single value unchanged
-        if isinstance(result, Iterable) and not isinstance(result, list):
-            return list(result)
         return result
 
     def __call__(self, fn):
