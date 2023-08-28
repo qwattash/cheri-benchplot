@@ -76,10 +76,12 @@ class PlotTask(AnalysisTask):
         gid_column = self.session.benchmark_matrix[g_uuid]
         return gid_column[0].config.instance
 
-    def g_uuid_to_label(self, g_uuid: UUID) -> str:
+    def g_uuid_to_label(self, g_uuid: UUID | str) -> str:
         """
         Helper that maps group UUIDs to a human-readable label that describes the instance
         """
+        if isinstance(g_uuid, str):
+            g_uuid = UUID(g_uuid)
         instance_config = self.get_instance_config(g_uuid)
         return instance_config.name
 
