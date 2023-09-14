@@ -9,6 +9,8 @@ from pycheribenchplot.core.dwarf import DWARFManager, GraphConversionVisitor
 from pycheribenchplot.subobject.imprecise_subobject import (AllImpreciseMembersPlot, ExtractImpreciseSubobject,
                                                             ExtractImpreciseSubobjectConfig, RequiredSubobjectPrecision)
 
+NodeID = GraphConversionVisitor.NodeID
+
 
 @pytest.fixture
 def extract_task(fake_simple_benchmark):
@@ -75,8 +77,6 @@ def test_find_imprecise(dwarf_manager, extract_task, expect_file_path):
             g.nodes[nid]["alias_aligned_top"]
         with pytest.raises(KeyError):
             g.nodes[nid]["alias_aligned_base"]
-
-    NodeID = GraphConversionVisitor.NodeID
 
     # Verify node information for the test_large_subobject struct
     large = NodeID(file=expect_file_path, line=2, base_name="test_large_subobject", member_name=None, member_offset=0)
@@ -172,12 +172,16 @@ def test_graph_io(dwarf_manager, extract_task, tmp_path):
 
     GraphConversionVisitor.dump(g, tmp_path / "test_dump.json")
     g2 = GraphConversionVisitor.load(tmp_path / "test_dump.json")
+    for n in g2.nodes:
+        assert type(n) == NodeID
     assert g.graph["roots"] == g2.graph["roots"]
     assert nx.utils.nodes_equal(g, g2)
     assert nx.utils.edges_equal(g, g2)
 
     GraphConversionVisitor.dump(g, tmp_path / "test_dump.json.gz")
     g2 = GraphConversionVisitor.load(tmp_path / "test_dump.json.gz")
+    for n in g2.nodes:
+        assert type(n) == NodeID
     assert g.graph["roots"] == g2.graph["roots"]
     assert nx.utils.nodes_equal(g, g2)
     assert nx.utils.edges_equal(g, g2)
