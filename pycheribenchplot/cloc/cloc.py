@@ -278,19 +278,27 @@ class LoCChangesSummary(AnalysisTask):
             "Changed files": data_nfiles,
             "% Changed files": 100 * data_nfiles / baseline_nfiles,
         }
-        return pd.DataFrame(stats).round(1)
+        return pd.DataFrame(stats).round(3)
 
     def run(self):
         # Build stats without CDB
         stats_df = self._build_stats(self.loc_data.diff_df.get(), self.loc_data.baseline_df.get())
-        stats_df.to_csv(self.table.path)
+        stats_df.fillna(0).to_csv(self.table.path)
+
+        totals_df = stats_df.xs("total", level="Type")
+        totals_df.fillna(0).to_csv(self.totals_table.path)
+
         if self.loc_data.compilation_db is not None:
             stats_df = self._build_stats(self.loc_data.cdb_diff_df.get(), self.loc_data.cdb_baseline_df.get())
-            stats_df.to_csv(self.cdb_table.path)
+            stats_df.fillna(0).to_csv(self.cdb_table.path)
 
     @output
     def table(self):
         return AnalysisFileTarget(self, prefix="all-summary", ext="csv")
+
+    @output
+    def totals_table(self):
+        return AnalysisFileTarget(self, prefix="condensed-summary", ext="csv")
 
     @output
     def cdb_table(self):

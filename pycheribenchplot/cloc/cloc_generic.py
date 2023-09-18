@@ -23,6 +23,8 @@ from .model import LoCCountModel, LoCDiffModel
 
 @dataclass
 class ExtractRepoLoCConfig(Config):
+    #: Human-readable name of the cloc data, defaults to the repo path
+    name: str | None = None
     #: Target repository, relative to UserConfig CHERI repository path
     repo_path: ConfigPath | None = None
     #: Repository baseline ref
@@ -37,6 +39,10 @@ class ExtractRepoLoCConfig(Config):
     reject_filter: list[str] = field(default_factory=list)
 
     # XXX implement validators here
+
+    def __post_init__(self):
+        if self.name is None:
+            self.name = self.repo_path
 
 
 @dataclass
@@ -107,7 +113,7 @@ class ExtractLoCBase(SessionDataGenTask):
             chunk = raw_data[key]
             df = pd.DataFrame(chunk).transpose()
             df["how"] = key
-            df["repo"] = config.repo_path
+            df["repo"] = config.name
             # Drop the nFiles column as it is not meaningful
             df = df.drop("nFiles", axis=1)
             df.index.name = "file"
@@ -134,7 +140,7 @@ class ExtractLoCBase(SessionDataGenTask):
         raw_data.pop("SUM")
         df = pd.DataFrame(raw_data).transpose()
         df.index.name = "file"
-        df["repo"] = config.repo_path
+        df["repo"] = config.name
         return df.set_index("repo", append=True).reorder_levels(["repo", "file"])
 
     @check_data_model
@@ -222,12 +228,12 @@ class ExtractLoCGenericRepo(ExtractLoCBase):
     def __init__(self, session, task_config=None):
         # Required for task_id
         assert task_config is not None
-        self._repo = str(task_config.repo_path).replace("/", "_")
+        self._repo_key = str(task_config.name).replace("/", "_").replace(" ", "_")
         super().__init__(session, task_config=task_config)
 
     @property
     def task_id(self):
-        return super().task_id + "-" + self._repo
+        return super().task_id + "-" + self._repo_key
 
     def run(self):
         diff_df, base_df = self._extract_loc(self.config)
