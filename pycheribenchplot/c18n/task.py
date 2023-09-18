@@ -38,7 +38,7 @@ class PrettifyTraceConfig(Config):
 
 @dataclass
 class TransitionGraphConfig(Config):
-    #: Drop trusted / redundant transitions
+    #: Drop redundant transitions
     drop_redundant: bool = True
 
 
@@ -66,8 +66,9 @@ class C18NKtraceImport(DataGenTask):
 
     def _parse(self, kdump: ty.IO) -> pd.DataFrame:
         line_matcher = re.compile(
-            r"(?P<pid>[0-9]+)\s+(?P<binary>[\w.-]+).*RTLD:.*(?P<op>leave|enter)\s+(?P<compartment>[\w./-]+).*at\s+(?P<symbol>[\w<>-]+)\s*\(?(?P<address>[\dxabcdef]*)\)?"
-        )
+            r"(?P<pid>[0-9]+)\s+(?P<binary>[\w.-]+).*RTLD:.*(?P<op>leave|enter)\s+\[?(?P<compartment>[\w./-]+)\]?.*thread "
+            r"(?P<thread>[0-9abcdefx]+) at \[(?P<symbol_number>[0-9]+)\] "
+            r"(?P<symbol>[\w<>-]+)\s*\(?(?P<address>[\dxabcdef]*)\)?")
         data = []
         failed = 0
         for line in kdump:
@@ -77,6 +78,8 @@ class C18NKtraceImport(DataGenTask):
             m = line_matcher.match(line)
             if not m:
                 failed += 1
+                if self.session.user_config.verbose:
+                    self.logger.warn("Failed to process %s", line)
                 continue
             data.append(m.groupdict())
         if failed:
@@ -84,11 +87,9 @@ class C18NKtraceImport(DataGenTask):
         self.logger.info("Imported %d records from kdump %s", len(data), self.config.kdump)
 
         df = pd.DataFrame(data)
-        # Normalize addresses
-        if "address" in df.columns:
-            df["address"] = df["address"].map(lambda v: int(v, base=16) if v else None)
-        else:
-            df["address"] = np.nan
+        # Normalize hex values
+        df["address"] = df["address"].map(lambda v: int(v, base=16) if v else None)
+        df["thread"] = df["thread"].map(lambda v: int(v, base=16) if v else None)
         df.index.name = "sequence"
         df["trace_source"] = self.config.kdump.name
         return df
@@ -211,32 +212,29 @@ class C18NTransitionGraph(PlotTask):
             comp = Path(n).name.split(".")
             comp[0] = comp[0][3:] if comp[0].startswith("lib") else comp[0]
             name = ".".join(comp[:2])
-            # XXX terrible hack, sometimes we find libc without the .so suffix
-            # this ensures that they are accounted as the same thing.
-            if name == "c":
-                name = "c.so"
             return name
 
         df["compartment"] = df["compartment"].map(simplify_name)
-
-        if self.config.drop_redundant:
-            to_drop = df["compartment"].isin(["c.so", "thr.so", "ld-elf-c18n.so"])
-            df = df.loc[~to_drop]
 
         # Need to determine the source compartment for each "enter" entry
         # while we are scanning, add entries to the graph
         self.logger.info("Computing transition graph")
 
-        enter_stack = [binary_name]
+        enter_stacks = {tid: ["main"] for tid in df.index.unique("thread")}
+
+        thread_label_index = df.index.names.index("thread")
+        assert thread_label_index != -1
 
         def fill_graph(row):
+            thread = row.name[thread_label_index]
+            enter_stack = enter_stacks[thread]
             if row["op"] == "enter":
                 current = enter_stack[-1]
                 enter_stack.append(row["compartment"])
                 edge_id = (current, row["compartment"])
 
                 if not edge_id in graph.edges:
-                    graph.add_edge(*edge_id, weight=1)
+                    graph.add_edge(*edge_id, weight=1, thread=thread)
                 else:
                     e = graph.edges[*edge_id]
                     e["weight"] += 1
@@ -256,7 +254,7 @@ class C18NTransitionGraph(PlotTask):
 
         draw_options = {
             "node_color": "#a0cbe2",
-            "edge_color": nx.get_edge_attributes(graph, "weight").values(),
+            "edge_color": None,
             "edge_cmap": cmap,
             "width": 0.7,
             "font_size": 4,
@@ -265,12 +263,17 @@ class C18NTransitionGraph(PlotTask):
             "arrowsize": 3
         }
 
-        # layout = nx.kamada_kawai_layout(graph, weight="weight", scale=4)
-        layout = nx.nx_agraph.graphviz_layout(graph, prog="neato")
-
+        thread_num = len(enter_stacks)
         with new_figure(self.reachability_plot.paths()) as fig:
-            ax = fig.subplots(1, 1)
-            nx.draw(graph, pos=layout, ax=ax, **draw_options)
+            axs = fig.subplots(thread_num, 1)
+            edge_threads = nx.get_edge_attributes(graph, "thread")
+            for ax, tid in zip(axs, enter_stacks.keys()):
+                view = nx.edge_subgraph(graph, (e for e, t in edge_threads.items() if t == tid))
+
+                # layout = nx.kamada_kawai_layout(graph, weight="weight", scale=4)
+                layout = nx.nx_agraph.graphviz_layout(view, prog="neato")
+                draw_options.update({"edge_color": nx.get_edge_attributes(view, "weight").values()})
+                nx.draw(view, pos=layout, ax=ax, **draw_options)
 
 
 class C18NAnnotateTrace(BenchmarkAnalysisTask):

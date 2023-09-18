@@ -13,7 +13,7 @@
         "generators": [{
             "handler": "c18n.ktrace-import",
             "task_options": {
-                "kdump": "./grpc-demo-client-100.txt"
+                "kdump": "./ping-no-policy.txt"
             }
         }]
     }]
