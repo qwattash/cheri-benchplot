@@ -4,6 +4,7 @@ from typing import ForwardRef, Type
 
 import pandas as pd
 import pandera as pa
+from jinja2 import (Environment, PackageLoader, TemplateNotFound, select_autoescape)
 from typing_extensions import Self
 
 from .borg import Borg
@@ -289,6 +290,38 @@ class DataRunAnalysisFileTarget(LocalFileTarget):
 
     def paths(self):
         return [self._task.benchmark.get_plot_path() / self._file_name]
+
+
+class HTMLTemplateTarget(LocalFileTarget):
+    """
+    A target that identifies an HTML template that renders analysis data.
+
+    Note that the templates are located in pycheribenchplot/templates.
+    """
+    env = Environment(loader=PackageLoader("pycheribenchplot", "templates"), autoescape=select_autoescape())
+
+    def __init__(self, task: Task, template: str):
+        self._template = template
+        base_name = template.split(".")[0]
+        super().__init__(task, prefix=base_name, ext="html")
+
+    def paths(self):
+        if self._task.is_benchmark_task():
+            base_path = self._task.benchmark.get_plot_path()
+        elif self._task.is_session_task():
+            base_path = self._task.session.get_plot_root_path()
+        else:
+            raise TypeError("HTMLTemplateTarget require a session or benchmark task")
+        return [base_path / self._file_name]
+
+    def render(self, **kwargs):
+        try:
+            tmpl = HTMLTemplateTarget.env.get_template(self._template)
+        except TemplateNotFound:
+            self._task.logger.error("Can not find file template %s, target setup is wrong", self._template)
+            raise RuntimeError("Target error")
+        with open(self.path, "w") as fd:
+            fd.write(tmpl.render(**kwargs))
 
 
 class TargetLoadTaskMixin:

@@ -1,3 +1,4 @@
+import json
 import re
 import uuid
 from collections.abc import Iterator
@@ -12,7 +13,7 @@ import seaborn as sns
 import seaborn.objects as so
 
 from ..core.analysis import AnalysisTask
-from ..core.artefact import (AnalysisFileTarget, DataFrameTarget, LocalFileTarget, Target)
+from ..core.artefact import (AnalysisFileTarget, DataFrameTarget, HTMLTemplateTarget, LocalFileTarget, Target)
 from ..core.config import Config, ConfigPath, InstanceKernelABI
 from ..core.dwarf import DWARFManager, GraphConversionVisitor
 from ..core.plot import PlotTarget, PlotTask, new_figure
@@ -77,6 +78,9 @@ class StructLayoutLoader(BenchmarkTask):
 class ExtractImpreciseSubobject(DataGenTask):
     """
     Extract CheriBSD DWARF type information for aggregate data types.
+
+    This will produce a graph containing structure layouts as trees.
+    XXX Document tree structure and node attributes.
     """
     public = True
     task_namespace = "subobject"
@@ -270,7 +274,7 @@ class ImpreciseMembersPlotBase(PlotTask):
             gid = uuid.UUID(g.graph["dataset_gid"])
             records = []
             for struct_root in g.graph["roots"]:
-                if "has_imprecise" not in g.nodes[struct_root] or not g.nodes[struct_root]["has_imprecise"]:
+                if not g.nodes[struct_root].get("has_imprecise", False):
                     continue
                 for desc in nx.descendants(g, struct_root):
                     if "alias_group_id" not in g.nodes[desc]:
@@ -619,26 +623,92 @@ class RequiredSubobjectPrecision(ImpreciseMembersPlotBase):
                              self.imprecise_common_bits_cdf)
 
 
-class ImpreciseSetboundsLayouts(AnalysisTask):
+class ImpreciseSetboundsLayouts(PlotTask):
     """
     Produce a D3-js html document that allows to browse the structure layouts with imprecision
     and inspect the data members that are affected by imprecision.
     """
+    public = True
     task_namespace = "subobject"
     task_name = "imprecise-subobject-layouts"
+
+    class LayoutDescription:
+        ID_COUNTER = 0
+
+        @classmethod
+        def next_id(cls):
+            cls.ID_COUNTER += 1
+            return cls.ID_COUNTER
+
+        def __init__(self, graph, root):
+            self._graph = graph
+            self._root = root
+            self.id = f"layout-{self.next_id()}"
+
+        @property
+        def name(self):
+            return self._root.base_name
+
+        @property
+        def member_name(self):
+            return self._root.member_name
+
+        @property
+        def member_offset(self):
+            return self._root.member_offset
+
+        @property
+        def member_type(self):
+            return self._graph.nodes[self._root]["type_name"]
+
+        @property
+        def member_size(self):
+            return self._graph.nodes[self._root]["size"]
+
+        @property
+        def is_imprecise(self):
+            return self.alias_id is not None
+
+        @property
+        def alias_id(self):
+            return self._graph.nodes[self._root].get("alias_group_id", None)
+
+        @property
+        def alias_groups(self):
+            return ",".join(map(str, self._graph.nodes[self._root].get("alias_groups", [])))
+
+        @property
+        def location(self):
+            return f"{self._root.file}:{self._root.line}"
+
+        @property
+        def has_children(self):
+            return self._graph.out_degree(self._root) > 0
+
+        def __iter__(self):
+            for n in self._graph.successors(self._root):
+                yield self.__class__(self._graph, n)
 
     @dependency
     def data(self):
         return ImpreciseSubobjectBoundsUnion(self.session, self.analysis_config)
 
     @output
-    def html_view(self):
-        return AnalysisFileTarget(self, ext="html")
+    def layouts_table(self):
+        return HTMLTemplateTarget(self, "imprecise-subobject-layout.html.jinja")
 
     def run(self):
         layouts = self.data.all_layouts.get()
 
-        render_ctx = {}
+        layout_groups = {}
         for g in layouts:
-            roots = set(filter(lambda lg: "has_imprecise" in lg.graph and lg.graph["has_imprecise"], g.graph["roots"]))
-            render_ctx[g.graph["dataset_gid"]] = roots
+            group_name = self.g_uuid_to_label(g.graph["dataset_gid"])
+            descriptions = []
+            self.logger.debug("Prepare structures for %s", group_name)
+            for struct_root in set(g.graph["roots"]):
+                if not g.nodes[struct_root].get("has_imprecise", False):
+                    continue
+                descriptions.append(self.LayoutDescription(g, struct_root))
+            layout_groups[group_name] = descriptions
+
+        self.layouts_table.render(layout_groups=layout_groups)
