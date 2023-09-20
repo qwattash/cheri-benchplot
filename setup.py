@@ -103,7 +103,7 @@ setup(name="pycheribenchplot",
           "pandera>=0.15.1", "pyelftools>=0.27", "PyPika>=0.48.8", "sortedcontainers>=2.4.0", "seaborn>=0.12",
           "squarify>=0.4.3", "tabulate>=0.9", "termcolor>=1.1.0", "XlsxWriter>=3.0.2", "yapf>=0.31.0",
           "gitpython>=3.1.27", "typing_inspect>=0.5.0", "typing_extensions>=4.7.0", "multi-await>=1.0.0",
-          "pyserial>=3.5", "hypothesis>=6.81.0", "cxxfilt>=0.3.0", "pyqt6>=6.5.1"
+          "pyserial>=3.5", "hypothesis>=6.81.0", "cxxfilt>=0.3.0", "pyqt6>=6.5.1", "jinja2>=3.1.2"
       ],
       extras_require={"dev": [
           "pytest",
