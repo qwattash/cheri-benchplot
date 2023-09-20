@@ -236,7 +236,7 @@ class C18NTransitionGraph(PlotTask):
                 if not edge_id in graph.edges:
                     graph.add_edge(*edge_id, weight=1, thread=thread)
                 else:
-                    e = graph.edges[*edge_id]
+                    e = graph.edges[edge_id]
                     e["weight"] += 1
             else:
                 enter_stack.pop()
