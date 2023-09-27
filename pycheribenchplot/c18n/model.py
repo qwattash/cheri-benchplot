@@ -13,6 +13,7 @@ class C18NDomainTransitionTraceModel(DataModel):
     thread: Index[int]
     op: Series[str] = Field(isin=["enter", "leave"])
     compartment: Series[str]
+    parent_compartment: Series[str] = Field(nullable=True)
     symbol_number: Series[int]
     symbol: Series[str]
     address: Series[pd.Int64Dtype] = Field(nullable=True)

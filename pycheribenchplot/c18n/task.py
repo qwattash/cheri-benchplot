@@ -1,4 +1,3 @@
-import gzip
 import re
 import typing as ty
 from dataclasses import dataclass, field
@@ -10,12 +9,13 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
-from ..core.analysis import AnalysisTask, BenchmarkAnalysisTask
+from ..core.analysis import AnalysisTask, DatasetAnalysisTask
 from ..core.artefact import (DataFrameTarget, DataRunAnalysisFileTarget, LocalFileTarget)
 from ..core.config import Config, ConfigPath, validate_path_exists
 from ..core.pandas_util import generalized_xs
-from ..core.plot import PlotTarget, PlotTask, new_figure
+from ..core.plot import DatasetPlotTask, PlotTarget, new_figure
 from ..core.task import DataGenTask, dependency, output
+from ..core.util import gzopen
 from .gui import C18NTraceInspector
 from .model import C18NDomainTransitionTraceModel
 
@@ -56,7 +56,8 @@ class C18NKtraceImport(DataGenTask):
 
     def run(self):
         self.logger.debug("Ingest c18n domain transition kdump: %s", self.config.kdump)
-        with open(self.config.kdump, "r") as kdump:
+
+        with gzopen(self.config.kdump, "r") as kdump:
             df = self._parse(kdump)
         df.to_csv(self.data_file.path)
 
@@ -66,9 +67,9 @@ class C18NKtraceImport(DataGenTask):
 
     def _parse(self, kdump: ty.IO) -> pd.DataFrame:
         line_matcher = re.compile(
-            r"(?P<pid>[0-9]+)\s+(?P<binary>[\w.-]+).*RTLD:.*(?P<op>leave|enter)\s+\[?(?P<compartment>[\w./-]+)\]?.*thread "
-            r"(?P<thread>[0-9abcdefx]+) at \[(?P<symbol_number>[0-9]+)\] "
-            r"(?P<symbol>[\w<>-]+)\s*\(?(?P<address>[\dxabcdef]*)\)?")
+            r"(?P<pid>[0-9]+) (?P<thread>[0-9]+)\s+(?P<binary>[\w.-]+).*RTLD: c18n: (?P<op>enter|leave) "
+            r"\[?(?P<compartment>[\w./<>+-]+)\]?(?: from \[?(?P<parent_compartment>[\w./<>+-]+)\]?)? "
+            r"at \[(?P<symbol_number>[0-9]+)\] (?P<symbol>[\w<>-]+)\s*\(?(?P<address>[\dxabcdef]*)\)?")
         data = []
         failed = 0
         for line in kdump:
@@ -89,36 +90,12 @@ class C18NKtraceImport(DataGenTask):
         df = pd.DataFrame(data)
         # Normalize hex values
         df["address"] = df["address"].map(lambda v: int(v, base=16) if v else None)
-        df["thread"] = df["thread"].map(lambda v: int(v, base=16) if v else None)
         df.index.name = "sequence"
         df["trace_source"] = self.config.kdump.name
         return df
 
 
-class LoadC18NTransitionTrace(AnalysisTask):
-    """
-    Helper task to load and pre-process all traces we ingested
-    """
-    task_namespace = "c18n"
-    task_name = "load-c18n-ingested-ktrace"
-
-    @dependency
-    def data(self):
-        for task in self.session.find_all_exec_tasks(C18NKtraceImport):
-            yield task.data_file.get_loader()
-
-    @output
-    def all_traces(self):
-        return DataFrameTarget(self, C18NDomainTransitionTraceModel)
-
-    def run(self):
-        # Merge all traces, keeping the same frame shape
-        df = pd.concat([t.df.get() for t in self.data])
-
-        self.all_traces.assign(df)
-
-
-class C18NTransitionsSummary(PlotTask):
+class C18NTransitionsSummary(DatasetPlotTask):
     """
     Generate a simple histogram of the top 20 most frequent domain transitions.
     """
@@ -128,14 +105,15 @@ class C18NTransitionsSummary(PlotTask):
 
     @dependency
     def data(self):
-        return LoadC18NTransitionTrace(self.session, self.analysis_config, self.config)
+        generator = self.benchmark.find_exec_task(C18NKtraceImport)
+        return generator.data_file.get_loader()
 
     @output
     def hist_plot(self):
         return PlotTarget(self)
 
     def run_plot(self):
-        df = self.data.all_traces.get()
+        df = self.data.df.get()
 
         def demangler(v):
             if v == "<unknown>":
@@ -180,7 +158,7 @@ class C18NTransitionsSummary(PlotTask):
             ax_r.set_xlabel("% of transitions")
 
 
-class C18NTransitionGraph(PlotTask):
+class C18NTransitionGraph(DatasetPlotTask):
     """
     Generate a graph with relationship between compartments.
     """
@@ -191,14 +169,15 @@ class C18NTransitionGraph(PlotTask):
 
     @dependency
     def data(self):
-        return LoadC18NTransitionTrace(self.session, self.analysis_config, self.config)
+        generator = self.benchmark.find_exec_task(C18NKtraceImport)
+        return generator.data_file.get_loader()
 
     @output
     def reachability_plot(self):
         return PlotTarget(self)
 
     def run_plot(self):
-        df = self.data.all_traces.get()
+        df = self.data.df.get()
         graph = nx.DiGraph()
 
         names = df.index.unique("binary")
@@ -215,68 +194,57 @@ class C18NTransitionGraph(PlotTask):
             return name
 
         df["compartment"] = df["compartment"].map(simplify_name)
+        df["parent_compartment"] = df["parent_compartment"].fillna("").map(simplify_name)
 
         # Need to determine the source compartment for each "enter" entry
         # while we are scanning, add entries to the graph
         self.logger.info("Computing transition graph")
 
-        enter_stacks = {tid: ["main"] for tid in df.index.unique("thread")}
-
+        # Build the graph representation from a dataframe containing records
         thread_label_index = df.index.names.index("thread")
         assert thread_label_index != -1
 
+        self.logger.info("Prepare transition graph")
+        max_edge_weights = {tid: 0 for tid in df.index.unique("thread")}
+
         def fill_graph(row):
             thread = row.name[thread_label_index]
-            enter_stack = enter_stacks[thread]
-            if row["op"] == "enter":
-                current = enter_stack[-1]
-                enter_stack.append(row["compartment"])
-                edge_id = (current, row["compartment"])
+            if row["op"] != "enter":
+                return
+            edge_id = (row["parent_compartment"], row["compartment"])
+            # Avoid creating self-edges
+            if edge_id[0] == edge_id[1] and self.config.drop_redundant:
+                return
 
-                if not edge_id in graph.edges:
-                    graph.add_edge(*edge_id, weight=1, thread=thread)
-                else:
-                    e = graph.edges[edge_id]
-                    e["weight"] += 1
+            if not edge_id in graph.edges:
+                graph.add_edge(*edge_id, weight=1, thread=thread)
             else:
-                enter_stack.pop()
+                e = graph.edges[edge_id]
+                e["weight"] += 1
+            max_edge_weights[thread] = max(max_edge_weights[thread], graph.edges[edge_id]["weight"])
 
         df.apply(fill_graph, axis=1)
         del df
-        self.logger.info("Draw transition graph")
-
-        # Self loop edges are not really interesting
-        if self.config.drop_redundant:
-            graph.remove_edges_from(nx.selfloop_edges(graph))
 
         sns.set_theme()
-        cmap = sns.color_palette("flare", as_cmap=True)
+        cmap = sns.color_palette("crest", as_cmap=True)
 
-        draw_options = {
-            "node_color": "#a0cbe2",
-            "edge_color": None,
-            "edge_cmap": cmap,
-            "width": 0.7,
-            "font_size": 4,
-            "with_labels": True,
-            "node_size": 100,
-            "arrowsize": 3
-        }
+        for u, v, edge in graph.edges.data():
+            norm_weight = (edge["weight"] - 1) / (max_edge_weights[edge["thread"]] - 1)
+            color = cmap(norm_weight, bytes=True)
+            edge["color"] = "#{:2x}{:2x}{:2x}{:2x}".format(*(color))
 
-        thread_num = len(enter_stacks)
-        with new_figure(self.reachability_plot.paths()) as fig:
-            axs = fig.subplots(thread_num, 1)
-            edge_threads = nx.get_edge_attributes(graph, "thread")
-            for ax, tid in zip(axs, enter_stacks.keys()):
-                view = nx.edge_subgraph(graph, (e for e, t in edge_threads.items() if t == tid))
-
-                # layout = nx.kamada_kawai_layout(graph, weight="weight", scale=4)
-                layout = nx.nx_agraph.graphviz_layout(view, prog="neato")
-                draw_options.update({"edge_color": nx.get_edge_attributes(view, "weight").values()})
-                nx.draw(view, pos=layout, ax=ax, **draw_options)
+        self.logger.info("Found edges:%d nodes:%d", len(graph.edges), len(graph.nodes))
+        dot = nx.nx_pydot.to_pydot(graph)
+        dot.set_prog("neato")
+        dot.set_splines(True)
+        for path in self.reachability_plot.paths():
+            ext = path.suffix[1:]
+            writer = getattr(dot, f"write_{ext}")
+            writer(path)
 
 
-class C18NAnnotateTrace(BenchmarkAnalysisTask):
+class C18NAnnotateTrace(DatasetAnalysisTask):
     """
     Annotate a single trace to make it human-readable
 
@@ -341,7 +309,7 @@ class C18NAnnotateTrace(BenchmarkAnalysisTask):
         df["address"] = df["address"].fillna("")
 
         if self.config.compress_output:
-            openfn = gzip.open
+            openfn = gzopen
         else:
             openfn = open
 

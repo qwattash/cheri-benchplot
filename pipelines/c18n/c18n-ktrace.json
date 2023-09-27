@@ -8,13 +8,24 @@
         }]
     },
     "benchmark_config": [{
-        "name": "demo-c18n-ktrace",
-        "desc": "Example to import and process ktrace domain transitions for c18n compartmentalisation",
+        "name": "{workload}-c18n-{c18n_optimizations}-ktrace",
+        "desc": "{workload} domain transitions with c18n {c18n_optimizations}",
+        "parameterize": {
+            "workload": ["nginx", "grpc-ping"],
+            "c18n_optimizations": ["default", "noopt"]
+        },
         "generators": [{
             "handler": "c18n.ktrace-import",
             "task_options": {
-                "kdump": "./ping-no-policy.txt"
+                "kdump": "./data/{workload}-{c18n_optimizations}.txt.xz"
             }
         }]
-    }]
+    }],
+    "analysis_config": {
+        "tasks": [{
+            "handler": "c18n.plot-compartment-graph"
+        }, {
+            "handler": "c18n.plot-top-transitions"
+        }]
+    }
 }

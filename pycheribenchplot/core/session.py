@@ -14,7 +14,7 @@ from marshmallow.exceptions import ValidationError
 from tabulate import tabulate
 from typing_extensions import Self
 
-from .analysis import AnalysisTask
+from .analysis import AnalysisTask, DatasetAnalysisTaskGroup
 from .benchmark import Benchmark, BenchmarkExecMode, ExecTaskConfig
 from .config import (AnalysisConfig, BenchplotUserConfig, Config, ConfigContext, ExecTargetConfig, PipelineConfig,
                      SessionRunConfig, TaskTargetConfig)
@@ -206,7 +206,7 @@ class Session:
                 bench_matrix[benchmark_config.g_uuid] = benchmark
             benchmark.get_plot_path().mkdir(exist_ok=True)
 
-        show_matrix = tabulate(bench_matrix, tablefmt="github", headers="keys")
+        show_matrix = tabulate(bench_matrix.reset_index(), tablefmt="github", headers="keys", showindex=False)
         self.logger.debug("Benchmark matrix:\n%s", show_matrix)
 
         assert not bench_matrix.isna().any().any(), "Incomplete benchmark matrix"
@@ -405,13 +405,19 @@ class Session:
                 raise ValueError("Invalid task name")
             for task_klass in resolved:
                 if not issubclass(task_klass, AnalysisTask):
-                    self.logger.warning("Analysis process only supports scheduling of AnalysisTasks, skipping %s",
+                    self.logger.warning("Analysis step only supports scheduling of AnalysisTasks, skipping %s",
                                         task_klass)
                 if task_klass.task_config_class and isinstance(task_spec.task_options, dict):
                     options = task_klass.task_config_class.schema().load(task_spec.task_options)
                 else:
                     options = task_spec.task_options
-                task = task_klass(self, analysis_config, task_config=options)
+
+                # If the task is a session-wide task, just schedule it.
+                # If the task is per-dataset, schedule one instance for each dataset.
+                if task_klass.is_session_task():
+                    task = task_klass(self, analysis_config, task_config=options)
+                elif task_klass.is_benchmark_task():
+                    task = DatasetAnalysisTaskGroup(self, task_klass, analysis_config, task_config=options)
                 self.logger.debug("Schedule analysis task %s with opts %s", task, options)
                 self.scheduler.add_task(task)
         self.logger.info("Session %s start analysis", self.name)

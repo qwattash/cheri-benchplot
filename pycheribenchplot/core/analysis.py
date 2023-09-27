@@ -1,6 +1,6 @@
-import typing
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Type
 from uuid import UUID
 
 import numpy as np
@@ -11,7 +11,7 @@ from .artefact import DataFrameTarget, DataRunAnalysisFileTarget
 from .benchmark import Benchmark
 from .config import AnalysisConfig, Config
 from .model import DataModel
-from .task import ExecutionTask, SessionExecutionTask, SessionTask
+from .task import ExecutionTask, SessionTask, dependency
 
 
 class AnalysisTask(SessionTask):
@@ -27,29 +27,33 @@ class AnalysisTask(SessionTask):
     """
     task_namespace = "analysis"
 
-    def __init__(self, session: "Session", analysis_config: AnalysisConfig, task_config: Config = None):
+    def __init__(self, session: "Session", analysis_config: AnalysisConfig, task_config: Config | None = None):
         super().__init__(session, task_config=task_config)
         #: Analysis configuration for this invocation
         self.analysis_config = analysis_config
 
 
-class BenchmarkAnalysisTask(AnalysisTask):
+class DatasetAnalysisTask(AnalysisTask):
     """
-    Base class for analysis tasks that operate on a single benchmark context.
-    These generally used to perform per-benchmark operations such as loading
+    Base class for analysis tasks that operate on a single dataset context.
+    These generally used to perform per-dataset operations such as loading
     benchmark output data, pre-processing and preliminary aggregation.
 
     XXX These tasks must be scheduled by a session-wide :class:`AnalysisTask` as currently the
     session analysis system is not smart enough to create multiple of these tasks.
     """
-    task_namespace = "analysis.benchmark"
+    task_namespace = "analysis.dataset"
 
-    def __init__(self, benchmark: Benchmark, analysis_config: AnalysisConfig, task_config: Config = None):
+    def __init__(self, benchmark: Benchmark, analysis_config: AnalysisConfig, task_config: Config | None = None):
         #: The associated benchmark context
         self.benchmark = benchmark
 
         # Borg initialization occurs here
         super().__init__(benchmark.session, analysis_config, task_config=task_config)
+
+    @classmethod
+    def is_session_task(cls):
+        return False
 
     @classmethod
     def is_benchmark_task(cls):
@@ -71,6 +75,43 @@ class BenchmarkAnalysisTask(AnalysisTask):
         change the task ID generation.
         """
         return f"{self.task_namespace}.{self.task_name}-{self.benchmark.uuid}"
+
+
+class DatasetAnalysisTaskGroup(AnalysisTask):
+    """
+    Synthetic target that schedules a per-dataset analysis task for each dataset in the session.
+    """
+    task_name = "sched-group"
+
+    def __init__(self,
+                 session: "Session",
+                 task_class: Type[DatasetAnalysisTask],
+                 analysis_config: AnalysisConfig,
+                 task_config: Config | None = None):
+        self._task_class = task_class
+
+        # Borg initialization occurs here
+        super().__init__(session, analysis_config, task_config)
+
+    @dependency
+    def children(self):
+        """
+        Schedule one instance of task_class for each dataset in the session
+        """
+        for bench in self.session.all_benchmarks():
+            yield self._task_class(bench, self.analysis_config, self.config)
+
+    @property
+    def task_id(self):
+        """
+        Note that this must depend on the target task ID, otherwise we have duplicate IDs in
+        case of multiple groups.
+        """
+        return f"{super().task_id}-for-{self._task_class.task_namespace}-{self._task_class.task_name}"
+
+    def run(self):
+        # Nothing to do here
+        pass
 
 
 class MachineGroupAnalysisTask(AnalysisTask):
@@ -132,7 +173,7 @@ class ParamGroupAnalysisTask(AnalysisTask):
         return f"{self.task_namespace}.{self.task_name}-{parameter_set}"
 
 
-class BenchmarkDataLoadTask(BenchmarkAnalysisTask):
+class BenchmarkDataLoadTask(DatasetAnalysisTask):
     """
     General-purpose data loading and pre-processing task for benchmarks.
 
@@ -145,11 +186,11 @@ class BenchmarkDataLoadTask(BenchmarkAnalysisTask):
     This task generates a DataFrameTarget() that identifies the task result.
     """
     #: The exec task from which to fetch the target
-    exec_task: typing.Type[ExecutionTask] = None
+    exec_task: Type[ExecutionTask] = None
     #: The name of the target file to load
     target_key: str = None
     #: Input data model
-    model: typing.Type[DataModel] = None
+    model: Type[DataModel] = None
 
     def __init__(self, benchmark: Benchmark, analysis_config: AnalysisConfig, **kwargs):
         self._df = []
@@ -280,9 +321,9 @@ class StatsByParamGroupTask(ParamGroupAnalysisTask):
     The output dataframe should conform to the DataModel for this task.
     """
     #: The load task to use for loading dependencies
-    load_task: typing.Type[BenchmarkDataLoadTask] = None
+    load_task: Type[BenchmarkDataLoadTask] = None
     #: The output data model
-    model: typing.Type[DataModel] = None
+    model: Type[DataModel] = None
     #: Extra group keys to use, if more complex changes to the set of keys is needed, override
     #: the group_keys property
     extra_group_keys: list[str] = []
@@ -484,9 +525,9 @@ class StatsForAllParamSetsTask(AnalysisTask):
     Merge the statistics in the output dataframe.
     """
     #: The task class to produce the statistics dataframe
-    stats_task: typing.Type[StatsByParamGroupTask] = None
+    stats_task: Type[StatsByParamGroupTask] = None
     #: Data model for the output dataframe
-    model: typing.Type[DataModel] = None
+    model: Type[DataModel] = None
 
     def __init__(self, session, analysis_config, **kwargs):
         #: The merged dataframe with all unaggregated data.

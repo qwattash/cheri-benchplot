@@ -1,5 +1,6 @@
 import gzip
 import logging
+import lzma
 import shutil
 import subprocess
 import time
@@ -96,16 +97,8 @@ def gzopen(path: Path, mode: str) -> typing.IO:
         openfn = gzip.open
         if "b" not in mode and "t" not in mode:
             mode += "t"
-    else:
-        openfn = open
-    with openfn(path, mode) as fileio:
-        yield fileio
-
-
-@contextmanager
-def gzopen(path: Path, mode: str) -> typing.IO:
-    if path.suffix == ".gz":
-        openfn = gzip.open
+    elif path.suffix == ".xz":
+        openfn = lzma.open
         if "b" not in mode and "t" not in mode:
             mode += "t"
     else:
