@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from pycheribenchplot.core.dwarf import (DWARFManager, DWARFStructLayoutModel, GraphConversionVisitor)
+from pycheribenchplot.core.dwarf import (DWARFManager, DWARFStructLayoutModel, StructLayoutGraph)
 from pycheribenchplot.ext import pydwarf
 
 
@@ -54,8 +54,7 @@ def test_extract_struct_layout(dwarf_manager, fake_session):
     """
     dw = dwarf_manager.register_object("k", "tests/assets/riscv_purecap_test_dwarf_simple")
 
-    info = dw.load_type_info()
-    df = dw.parse_struct_layout(info)
+    df = dw.build_struct_layout_table()
 
     expected_schema = DWARFStructLayoutModel.as_raw_model().to_schema(fake_session)
     expected_schema.validate(df)
@@ -79,8 +78,7 @@ def test_extract_layout_members(fake_session, dwarf_manager, asset_file, ptr_siz
     """
     dw = dwarf_manager.register_object("k", asset_file)
 
-    info = dw.load_type_info()
-    df = dw.parse_struct_layout(info)
+    df = dw.build_struct_layout_table()
 
     expected_schema = DWARFStructLayoutModel.as_raw_model().to_schema(fake_session)
     expected_schema.validate(df)
@@ -157,8 +155,8 @@ def test_extract_layout_members_graph(fake_session, dwarf_manager, asset_file, p
     expect_file_path = "tests/assets/test_dwarf_struct_members.c"
     dw = dwarf_manager.register_object("k", asset_file)
 
-    info = dw.load_type_info()
-    g = dw.build_struct_layout_graph(info)
+    layouts_graph = dw.build_struct_layout_graph()
+    g = layouts_graph.layouts
 
     # Count only nodes we have control over
     nodes = [n for n in g.nodes if n.file.find("test_dwarf_struct_members") != -1]
@@ -176,7 +174,7 @@ def test_extract_layout_members_graph(fake_session, dwarf_manager, asset_file, p
         else:
             assert g.nodes[nid]["size"] == size_hybrid
 
-    NodeID = GraphConversionVisitor.NodeID
+    NodeID = StructLayoutGraph.NodeID
 
     # Verify node information
     foo = NodeID(file=expect_file_path, line=15, base_name="foo", member_name=None, member_offset=0)
@@ -322,8 +320,7 @@ def test_extract_layout_members_anon(fake_session, dwarf_manager, asset_file, pt
     expect_file_path = "tests/assets/test_dwarf_struct_members_anon.c"
     dw = dwarf_manager.register_object("k", asset_file)
 
-    info = dw.load_type_info()
-    df = dw.parse_struct_layout(info)
+    df = dw.build_struct_layout_table()
 
     expected_schema = DWARFStructLayoutModel.as_raw_model().to_schema(fake_session)
     expected_schema.validate(df)
@@ -390,8 +387,7 @@ def test_extract_layout_members_nesting(fake_session, dwarf_manager, asset_file,
     expect_file_path = "tests/assets/test_dwarf_nested.c"
     dw = dwarf_manager.register_object("k", asset_file)
 
-    info = dw.load_type_info()
-    df = dw.parse_struct_layout(info)
+    df = dw.build_struct_layout_table()
 
     expected_schema = DWARFStructLayoutModel.as_raw_model().to_schema(fake_session)
     expected_schema.validate(df)
@@ -465,8 +461,7 @@ def test_extract_layout_members_nesting(fake_session, dwarf_manager, asset_file,
 def test_extract_empty_struct(fake_session, dwarf_manager, asset_file, ptr_size):
     dw = dwarf_manager.register_object("k", asset_file)
 
-    info = dw.load_type_info()
-    df = dw.parse_struct_layout(info)
+    df = dw.build_struct_layout_table()
 
     expected_schema = DWARFStructLayoutModel.as_raw_model().to_schema(fake_session)
     expected_schema.validate(df)
@@ -502,8 +497,7 @@ def test_zero_length_array(fake_session, dwarf_manager, asset_file, ptr_size):
     """
     dw = dwarf_manager.register_object("k", asset_file)
 
-    info = dw.load_type_info()
-    df = dw.parse_struct_layout(info)
+    df = dw.build_struct_layout_table()
 
     expected_schema = DWARFStructLayoutModel.as_raw_model().to_schema(fake_session)
     expected_schema.validate(df)
@@ -566,8 +560,7 @@ def test_extract_bitfield_struct(fake_session, dwarf_manager, asset_file, ptr_si
     """
     dw = dwarf_manager.register_object("k", asset_file)
 
-    info = dw.load_type_info()
-    df = dw.parse_struct_layout(info)
+    df = dw.build_struct_layout_table()
 
     expected_schema = DWARFStructLayoutModel.as_raw_model().to_schema(fake_session)
     expected_schema.validate(df)
@@ -580,11 +573,11 @@ def test_extract_bitfield_struct(fake_session, dwarf_manager, asset_file, ptr_si
     assert before["member_offset"] == 0
     assert before["member_size"] == 1
     bitfield_a = check_member(foo, "bitfield_a")
-    assert bitfield_a["member_offset"] == 0
-    assert bitfield_a["member_size"] == 4
+    assert bitfield_a["member_offset"] == 1
+    assert bitfield_a["member_size"] == 1
     bitfield_b = check_member(foo, "bitfield_b")
     assert bitfield_b["member_offset"] == 4
-    assert bitfield_b["member_size"] == 4
+    assert bitfield_b["member_size"] == 3
     after = check_member(foo, "after")
     assert after["member_offset"] == 7
     assert after["member_size"] == 1
@@ -599,13 +592,25 @@ def test_extract_bitfield_struct(fake_session, dwarf_manager, asset_file, ptr_si
     assert before["member_size"] == 4
     bitfield_a = check_member(bar, "bitfield_a")
     assert bitfield_a["member_offset"] == 4
-    assert bitfield_a["member_size"] == 4
+    assert bitfield_a["member_size"] == 3 / 8  # 3 bits
     bitfield_b = check_member(bar, "bitfield_b")
-    assert bitfield_b["member_offset"] == 4
-    assert bitfield_b["member_size"] == 4
+    assert bitfield_b["member_offset"] == 4 + (3 / 8)  # 3 bits past the 4-byte boundary
+    assert bitfield_b["member_size"] == 4 / 8  # 4 bits
     x = check_member(bar, "x")
     assert x["member_offset"] == 8
     assert x["member_size"] == 8
+
+    etherip = df.xs("etherip_header", level="base_name")
+    assert len(etherip) == 3
+    eip_resvl = check_member(etherip, "eip_resvl")
+    assert eip_resvl["member_offset"] == 0
+    assert eip_resvl["member_size"] == 4 / 8  # 4 bits
+    eip_ver = check_member(etherip, "eip_ver")
+    assert eip_ver["member_offset"] == 0 + 4 / 8  # 4 bits past the start
+    assert eip_ver["member_size"] == 4 / 8  # 4 bits
+    eip_resvh = check_member(etherip, "eip_resvh")
+    assert eip_resvh["member_offset"] == 1
+    assert eip_resvh["member_size"] == 1
 
 
 @pytest.mark.user_config
@@ -614,8 +619,7 @@ def test_extract_kernel_struct(fake_session, dwarf_manager, benchplot_user_confi
     kernel_path = benchplot_user_config.sdk_path / "rootfs-riscv64-purecap/boot/kernel/kernel.full"
     dw = dwarf_manager.register_object("k", kernel_path)
 
-    info = dw.load_type_info()
-    df = dw.parse_struct_layout(info)
+    df = dw.build_struct_layout_table()
 
     expected_schema = DWARFStructLayoutModel.as_raw_model().to_schema(fake_session)
     expected_schema.validate(df)

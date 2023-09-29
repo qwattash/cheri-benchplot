@@ -1,6 +1,4 @@
 
-#include <stdio.h>
-
 struct foo {
   char before;
   int bitfield_a:8;
@@ -16,20 +14,17 @@ struct bar {
   long int x;
 };
 
+struct etherip_header {
+  unsigned int eip_resvl:4, eip_ver:4;
+  unsigned char eip_resvh;
+} __attribute__((packed));
 
-void show(struct foo *fp, struct bar *bp)
-{
-  printf("Foo %ld %lx\n", fp->x, bp->x);
-}
 
 int main(int argc, char *argv[])
 {
+  struct etherip_header h;
   struct foo f;
   struct bar b;
-
-  f.x = 10;
-  b.x = 20;
-  show(&f, &b);
 
   return 0;
 }
