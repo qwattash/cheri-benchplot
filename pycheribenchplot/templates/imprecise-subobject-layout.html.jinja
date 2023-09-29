@@ -65,7 +65,7 @@
               <div class="p-2">
                 <ul class="struct-offset-list">
                   {%- for member in layout recursive %}
-                  <li class="struct-text">{{ "%#0x" | format(member.member_offset) }}</li>
+                  <li class="struct-text">{{ member.member_offset_str}}</li>
                   {%- if member.has_children %}
                     {{loop(member)}}
                   {%- endif %}
@@ -81,7 +81,7 @@
                     <div class="member-desc rounded-3 {{ 'member-imprecise' if member.is_imprecise }}">
                       <span class="struct-text member-type">{{ member.member_type|e }}</span>
                       <span class="struct-text member-name">{{ member.member_name|e }}</span>
-                      <span class="struct-text member-size">({{ "%#0x" | format(member.member_size) }})</span>
+                      <span class="struct-text member-size">({{ member.member_size_str }})</span>
                     </div>
                     {%- if member.has_children %}
                     <ul>{{ loop(member) }}</ul>

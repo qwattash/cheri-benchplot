@@ -15,7 +15,7 @@ import seaborn.objects as so
 from ..core.analysis import AnalysisTask
 from ..core.artefact import (AnalysisFileTarget, DataFrameTarget, HTMLTemplateTarget, LocalFileTarget, Target)
 from ..core.config import Config, ConfigPath, InstanceKernelABI
-from ..core.dwarf import DWARFManager, GraphConversionVisitor
+from ..core.dwarf import DWARFManager, StructLayoutGraph
 from ..core.plot import PlotTarget, PlotTask, new_figure
 from ..core.task import BenchmarkTask, DataGenTask, dependency, output
 from ..ext import pychericap, pydwarf
@@ -71,7 +71,7 @@ class StructLayoutLoader(BenchmarkTask):
         return ValueTarget(self)
 
     def run(self):
-        g = GraphConversionVisitor.load(self.target.path)
+        g = StructLayoutGraph.load(self.benchmark, self.target.path)
         self.graph.assign(g)
 
 
@@ -104,12 +104,16 @@ class ExtractImpreciseSubobject(DataGenTask):
     def imprecise_layouts(self):
         return LocalFileTarget(self, ext="gml.gz", loader=StructLayoutLoader)
 
-    def _check_imprecise(self, offset: int, size: int) -> tuple[int, int] | None:
+    def _check_imprecise(self, offset: float, size: float) -> tuple[int, int] | None:
         """
         Check if a specific member of a structure is representable.
 
-        If it is not representable, return a tuple (new_base, new_top)
+        If it is not representable, return a tuple (new_base, new_top).
+        Note that offset and size may be floating point numbers if the sub-object
+        involves bit-fields.
         """
+        offset = int(offset)
+        size = int(np.ceil(size))
         subobject_cap = self.cap_format.make_max_bounds_cap(offset)
         is_exact = subobject_cap.setbounds(size)
 
@@ -119,8 +123,22 @@ class ExtractImpreciseSubobject(DataGenTask):
         assert subobject_cap.base() < offset or subobject_cap.top() >= offset + size
         return (subobject_cap.base(), subobject_cap.top())
 
-    def _find_imprecise_for(self, g: nx.DiGraph, n: "NodeID"):
+    def _find_imprecise_for(self, g: nx.DiGraph, n: StructLayoutGraph.NodeID):
         """
+        Given a NodeID in the graph representing a top-level struct description,
+        find whether the structure contains any imprecise members.
+
+        If the structure contains imprecise sub-objects, set the "has_imprecise" attribute.
+        The node will additionally define the following attributes:
+        - alias_group_id: an integer (unique within the top-level structure members) that identifies
+        the group of struct members that alias with the owner of that ID.
+        - alias_aligned_base: the representable base for the sub-object capability
+        - alias_aligned_top: the representable top for the sub-object capability
+
+        Each node that aliases with an imprecise sub-object capability for a member has the
+        following attributes:
+        - alias_groups: A list/sequence containing the alias_group_id values of all the
+        sub-objects that alias with the struct member corresponding to the node.
         """
         g.nodes[n]["has_imprecise"] = False
         alias_group_id = 0
@@ -169,7 +187,7 @@ class ExtractImpreciseSubobject(DataGenTask):
                 g.nodes[child]["alias_groups"] = list(map(int, groups))
         self.logger.debug("Found %d imprecise members for %s", len(imprecise), n)
 
-    def _find_imprecise(self, g: nx.DiGraph):
+    def _find_imprecise(self, g: StructLayoutGraph):
         """
         Generate alias groups for imprecise sub-object members.
         This generates a graph representing data structure layouts in the dwarf information.
@@ -179,12 +197,12 @@ class ExtractImpreciseSubobject(DataGenTask):
         representability rounding.
         The alias_groups attribute contains a list of all the group IDs that a field is aliasing with.
         """
-        roots = g.graph["roots"]
+        roots = g.layouts.graph["roots"]
         if len(roots) == 0:
             self.logger.debug("No data structures for %s", dw.path)
             return None
         for n in roots:
-            self._find_imprecise_for(g, n)
+            self._find_imprecise_for(g.layouts, n)
         return g
 
     def _resolve_paths(self, target: PathMatchSpec) -> Iterator[Path]:
@@ -202,8 +220,7 @@ class ExtractImpreciseSubobject(DataGenTask):
         yield from filter(match_path, target.path.rglob("*"))
 
     def run(self):
-        iconf = self.benchmark.config.instance
-        layout_graph = nx.DiGraph()
+        layout_container = StructLayoutGraph(self.benchmark)
 
         for target in self.config.dwarf_data_sources:
             for item in self._resolve_paths(target):
@@ -212,16 +229,14 @@ class ExtractImpreciseSubobject(DataGenTask):
                     self.logger.error("File %s is not a regular file, skipping", item)
                     continue
                 # XXX may want to make the manager use a more predictable target name
-                # XXX the pointer size detection should go away
-                dw = self.benchmark.dwarf.register_object(item, item, arch_pointer_size=iconf.user_pointer_size)
-                info = dw.load_type_info()
-                dw.build_struct_layout_graph(info, layout_graph)
+                dw = self.benchmark.dwarf.register_object(item, item)
+                dw.build_struct_layout_graph(layout_container)
 
-        self._find_imprecise(layout_graph)
-        layout_graph.graph["dataset_id"] = str(self.benchmark.uuid)
-        layout_graph.graph["dataset_gid"] = str(self.benchmark.g_uuid)
+        self._find_imprecise(layout_container)
+        layout_container.layouts.graph["dataset_id"] = str(self.benchmark.uuid)
+        layout_container.layouts.graph["dataset_gid"] = str(self.benchmark.g_uuid)
         # Now we can dump the layout
-        GraphConversionVisitor.dump(layout_graph, self.imprecise_layouts.path)
+        layout_container.dump(self.imprecise_layouts.path)
 
 
 class ImpreciseSubobjectBoundsUnion(AnalysisTask):
@@ -265,12 +280,13 @@ class ImpreciseMembersPlotBase(PlotTask):
     def data(self):
         return ImpreciseSubobjectBoundsUnion(self.session, self.analysis_config)
 
-    def _collect_imprecise_members(self, layouts: list[nx.DiGraph]):
+    def _collect_imprecise_members(self, struct_graphs: list[StructLayoutGraph]):
         """
         Construct a dataframe containing all the imprecise structure members
         """
         imprecise = []
-        for g in layouts:
+        for sg in struct_graphs:
+            g = sg.layouts
             gid = uuid.UUID(g.graph["dataset_gid"])
             records = []
             for struct_root in g.graph["roots"]:
@@ -323,14 +339,15 @@ class ImpreciseMembersPlotBase(PlotTask):
         for all dataset_gid (E.g. common to both morello and riscv).
         """
         df = self._prepare_dataset()
-        layouts = self.data.all_layouts.get()
+        struct_graphs = self.data.all_layouts.get()
 
         # Filter the dataframe by structures that exist in all layout dumps
         # To do so, find the intersection between all structure identifiers, then
         # select only the nodes in df that belong to these structures.
         # This means joining on [file, line, base_name]
-        common = set(layouts[0].graph["roots"])
-        for g in layouts[1:]:
+        common = set(struct_graphs[0].layouts.graph["roots"])
+        for sg in struct_graphs[1:]:
+            g = sg.layouts
             common = common.intersection(g.graph["roots"])
         common_df = pd.DataFrame.from_records(map(lambda n: (n.file, n.line, n.base_name), common),
                                               columns=["file", "line", "base_name"])
@@ -508,12 +525,14 @@ class RequiredSubobjectPrecision(ImpreciseMembersPlotBase):
     def imprecise_common_bits_cdf(self):
         return PlotTarget(self, prefix="common-cdf")
 
-    def _compute_precision(self, base, top):
+    def _compute_precision(self, base: float, top: float):
         """
         This should produce the mantissa size required for a specific (base, top) pair
         to be representable.
         """
         assert base <= top, "Invalid base > top"
+        base = int(base)
+        top = int(np.ceil(top))
 
         def lsb(x):
             if x == 0:
@@ -530,7 +549,16 @@ class RequiredSubobjectPrecision(ImpreciseMembersPlotBase):
             exponent = min(lsb(base), lsb(top))
         return len_msb - exponent + 1
 
-    def _compute_platform_precision(self, g_uuid, base, top):
+    def _compute_platform_precision(self, g_uuid: uuid.UUID, base: float, top: float):
+        """
+        Compute the precision for a given [base, top] region on the platform identified
+        by the g_uuid.
+
+        Note that base and top may be floats if the region involves bit fields.
+        """
+        base = int(base)
+        top = int(np.ceil(top))
+
         config = self.get_instance_config(g_uuid)
         if config.cheri_target.is_riscv():
             mantissa_width = pychericap.CompressedCap128.get_mantissa_width()
@@ -658,12 +686,30 @@ class ImpreciseSetboundsLayouts(PlotTask):
             return self._root.member_offset
 
         @property
+        def member_offset_str(self):
+            byte_offset = int(self.member_offset)
+            bit_offset = int((self.member_offset - byte_offset) * 8)
+            str_offset = f"{byte_offset:#x}"
+            if bit_offset:
+                str_offset += f":+{bit_offset:d}"
+            return str_offset
+
+        @property
         def member_type(self):
             return self._graph.nodes[self._root]["type_name"]
 
         @property
         def member_size(self):
             return self._graph.nodes[self._root]["size"]
+
+        @property
+        def member_size_str(self):
+            byte_size = int(self.member_size)
+            bit_size = int((self.member_size - byte_size) * 8)
+            str_size = f"{byte_size:#x}"
+            if bit_size:
+                str_size += f":+{bit_size:d}"
+            return str_size
 
         @property
         def is_imprecise(self):
@@ -698,17 +744,17 @@ class ImpreciseSetboundsLayouts(PlotTask):
         return HTMLTemplateTarget(self, "imprecise-subobject-layout.html.jinja")
 
     def run(self):
-        layouts = self.data.all_layouts.get()
+        containers = self.data.all_layouts.get()
 
         layout_groups = {}
-        for g in layouts:
-            group_name = self.g_uuid_to_label(g.graph["dataset_gid"])
+        for c in containers:
+            group_name = self.g_uuid_to_label(c.layouts.graph["dataset_gid"])
             descriptions = []
             self.logger.debug("Prepare structures for %s", group_name)
-            for struct_root in set(g.graph["roots"]):
-                if not g.nodes[struct_root].get("has_imprecise", False):
+            for struct_root in set(c.layouts.graph["roots"]):
+                if not c.layouts.nodes[struct_root].get("has_imprecise", False):
                     continue
-                descriptions.append(self.LayoutDescription(g, struct_root))
+                descriptions.append(self.LayoutDescription(c.layouts, struct_root))
             layout_groups[group_name] = descriptions
 
         self.layouts_table.render(layout_groups=layout_groups)
