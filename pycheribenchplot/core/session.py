@@ -1,6 +1,7 @@
 import logging
 import re
 import shutil
+import subprocess
 from collections import defaultdict, namedtuple
 from contextlib import AbstractContextManager
 from dataclasses import asdict, fields
@@ -268,7 +269,7 @@ class Session:
         self.logger.info("Remove session %s (%s)", self.name, self.uuid)
         shutil.rmtree(self.session_root_path)
 
-    def bundle(self):
+    def bundle(self, include_raw_data: bool = False):
         """
         Produce a compressed archive with all the session output.
         """
@@ -277,7 +278,11 @@ class Session:
         if bundle_file.exists():
             self.logger.info("Replacing old bundle %s", bundle_file)
             bundle_file.unlink()
-        result = subprocess.run(["tar", "-J", "-c", "-f", bundle_file, self.session_root_path])
+        if include_raw_data:
+            archive_src = self.session_root_path
+        else:
+            archive_src = self.get_plot_root_path()
+        result = subprocess.run(["tar", "-J", "-c", "-f", bundle_file, archive_src])
         if result.returncode:
             self.logger.error("Failed to produce bundle")
         self.logger.info("Archive created at %s", bundle_file)
