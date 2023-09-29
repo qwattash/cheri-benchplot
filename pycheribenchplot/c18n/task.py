@@ -40,6 +40,12 @@ class PrettifyTraceConfig(Config):
 class TransitionGraphConfig(Config):
     #: Drop redundant transitions
     drop_redundant: bool = True
+    #: Map number of calls to edge thickness
+    weight_edge_thickness: bool = False
+    #: Edge thickness limits (min, max)
+    edge_thickness_limits: tuple[float, float] = (1, 2)
+    #: Map number of calls to edge color
+    weight_edge_color: bool = True
 
 
 class C18NKtraceImport(DataGenTask):
@@ -68,7 +74,7 @@ class C18NKtraceImport(DataGenTask):
     def _parse(self, kdump: ty.IO) -> pd.DataFrame:
         line_matcher = re.compile(
             r"(?P<pid>[0-9]+) (?P<thread>[0-9]+)\s+(?P<binary>[\w.-]+).*RTLD: c18n: (?P<op>enter|leave) "
-            r"\[?(?P<compartment>[\w./<>+-]+)\]?(?: from \[?(?P<parent_compartment>[\w./<>+-]+)\]?)? "
+            r"\[?(?P<callee_compartment>[\w./<>+-]+)\]? (?:from|to) \[?(?P<caller_compartment>[\w./<>+-]+)\]? "
             r"at \[(?P<symbol_number>[0-9]+)\] (?P<symbol>[\w<>-]+)\s*\(?(?P<address>[\dxabcdef]*)\)?")
         data = []
         failed = 0
@@ -127,11 +133,11 @@ class C18NTransitionsSummary(DatasetPlotTask):
         df["symbol"] = df["symbol"].map(demangler)
 
         # Count transitions
-        df = df.groupby(["compartment", "symbol", "op"]).size()
+        df = df.groupby(["callee_compartment", "symbol", "op"]).size()
         # Prepare to pivot
         df = df.to_frame(name="count").reset_index()
         # Pivot enter/leave out
-        show_df = df.reset_index().pivot(index=["compartment", "symbol"], columns="op", values="count")
+        show_df = df.reset_index().pivot(index=["callee_compartment", "symbol"], columns="op", values="count")
 
         show_df["total"] = show_df["enter"] + show_df["leave"]
         show_df["% enter"] = 100 * show_df["enter"] / show_df["enter"].sum()
@@ -188,13 +194,10 @@ class C18NTransitionGraph(DatasetPlotTask):
 
         # Simplify the compartment names for display
         def simplify_name(n):
-            comp = Path(n).name.split(".")
-            comp[0] = comp[0][3:] if comp[0].startswith("lib") else comp[0]
-            name = ".".join(comp[:2])
-            return name
+            return Path(n).name
 
-        df["compartment"] = df["compartment"].map(simplify_name)
-        df["parent_compartment"] = df["parent_compartment"].fillna("").map(simplify_name)
+        df["caller_compartment"] = df["caller_compartment"].map(simplify_name)
+        df["callee_compartment"] = df["callee_compartment"].map(simplify_name)
 
         # Need to determine the source compartment for each "enter" entry
         # while we are scanning, add entries to the graph
@@ -205,34 +208,43 @@ class C18NTransitionGraph(DatasetPlotTask):
         assert thread_label_index != -1
 
         self.logger.info("Prepare transition graph")
-        max_edge_weights = {tid: 0 for tid in df.index.unique("thread")}
+
+        # max_edge_weights = {tid: 0 for tid in df.index.unique("thread")}
 
         def fill_graph(row):
             thread = row.name[thread_label_index]
             if row["op"] != "enter":
                 return
-            edge_id = (row["parent_compartment"], row["compartment"])
+            edge_id = (row["caller_compartment"], row["callee_compartment"])
             # Avoid creating self-edges
             if edge_id[0] == edge_id[1] and self.config.drop_redundant:
                 return
 
             if not edge_id in graph.edges:
-                graph.add_edge(*edge_id, weight=1, thread=thread)
+                graph.add_edge(*edge_id, weight=1)
             else:
                 e = graph.edges[edge_id]
                 e["weight"] += 1
-            max_edge_weights[thread] = max(max_edge_weights[thread], graph.edges[edge_id]["weight"])
+            # max_edge_weights[thread] = max(max_edge_weights[thread], graph.edges[edge_id]["weight"])
 
         df.apply(fill_graph, axis=1)
         del df
 
         sns.set_theme()
-        cmap = sns.color_palette("crest", as_cmap=True)
+        cmap = sns.color_palette("flare", as_cmap=True)
+
+        # Find out the max edge weight
+        max_edge_weight = np.max(list(nx.get_edge_attributes(graph, "weight").values()))
 
         for u, v, edge in graph.edges.data():
-            norm_weight = (edge["weight"] - 1) / (max_edge_weights[edge["thread"]] - 1)
-            color = cmap(norm_weight, bytes=True)
-            edge["color"] = "#{:2x}{:2x}{:2x}{:2x}".format(*(color))
+            norm_weight = np.log(edge["weight"]) / np.log(max_edge_weight)
+            assert norm_weight <= 1.0 and norm_weight >= 0.0
+            if self.config.weight_edge_color:
+                color = cmap(norm_weight, bytes=True)
+                edge["color"] = "#{:2x}{:2x}{:2x}{:2x}".format(*color)
+            if self.config.weight_edge_thickness:
+                thickness_range = self.config.edge_thickness_limits[1] - self.config.edge_thickness_limits[0]
+                edge["penwidth"] = self.config.edge_thickness_limits[0] + thickness_range * norm_weight
 
         self.logger.info("Found edges:%d nodes:%d", len(graph.edges), len(graph.nodes))
         dot = nx.nx_pydot.to_pydot(graph)

@@ -11,8 +11,8 @@
         "name": "{workload}-c18n-{c18n_optimizations}-ktrace",
         "desc": "{workload} domain transitions with c18n {c18n_optimizations}",
         "parameterize": {
-            "workload": ["nginx", "grpc-ping"],
-            "c18n_optimizations": ["default", "noopt"]
+            "workload": ["grpc-ping", "grpc-rb"],
+            "c18n_optimizations": ["with-policy", "no-policy"]
         },
         "generators": [{
             "handler": "c18n.ktrace-import",
@@ -23,7 +23,12 @@
     }],
     "analysis_config": {
         "tasks": [{
-            "handler": "c18n.plot-compartment-graph"
+            "handler": "c18n.plot-compartment-graph",
+            "task_options": {
+                "edge_thickness_limits": [0.5, 2],
+                "weight_edge_thickness": true,
+                "weight_edge_color": true
+            }
         }, {
             "handler": "c18n.plot-top-transitions"
         }]

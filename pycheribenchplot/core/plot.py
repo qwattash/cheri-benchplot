@@ -43,7 +43,7 @@ class PlotTarget(LocalFileTarget):
         self._plot_ext = [f".{ext}" for ext in self._plot_ext if not ext.startswith(".")]
 
     def _session_paths(self):
-        return [self._task.session.get_root_plot_path() / self._file_name]
+        return [self._task.session.get_plot_root_path() / self._file_name]
 
     def _benchmark_paths(self):
         return [self._task.benchmark.get_plot_path() / self._file_name]
