@@ -339,15 +339,15 @@ class Config:
         origin = get_origin(dtype)
         if is_union_type(dtype):
             args = get_args(dtype)
-            if len(args) == 2 and args[1] == type(None):
-                # If we have an optional field, bind with the type argument
-                if value is None:
-                    return value
-                return self._bind_field(context, args[0], value)
-            else:
-                # Common union field, use whatever type we have as the argument as we do not
-                # know how to parse it
+            if value is not None:
                 return self._bind_field(context, type(value), value)
+            # Check if None is allowed
+            for t in args:
+                if t == type(None):
+                    break
+            else:
+                raise ConfigurationError("None type is not allowed")
+            return None
         elif type(value) == list:
             if origin is List or origin is list:
                 inner_type_fn = lambda v: get_args(dtype)[0]

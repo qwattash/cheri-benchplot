@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from functools import reduce
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Optional
 
 import pandas as pd
 import pandera.typing as pa
@@ -24,15 +25,15 @@ from .model import LoCCountModel, LoCDiffModel
 @dataclass
 class ExtractRepoLoCConfig(Config):
     #: Human-readable name of the cloc data, defaults to the repo path
-    name: str | None = None
+    name: Optional[str] = None
     #: Target repository, relative to UserConfig CHERI repository path
-    repo_path: ConfigPath | None = None
+    repo_path: Optional[ConfigPath] = None
     #: Repository baseline ref
-    baseline_ref: ConfigPath | str = None
+    baseline_ref: Optional[ConfigPath | str] = None
     #: Repository head ref
     head_ref: ConfigPath | str = "HEAD"
     #: Extensions to accept e.g. ".c"
-    accept_ext: str | None = None
+    accept_ext: Optional[str] = None
     #: Filter directories matching any of the regexes
     accept_filter: list[str] = field(default_factory=list)
     #: Filter out directories matching any of the regexes
@@ -41,8 +42,8 @@ class ExtractRepoLoCConfig(Config):
     # XXX implement validators here
 
     def __post_init__(self):
-        if self.name is None:
-            self.name = self.repo_path
+        if self.name is None and self.repo_path:
+            self.name = str(self.repo_path)
 
 
 @dataclass

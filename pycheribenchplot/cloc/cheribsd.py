@@ -1,5 +1,6 @@
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 import seaborn as sns
@@ -28,8 +29,8 @@ def abspath_or(path: Path | str, default_base: Path) -> Path:
 
 @dataclass
 class ExtractCheriBSDLoCConfig(ExtractRepoLoCConfig):
-    drm: ExtractRepoLoCConfig | None = None
-    zfs: ExtractRepoLoCConfig | None = None
+    drm: Optional[ExtractRepoLoCConfig] = None
+    zfs: Optional[ExtractRepoLoCConfig] = None
 
 
 class ExtractLoCCheriBSD(ExtractLoCBase):
@@ -58,6 +59,9 @@ class ExtractLoCCheriBSD(ExtractLoCBase):
         else:
             repo_fullpath = self.session.user_config.src_path / self.config.repo_path
         self._repo = Repo(repo_fullpath)
+
+        if not self.config.name:
+            self.config.name = self.config.repo_path.name
 
         # Load ref to last freebsd merged commit
         with open(repo_fullpath / ".last_merge", "r") as last_merge:
@@ -211,10 +215,20 @@ class CheriBSDLoCDiffByComponent(PlotTask):
         """
         Produce the plot given a set of component filters and a target where to emit the plot
         """
-        # Filter only the cheribsd data
-        # XXX assume the repository is "cheribsd", should grab this from the config
-        df = df.xs("cheribsd", level="repo")
-        base_df = base_df.xs("cheribsd", level="repo")
+        # Filter only the cheribsd/zfs/drm data
+        gen_task = self.session.find_exec_task(ExtractLoCCheriBSD)
+
+        def repo_xs(in_df):
+            repo_key = in_df.index.get_level_values("repo")
+            # Grab the repository key names from the configuration
+            cheribsd = gen_task.config.name
+            zfs = gen_task.config.zfs.name
+            drm = gen_task.config.drm.name
+            return in_df.loc[(repo_key == cheribsd) | (repo_key == zfs) | (repo_key == drm)]
+
+        df = repo_xs(df)
+        base_df = repo_xs(base_df)
+
         # Drop the "same" data as we don't care
         df = generalized_xs(df, how="same", complement=True)
 
