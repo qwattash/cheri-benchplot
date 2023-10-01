@@ -213,7 +213,7 @@ class TaskInfoSubCommand(SubCommand):
         Without any arguments, this will dump the existing user config,
         or a default one if none is found.
         """
-        if args.u:
+        if hasattr(args, "u"):
             if args.u.exists():
                 self.logger.warning("User configuration file already exists: %s", args.u)
             with open(args.u, "w+") as outconfig:
