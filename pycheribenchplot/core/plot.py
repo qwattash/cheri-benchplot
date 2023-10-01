@@ -79,7 +79,7 @@ class PlotTaskMixin:
             base = self.benchmark.get_plot_path()
         else:
             base = self.session.get_plot_root_path()
-        return PlotTarget(base / name)
+        return PlotTarget(self, base / name)
 
     def get_instance_config(self, g_uuid: UUID) -> InstanceConfig:
         """

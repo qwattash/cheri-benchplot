@@ -4,14 +4,14 @@ from dataclasses import dataclass, field
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
-from matplotlib.ticker import AutoMinorLocator, LinearLocator
+from matplotlib.ticker import AutoLocator, AutoMinorLocator
 
-from pycheribenchplot.core.analysis import AnalysisTask
-from pycheribenchplot.core.artefact import DataFrameTarget, LocalFileTarget
-from pycheribenchplot.core.config import (Config, ConfigPath, validate_path_exists)
-from pycheribenchplot.core.plot import PlotTarget, PlotTask, new_figure
-from pycheribenchplot.core.task import SessionDataGenTask
-from pycheribenchplot.kernel_vuln.model import (CheriBSDAdvisories, CheriBSDUnmitigated, History, Marker)
+from ..core.analysis import AnalysisTask
+from ..core.artefact import (AnalysisFileTarget, DataFrameTarget, LocalFileTarget)
+from ..core.config import Config, ConfigPath, validate_path_exists
+from ..core.plot import PlotTarget, PlotTask, new_figure
+from ..core.task import SessionDataGenTask, dependency, output
+from .model import CheriBSDAdvisories, CheriBSDUnmitigated, History, Marker
 
 
 @dataclass
@@ -33,14 +33,17 @@ class CheriBSDKernelVuln(SessionDataGenTask):
     task_name = "cheribsd-sa-classification"
     task_config_class = CheriBSDKernelVulnConfig
 
-    def _output_target(self) -> LocalFileTarget:
-        return LocalFileTarget.from_task(self, ext="csv")
+    @output
+    def advisories(self):
+        return LocalFileTarget(self, ext="csv", model=CheriBSDAdvisories)
 
-    def _output_history(self) -> LocalFileTarget:
-        return LocalFileTarget.from_task(self, prefix="history", ext="csv")
+    @output
+    def history(self):
+        return LocalFileTarget(self, prefix="history", ext="csv", model=History)
 
-    def _output_unmitigated(self) -> LocalFileTarget:
-        return LocalFileTarget.from_task(self, prefix="unmitigated", ext="csv")
+    @output
+    def unmitigated(self):
+        return LocalFileTarget(self, prefix="unmitigated", ext="csv", model=CheriBSDUnmitigated)
 
     def _normalize_input_colname(self, column_name: str) -> str:
         """
@@ -73,14 +76,14 @@ class CheriBSDKernelVuln(SessionDataGenTask):
             ["date", "advisory", "local_remote", "patch_commits", "notes", "history"])
         input_df[marker_cols] = input_df[marker_cols].applymap(lambda v: Marker.from_input(v))
         df = CheriBSDAdvisories.to_schema(self.session).validate(input_df)
-        df.to_csv(self._output_target().path)
+        df.to_csv(self.advisories.path)
 
         history_df["date"] = history_df["history"].str.split(":").str.get(0).astype("datetime64[ns]")
         history_df["occurrence"] = history_df["history"].str.split(":").str.get(1)
         history_df = history_df.set_index("date").sort_index()
         history_df.drop("history", axis=1)
         df = History.to_schema(self.session).validate(history_df)
-        df.to_csv(self._output_history().path)
+        df.to_csv(self.history.path)
 
     def _import_unmitigated(self):
         self.logger.debug("Reading unmitigated classification from %s", self.config.unmitigated_file)
@@ -99,20 +102,11 @@ class CheriBSDKernelVuln(SessionDataGenTask):
         input_df.columns = pd.Index(normalized_names)
         input_df.set_index(["date", "unmitigated_advisory"], inplace=True)
         df = CheriBSDUnmitigated.to_schema(self.session).validate(input_df)
-        df.to_csv(self._output_unmitigated().path)
-
-    @property
-    def task_id(self):
-        return f"{self.task_namespace}.{self.task_name}"
+        df.to_csv(self.unmitigated.path)
 
     def run(self):
         self._import_advisories()
         self._import_unmitigated()
-
-    def outputs(self):
-        yield "advisories", self._output_target()
-        yield "history", self._output_history()
-        yield "unmitigated", self._output_unmitigated()
 
 
 class CheriBSDKernelVulnLoad(AnalysisTask):
@@ -122,26 +116,37 @@ class CheriBSDKernelVulnLoad(AnalysisTask):
     task_namespace = "kernel-vuln"
     task_name = "load-sa"
 
+    @dependency
+    def advisories_df(self):
+        task = self.session.find_exec_task(CheriBSDKernelVuln)
+        return task.advisories.get_loader()
+
+    @dependency
+    def history_df(self):
+        task = self.session.find_exec_task(CheriBSDKernelVuln)
+        return task.history.get_loader()
+
+    @dependency
+    def unmitigated_df(self):
+        task = self.session.find_exec_task(CheriBSDKernelVuln)
+        return task.unmitigated.get_loader()
+
     def run(self):
         # XXX the datagen task should be made session-scoped so that we don't have to
         # pass a random benchmark there.
-        task = CheriBSDKernelVuln(self.session.benchmark_matrix.iloc[0, 0], None)
-        advisories = task.output_map["advisories"]
-        df = pd.read_csv(advisories.path, index_col=["date", "advisory"])
-        self.output_map["df"].assign(df)
+        return
+        # task = CheriBSDKernelVuln(self.session.benchmark_matrix.iloc[0, 0], None)
+        # advisories = task.output_map["advisories"]
+        # df = pd.read_csv(advisories.path, index_col=["date", "advisory"])
+        # self.df.assign(df)
 
-        history = task.output_map["history"]
-        df = pd.read_csv(history.path, index_col=["date"])
-        self.output_map["history_df"].assign(df)
+        # history = task.output_map["history"]
+        # df = pd.read_csv(history.path, index_col=["date"])
+        # self.history_df.assign(df)
 
-        unmitigated = task.output_map["unmitigated"]
-        df = pd.read_csv(unmitigated.path, index_col=["date", "unmitigated_advisory"])
-        self.output_map["unmitigated_df"].assign(df)
-
-    def outputs(self):
-        yield "df", DataFrameTarget(CheriBSDAdvisories.to_schema(self.session))
-        yield "history_df", DataFrameTarget(History.to_schema(self.session))
-        yield "unmitigated_df", DataFrameTarget(CheriBSDUnmitigated.to_schema(self.session))
+        # unmitigated = task.output_map["unmitigated"]
+        # df = pd.read_csv(unmitigated.path, index_col=["date", "unmitigated_advisory"])
+        # self.unmitigated_df.assign(df)
 
 
 class CheriBSDAdvisoriesHistory(PlotTask):
@@ -152,13 +157,29 @@ class CheriBSDAdvisoriesHistory(PlotTask):
     task_namespace = "kernel-vuln"
     task_name = "plot-sa-timeline"
 
-    def dependencies(self):
-        self._sa_load = CheriBSDKernelVulnLoad(self.session, self.analysis_config)
-        yield self._sa_load
+    @dependency
+    def sa_load(self):
+        return CheriBSDKernelVulnLoad(self.session, self.analysis_config)
 
-    def run(self):
-        df = self._sa_load.output_map["df"].get()
-        history = self._sa_load.output_map["history_df"].get()
+    @output
+    def timeline(self):
+        return PlotTarget(self, prefix="timeline")
+
+    @output
+    def mitigated_timeline(self):
+        return PlotTarget(self, prefix="mit-timeline")
+
+    @output
+    def mitigated_rel_timeline(self):
+        return PlotTarget(self, prefix="mit-rel-timeline")
+
+    @output
+    def mitigated_rel_mem_timeline(self):
+        return PlotTarget(self, prefix="mit-rel-mem-timeline")
+
+    def run_plot(self):
+        df = self.sa_load.advisories_df.df.get()
+        history = self.sa_load.history_df.df.get()
 
         df["year"] = df.index.get_level_values("date").year
         df["advisory"] = df.index.get_level_values("advisory")
@@ -198,7 +219,7 @@ class CheriBSDAdvisoriesHistory(PlotTask):
             "is_memory_safety_spatial": "Spatial memory safety advisory"
         }
         plot_df = do_melt(aggregated, display_columns)
-        with new_figure(self.output_map["timeline"].path) as fig:
+        with new_figure(self.timeline.paths()) as fig:
             ax = fig.subplots()
             ax.grid(axis="y", linestyle="--")
             ax.xaxis.set_minor_locator(AutoMinorLocator())
@@ -236,7 +257,7 @@ class CheriBSDAdvisoriesHistory(PlotTask):
         plot_df["is_mitigated_spatial"] = plot_df["is_mitigated_spatial"] * 100 / plot_df["advisory"]
         plot_df["is_mitigated"] = plot_df["is_mitigated"] * 100 / plot_df["advisory"]
         plot_df = do_melt(plot_df, display_columns)
-        with new_figure(self.output_map["mitigated-rel-timeline"].path) as fig:
+        with new_figure(self.mitigated_rel_timeline.paths()) as fig:
             ax = fig.subplots()
             ax.grid(axis="y", linestyle="--")
             ax.xaxis.set_minor_locator(AutoMinorLocator())
@@ -251,7 +272,7 @@ class CheriBSDAdvisoriesHistory(PlotTask):
             ax.set_ylabel("% of all advisories")
 
         plot_df = do_melt(aggregated, display_columns)
-        with new_figure(self.output_map["mitigated-timeline"].path) as fig:
+        with new_figure(self.mitigated_timeline.paths()) as fig:
             ax = fig.subplots()
             ax.grid(axis="y", linestyle="--")
             ax.xaxis.set_minor_locator(AutoMinorLocator())
@@ -272,7 +293,7 @@ class CheriBSDAdvisoriesHistory(PlotTask):
         plot_df["is_mitigated_spatial"] = plot_df["is_mitigated_spatial"] * 100 / plot_df["is_memory_safety"]
         plot_df["is_mitigated"] = plot_df["is_mitigated"] * 100 / plot_df["is_memory_safety"]
         plot_df = do_melt(plot_df, display_columns)
-        with new_figure(self.output_map["mitigated-rel-mem-timeline"].path) as fig:
+        with new_figure(self.mitigated_rel_mem_timeline.paths()) as fig:
             ax = fig.subplots()
             ax.grid(axis="y", linestyle="--")
             ax.xaxis.set_minor_locator(AutoMinorLocator())
@@ -289,12 +310,6 @@ class CheriBSDAdvisoriesHistory(PlotTask):
 
         # mitigated-distribution produces a plot with the different shares of
 
-    def outputs(self):
-        yield "timeline", self._plot_output("timeline")
-        yield "mitigated-timeline", self._plot_output("mit-timeline")
-        yield "mitigated-rel-timeline", self._plot_output("mit-rel-timeline")
-        yield "mitigated-rel-mem-timeline", self._plot_output("mit-rel-mem-timeline")
-
 
 class CheriBSDAdvisoriesTables(AnalysisTask):
     """
@@ -304,8 +319,20 @@ class CheriBSDAdvisoriesTables(AnalysisTask):
     task_namespace = "kernel-vuln"
     task_name = "summary-tables"
 
+    @dependency
+    def sa_load(self):
+        return CheriBSDKernelVulnLoad(self.session, self.analysis_config)
+
+    @output
+    def mitigation_summary(self):
+        return AnalysisFileTarget(self, prefix="advisories-summary", ext="csv")
+
+    @output
+    def unmitigated_summary(self):
+        return AnalysisFileTarget(self, prefix="unmitigated-summary", ext="csv")
+
     def _advisories_summary(self):
-        df = self._sa_load.output_map["df"].df
+        df = self.sa_load.advisories_df.df.get()
 
         all_memory = (df["not_memory_safety_bug"] == Marker.EMPTY).sum()
         all_mitigated = ((df["cheri_does_not_help"] != Marker.YES) &
@@ -332,11 +359,11 @@ class CheriBSDAdvisoriesTables(AnalysisTask):
                                                           all_memory).round(decimals=2)
         mitigation_df["% Of advisories that can be mitigated"] = (mitigation_df["Number of advisories"] * 100 /
                                                                   all_mitigated).round(decimals=2)
-        mitigation_df.to_csv(self.output_map["mitigation-summary"].path, index=False, header=True)
+        mitigation_df.to_csv(self.mitigation_summary.path, index=False, header=True)
 
     def _unmitigated_summary(self):
-        advisory_df = self._sa_load.output_map["df"].df
-        df = self._sa_load.output_map["unmitigated_df"].df
+        advisory_df = self.sa_load.advisories_df.df.get()
+        df = self.sa_load.unmitigated_df.df.get()
 
         all_unmitigated = ((advisory_df["not_memory_safety_bug"] == Marker.EMPTY) &
                            (advisory_df["cheri_does_not_help"] == Marker.YES)).sum()
@@ -353,17 +380,59 @@ class CheriBSDAdvisoriesTables(AnalysisTask):
                                           (df["reason_other"] == Marker.YES).sum()]
         out_df["% Of unmitigated advisories"] = (out_df["Number of advisories"] * 100 /
                                                  all_unmitigated).round(decimals=2)
-        out_df.to_csv(self.output_map["unmitigated-summary"].path, index=False, header=True)
-
-    def dependencies(self):
-        self._sa_load = CheriBSDKernelVulnLoad(self.session, self.analysis_config)
-        yield self._sa_load
+        out_df.to_csv(self.unmitigated_summary.path, index=False, header=True)
 
     def run(self):
         self._advisories_summary()
         self._unmitigated_summary()
 
-    def outputs(self):
-        yield "mitigation-summary", PlotTarget([self.session.get_plot_root_path() / "security-advisories-summary.csv"])
-        yield "unmitigated-summary", PlotTarget(
-            [self.session.get_plot_root_path() / "unmitigated-advisories-summary.csv"])
+
+class CheriBSDAdvisoriesTables(PlotTask):
+    """
+    Generate a plot showing the mitigation spectrum.
+    On the X axis, we have CHERI features, on the Y axis the % of mitigated vulnerabilities
+    """
+    public = True
+    task_namespace = "kernel-vuln"
+    task_name = "feature-mitigation-cdf"
+
+    @dependency
+    def sa_load(self):
+        return CheriBSDKernelVulnLoad(self.session, self.analysis_config)
+
+    @output
+    def cdf(self):
+        return PlotTarget(self)
+
+    def run_plot(self):
+        df = self.sa_load.advisories_df.df.get()
+
+        all_memory = (df["not_memory_safety_bug"] == Marker.EMPTY).sum()
+
+        mitigated_by_spatial_safety = (((df["cheri_bounds_checking"] == Marker.YES) |
+                                        (df["cheri_ptr_integrity"] == Marker.YES) |
+                                        (df["cheri_ptr_provenance"] == Marker.YES)) &
+                                       (df["cheri_subobject"] != Marker.YES)).sum()
+        mitigated_by_subobject = (df["cheri_subobject"] == Marker.YES).sum()
+        mitigated_by_temporal = (df["cheri_temporal"] == Marker.TEMPORAL).sum()
+
+        mitigation_df = pd.DataFrame({
+            "CHERI mitigation": [
+                "Spatial safety", "Spatial safety + sub-object bounds", "Spatial + temporal safety",
+                "Compartmentalisation"
+            ],
+            "Number mitigated": [
+                mitigated_by_spatial_safety, mitigated_by_spatial_safety + mitigated_by_subobject,
+                mitigated_by_spatial_safety + mitigated_by_subobject + mitigated_by_temporal, None
+            ]
+        })
+        mitigation_df["Percent mitigated"] = 100 * mitigation_df["Number mitigated"] / all_memory
+
+        sns.set_theme()
+        with new_figure(self.cdf.paths()) as fig:
+            ax = fig.subplots()
+            sns.pointplot(mitigation_df, x="CHERI mitigation", y="Percent mitigated", ax=ax)
+            ax.grid(axis="x", linestyle="--", color="gray", linewidth=.5)
+            ax.grid(axis="y", linestyle="--", color="gray", linewidth=.5)
+            ax.set_ylim(0, 100)
+            ax.set_xticklabels(ax.get_xticklabels(), rotation=35, ha="right", fontsize="x-small")
