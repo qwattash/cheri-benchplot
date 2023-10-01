@@ -5,11 +5,11 @@ import pandas as pd
 import pytest
 from test_dwarf import check_member
 
-from pycheribenchplot.core.dwarf import DWARFManager, GraphConversionVisitor
+from pycheribenchplot.core.dwarf import DWARFManager, StructLayoutGraph
 from pycheribenchplot.subobject.imprecise_subobject import (AllImpreciseMembersPlot, ExtractImpreciseSubobject,
                                                             ExtractImpreciseSubobjectConfig, RequiredSubobjectPrecision)
 
-NodeID = GraphConversionVisitor.NodeID
+NodeID = StructLayoutGraph.NodeID
 
 
 @pytest.fixture
