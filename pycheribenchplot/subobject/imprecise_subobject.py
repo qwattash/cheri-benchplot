@@ -145,7 +145,7 @@ class ExtractImpreciseSubobject(DataGenTask):
         imprecise = set()
         for parent, child in nx.dfs_edges(g, source=n):
             # Determine if this node is imprecise
-            result = self._check_imprecise(child.member_offset, g.nodes[child]["size"])
+            result = self._check_imprecise(g.nodes[child]["offset"], child.member_size)
             if result:
                 g.nodes[child]["alias_group_id"] = alias_group_id
                 alias_group_id += 1
@@ -167,8 +167,8 @@ class ExtractImpreciseSubobject(DataGenTask):
         # Now need to determine the alias groups
         for parent, child in nx.dfs_edges(g, source=n):
             # XXX reject unions?
-            aliasing = imprecise_table.index.overlaps(
-                pd.Interval(child.member_offset, child.member_offset + g.nodes[child]["size"], closed="left"))
+            offset = g.nodes[child]["offset"]
+            aliasing = imprecise_table.index.overlaps(pd.Interval(offset, offset + child.member_size, closed="left"))
             if not aliasing.any():
                 continue
             groups = set(imprecise_table[aliasing].unique())
@@ -298,10 +298,10 @@ class ImpreciseMembersPlotBase(PlotTask):
                     # This is an imprecise member, remember it
                     r = ImpreciseSubobjectInfoModelRecord(file=desc.file,
                                                           line=desc.line,
-                                                          base_name=desc.base_name,
-                                                          member_name=desc.member_name,
-                                                          member_offset=desc.member_offset,
-                                                          member_size=g.nodes[desc]["size"],
+                                                          base_name=g.nodes[desc]["base_name"],
+                                                          member_name=desc.member,
+                                                          member_offset=g.nodes[desc]["offset"],
+                                                          member_size=desc.member_size,
                                                           member_aligned_base=g.nodes[desc]["alias_aligned_base"],
                                                           member_aligned_top=g.nodes[desc]["alias_aligned_top"])
                     records.append(r)
