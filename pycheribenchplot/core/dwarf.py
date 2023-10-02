@@ -39,13 +39,12 @@ class DWARFStructLayoutModel(DataModel):
     line: Index[int]
     base_name: Index[str]
     member_name: Index[str]
-    member_offset: Index[float] = Field(nullable=True)
+    size: Index[int]
+    member_size: Index[float] = Field(nullable=True)
 
     type_id: Series[int]
-    size: Series[int]
-    type_name: Series[str]
-    member_size: Series[float] = Field(nullable=True)
-    member_type_name: Series[str] = Field(nullable=True)
+    member_type_name: Series[str]
+    member_offset: Series[float]
 
 
 class StructLayoutGraph:
@@ -62,14 +61,16 @@ class StructLayoutGraph:
     - size: the size of the structure or field
     """
     #: Type of the graph nodes
-    NodeID = namedtuple("NodeID", ["file", "line", "base_name", "size", "member_name", "member_offset"])
+    # NodeID = namedtuple("NodeID", ["file", "line", "base_name", "size", "member_name", "member_offset"])
+    NodeID = namedtuple("NodeID", ["file", "line", "member", "size", "member_size"])
+    Attrsv2 = ["base_name", "member_name", "member_type_name", "member_offset"]
 
     @dataclass
     class AddLayoutContext:
         """
         Helper context for traversing a structure layout
         """
-        #: Normalized type name of the top-level structure
+        #: Normalized "base" name of the top-level structure
         layout_type_name: str
         #: Normalized source file path of the top-level structure
         layout_file: str
@@ -87,12 +88,13 @@ class StructLayoutGraph:
             return self.parent_stack[-1] if self.parent_stack else self.root_node
 
         def __post_init__(self):
-            self.root_node = StructLayoutGraph.NodeID(file=self.layout_file,
-                                                      line=self.root_info.line,
-                                                      base_name=self.layout_type_name,
-                                                      size=self.root_info.size,
-                                                      member_name=None,
-                                                      member_offset=0)
+            if self.root_node is None:
+                self.root_node = StructLayoutGraph.NodeID(file=self.layout_file,
+                                                          line=self.root_info.line,
+                                                          member=self.layout_type_name,
+                                                          size=self.root_info.size,
+                                                          member_size=None)
+                self.parent_stack = [self.root_node]
 
     @classmethod
     def load(cls, benchmark, path: Path) -> "StructLayoutGraph":
@@ -155,25 +157,27 @@ class StructLayoutGraph:
         float_size = (member.size * 8 + member.bit_size) / 8
         member_node = self.NodeID(file=ctx.layout_file,
                                   line=ctx.root_info.line,
-                                  base_name=ctx.layout_type_name,
-                                  size=float_size,
-                                  member_name=member.name,
-                                  member_offset=ctx.offset + float_offset)
+                                  member=ctx.parent.member + "." + member.name,
+                                  size=ctx.root_info.size,
+                                  member_size=float_size)
         if member_node in self.layouts.nodes:
-            # Nothing to do, maybe safety-check for equality
+            # Just link the nodes here
+            self.layouts.add_edge(ctx.parent, member_node)
             return member_node
 
         attrs = {
-            "type_id": ctx.root_info.handle,
+            "type_id": member.type_info.handle,
+            "base_name": self._normalize_anon(ctx.root_info.base_name),
             "type_name": self._normalize_anon(member.type_info.type_name),
-            "size": float_size
+            "offset": ctx.offset + float_offset,
+            "member_line": member.line
         }
-        if member_node.member_offset + float_size > ctx.root_info.size:
+        if attrs["offset"] + float_size > ctx.root_info.size:
             self.logger.error(
                 "Inconsistent data for %s (Die @ %s %#x), member %s of type "
                 "%s @ %#x with size %#x exceeds total structure size %#x", ctx.root_info.type_name, ctx.root_info.file,
-                ctx.root_info.handle, member.name, member.type_info.type_name, member_node.member_offset, member.size,
-                ctx.root_info.size)
+                ctx.root_info.handle, member_node.member, member.type_info.type_name, attrs["offset"],
+                member_node.member_size, ctx.root_info.size)
             raise RuntimeError("Inconsistent structure layout")
 
         self.layouts.add_node(member_node, **attrs)
@@ -196,7 +200,9 @@ class StructLayoutGraph:
             if flags & (pydwarf.TypeInfoFlags.kIsPtr | pydwarf.TypeInfoFlags.kIsArray):
                 continue
 
-            nested_ctx = replace(ctx, parent_stack=ctx.parent_stack + [member_node], offset=member_node.member_offset)
+            nested_ctx = replace(ctx,
+                                 parent_stack=ctx.parent_stack + [member_node],
+                                 offset=self.layouts.nodes[member_node]["offset"])
             self._do_add_layout(nested_ctx, member.type_info)
 
     def dump(self, path: Path):
@@ -222,17 +228,18 @@ class StructLayoutGraph:
                 self.logger.error("Duplicate node %s, invalid type_name expect: %s found %s", ctx.root_node,
                                   node_type_name, type_info.type_name)
                 raise RuntimeError("Invalid duplicate node")
-            node_size = self.layouts.nodes[ctx.root_node]["size"]
-            if node_size != type_info.size:
-                self.logger.error("Duplicate node %s, invalid size expect: %s found %s", ctx.root_node, node_size,
-                                  type_info.size)
+            if ctx.root_node.size != type_info.size:
+                self.logger.error("Duplicate node %s, invalid size expect: %s found %s", ctx.root_node,
+                                  ctx.root_node.size, type_info.size)
                 raise RuntimeError("Invalid duplicate node")
             return
 
         self.layouts.add_node(ctx.root_node,
                               type_id=type_info.handle,
+                              base_name=ctx.layout_type_name,
                               type_name=type_info.type_name,
-                              size=type_info.size)
+                              offset=0,
+                              member_line=None)
         self._do_add_layout(ctx, type_info)
         self.layouts.graph["roots"] += [ctx.root_node]
 
@@ -266,39 +273,31 @@ class DWARFInfoSource:
         """
         graph = self.build_struct_layout_graph()
         Record = namedtuple("Record", [
-            "type_id", "file", "line", "base_name", "member_name", "member_offset", "size", "type_name", "member_size",
-            "member_type_name"
+            "file", "line", "member_name", "size", "member_size", "type_id", "base_name", "member_type_name",
+            "member_offset"
         ])
         records = []
 
+        gl = graph.layouts
         # dfs_visit preorder
         for root_node in graph.layouts.graph["roots"]:
             for node in nx.dfs_preorder_nodes(graph.layouts, root_node):
-                if node == root_node:
-                    continue
-                prefix = ""
-                try:
-                    parent = next(graph.layouts.predecessors(node))
-                    while parent.member_name:
-                        prefix = f"{parent.member_name}.{prefix}"
-                        parent = next(graph.layouts.predecessors(parent))
-                except StopIteration:
-                    pass
-
-                record = Record(type_id=graph.layouts.nodes[node]["type_id"],
-                                base_name=node.base_name,
-                                member_name=prefix + node.member_name,
-                                member_offset=node.member_offset,
-                                file=root_node.file,
-                                line=root_node.line,
-                                size=graph.layouts.nodes[root_node]["size"],
-                                type_name=graph.layouts.nodes[root_node]["type_name"],
-                                member_size=graph.layouts.nodes[node]["size"],
-                                member_type_name=graph.layouts.nodes[node]["type_name"])
+                record = Record(
+                    # Index
+                    file=root_node.file,
+                    line=root_node.line,
+                    base_name=gl.nodes[node]["base_name"],
+                    member_name=node.member,
+                    size=node.size,
+                    member_size=node.member_size,
+                    # Data
+                    type_id=gl.nodes[node]["type_id"],
+                    member_type_name=gl.nodes[node]["type_name"],
+                    member_offset=gl.nodes[node]["offset"])
                 records.append(record)
 
         df = pd.DataFrame.from_records(records, columns=Record._fields)
-        df.set_index(["file", "line", "base_name", "member_name", "member_offset"], inplace=True)
+        df.set_index(["file", "line", "base_name", "member_name", "size", "member_size"], inplace=True)
         df = df[~df.index.duplicated(keep="first")]
         return df
 

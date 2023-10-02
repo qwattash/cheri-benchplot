@@ -386,6 +386,7 @@ llvm::Error StructLayoutVisitor::extractMemberInfo(const llvm::DWARFDie &Die,
 
       Member MI{.Name = dwarf::toString(Child.find(dwarf::DW_AT_name),
                                         DefaultName.c_str()),
+                .Line = Die.getDeclLine(),
                 .Offset = ByteOffset,
                 .Size = (BitSize) ? BitSize / 8 : ByteSize,
                 .BitOffset = BitOffset,

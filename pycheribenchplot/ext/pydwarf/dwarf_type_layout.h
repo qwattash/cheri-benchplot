@@ -35,12 +35,21 @@ struct TypeInfo;
  * and the BitOffset/BitSize holds the remainder.
  */
 struct Member {
+  /* Name of the member */
   std::string Name;
+  /* Full name including all ancestors up to the structure root */
+  std::string FullName;
+  /* Line where the member is defined */
   unsigned long Line;
+  /* Offset into the root structure (Byte part)*/
   unsigned long Offset;
+  /* Size of the member (Byte part)*/
   unsigned long Size;
+  /* Bit offset of the member relative to the last byte boundary */
   unsigned long BitOffset;
+  /* Bit size of the member past the last byte boundary */
   unsigned long BitSize;
+  /* Reference to the member type information */
   std::weak_ptr<TypeInfo> Type;
 };
 

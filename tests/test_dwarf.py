@@ -35,11 +35,10 @@ def check_member(df, name):
     Grab the row corresponding to a member with the given name.
     The row must be unique and it is returned as a series.
     """
-    df = df.reset_index()
-    result = df[df["member_name"] == name]
+    result = df.xs(name, level="member_name")
     assert len(result) > 0, f"No member matching member_name == {name}"
     assert len(result) == 1, f"Too many rows matching member_name == {name}"
-    return result.iloc[0]
+    return result.reset_index().iloc[0]
 
 
 def test_register_obj(dwarf_manager):
@@ -84,64 +83,64 @@ def test_extract_layout_members(fake_session, dwarf_manager, asset_file, ptr_siz
     expected_schema.validate(df)
     assert df.index.is_unique
 
-    foo = df.xs("foo", level="base_name")
-    assert len(foo) == 15
-    a = check_member(foo, "a")
+    check_member(df, "foo")
+    assert df.reset_index()["member_name"].str.startswith("foo").sum() == 16
+    a = check_member(df, "foo.a")
     assert a["member_type_name"] == "int"
     assert a["member_size"] == 4
-    b = check_member(foo, "b")
+    b = check_member(df, "foo.b")
     assert b["member_type_name"] == "char *"
     assert b["member_size"] == ptr_size
-    c = check_member(foo, "c")
+    c = check_member(df, "foo.c")
     assert c["member_type_name"] == "struct bar"
     assert c["member_size"] == 8
-    cx = check_member(foo, "c.x")
+    cx = check_member(df, "foo.c.x")
     assert cx["member_type_name"] == "int"
     assert cx["member_size"] == 4
-    cy = check_member(foo, "c.y")
+    cy = check_member(df, "foo.c.y")
     assert cy["member_type_name"] == "int"
     assert cy["member_size"] == 4
-    d = check_member(foo, "d")
+    d = check_member(df, "foo.d")
     assert d["member_type_name"] == "char const *"
     assert d["member_size"] == ptr_size
-    e = check_member(foo, "e")
+    e = check_member(df, "foo.e")
     assert e["member_type_name"] == "char * const"
     assert e["member_size"] == ptr_size
-    f = check_member(foo, "f")
+    f = check_member(df, "foo.f")
     assert f["member_type_name"] == "void volatile const *"
     assert f["member_size"] == ptr_size
-    g = check_member(foo, "g")
+    g = check_member(df, "foo.g")
     assert g["member_type_name"] == "int * *"
     assert g["member_size"] == ptr_size
-    h = check_member(foo, "h")
+    h = check_member(df, "foo.h")
     assert h["member_type_name"] == "int * [10]"
     assert h["member_size"] == 10 * ptr_size
-    i = check_member(foo, "i")
+    i = check_member(df, "foo.i")
     assert i["member_type_name"] == "void(int, int) *"
     assert i["member_size"] == ptr_size
-    j = check_member(foo, "j")
+    j = check_member(df, "foo.j")
     assert j["member_type_name"] == "int [10] *"
     assert j["member_size"] == ptr_size
-    k = check_member(foo, "k")
+    k = check_member(df, "foo.k")
     assert k["member_type_name"] == "baz_t"
     assert k["member_size"] == 8
-    kz = check_member(foo, "k.z")
+    kz = check_member(df, "foo.k.z")
     assert kz["member_type_name"] == "long"
     assert kz["member_size"] == 8
-    l = check_member(foo, "l")
+    l = check_member(df, "foo.l")
     assert l["member_type_name"] == "struct forward *"
     assert l["member_size"] == ptr_size
 
-    bar = df.xs("bar", level="base_name")
-    assert len(bar) == 2
-    x = check_member(bar, "x")
-    y = check_member(bar, "y")
+    check_member(df, "bar")
+    assert df.reset_index()["member_name"].str.startswith("bar").sum() == 3
+    x = check_member(df, "bar.x")
+    y = check_member(df, "bar.y")
     assert x["member_type_name"] == "int"
     assert y["member_type_name"] == "int"
 
-    baz = df.xs("baz", level="base_name")
-    assert len(baz) == 1
-    z = check_member(baz, "z")
+    check_member(df, "baz")
+    assert df.reset_index()["member_name"].str.startswith("baz").sum() == 2
+    z = check_member(df, "baz.z")
     assert z["member_type_name"] == "long"
 
 
@@ -168,144 +167,141 @@ def test_extract_layout_members_graph(fake_session, dwarf_manager, asset_file, p
                 print("check n=", n, "MATCH:", nid == n)
         return nid in nodes
 
-    def check_size(nid, size_purecap, size_hybrid):
+    def pick_size(size_purecap, size_hybrid):
         if ptr_size == 16:
-            assert g.nodes[nid]["size"] == size_purecap
+            return size_purecap
         else:
-            assert g.nodes[nid]["size"] == size_hybrid
+            return size_hybrid
 
     NodeID = StructLayoutGraph.NodeID
 
     # Verify node information
-    foo = NodeID(file=expect_file_path, line=15, base_name="foo", member_name=None, member_offset=0)
+    foo_size = pick_size(0x150, 0xa8)
+    foo = NodeID(file=expect_file_path, line=15, member="foo", size=foo_size, member_size=None)
     assert check_node(foo)
+    assert g.nodes[foo]["base_name"] == "foo"
     assert g.nodes[foo]["type_name"] == "struct foo"
-    check_size(foo, 0x150, 0xa8)
+    assert g.nodes[foo]["offset"] == 0
     assert g.in_degree(foo) == 0
     assert g.out_degree(foo) == 12
 
-    foo_a = NodeID(file=expect_file_path, line=15, base_name="foo", member_name="a", member_offset=0)
+    foo_a = NodeID(file=expect_file_path, line=15, member="foo.a", size=foo_size, member_size=4)
     assert check_node(foo_a)
+    assert g.nodes[foo_a]["base_name"] == "foo"
     assert g.nodes[foo_a]["type_name"] == "int"
-    check_size(foo_a, 4, 4)
+    assert g.nodes[foo_a]["offset"] == 0
     assert g.in_degree(foo_a) == 1
     assert g.out_degree(foo_a) == 0
 
-    foo_b = NodeID(file=expect_file_path, line=15, base_name="foo", member_name="b", member_offset=ptr_size)
+    foo_b = NodeID(file=expect_file_path, line=15, member="foo.b", size=foo_size, member_size=ptr_size)
     assert check_node(foo_b)
+    assert g.nodes[foo_b]["base_name"] == "foo"
     assert g.nodes[foo_b]["type_name"] == "char *"
-    check_size(foo_b, ptr_size, ptr_size)
+    assert g.nodes[foo_b]["offset"] == ptr_size
     assert g.in_degree(foo_b) == 1
     assert g.out_degree(foo_b) == 0
 
-    foo_c = NodeID(file=expect_file_path, line=15, base_name="foo", member_name="c", member_offset=2 * ptr_size)
+    foo_c = NodeID(file=expect_file_path, line=15, member="foo.c", size=foo_size, member_size=8)
     assert check_node(foo_c)
+    assert g.nodes[foo_c]["base_name"] == "foo"
     assert g.nodes[foo_c]["type_name"] == "struct bar"
-    check_size(foo_c, 8, 8)
+    assert g.nodes[foo_c]["offset"] == 2 * ptr_size
     assert g.in_degree(foo_c) == 1
     assert g.out_degree(foo_c) == 2
 
-    foo_cx = NodeID(file=expect_file_path, line=15, base_name="foo", member_name="x", member_offset=2 * ptr_size)
+    foo_cx = NodeID(file=expect_file_path, line=15, member="foo.c.x", size=foo_size, member_size=4)
     assert check_node(foo_cx)
+    assert g.nodes[foo_cx]["base_name"] == "foo"
     assert g.nodes[foo_cx]["type_name"] == "int"
-    check_size(foo_cx, 4, 4)
+    assert g.nodes[foo_cx]["offset"] == 2 * ptr_size
     assert g.in_degree(foo_cx) == 1
     assert g.out_degree(foo_cx) == 0
 
-    foo_cy = NodeID(file=expect_file_path, line=15, base_name="foo", member_name="y", member_offset=2 * ptr_size + 4)
+    foo_cy = NodeID(file=expect_file_path, line=15, member="foo.c.y", size=foo_size, member_size=4)
     assert check_node(foo_cy)
+    assert g.nodes[foo_cy]["base_name"] == "foo"
     assert g.nodes[foo_cy]["type_name"] == "int"
-    check_size(foo_cy, 4, 4)
+    assert g.nodes[foo_cy]["offset"] == 2 * ptr_size + 4
     assert g.in_degree(foo_cy) == 1
     assert g.out_degree(foo_cy) == 0
 
-    foo_d = NodeID(file=expect_file_path, line=15, base_name="foo", member_name="d", member_offset=3 * ptr_size)
+    foo_d = NodeID(file=expect_file_path, line=15, member="foo.d", size=foo_size, member_size=ptr_size)
     assert check_node(foo_d)
+    assert g.nodes[foo_d]["base_name"] == "foo"
     assert g.nodes[foo_d]["type_name"] == "char const *"
-    check_size(foo_d, ptr_size, ptr_size)
+    assert g.nodes[foo_d]["offset"] == 3 * ptr_size
     assert g.in_degree(foo_d) == 1
     assert g.out_degree(foo_d) == 0
 
-    foo_e = NodeID(file=expect_file_path, line=15, base_name="foo", member_name="e", member_offset=4 * ptr_size)
+    foo_e = NodeID(file=expect_file_path, line=15, member="foo.e", size=foo_size, member_size=ptr_size)
     assert check_node(foo_e)
+    assert g.nodes[foo_e]["base_name"] == "foo"
     assert g.nodes[foo_e]["type_name"] == "char * const"
-    check_size(foo_e, ptr_size, ptr_size)
+    assert g.nodes[foo_e]["offset"] == 4 * ptr_size
     assert g.in_degree(foo_e) == 1
     assert g.out_degree(foo_e) == 0
 
-    foo_f = NodeID(file=expect_file_path, line=15, base_name="foo", member_name="f", member_offset=5 * ptr_size)
+    foo_f = NodeID(file=expect_file_path, line=15, member="foo.f", size=foo_size, member_size=ptr_size)
     assert check_node(foo_f)
+    assert g.nodes[foo_f]["base_name"] == "foo"
     assert g.nodes[foo_f]["type_name"] == "void volatile const *"
-    check_size(foo_f, ptr_size, ptr_size)
+    assert g.nodes[foo_f]["offset"] == 5 * ptr_size
     assert g.in_degree(foo_f) == 1
     assert g.out_degree(foo_f) == 0
 
-    foo_g = NodeID(file=expect_file_path, line=15, base_name="foo", member_name="g", member_offset=6 * ptr_size)
+    foo_g = NodeID(file=expect_file_path, line=15, member="foo.g", size=foo_size, member_size=ptr_size)
     assert check_node(foo_g)
+    assert g.nodes[foo_g]["base_name"] == "foo"
     assert g.nodes[foo_g]["type_name"] == "int * *"
-    check_size(foo_g, ptr_size, ptr_size)
+    assert g.nodes[foo_g]["offset"] == 6 * ptr_size
     assert g.in_degree(foo_g) == 1
     assert g.out_degree(foo_g) == 0
 
-    foo_h = NodeID(file=expect_file_path, line=15, base_name="foo", member_name="h", member_offset=7 * ptr_size)
+    foo_h = NodeID(file=expect_file_path, line=15, member="foo.h", size=foo_size, member_size=10 * ptr_size)
     assert check_node(foo_h)
+    assert g.nodes[foo_h]["base_name"] == "foo"
     assert g.nodes[foo_h]["type_name"] == "int * [10]"
-    check_size(foo_h, 10 * ptr_size, 10 * ptr_size)
+    assert g.nodes[foo_h]["offset"] == 7 * ptr_size
     assert g.in_degree(foo_h) == 1
     assert g.out_degree(foo_h) == 0
 
-    foo_i = NodeID(file=expect_file_path,
-                   line=15,
-                   base_name="foo",
-                   member_name="i",
-                   member_offset=7 * ptr_size + 10 * ptr_size)
+    foo_i = NodeID(file=expect_file_path, line=15, member="foo.i", size=foo_size, member_size=ptr_size)
     assert check_node(foo_i)
+    assert g.nodes[foo_i]["base_name"] == "foo"
     assert g.nodes[foo_i]["type_name"] == "void(int, int) *"
-    check_size(foo_i, ptr_size, ptr_size)
+    assert g.nodes[foo_i]["offset"] == 7 * ptr_size + 10 * ptr_size
     assert g.in_degree(foo_i) == 1
     assert g.out_degree(foo_i) == 0
 
-    foo_j = NodeID(file=expect_file_path,
-                   line=15,
-                   base_name="foo",
-                   member_name="j",
-                   member_offset=8 * ptr_size + 10 * ptr_size)
+    foo_j = NodeID(file=expect_file_path, line=15, member="foo.j", size=foo_size, member_size=ptr_size)
     assert check_node(foo_j)
+    assert g.nodes[foo_j]["base_name"] == "foo"
     assert g.nodes[foo_j]["type_name"] == "int [10] *"
-    check_size(foo_j, ptr_size, ptr_size)
+    assert g.nodes[foo_j]["offset"] == 8 * ptr_size + 10 * ptr_size
     assert g.in_degree(foo_j) == 1
     assert g.out_degree(foo_j) == 0
 
-    foo_k = NodeID(file=expect_file_path,
-                   line=15,
-                   base_name="foo",
-                   member_name="k",
-                   member_offset=9 * ptr_size + 10 * ptr_size)
+    foo_k = NodeID(file=expect_file_path, line=15, member="foo.k", size=foo_size, member_size=8)
     assert check_node(foo_k)
+    assert g.nodes[foo_k]["base_name"] == "foo"
     assert g.nodes[foo_k]["type_name"] == "baz_t"
-    check_size(foo_k, 8, 8)
+    assert g.nodes[foo_k]["offset"] == 9 * ptr_size + 10 * ptr_size
     assert g.in_degree(foo_k) == 1
     assert g.out_degree(foo_k) == 1
 
-    foo_kz = NodeID(file=expect_file_path,
-                    line=15,
-                    base_name="foo",
-                    member_name="z",
-                    member_offset=9 * ptr_size + 10 * ptr_size)
+    foo_kz = NodeID(file=expect_file_path, line=15, member="foo.k.z", size=foo_size, member_size=8)
     assert check_node(foo_kz)
+    assert g.nodes[foo_kz]["base_name"] == "foo"
     assert g.nodes[foo_kz]["type_name"] == "long"
-    check_size(foo_kz, 8, 8)
+    assert g.nodes[foo_kz]["offset"] == 9 * ptr_size + 10 * ptr_size
     assert g.in_degree(foo_kz) == 1
     assert g.out_degree(foo_kz) == 0
 
-    foo_l = NodeID(file=expect_file_path,
-                   line=15,
-                   base_name="foo",
-                   member_name="l",
-                   member_offset=10 * ptr_size + 10 * ptr_size)
+    foo_l = NodeID(file=expect_file_path, line=15, member="foo.l", size=foo_size, member_size=ptr_size)
     assert check_node(foo_l)
+    assert g.nodes[foo_l]["base_name"] == "foo"
     assert g.nodes[foo_l]["type_name"] == "struct forward *"
-    check_size(foo_l, ptr_size, ptr_size)
+    assert g.nodes[foo_l]["offset"] == 10 * ptr_size + 10 * ptr_size
     assert g.in_degree(foo_l) == 1
     assert g.out_degree(foo_l) == 0
 
@@ -326,52 +322,52 @@ def test_extract_layout_members_anon(fake_session, dwarf_manager, asset_file, pt
     expected_schema.validate(df)
     assert df.index.is_unique
 
-    foo = df.xs("foo", level="base_name")
-    assert len(foo) == 8
-    a = check_member(foo, "a")
+    check_member(df, "foo")
+    assert df.reset_index()["member_name"].str.startswith("foo").sum() == 9
+    a = check_member(df, "foo.a")
     assert a["member_type_name"] == "baz_t"
     assert a["member_size"] == 8
-    az = check_member(foo, "a.z")
+    az = check_member(df, "foo.a.z")
     assert az["member_type_name"] == "long"
     assert az["member_size"] == 8
 
-    a = check_member(foo, f"<anon>.{ptr_size}")
+    a = check_member(df, f"foo.<anon>.{ptr_size}")
     assert a["member_type_name"] == f"struct <anon>.{expect_file_path}.10"
     assert a["member_size"] == 2 * ptr_size
     assert a["member_offset"] == ptr_size
-    s_a = check_member(foo, f"<anon>.{ptr_size}.s_a")
+    s_a = check_member(df, f"foo.<anon>.{ptr_size}.s_a")
     assert s_a["member_type_name"] == "int"
     assert s_a["member_size"] == 4
     assert s_a["member_offset"] == ptr_size
-    s_b = check_member(foo, f"<anon>.{ptr_size}.s_b")
+    s_b = check_member(df, f"foo.<anon>.{ptr_size}.s_b")
     assert s_b["member_type_name"] == "char *"
     assert s_b["member_size"] == ptr_size
     assert s_b["member_offset"] == 2 * ptr_size
 
-    un = check_member(foo, f"<anon>.{3 * ptr_size}")
+    un = check_member(df, f"foo.<anon>.{3 * ptr_size}")
     assert un["member_type_name"] == f"union <anon>.{expect_file_path}.14"
     assert un["member_size"] == ptr_size
     assert un["member_offset"] == 3 * ptr_size
-    un_a = check_member(foo, f"<anon>.{3 * ptr_size}.un_a")
+    un_a = check_member(df, f"foo.<anon>.{3 * ptr_size}.un_a")
     assert un_a["member_type_name"] == "int"
     assert un_a["member_size"] == 4
     assert un_a["member_offset"] == 3 * ptr_size
-    un_b = check_member(foo, f"<anon>.{3 * ptr_size}.un_b")
+    un_b = check_member(df, f"foo.<anon>.{3 * ptr_size}.un_b")
     assert un_b["member_type_name"] == "char *"
     assert un_b["member_size"] == ptr_size
     assert un_b["member_offset"] == 3 * ptr_size
 
-    bar = df.xs("bar", level="base_name")
-    assert len(bar) == 3
-    nested = check_member(bar, f"nested")
+    check_member(df, "bar")
+    assert df.reset_index()["member_name"].str.startswith("bar").sum() == 4
+    nested = check_member(df, "bar.nested")
     assert nested["member_type_name"] == f"struct <anon>.{expect_file_path}.21"
     assert nested["member_size"] == 2 * ptr_size
     assert nested["member_offset"] == 0
-    a = check_member(bar, "nested.a")
+    a = check_member(df, "bar.nested.a")
     assert a["member_type_name"] == "long"
     assert a["member_size"] == 8
     assert a["member_offset"] == 0
-    b = check_member(bar, "nested.b")
+    b = check_member(df, "bar.nested.b")
     assert b["member_type_name"] == "char *"
     assert b["member_size"] == ptr_size
     assert b["member_offset"] == ptr_size
@@ -393,64 +389,64 @@ def test_extract_layout_members_nesting(fake_session, dwarf_manager, asset_file,
     expected_schema.validate(df)
     assert df.index.is_unique
 
-    foo = df.xs("foo", level="base_name")
-    assert len(foo) == 12
-    a = check_member(foo, "a")
+    check_member(df, "foo")
+    assert df.reset_index()["member_name"].str.startswith("foo").sum() == 13
+    a = check_member(df, "foo.a")
     assert a["member_type_name"] == "int"
     assert a["member_size"] == 4
     assert a["member_offset"] == 0
 
-    b = check_member(foo, "b")
+    b = check_member(df, "foo.b")
     assert b["member_type_name"] == f"union <anon>.{expect_file_path}.19"
     assert b["member_size"] == 16
     assert b["member_offset"] == 8
 
-    bar = check_member(foo, "b.b_bar")
+    bar = check_member(df, "foo.b.b_bar")
     assert bar["member_type_name"] == f"struct bar"
     assert bar["member_size"] == 16
     assert bar["member_offset"] == 8
 
-    bar_x = check_member(foo, "b.b_bar.x")
+    bar_x = check_member(df, "foo.b.b_bar.x")
     assert bar_x["member_type_name"] == "int"
     assert bar_x["member_size"] == 4
     assert bar_x["member_offset"] == 8
 
-    bar_u = check_member(foo, "b.b_bar.u")
+    bar_u = check_member(df, "foo.b.b_bar.u")
     assert bar_u["member_type_name"] == "union nested_union"
     assert bar_u["member_size"] == 8
     assert bar_u["member_offset"] == 16
 
-    bar_ux = check_member(foo, "b.b_bar.u.x")
+    bar_ux = check_member(df, "foo.b.b_bar.u.x")
     assert bar_ux["member_type_name"] == "int"
     assert bar_ux["member_size"] == 4
     assert bar_ux["member_offset"] == 16
 
-    bar_uy = check_member(foo, "b.b_bar.u.y")
+    bar_uy = check_member(df, "foo.b.b_bar.u.y")
     assert bar_uy["member_type_name"] == "long"
     assert bar_uy["member_size"] == 8
     assert bar_uy["member_offset"] == 16
 
-    baz = check_member(foo, "b.b_baz")
+    baz = check_member(df, "foo.b.b_baz")
     assert baz["member_type_name"] == f"struct baz"
     assert baz["member_size"] == 16
     assert baz["member_offset"] == 8
 
-    baz_v = check_member(foo, "b.b_baz.v")
+    baz_v = check_member(df, "foo.b.b_baz.v")
     assert baz_v["member_type_name"] == "int"
     assert baz_v["member_size"] == 4
     assert baz_v["member_offset"] == 8
 
-    baz_u = check_member(foo, "b.b_baz.u")
+    baz_u = check_member(df, "foo.b.b_baz.u")
     assert baz_u["member_type_name"] == "union nested_union"
     assert baz_u["member_size"] == 8
     assert baz_u["member_offset"] == 16
 
-    baz_ux = check_member(foo, "b.b_baz.u.x")
+    baz_ux = check_member(df, "foo.b.b_baz.u.x")
     assert baz_ux["member_type_name"] == "int"
     assert baz_ux["member_size"] == 4
     assert baz_ux["member_offset"] == 16
 
-    baz_uy = check_member(foo, "b.b_baz.u.y")
+    baz_uy = check_member(df, "foo.b.b_baz.u.y")
     assert baz_uy["member_type_name"] == "long"
     assert baz_uy["member_size"] == 8
     assert baz_uy["member_offset"] == 16
@@ -467,26 +463,21 @@ def test_extract_empty_struct(fake_session, dwarf_manager, asset_file, ptr_size)
     expected_schema.validate(df)
     assert df.index.is_unique
 
-    bar = df.xs("bar", level="base_name")
-    assert len(bar) == 1
-    assert (bar.index.get_level_values("member_name") == "<empty>").all()
-    assert bar["member_size"].isna().all()
-    assert bar["member_type_name"].isna().all()
+    bar = check_member(df, "bar")
+    assert df.reset_index()["member_name"].str.startswith("bar").sum() == 1
+    assert np.isnan(bar["member_size"])
+    assert bar["member_type_name"] == "struct bar"
 
-    foo = df.xs("foo", level="base_name")
-    assert len(foo) == 3
-    a = check_member(foo, "a")
+    foo = check_member(df, "foo")
+    assert df.reset_index()["member_name"].str.startswith("foo").sum() == 3
+    a = check_member(df, "foo.a")
     assert a["member_type_name"] == "int"
     assert a["member_size"] == 4
     assert a["member_offset"] == 0
-    b = check_member(foo, "b")
+    b = check_member(df, "foo.b")
     assert b["member_type_name"] == "struct bar"
     assert b["member_size"] == 0
     assert b["member_offset"] == 4
-    be = check_member(foo, "b.<empty>")
-    assert be[["member_type_name"]].isna().all()
-    assert be[["member_size"]].isna().all()
-    assert be["member_offset"] == 4
 
 
 @pytest.mark.parametrize("asset_file,ptr_size", [("tests/assets/riscv_purecap_test_dwarf_zero_length_array", 16),
@@ -507,42 +498,43 @@ def test_zero_length_array(fake_session, dwarf_manager, asset_file, ptr_size):
         return ((v + (ptr_size - 1)) & ~(ptr_size - 1))
 
     foo = df.xs("foo", level="base_name")
-    assert len(foo) == 9
-    why_l = check_member(foo, "why_l_")
+    check_member(df, "foo")
+    assert df.reset_index()["member_name"].str.startswith("foo").sum() == 10
+    why_l = check_member(df, "foo.why_l_")
     assert why_l["member_type_name"] == "char [0]"
     assert why_l["member_size"] == 0
     assert why_l["member_offset"] == 0
-    why = check_member(foo, "why")
+    why = check_member(df, "foo.why")
     assert why["member_type_name"] == "char const *"
     assert why["member_size"] == ptr_size
     assert why["member_offset"] == 0
-    why_r = check_member(foo, "why_r_")
+    why_r = check_member(df, "foo.why_r_")
     assert why_r["member_type_name"] == "char [0]"
     assert why_r["member_size"] == 0
     assert why_r["member_offset"] == ptr_size
 
-    nargs_l = check_member(foo, "nargs_l_")
+    nargs_l = check_member(df, "foo.nargs_l_")
     assert nargs_l["member_type_name"] == "char [0]"
     assert nargs_l["member_size"] == 0
     assert nargs_l["member_offset"] == ptr_size
-    nargs = check_member(foo, "nargs")
+    nargs = check_member(df, "foo.nargs")
     assert nargs["member_type_name"] == "int"
     assert nargs["member_size"] == 4
     assert nargs["member_offset"] == ptr_size
-    nargs_r = check_member(foo, "nargs_r_")
+    nargs_r = check_member(df, "foo.nargs_r_")
     assert nargs_r["member_type_name"] == "char [12]"
     assert nargs_r["member_size"] == 12
     assert nargs_r["member_offset"] == 4 + ptr_size
 
-    args_l = check_member(foo, "args_l_")
+    args_l = check_member(df, "foo.args_l_")
     assert args_l["member_type_name"] == "char [0]"
     assert args_l["member_size"] == 0
     assert args_l["member_offset"] == align_up(16 + ptr_size)
-    args = check_member(foo, "args")
+    args = check_member(df, "foo.args")
     assert args["member_type_name"] == "void * *"
     assert args["member_size"] == ptr_size
     assert args["member_offset"] == align_up(16 + ptr_size)
-    args_r = check_member(foo, "args_r_")
+    args_r = check_member(df, "foo.args_r_")
     assert args_r["member_type_name"] == "char [0]"
     assert args_r["member_size"] == 0
     assert args_r["member_offset"] == align_up(16 + 2 * ptr_size)
@@ -566,49 +558,50 @@ def test_extract_bitfield_struct(fake_session, dwarf_manager, asset_file, ptr_si
     expected_schema.validate(df)
     assert df.index.is_unique
 
-    foo = df.xs("foo", level="base_name")
-    assert len(foo) == 5
+    check_member(df, "foo")
+    assert df.reset_index()["member_name"].str.startswith("foo").sum() == 6
 
-    before = check_member(foo, "before")
+    before = check_member(df, "foo.before")
     assert before["member_offset"] == 0
     assert before["member_size"] == 1
-    bitfield_a = check_member(foo, "bitfield_a")
+    bitfield_a = check_member(df, "foo.bitfield_a")
     assert bitfield_a["member_offset"] == 1
     assert bitfield_a["member_size"] == 1
-    bitfield_b = check_member(foo, "bitfield_b")
+    bitfield_b = check_member(df, "foo.bitfield_b")
     assert bitfield_b["member_offset"] == 4
     assert bitfield_b["member_size"] == 3
-    after = check_member(foo, "after")
+    after = check_member(df, "foo.after")
     assert after["member_offset"] == 7
     assert after["member_size"] == 1
-    x = check_member(foo, "x")
+    x = check_member(df, "foo.x")
     assert x["member_offset"] == 8
     assert x["member_size"] == 8
 
     bar = df.xs("bar", level="base_name")
-    assert len(bar) == 4
-    before = check_member(bar, "before")
+    check_member(df, "bar")
+    assert df.reset_index()["member_name"].str.startswith("bar").sum() == 5
+    before = check_member(df, "bar.before")
     assert before["member_offset"] == 0
     assert before["member_size"] == 4
-    bitfield_a = check_member(bar, "bitfield_a")
+    bitfield_a = check_member(df, "bar.bitfield_a")
     assert bitfield_a["member_offset"] == 4
     assert bitfield_a["member_size"] == 3 / 8  # 3 bits
-    bitfield_b = check_member(bar, "bitfield_b")
+    bitfield_b = check_member(df, "bar.bitfield_b")
     assert bitfield_b["member_offset"] == 4 + (3 / 8)  # 3 bits past the 4-byte boundary
     assert bitfield_b["member_size"] == 4 / 8  # 4 bits
-    x = check_member(bar, "x")
+    x = check_member(df, "bar.x")
     assert x["member_offset"] == 8
     assert x["member_size"] == 8
 
-    etherip = df.xs("etherip_header", level="base_name")
-    assert len(etherip) == 3
-    eip_resvl = check_member(etherip, "eip_resvl")
+    check_member(df, "etherip_header")
+    assert df.reset_index()["member_name"].str.startswith("etherip_header").sum() == 4
+    eip_resvl = check_member(df, "etherip_header.eip_resvl")
     assert eip_resvl["member_offset"] == 0
     assert eip_resvl["member_size"] == 4 / 8  # 4 bits
-    eip_ver = check_member(etherip, "eip_ver")
+    eip_ver = check_member(df, "etherip_header.eip_ver")
     assert eip_ver["member_offset"] == 0 + 4 / 8  # 4 bits past the start
     assert eip_ver["member_size"] == 4 / 8  # 4 bits
-    eip_resvh = check_member(etherip, "eip_resvh")
+    eip_resvh = check_member(df, "etherip_header.eip_resvh")
     assert eip_resvh["member_offset"] == 1
     assert eip_resvh["member_size"] == 1
 

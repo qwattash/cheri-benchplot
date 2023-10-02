@@ -44,6 +44,7 @@ PYBIND11_MODULE(_pydwarf, m) {
 
   py::class_<Member>(m, "Member")
       .def_readonly("name", &Member::Name)
+      .def_readonly("line", &Member::Line)
       .def_readonly("offset", &Member::Offset)
       .def_readonly("size", &Member::Size)
       .def_readonly("bit_offset", &Member::BitOffset)
