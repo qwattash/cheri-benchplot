@@ -61,9 +61,7 @@ class StructLayoutGraph:
     - size: the size of the structure or field
     """
     #: Type of the graph nodes
-    # NodeID = namedtuple("NodeID", ["file", "line", "base_name", "size", "member_name", "member_offset"])
     NodeID = namedtuple("NodeID", ["file", "line", "member", "size", "member_size"])
-    Attrsv2 = ["base_name", "member_name", "member_type_name", "member_offset"]
 
     @dataclass
     class AddLayoutContext:
@@ -96,13 +94,38 @@ class StructLayoutGraph:
                                                           member_size=None)
                 self.parent_stack = [self.root_node]
 
+    class Encoder(json.JSONEncoder):
+        """
+        Custom encoder to serialize the graph
+        """
+        def default(self, obj):
+            if isinstance(obj, pydwarf.TypeInfoFlags):
+                return {"__pydwarf_typeinfoflags__": 1, "v": int(obj)}
+            elif isinstance(obj, StructLayoutGraph.NodeID):
+                return {"__pydwarf_nodeid__": 1, "v": tuple(obj)}
+            return super().default(obj)
+
+    class Decoder(json.JSONDecoder):
+        """
+        Custom decoder to load the graph
+        """
+        def __init__(self, **kwargs):
+            super().__init__(object_hook=self.object_hook, **kwargs)
+
+        def object_hook(self, data):
+            if "__pydwarf_typeinfoflags__" in data:
+                return pydwarf.TypeInfoFlags(data["v"])
+            elif "__pydwarf_nodeid__" in data:
+                return StructLayoutGraph.NodeID(data["v"])
+            return data
+
     @classmethod
     def load(cls, benchmark, path: Path) -> "StructLayoutGraph":
         """
         Load a GML representation of the structure layout graph
         """
         with gzopen(path, "r") as fd:
-            data = json.load(fd)
+            data = json.load(fd, cls=cls.Decoder)
         g = nx.relabel_nodes(nx.node_link_graph(data), lambda r: cls.NodeID(*r))
         g.graph["roots"] = [cls.NodeID(*r) for r in g.graph["roots"]]
 
@@ -126,12 +149,12 @@ class StructLayoutGraph:
         """
         if name.find("<anon>") == -1:
             return name
-        match = re.match(r"(.*)<anon>\.(.*)\.([0-9]+)", name)
+        match = re.match(r"(.*)<anon>@(.*)\+([0-9]+)", name)
         if not match:
             return name
         path = Path(match.group(2))
         relpath = self._normalize_path(path)
-        return match.group(1) + "<anon>." + str(relpath) + "." + match.group(3)
+        return match.group(1) + "<anon>@" + str(relpath) + "+" + match.group(3)
 
     def _normalize_path(self, strpath: str) -> str:
         """
@@ -170,8 +193,12 @@ class StructLayoutGraph:
             "base_name": self._normalize_anon(ctx.root_info.base_name),
             "type_name": self._normalize_anon(member.type_info.type_name),
             "offset": ctx.offset + float_offset,
-            "member_line": member.line
+            "member_line": member.line,
+            "flags": member.type_info.flags
         }
+        if member.type_info.flags & pydwarf.TypeInfoFlags.kIsArray:
+            attrs["nitems"] = member.type_info.array_items
+
         if attrs["offset"] + float_size > ctx.root_info.size:
             self.logger.error(
                 "Inconsistent data for %s (Die @ %s %#x), member %s of type "
@@ -207,10 +234,11 @@ class StructLayoutGraph:
 
     def dump(self, path: Path):
         """
-        Write a GML representation of the graph.
+        Write a json representation of the graph.
         """
         with gzopen(path, "w") as fd:
-            json.dump(self.layouts, fd, default=nx.node_link_data)
+            data = nx.node_link_data(self.layouts)
+            json.dump(data, fd, cls=self.Encoder)
 
     def add_layout(self, type_info: pydwarf.TypeInfo):
         """

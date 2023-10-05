@@ -331,28 +331,28 @@ def test_extract_layout_members_anon(fake_session, dwarf_manager, asset_file, pt
     assert az["member_type_name"] == "long"
     assert az["member_size"] == 8
 
-    a = check_member(df, f"foo.<anon>.{ptr_size}")
-    assert a["member_type_name"] == f"struct <anon>.{expect_file_path}.10"
+    a = check_member(df, f"foo.<anon>@{ptr_size}")
+    assert a["member_type_name"] == f"struct <anon>@{expect_file_path}+10"
     assert a["member_size"] == 2 * ptr_size
     assert a["member_offset"] == ptr_size
-    s_a = check_member(df, f"foo.<anon>.{ptr_size}.s_a")
+    s_a = check_member(df, f"foo.<anon>@{ptr_size}.s_a")
     assert s_a["member_type_name"] == "int"
     assert s_a["member_size"] == 4
     assert s_a["member_offset"] == ptr_size
-    s_b = check_member(df, f"foo.<anon>.{ptr_size}.s_b")
+    s_b = check_member(df, f"foo.<anon>@{ptr_size}.s_b")
     assert s_b["member_type_name"] == "char *"
     assert s_b["member_size"] == ptr_size
     assert s_b["member_offset"] == 2 * ptr_size
 
-    un = check_member(df, f"foo.<anon>.{3 * ptr_size}")
-    assert un["member_type_name"] == f"union <anon>.{expect_file_path}.14"
+    un = check_member(df, f"foo.<anon>@{3 * ptr_size}")
+    assert un["member_type_name"] == f"union <anon>@{expect_file_path}+14"
     assert un["member_size"] == ptr_size
     assert un["member_offset"] == 3 * ptr_size
-    un_a = check_member(df, f"foo.<anon>.{3 * ptr_size}.un_a")
+    un_a = check_member(df, f"foo.<anon>@{3 * ptr_size}.un_a")
     assert un_a["member_type_name"] == "int"
     assert un_a["member_size"] == 4
     assert un_a["member_offset"] == 3 * ptr_size
-    un_b = check_member(df, f"foo.<anon>.{3 * ptr_size}.un_b")
+    un_b = check_member(df, f"foo.<anon>@{3 * ptr_size}.un_b")
     assert un_b["member_type_name"] == "char *"
     assert un_b["member_size"] == ptr_size
     assert un_b["member_offset"] == 3 * ptr_size
@@ -360,7 +360,7 @@ def test_extract_layout_members_anon(fake_session, dwarf_manager, asset_file, pt
     check_member(df, "bar")
     assert df.reset_index()["member_name"].str.startswith("bar").sum() == 4
     nested = check_member(df, "bar.nested")
-    assert nested["member_type_name"] == f"struct <anon>.{expect_file_path}.21"
+    assert nested["member_type_name"] == f"struct <anon>@{expect_file_path}+21"
     assert nested["member_size"] == 2 * ptr_size
     assert nested["member_offset"] == 0
     a = check_member(df, "bar.nested.a")
@@ -397,7 +397,7 @@ def test_extract_layout_members_nesting(fake_session, dwarf_manager, asset_file,
     assert a["member_offset"] == 0
 
     b = check_member(df, "foo.b")
-    assert b["member_type_name"] == f"union <anon>.{expect_file_path}.19"
+    assert b["member_type_name"] == f"union <anon>@{expect_file_path}+19"
     assert b["member_size"] == 16
     assert b["member_offset"] == 8
 

@@ -34,7 +34,7 @@ std::string extractNameOrAnon(const llvm::DWARFDie &Die) {
     return *MaybeName;
   std::string File = Die.getDeclFile(FileLineInfoKind::AbsoluteFilePath);
   unsigned long Line = Die.getDeclLine();
-  return std::format("<anon>.{}.{:d}", File, Line);
+  return std::format("<anon>@{}+{:d}", File, Line);
 }
 
 } // namespace
@@ -379,7 +379,7 @@ llvm::Error StructLayoutVisitor::extractMemberInfo(const llvm::DWARFDie &Die,
       }
       unsigned long ByteOffset = BitOffset / 8;
       BitOffset = BitOffset % 8;
-      std::string DefaultName = std::format("<anon>.{:d}", ByteOffset);
+      std::string DefaultName = std::format("<anon>@{:d}", ByteOffset);
       if (BitOffset) {
         DefaultName += std::format(":{:d}", BitOffset);
       }

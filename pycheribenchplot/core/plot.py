@@ -15,14 +15,14 @@ from .task import Task
 
 
 @contextmanager
-def new_figure(dest: Path | list[Path], **kwargs):
+def new_figure(dest: Path | list[Path], bbox_inches="tight", **kwargs):
     kwargs.setdefault("constrained_layout", True)
     fig = plt.figure(**kwargs)
     yield fig
     if isinstance(dest, Path):
         dest = [dest]
     for path in dest:
-        fig.savefig(path, bbox_inches="tight")
+        fig.savefig(path, bbox_inches=bbox_inches)
     plt.close(fig)
 
 
