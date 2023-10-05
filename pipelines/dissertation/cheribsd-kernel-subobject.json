@@ -38,6 +38,8 @@
             "handler": "subobject.imprecise-subobject-bits-plot"
         }, {
             "handler": "subobject.imprecise-subobject-layouts"
+        }, {
+            "handler": "subobject.imprecise-subobject-security"
         }]
     }
 }

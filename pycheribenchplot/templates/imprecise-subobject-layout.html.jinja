@@ -5,20 +5,34 @@
         rel="stylesheet" integrity="sha384-rbsA2VBKQhggwzxH7pPCaAqO46MgnOM80zW1RWuH61DGLwZJEdK2Kadq2F9CUG65"
         crossorigin="anonymous">
   <style>
-    ul.struct-offset-list {
-        list-style-type: none;
-        margin-left: 0;
-        padding-left: 0;
-    }
-
-    .struct-text {
+    body {
         font-family: "Source Code Pro", monospace, sans-serif;
     }
-    .struct-name {
-        padding-left: 1em;
-        padding-right: 1em;
+
+    strong {
         font-weight: bold;
     }
+
+    .member-desc {
+        display: list-item;
+    }
+    .member-desc-0 {
+        list-style-type: disc;
+    }
+    .member-desc-1 {
+        list-style-type: circle;
+    }
+    .member-desc-2 {
+        list-style-type: square;
+    }
+    .member-desc-3 {
+        list-style-type: "-";
+    }
+    .member-alias-ptr {
+
+    }
+
+
     .member-type {
         padding-left: 5px;
         font-weight: normal;
@@ -29,105 +43,147 @@
     .member-size {
         font-weight: normal;
     }
+
     .member-imprecise {
         background: #8f151560;
     }
-
-    .select-imprecise-group > .member-desc {
+    .select-imprecise-group {
         background: #15158f60;
     }
-
-    .hover-imprecise-group > .member-desc {
+    .hover-imprecise-group {
         background: #158f1560;
     }
   </style>
 </head>
 <body>
-  {%- for group_name, descriptions in layout_groups.items() %}
-  <div class="container">
-    <div class="accordion" id="group-{{group_name}}">
-      {%- for layout in descriptions %}
+  <h1 class="p-2">Data structures with imprecise sub-objects</h1>
+  <div class="container-fluid m-2">
+    <!-- Outer accordion with one item for each group of structure for a specific target e.g. RISC-V -->
+    <div class="accordion" id="dataset-gid-accordion">
+
+      {%- for group_name, descriptions in layout_groups.items() %}
+
       <div class="accordion-item">
-        <h1 class="accordion-header" id="{{layout.id}}-header">
+        <h1 class="accordion-header" id="accordion-{{loop.index}}-header">
           <button class="accordion-button collapsed" type="button"
                   data-bs-toggle="collapse"
-                  data-bs-target="#{{layout.id}}-data"
+                  data-bs-target="#accordion-{{loop.index}}-data"
                   aria-expanded="false"
-                  aria-controls="{{layout.id}}-data">
-            Layout of <span class="struct-text struct-name">{{ layout.name|e }}</span> @ {{ layout.location|e }} ({{ "%#0x" | format( layout.member_size ) }})
+                  aria-controls="accordion-{{loop.index}}-data">
+            Structure layouts with imprecise members for&nbsp;<strong>{{ group_name|e }}</strong>.
           </button>
         </h1>
-        <div id="{{layout.id}}-data" class="accordion-collapse collapse"
-             aria-labelledby="{{layout.id}}-header" data-bs-parent="#group-{{group_name}}">
+
+        <div id="accordion-{{loop.index}}-data" class="accordion-collapse collapse"
+             aria-labelledby="accordion-{{loop.index}}-header"
+             data-bs-parent="#group-{{group_name}}">
           <div class="accordion-body">
-            <div class="d-flex">
-              <!-- Left column with structure offsets -->
-              <div class="p-2">
-                <ul class="struct-offset-list">
-                  {%- for member in layout recursive %}
-                  <li class="struct-text">{{ member.member_offset_str}}</li>
-                  {%- if member.has_children %}
-                    {{loop(member)}}
-                  {%- endif %}
-                  {%- endfor %}
-                </ul>
-              </div>
-              <!-- Main column with structure members layout -->
-              <div class="p-2 flex-grow">
-                <ul>
-                  {%- for member in layout recursive %}
-                  <li {% if member.alias_groups %} data-member-alias-groups="{{ member.alias_groups }}" {% endif %}
-                      {% if member.alias_id != None %} data-member-alias-target="{{ member.alias_id }}" {% endif %}>
-                    <div class="member-desc rounded-3 {{ 'member-imprecise' if member.is_imprecise }}">
-                      <span class="struct-text member-type">{{ member.member_type|e }}</span>
-                      <span class="struct-text member-name">{{ member.member_name|e }}</span>
-                      <span class="struct-text member-size">({{ member.member_size_str }})</span>
+            <!-- Nested accordion with one item for each structure layout -->
+            <div class="accordion m-2" id="group-{{group_name}}">
+              {%- for layout in descriptions %}
+              <div class="accordion-item">
+                <!-- accordion header -->
+                <h1 class="accordion-header" id="{{layout.id}}-header">
+                  <button class="accordion-button collapsed" type="button"
+                          data-bs-toggle="collapse"
+                          data-bs-target="#{{layout.id}}-data"
+                          aria-expanded="false"
+                          aria-controls="{{layout.id}}-data">
+                    Layout of&nbsp;<strong>{{ layout.base_name|e }}</strong>&nbsp;
+                    @ {{ layout.location|e }} ({{ "%#0x" | format( layout.base_size|int ) }})
+                    <small>
+                      {%- if layout.has_imprecise_pointer_alias -%}
+                      <span class="badge rounded-pill bg-secondary">Ptr</span>
+                      {%- endif -%}
+                      {%- if layout.has_imprecise_array -%}
+                      <span class="badge rounded-pill bg-secondary">Array</span>
+                      {%- endif -%}
+                    </small>
+                  </button>
+                </h1>
+                <!-- accordion body container -->
+                <div id="{{layout.id}}-data" class="accordion-collapse collapse"
+                     aria-labelledby="{{layout.id}}-header"
+                     data-bs-parent="#group-{{group_name}}">
+                  <div class="accordion-body">
+                    <div class="container-fluid">
+                      {%- for member in layout recursive %}
+                      <div class="row">
+                        <div class="col-1">{{ member.member_offset_str}}</div>
+                        <div class="col">
+                          <span class="member-desc
+                                       member-desc-{{ member.depth % 4 }}
+                                       rounded-3
+                                       {{ 'member-imprecise' if member.is_imprecise }}
+                                       {{ 'member-alias-ptr' if member.is_aliasing_pointer_members }}"
+                                style="margin-left: {{ 2 * member.depth }}em"
+                                {%- if member.alias_groups -%}
+                                data-member-alias-groups="{{ member.alias_groups }}"
+                                {%- endif -%}
+                                {%- if member.alias_id != None -%}
+                                data-member-alias-target="{{ member.alias_id }}"
+                                {%- endif %}>
+                            <span class="member-type">{{ member.member_type|e }}</span>
+                            <span class="member-name">{{ member.member_name|e }}</span>
+                            <span class="member-size">({{ member.member_size_str }})</span>
+                            {% if member.is_aliasing_pointer_members %}
+                            <span class="badge rounded-pill bg-secondary">Ptr</span>
+                            {% endif %}
+                            {% if member.is_array %}
+                            <span class="badge rounded-pill bg-secondary">Array</span>
+                            {% endif %}
+                          </span>
+                        </div>
+                      </div>
+                      {{ loop(member) }}
+                      {%- endfor %}
                     </div>
-                    {%- if member.has_children %}
-                    <ul>{{ loop(member) }}</ul>
-                    {%- endif %}
-                  </li>
-                  {%- endfor %}
-                </ul>
+                  </div>
+                </div>
+                <!-- END accordion body container -->
               </div>
+              {%- endfor %} <!-- END loop over descriptors -->
             </div>
+            <!-- END Nested accordion -->
           </div>
         </div>
+        <!-- END Outer accordion body container> -->
       </div>
-    {%- endfor %}
-    </div>
-  </div>
-  {%- endfor %}
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"
-          integrity="sha384-kenU1KFdBIe4zVF0s0G1M5b4hcpxyD9F7jL+jjXkk+Q2h455rYXK/7HAuoJl+0I4"
-          crossorigin="anonymous"></script>
-  <script>
-    document.addEventListener("DOMContentLoaded", () => {
-        document.querySelectorAll("li[data-member-alias-target]").forEach((item) => {
-            const target_group = item.getAttribute("data-member-alias-target");
-            const top_level_struct = item.closest(".accordion-body");
-            item.addEventListener("mouseover", (event) => {
-                top_level_struct.querySelectorAll("li[data-member-alias-groups]").forEach((target) => {
-                    if (target.getAttribute("data-member-alias-groups").split(",").indexOf(target_group) >= 0) {
-                        target.classList.add("hover-imprecise-group");
-                    }
-                });
-            });
-            item.addEventListener("mouseout", (event) => {
-                top_level_struct.querySelectorAll("li[data-member-alias-groups]").forEach((target) => {
-                    if (target.getAttribute("data-member-alias-groups").split(",").indexOf(target_group) >= 0) {
-                        target.classList.remove("hover-imprecise-group");
-                    }
-                });
-            });
-            item.addEventListener("click", (event) => {
-                top_level_struct.querySelectorAll("li[data-member-alias-groups]").forEach((target) => {
-                    if (target.getAttribute("data-member-alias-groups").split(",").indexOf(target_group) >= 0) {
-                        target.classList.toggle("select-imprecise-group");
-                    }
-                });
-            });
-        });
-    });
-  </script>
+      <!-- END Outer accordion item -->
+      {%- endfor %} <!-- for loop over structure groups for each dataset-gid -->
+    </div> <!-- main accordion -->
+  </div> <!-- main container -->
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-kenU1KFdBIe4zVF0s0G1M5b4hcpxyD9F7jL+jjXkk+Q2h455rYXK/7HAuoJl+0I4"
+        crossorigin="anonymous"></script>
+<script>
+  document.addEventListener("DOMContentLoaded", () => {
+      document.querySelectorAll("span[data-member-alias-target]").forEach((item) => {
+          const target_group = item.getAttribute("data-member-alias-target");
+          const top_level_struct = item.closest(".accordion-body");
+          item.addEventListener("mouseover", (event) => {
+              top_level_struct.querySelectorAll("span[data-member-alias-groups]").forEach((target) => {
+                  if (target.getAttribute("data-member-alias-groups").split(",").indexOf(target_group) >= 0) {
+                      target.classList.add("hover-imprecise-group");
+                  }
+              });
+          });
+          item.addEventListener("mouseout", (event) => {
+              top_level_struct.querySelectorAll("span[data-member-alias-groups]").forEach((target) => {
+                  if (target.getAttribute("data-member-alias-groups").split(",").indexOf(target_group) >= 0) {
+                      target.classList.remove("hover-imprecise-group");
+                  }
+              });
+          });
+          item.addEventListener("click", (event) => {
+              top_level_struct.querySelectorAll("span[data-member-alias-groups]").forEach((target) => {
+                  if (target.getAttribute("data-member-alias-groups").split(",").indexOf(target_group) >= 0) {
+                      target.classList.toggle("select-imprecise-group");
+                  }
+              });
+          });
+      });
+  });
+</script>
 </body>

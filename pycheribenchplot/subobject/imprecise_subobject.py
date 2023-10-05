@@ -22,6 +22,27 @@ from ..ext import pychericap, pydwarf
 from .model import (ImpreciseSubobjectInfoModel, ImpreciseSubobjectInfoModelRecord, ImpreciseSubobjectLayoutModel)
 
 
+def legend_on_top(fig, ax=None, **kwargs):
+    """
+    Fixup the legend to appear at the top of the axes
+    """
+    if not fig.legends:
+        return
+    # Hack to remove the legend as we can not easily move it
+    # Not sure why seaborn puts the legend in the figure here
+    legend = fig.legends.pop()
+    if ax is None:
+        owner = fig
+    else:
+        owner = ax
+    kwargs.setdefault("loc", "center")
+    owner.legend(legend.legend_handles,
+                 map(lambda t: t.get_text(), legend.texts),
+                 bbox_to_anchor=(0, 1.02),
+                 ncols=4,
+                 **kwargs)
+
+
 @dataclass
 class PathMatchSpec(Config):
     path: ConfigPath
@@ -81,6 +102,29 @@ class ExtractImpreciseSubobject(DataGenTask):
 
     This will produce a graph containing structure layouts as trees.
     XXX Document tree structure and node attributes.
+
+    Example configuration:
+
+    .. code-block:: json
+
+        {
+            "instance_config": {
+                "instances": [{
+                    "kernel": "KERNEL-CONFIG-WITH-SUBOBJ-STATS",
+                    "cheri_target": "riscv64-purecap",
+                    "kernelabi": "purecap"
+                }, {
+                    "kernel": "KERNEL-CONFIG-WITH-SUBOBJ-STATS",
+                    "cheri_target": "morello-purecap",
+                    "kernelabi": "purecap"
+                }]
+            },
+            "benchmark_config": [{
+                "name": "example",
+                "generators": [{ "handler": "kernel-static.cheribsd-subobject-stats" }]
+            }]
+        }
+
     """
     public = True
     task_namespace = "subobject"
@@ -123,6 +167,31 @@ class ExtractImpreciseSubobject(DataGenTask):
         assert subobject_cap.base() < offset or subobject_cap.top() >= offset + size
         return (subobject_cap.base(), subobject_cap.top())
 
+    def _check_flex_array(self, g: nx.DiGraph, n: StructLayoutGraph.NodeID) -> bool:
+        """
+        Check whether the given structure contains a flexible array member at the end.
+
+        Note that this uses an heuristic to skip structures with zero-length padding
+        arrays at the end that are generated for CheriBSD syscall arguments.
+        """
+        # Special case for kernel system call structures that may have 0 padding members.
+        # We know that there are no flex arrays in there
+        if n.file.endswith("sys/sys/sysproto.h") or re.search(r"sys/compat/.*_proto\.h$", n.file):
+            self.logger.warning("Note: %s @ %s:%d ignores flex array matching due to CheriBSD heuristic",
+                                g.nodes[n]["type_name"], n.file, n.line)
+            return False
+        top_level_members = sorted(g.successors(n), key=lambda m: g.nodes[m]["offset"])
+        if not top_level_members:
+            return False
+
+        last = top_level_members[-1]
+        if g.nodes[last]["flags"] & pydwarf.TypeInfoFlags.kIsArray == 0 or g.nodes[last]["nitems"] != 0:
+            return False
+
+        # This is likely a flex array.
+        self.logger.debug("Found flex array structure %s", n)
+        return True
+
     def _find_imprecise_for(self, g: nx.DiGraph, n: StructLayoutGraph.NodeID):
         """
         Given a NodeID in the graph representing a top-level struct description,
@@ -134,6 +203,10 @@ class ExtractImpreciseSubobject(DataGenTask):
         the group of struct members that alias with the owner of that ID.
         - alias_aligned_base: the representable base for the sub-object capability
         - alias_aligned_top: the representable top for the sub-object capability
+        - alias_pointer_members: the sub-object capability would alias some pointers.
+
+        If the structure contains a flexible array at the end, mark it with "has_flexarray".
+        Note that it is impossible to have nested members with flexible arrays.
 
         Each node that aliases with an imprecise sub-object capability for a member has the
         following attributes:
@@ -151,8 +224,12 @@ class ExtractImpreciseSubobject(DataGenTask):
                 alias_group_id += 1
                 g.nodes[child]["alias_aligned_base"] = result[0]
                 g.nodes[child]["alias_aligned_top"] = result[1]
+                g.nodes[child]["alias_pointer_members"] = False
                 imprecise.add(child)
                 g.nodes[n]["has_imprecise"] = True
+
+        if self._check_flex_array(g, n):
+            g.nodes[n]["has_flexarray"] = True
 
         if len(imprecise) == 0:
             # Bail, nothing else to do
@@ -183,8 +260,14 @@ class ExtractImpreciseSubobject(DataGenTask):
                 remove_groups.add(g.nodes[d].get("alias_group_id", None))
             groups = groups.difference(remove_groups)
             if groups:
-                # Can not use set because it is harder to serialize to GML cleanly
+                # Can not use set because it is harder to serialize cleanly when dumping the graph
                 g.nodes[child]["alias_groups"] = list(map(int, groups))
+            # If this node is a pointer, mark it as such in the "owner" of the alias group
+            if g.nodes[child].get("flags", 0) & pydwarf.TypeInfoFlags.kIsPtr:
+                for subobject_node in imprecise:
+                    g.nodes[subobject_node]["alias_pointer_members"] |= (g.nodes[subobject_node]["alias_group_id"]
+                                                                         in groups)
+
         self.logger.debug("Found %d imprecise members for %s", len(imprecise), n)
 
     def _find_imprecise(self, g: StructLayoutGraph):
@@ -298,7 +381,7 @@ class ImpreciseMembersPlotBase(PlotTask):
                     # This is an imprecise member, remember it
                     r = ImpreciseSubobjectInfoModelRecord(file=desc.file,
                                                           line=desc.line,
-                                                          base_name=g.nodes[desc]["base_name"],
+                                                          base_name=desc.member.split(".")[0],
                                                           member_name=desc.member,
                                                           member_offset=g.nodes[desc]["offset"],
                                                           member_size=desc.member_size,
@@ -349,25 +432,9 @@ class ImpreciseMembersPlotBase(PlotTask):
         for sg in struct_graphs[1:]:
             g = sg.layouts
             common = common.intersection(g.graph["roots"])
-        common_df = pd.DataFrame.from_records(map(lambda n: (n.file, n.line, n.base_name), common),
+        common_df = pd.DataFrame.from_records(map(lambda n: (n.file, n.line, n.member.split(".")[0]), common),
                                               columns=["file", "line", "base_name"])
         return df.join(common_df.set_index(["file", "line", "base_name"]), how="inner")
-
-    def _legend_on_top(self, fig, ax, **kwargs):
-        """
-        Fixup the legend to appear at the top of the axes
-        """
-        if not fig.legends:
-            return
-        # Hack to remove the legend as we can not easily move it
-        # Not sure why seaborn puts the legend in the figure here
-        legend = fig.legends.pop()
-        ax.legend(legend.legend_handles,
-                  map(lambda t: t.get_text(), legend.texts),
-                  loc='center',
-                  bbox_to_anchor=(0, 1.02),
-                  ncols=4,
-                  **kwargs)
 
 
 class AllImpreciseMembersPlot(ImpreciseMembersPlotBase):
@@ -398,7 +465,7 @@ class AllImpreciseMembersPlot(ImpreciseMembersPlotBase):
                 source_of_imprecision=show_df["source_of_imprecision"],
                 orient="y").plot())
 
-            self._legend_on_top(fig, ax)
+            legend_on_top(fig, ax)
             ax.set_xscale("log", base=2)
             ax.set_xlabel("Capability imprecision (Bytes)")
             ax.set_ylabel("Sub-object field")
@@ -410,7 +477,8 @@ class AllImpreciseMembersPlot(ImpreciseMembersPlotBase):
         """
         show_df = df.reset_index()
         show_df["legend"] = show_df["dataset_gid"].map(self.g_uuid_to_label)
-        show_df["label"] = show_df["base_name"] + "::" + show_df["member_name"]
+        # Prepare labels, strip leading _ to pacify matplotlib warnings
+        show_df["label"] = show_df["base_name"].str.strip("_") + "::" + show_df["member_name"]
         show_df = show_df.sort_values(["member_size", "dataset_gid"])
 
         # Basic field vs size plot (horizontal Y)
@@ -422,7 +490,7 @@ class AllImpreciseMembersPlot(ImpreciseMembersPlotBase):
                                                                                      dataset_gid=show_df["dataset_gid"],
                                                                                      orient="y").plot())
 
-            self._legend_on_top(fig, ax)
+            legend_on_top(fig, ax)
             ax.set_xscale("log", base=2)
             ax.set_xlabel("Sub-object size (Bytes)")
             ax.set_ylabel("Sub-object field")
@@ -437,7 +505,7 @@ class AllImpreciseMembersPlot(ImpreciseMembersPlotBase):
             hist_bins = [2**x for x in range(min_size, max_size)]
 
             (so.Plot(show_df, "member_size", color="label").add(so.Area(), so.Hist(bins=hist_bins)).plot())
-            self._legend_on_top(fig, ax)
+            legend_on_top(fig, ax)
             ax.set_xscale("log", base=2)
             ax.set_xlabel("Sub-object size (Bytes)")
             ax.set_ylabel("# of imprecise sub-objects")
@@ -490,7 +558,7 @@ class ImpreciseCommonMembersPlot(ImpreciseMembersPlotBase):
                                                                                dataset_gid=show_df["dataset_gid"],
                                                                                orient="y").plot())
 
-            self._legend_on_top(fig, ax)
+            legend_on_top(fig, ax)
             # ax.set_xscale("log", base=2)
             ax.set_xlabel("Capability imprecision (Bytes)")
             ax.set_ylabel("Sub-object field")
@@ -596,7 +664,7 @@ class RequiredSubobjectPrecision(ImpreciseMembersPlotBase):
                                                 dataset_gid=show_df["dataset_gid"],
                                                 orient="y").plot())
 
-            self._legend_on_top(fig, ax)
+            legend_on_top(fig, ax)
             ax.set_xlabel("Increased precision (bits) required")
             ax.set_ylabel("Sub-object field")
             plt.setp(ax.get_yticklabels(), ha="right", va="center", fontsize="xx-small")
@@ -651,9 +719,179 @@ class RequiredSubobjectPrecision(ImpreciseMembersPlotBase):
                              self.imprecise_common_bits_cdf)
 
 
+class CheriBSDSubobjectSizeDistribution(PlotTask):
+    """
+    Generate plots showing the distribution of subobject bounds sizes.
+    """
+    public = True
+    task_namespace = "subobject"
+    task_name = "subobject-size-distribution-plot"
+
+    @dependency
+    def data(self):
+        return ImpreciseSubobjectBoundsUnion(self.session, self.analysis_config)
+
+    def _plot_size_distribution(self, df: pd.DataFrame, target: PlotTarget):
+        """
+        Helper to plot the distribution of subobject bounds sizes
+        """
+        # Determine buckets we are going to use
+        min_size = max(df["size"].min(), 1)
+        max_size = max(df["size"].max(), 1)
+        log_buckets = range(int(np.log2(min_size)), int(np.log2(max_size)) + 1)
+        buckets = [2**i for i in log_buckets]
+
+        with new_figure(target.paths()) as fig:
+            ax = fig.subplots()
+            sns.histplot(df, x="size", stat="count", bins=buckets, ax=ax)
+            ax.set_yscale("log", base=10)
+            ax.set_xscale("log", base=2)
+            ax.set_xlabel("size (bytes)")
+            ax.set_ylabel("# of csetbounds")
+
+    def run_plot(self):
+        containers = self.data.all_layouts.get()
+        ## XXX Port this
+        # Note that it would be nice if we could also read stats
+        # from the compiler-emitted setbounds and see how these distributions
+        # compare.
+
+        # # Filter only setbounds that are marked kind=subobject
+        # data_df = df.loc[df["kind"] == SetboundsKind.SUBOBJECT.value]
+
+        # sns.set_theme()
+
+        # show_df = data_df.loc[data_df["src_module"] == "kernel"]
+        # self._plot_size_distribution(show_df, self.size_distribution_kernel)
+
+        # show_df = data_df.loc[data_df["src_module"] != "kernel"]
+        # self._plot_size_distribution(show_df, self.size_distribution_modules)
+
+        # self._plot_size_distribution(data_df, self.size_distribution_all)
+
+    @output
+    def size_distribution_kernel(self):
+        return PlotTarget(self, prefix="size-distribution-kern")
+
+    @output
+    def size_distribution_modules(self):
+        return PlotTarget(self, prefix="size-distribution-mods")
+
+    @output
+    def size_distribution_all(self):
+        return PlotTarget(self, prefix="size-distribution-all")
+
+
+class ImpreciseSetboundsSecurity(PlotTask):
+    """
+    Produce plots to display the impact of imprecise sub-object
+    """
+    public = True
+    task_namespace = "subobject"
+    task_name = "imprecise-subobject-security"
+
+    @dependency
+    def data(self):
+        return ImpreciseSubobjectBoundsUnion(self.session, self.analysis_config)
+
+    @output
+    def categories(self):
+        return PlotTarget(self, prefix="categories")
+
+    @output
+    def categories_percent(self):
+        return PlotTarget(self, prefix="categories-percent")
+
+    @output
+    def categories_alias_ptr(self):
+        return PlotTarget(self, prefix="alias-ptr")
+
+    @output
+    def categories_sizes_per_alias_kind(self):
+        return PlotTarget(self, prefix="sizes-per-alias-kind")
+
+    def run_plot(self):
+        containers = self.data.all_layouts.get()
+        records = []
+
+        for c in containers:
+            gid = uuid.UUID(c.layouts.graph["dataset_gid"])
+            # Count categories for this data source
+            for node, attrs in c.layouts.nodes(data=True):
+                if attrs.get("alias_group_id") is None:
+                    # Nothing else to do
+                    continue
+
+                if attrs["flags"] & pydwarf.TypeInfoFlags.kIsStruct:
+                    category = "struct"
+                elif attrs["flags"] & pydwarf.TypeInfoFlags.kIsUnion:
+                    category = "union"
+                elif attrs["flags"] & pydwarf.TypeInfoFlags.kIsArray:
+                    category = "array"
+                else:
+                    self.logger.warning("Uncategorised sub-object node %s %s", node.member, attrs)
+                    continue
+
+                r = dict(dataset_gid=gid,
+                         category=category,
+                         alias_kind="alias-ptr" if attrs["alias_pointer_members"] else "other",
+                         size=node.member_size)
+                records.append(r)
+        df = pd.DataFrame(records)
+        df["platform"] = df["dataset_gid"].apply(self.g_uuid_to_label)
+        sns.set_theme()
+
+        # Plot the absolute number of imprecise members in each category grouped by platform
+        with new_figure(self.categories.paths()) as fig:
+            ax = fig.subplots()
+            count_df = df.groupby(["platform", "category"], as_index=False).size().rename(columns={"size": "count"})
+            sns.barplot(count_df, x="category", y="count", hue="platform", ax=ax)
+
+        # Plot the % of imprecise members in each category grouped by platform
+        with new_figure(self.categories_percent.paths()) as fig:
+            ax = fig.subplots()
+            total_df = df.groupby(["platform"], as_index=False).size().rename(columns={"size": "total"})
+            count_df = df.groupby(["platform", "category"], as_index=False).size()
+            percent_df = total_df.merge(count_df, on="platform")
+            percent_df["% of all imprecise"] = 100 * percent_df["size"] / percent_df["total"]
+            sns.barplot(percent_df, x="category", y="% of all imprecise", hue="platform", ax=ax)
+
+        # Plot the % of imprecise members in each category that alias with pointer members,
+        # grouped by platform
+        with new_figure(self.categories_alias_ptr.paths()) as fig:
+            ax = fig.subplots()
+            count_df = df.groupby(["platform", "category"], as_index=False).size()
+            alias_ptr = df[df["alias_kind"] == "alias-ptr"].groupby(["platform", "category"], as_index=False).size()
+            percent_df = alias_ptr.merge(count_df, on=["platform", "category"], suffixes=["_ptr", "_total_by_kind"])
+            percent_df["% aliasing with ptr"] = 100 * percent_df["size_ptr"] / percent_df["size_total_by_kind"]
+            sns.barplot(percent_df, x="category", y="% aliasing with ptr", hue="platform", ax=ax)
+
+        # Plot distribution of imprecise sub-object sizes grouped by platform, with one faced for
+        # each aliasing kind.
+        with new_figure(self.categories_sizes_per_alias_kind.paths()) as fig:
+            low_size, high_size = np.log2(df["size"].min()), np.log2(df["size"].max())
+            (so.Plot(df, x="size",
+                     color="category").on(fig).add(so.Bars(), so.Hist()).scale(x="log2").facet(row="platform").plot())
+            legend_on_top(fig, loc="center left")
+
+
+class ImpreciseSubobjectPaddingEstimator(PlotTask):
+    """
+    Determine the cost in terms of padding to fix the sub-object imprecision.
+    """
+    pass
+
+
+class ImpreciseSubobjectLayoutReorderingEstimator(PlotTask):
+    """
+    Determine whether it is possible to reorder fields to fix the sub-object imprecision.
+    """
+    pass
+
+
 class ImpreciseSetboundsLayouts(PlotTask):
     """
-    Produce a D3-js html document that allows to browse the structure layouts with imprecision
+    Produce a html document that allows to browse the structure layouts with imprecision
     and inspect the data members that are affected by imprecision.
     """
     public = True
@@ -668,27 +906,53 @@ class ImpreciseSetboundsLayouts(PlotTask):
             cls.ID_COUNTER += 1
             return cls.ID_COUNTER
 
-        def __init__(self, graph, root):
+        def __init__(self, graph, node):
             self._graph = graph
-            self._root = root
+            self._node = node
             self.id = f"layout-{self.next_id()}"
 
+            # If this is a root, determine whether it contains
+            # imprecise arrays or pointer aliasing.
+            if self._node.member_size is None:
+                self._set_root_helpers()
+
+        def _set_root_helpers(self):
+            """
+            This is only meaningful on the root structure node.
+            Determine whether it contains an imprecise member that aliases with a pointer.
+            Determine whether it contains an imprecise array member.
+            """
+            self.has_imprecise_pointer_alias = False
+            self.has_imprecise_array = False
+            for child in nx.descendants(self._graph, self._node):
+                child_desc = self.__class__(self._graph, child)
+                if child_desc.is_imprecise:
+                    if child_desc.is_array:
+                        self.has_imprecise_array = True
+                    if child_desc.is_aliasing_pointer_members:
+                        self.has_imprecise_pointer_alias = True
+
         @property
-        def name(self):
-            return self._root.base_name
+        def depth(self):
+            """Nest level"""
+            return len(self._node.member.split(".")) - 2
+
+        @property
+        def base_name(self):
+            """Name of the root structure"""
+            return self._graph.nodes[self._node]["base_name"]
 
         @property
         def member_name(self):
-            return self._root.member_name
-
-        @property
-        def member_offset(self):
-            return self._root.member_offset
+            """Name of the member, without leading nested structs"""
+            return self._node.member.split(".")[-1]
 
         @property
         def member_offset_str(self):
-            byte_offset = int(self.member_offset)
-            bit_offset = int((self.member_offset - byte_offset) * 8)
+            """Offset representation as 0x<bytes>+<bits>"""
+            offset = self._graph.nodes[self._node]["offset"]
+            byte_offset = int(offset)
+            bit_offset = int((offset - byte_offset) * 8)
             str_offset = f"{byte_offset:#x}"
             if bit_offset:
                 str_offset += f":+{bit_offset:d}"
@@ -696,16 +960,20 @@ class ImpreciseSetboundsLayouts(PlotTask):
 
         @property
         def member_type(self):
-            return self._graph.nodes[self._root]["type_name"]
+            """Type name of the member"""
+            return self._graph.nodes[self._node]["type_name"]
 
         @property
-        def member_size(self):
-            return self._graph.nodes[self._root]["size"]
+        def base_size(self):
+            """Size of the root structure"""
+            return self._node.size
 
         @property
         def member_size_str(self):
-            byte_size = int(self.member_size)
-            bit_size = int((self.member_size - byte_size) * 8)
+            """Size of the member as 0x<bytes>+<bits>"""
+            member_size = self._node.member_size
+            byte_size = int(member_size)
+            bit_size = int((member_size - byte_size) * 8)
             str_size = f"{byte_size:#x}"
             if bit_size:
                 str_size += f":+{bit_size:d}"
@@ -713,26 +981,44 @@ class ImpreciseSetboundsLayouts(PlotTask):
 
         @property
         def is_imprecise(self):
+            """Is this member node imprecise?"""
             return self.alias_id is not None
 
         @property
         def alias_id(self):
-            return self._graph.nodes[self._root].get("alias_group_id", None)
+            """The alias group identifier for this member node, if any"""
+            return self._graph.nodes[self._node].get("alias_group_id", None)
 
         @property
         def alias_groups(self):
-            return ",".join(map(str, self._graph.nodes[self._root].get("alias_groups", [])))
+            """
+            The list of alias group identifiers of which this member is part.
+            For each such group, there will be another member for which the sub-object capability
+            aliases with the current member.
+            """
+            return ",".join(map(str, self._graph.nodes[self._node].get("alias_groups", [])))
+
+        @property
+        def is_aliasing_pointer_members(self):
+            """Is this imprecise member aliasing another pointer member?"""
+            if not self.is_imprecise:
+                return False
+            return self._graph.nodes[self._node].get("alias_pointer_members", False)
+
+        @property
+        def is_array(self):
+            """Is this imprecise member an array?"""
+            if not self.is_imprecise:
+                return False
+            return self._graph.nodes[self._node].get("flags", 0) & pydwarf.TypeInfoFlags.kIsArray
 
         @property
         def location(self):
-            return f"{self._root.file}:{self._root.line}"
-
-        @property
-        def has_children(self):
-            return self._graph.out_degree(self._root) > 0
+            """Source code location for the root structure as <file>:<line>"""
+            return f"{self._node.file}:{self._node.line}"
 
         def __iter__(self):
-            for n in self._graph.successors(self._root):
+            for n in self._graph.successors(self._node):
                 yield self.__class__(self._graph, n)
 
     @dependency
@@ -751,9 +1037,11 @@ class ImpreciseSetboundsLayouts(PlotTask):
             group_name = self.g_uuid_to_label(c.layouts.graph["dataset_gid"])
             descriptions = []
             self.logger.debug("Prepare structures for %s", group_name)
-            for struct_root in set(c.layouts.graph["roots"]):
+            assert len(c.layouts.graph["roots"]) == len(set(c.layouts.graph["roots"]))
+            for struct_root in c.layouts.graph["roots"]:
                 if not c.layouts.nodes[struct_root].get("has_imprecise", False):
                     continue
+
                 descriptions.append(self.LayoutDescription(c.layouts, struct_root))
             layout_groups[group_name] = descriptions
 

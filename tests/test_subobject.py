@@ -131,7 +131,7 @@ def test_find_imprecise(dwarf_manager, extract_task, expect_file_path):
 
     inner = NodeID(file=expect_file_path, line=20, member="test_complex.inner", size=16392, member_size=16375)
     assert check_node(inner)
-    assert g.nodes[inner]["type_name"] == f"struct <anon>.{expect_file_path}.22"
+    assert g.nodes[inner]["type_name"] == f"struct <anon>@{expect_file_path}+22"
     assert g.nodes[inner]["offset"] == 4
     check_imprecise(inner, 0, 0, 16384)
     check_noalias(inner)
@@ -185,6 +185,13 @@ def test_find_imprecise(dwarf_manager, extract_task, expect_file_path):
     check_imprecise(age_cdata, 0, 0x240, 0x240 + 0x6140 + 0x20)
     check_noalias(age_cdata)
 
+    ## Check that we properly detect the flexible array
+    test_flexible = NodeID(file=expect_file_path, line=30, member="test_flexible", size=4, member_size=None)
+    assert check_node(test_flexible)
+    assert g.nodes[test_flexible]["type_name"] == "struct test_flexible"
+    assert g.nodes[test_flexible]["has_flexarray"] == True
+    assert g.nodes[test_flexible]["has_imprecise"] == False
+
 
 @pytest.mark.parametrize("dump_filename", ["test_dump.json", "test_dump.json.gz"])
 def test_graph_io(dwarf_manager, extract_task, tmp_path, dump_filename):
@@ -205,6 +212,8 @@ def test_graph_io(dwarf_manager, extract_task, tmp_path, dump_filename):
     assert g.graph["roots"] == g2.graph["roots"]
     assert nx.utils.nodes_equal(g, g2)
     assert nx.utils.edges_equal(g, g2)
+    for node in g.nodes():
+        assert g.nodes[node] == g2.nodes[node]
 
 
 def test_graph_extract_imprecise_members(dwarf_manager, extract_task, plot_imprecise_task):
