@@ -234,7 +234,6 @@ class ConfigContext:
 @dc.dataclass
 class Config:
     """
-    XXX merge with the basic config.
     Base class for configuration data structure that support template substitution.
     Note that this should be used across the whole hierarchy of nested configurations
     to have the expected behaviour.

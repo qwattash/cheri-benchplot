@@ -2,8 +2,10 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 import seaborn as sns
+import seaborn.objects as so
 from git import Repo
 from git.exc import BadName, InvalidGitRepositoryError
 
@@ -272,6 +274,7 @@ class CheriBSDLoCDiffByComponent(PlotTask):
 
         with new_figure(target.paths()) as fig:
             ax_l, ax_r = fig.subplots(1, 2, sharey=True)
+
             # Absolute SLoC on the left
             show_df = data_df.reset_index().pivot(index="component", columns="how", values="code")
             show_df.reset_index().plot(x="component",
@@ -281,6 +284,17 @@ class CheriBSDLoCDiffByComponent(PlotTask):
                                        ax=ax_l,
                                        color=colors,
                                        legend=False)
+            # Generate text annotations
+            totals = show_df.sum(axis=1)
+            for y, value in zip(ax_l.get_yticks(), totals):
+                magnitude = np.log10(value)
+                if magnitude > 6:
+                    txt_value = f"{np.round(value / 10**6, 2):.2f}M"
+                elif magnitude > 3:
+                    txt_value = f"{np.round(value / 10**3, 2):.2f}K"
+                else:
+                    txt_value = f"{value:d}"
+                ax_l.text(value, y, txt_value, fontsize="xx-small", va="center")
             ax_l.tick_params(axis="y", labelsize="x-small")
             ax_l.set_xlabel("# of lines")
 
@@ -293,6 +307,10 @@ class CheriBSDLoCDiffByComponent(PlotTask):
                                        ax=ax_r,
                                        color=colors,
                                        legend=False)
+            # Generate text annotations
+            totals = show_df.sum(axis=1)
+            for y, value in zip(ax_r.get_yticks(), totals):
+                ax_r.text(value, y, f"{value:.2f}%", fontsize="xx-small", va="center")
             ax_r.set_xlabel("% of lines")
 
             # The legend is shared at the top center

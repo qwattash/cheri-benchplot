@@ -2,20 +2,26 @@
 General purpose matplotlib helpers
 """
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import List, Optional
 from uuid import UUID
 
 import matplotlib.pyplot as plt
+import seaborn as sns
 from matplotlib import rc_context
 
 from .analysis import AnalysisTask, DatasetAnalysisTask
 from .artefact import LocalFileTarget
-from .config import AnalysisConfig, Config, InstanceConfig
+from .config import Config, InstanceConfig
 from .task import Task
 
 
 @contextmanager
 def new_figure(dest: Path | list[Path], bbox_inches="tight", **kwargs):
+    """
+    Helper context manager to produce a new figure
+    """
     kwargs.setdefault("constrained_layout", True)
     fig = plt.figure(**kwargs)
     yield fig
@@ -24,6 +30,58 @@ def new_figure(dest: Path | list[Path], bbox_inches="tight", **kwargs):
     for path in dest:
         fig.savefig(path, bbox_inches=bbox_inches)
     plt.close(fig)
+
+
+class CustomFacetGrid(sns.FacetGrid):
+    """
+    Facet grid with an hack to force legend extraction from subfigures.
+    """
+    def map_dataframe(self, func, *args, **kwargs):
+        if func is sns.histplot or func is sns.kdeplot:
+            self._extract_legend_handles = True
+        return super().map_dataframe(func, *args, **kwargs)
+
+
+@contextmanager
+def new_facet(dest: Path | list[Path], *args, savefig_kws: dict | None = None, **kwargs):
+    """
+    Helper context manager to produce a new seaborn facetgrid.
+    Arguments and keyword arguments are given to the FacetGrid constructor,
+    savefig_kws should be used to add savefig() function arguments.
+    """
+    if savefig_kws is None:
+        savefig_kws = {}
+    if isinstance(dest, Path):
+        dest = [dest]
+
+    facet = CustomFacetGrid(*args, **kwargs)
+    yield facet
+    for path in dest:
+        facet.savefig(path, **savefig_kws)
+    plt.close(facet.figure)
+
+
+@dataclass
+class PlotTargetConfig(Config):
+    """
+    Configuration keys for a single plot target.
+    """
+    title: Optional[str] = None
+    x_label: Optional[str] = None
+    y_label: Optional[str] = None
+
+
+@dataclass
+class PlotTaskConfig(Config):
+    """
+    Base class for plot task configurations.
+
+    Note that it is not mandatory to use this base as the value of
+    PlotTask.task_config_class.
+    When the PlotTask configuration is a subclass of PlotTaskConfig,
+    it is possible to customize plot outputs by key/value parameters.
+    """
+    target_config: List[PlotTargetConfig] = field(default_factory=list)
 
 
 class PlotTarget(LocalFileTarget):

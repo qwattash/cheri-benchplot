@@ -16,7 +16,7 @@ from ..core.analysis import AnalysisTask
 from ..core.artefact import (AnalysisFileTarget, DataFrameTarget, HTMLTemplateTarget, LocalFileTarget, Target)
 from ..core.config import Config, ConfigPath, InstanceKernelABI
 from ..core.dwarf import DWARFManager, StructLayoutGraph
-from ..core.plot import PlotTarget, PlotTask, new_figure
+from ..core.plot import PlotTarget, PlotTask, new_facet, new_figure
 from ..core.task import BenchmarkTask, DataGenTask, dependency, output
 from ..ext import pychericap, pydwarf
 from .model import (ImpreciseSubobjectInfoModel, ImpreciseSubobjectInfoModelRecord, ImpreciseSubobjectLayoutModel)
@@ -499,14 +499,11 @@ class AllImpreciseMembersPlot(ImpreciseMembersPlotBase):
         # Distribution of sizes as an histogram, without field names
         with new_figure(self.imprecise_fields_size_hist.paths()) as fig:
             ax = fig.subplots()
+            # min_size = int(np.log2(show_df["member_size"].min()))
+            # max_size = int(np.log2(show_df["member_size"].max())) + 1
+            # hist_bins = [2**x for x in range(min_size, max_size)]
 
-            min_size = int(np.log2(show_df["member_size"].min()))
-            max_size = int(np.log2(show_df["member_size"].max())) + 1
-            hist_bins = [2**x for x in range(min_size, max_size)]
-
-            (so.Plot(show_df, "member_size", color="label").add(so.Area(), so.Hist(bins=hist_bins)).plot())
-            legend_on_top(fig, ax)
-            ax.set_xscale("log", base=2)
+            sns.histplot(show_df, x="member_size", hue="legend", log_scale=2, ax=ax, element="step")
             ax.set_xlabel("Sub-object size (Bytes)")
             ax.set_ylabel("# of imprecise sub-objects")
 
@@ -586,12 +583,20 @@ class RequiredSubobjectPrecision(ImpreciseMembersPlotBase):
         return PlotTarget(self, prefix="cdf")
 
     @output
+    def imprecise_abs_bits_cdf(self):
+        return PlotTarget(self, prefix="cdf-abs")
+
+    @output
     def imprecise_common_bits_plot(self):
         return PlotTarget(self, prefix="common")
 
     @output
     def imprecise_common_bits_cdf(self):
         return PlotTarget(self, prefix="common-cdf")
+
+    @output
+    def imprecise_common_abs_bits_cdf(self):
+        return PlotTarget(self, prefix="common-cdf-abs")
 
     def _compute_precision(self, base: float, top: float):
         """
@@ -617,6 +622,27 @@ class RequiredSubobjectPrecision(ImpreciseMembersPlotBase):
             exponent = min(lsb(base), lsb(top))
         return len_msb - exponent + 1
 
+    def _platform_cap_format(self, g_uuid: uuid.UUID):
+        instance_config = self.get_instance_config(g_uuid)
+        if instance_config.cheri_target.is_riscv():
+            # XXX support/detect riscv32
+            cap_format = pychericap.CompressedCap128
+        elif instance_config.cheri_target.is_morello():
+            cap_format = pychericap.CompressedCap128m
+        else:
+            self.logger.error("DWARF TypeInfo extraction unsupported for %s", instance_config.cheri_target)
+            raise RuntimeError(f"Unsupported instance target {instance_config.cheri_target}")
+        return cap_format
+
+    def _platform_mantissa_and_exp_width(self, g_uuid: uuid.UUID) -> tuple[int, int]:
+        """
+        Return the mantissa and exponent width of a given platform
+        """
+        cap_format = self._platform_cap_format(g_uuid)
+        mantissa_width = cap_format.get_mantissa_width()
+        exponent_width = 3
+        return mantissa_width, exponent_width
+
     def _compute_platform_precision(self, g_uuid: uuid.UUID, base: float, top: float):
         """
         Compute the precision for a given [base, top] region on the platform identified
@@ -626,18 +652,8 @@ class RequiredSubobjectPrecision(ImpreciseMembersPlotBase):
         """
         base = int(base)
         top = int(np.ceil(top))
+        mantissa_width, exponent_width = self._platform_mantissa_and_exp_width(g_uuid)
 
-        config = self.get_instance_config(g_uuid)
-        if config.cheri_target.is_riscv():
-            mantissa_width = pychericap.CompressedCap128.get_mantissa_width()
-            exponent_width = 3
-        elif config.cheri_target.is_morello():
-            mantissa_width = pychericap.CompressedCap128m.get_mantissa_width()
-            exponent_width = 3
-        else:
-            self.logger.error("Unsupported cheri_target=%s", config.cheri_target)
-            raise RuntimeError(f"Unsupported instance target {config.cheri_target}, "
-                               "need to implement")
         ie_threshold = mantissa_width - 2
         len_msb = np.floor(np.log2(top - base)) if top != base else 0
         if len_msb + 1 <= ie_threshold:
@@ -658,6 +674,7 @@ class RequiredSubobjectPrecision(ImpreciseMembersPlotBase):
 
         with new_figure(target.paths(), figsize=(10, 50)) as fig:
             ax = fig.subplots()
+
             (so.Plot(show_df, y="label", x="additional_precision",
                      color="legend").on(ax).add(so.Bar(),
                                                 so.Dodge(by=["dataset_gid"]),
@@ -669,7 +686,7 @@ class RequiredSubobjectPrecision(ImpreciseMembersPlotBase):
             ax.set_ylabel("Sub-object field")
             plt.setp(ax.get_yticklabels(), ha="right", va="center", fontsize="xx-small")
 
-    def _plot_precision_cdf(self, df, target):
+    def _plot_precision_cdf(self, df, target: PlotTarget, absolute: bool):
         """
         Produce a CDF plot showing the amount of imprecise sub-object members that
         can be "fixed" by adding a number of precision bits.
@@ -682,11 +699,25 @@ class RequiredSubobjectPrecision(ImpreciseMembersPlotBase):
         with new_figure(target.paths()) as fig:
             ax = fig.subplots()
 
-            sns.ecdfplot(data=show_df, x="additional_precision", hue="legend", ax=ax)
-            ax.set_xlabel("Additional precision bits")
-            ax.set_ylabel("Proportion of sub-objects that become representable")
+            if absolute:
+                sns.ecdfplot(data=show_df, x="required_precision", hue="legend", ax=ax)
+                ax.set_xlabel("Precision bits")
+                ax.set_ylabel("Proportion of sub-objects that become representable")
+            else:
+                sns.ecdfplot(data=show_df, x="additional_precision", hue="legend", ax=ax)
+                ax.set_xlabel("Additional precision bits")
+                ax.set_ylabel("Proportion of sub-objects that become representable")
 
-    def _plot_precision(self, df, bars_target, cdf_target):
+    def _plot_precision(self, df, bars_target, cdf_target, abs_cdf_target):
+        """
+        Generate the following plots for the given dataset:
+        - A bar plot that shows the number of precision bits required to make an imprecise sub-object
+          representable.
+        - A CDF plot showing the proportion of imprecise sub-objects that become representable as
+        the precision increases.
+        - A CDF plot as above, but the X axis uses the absolute number of precision bits instead of the
+        offset from the platform-specific precision.
+        """
         sns.set_theme()
         # Compute imprecision bits
         # XXX just validate the model here?
@@ -711,17 +742,22 @@ class RequiredSubobjectPrecision(ImpreciseMembersPlotBase):
             "Something is wrong, these must be unrepresentable"
 
         self._plot_precision_bars(df, bars_target)
-        self._plot_precision_cdf(df, cdf_target)
+        self._plot_precision_cdf(df, cdf_target, absolute=False)
+        self._plot_precision_cdf(df, abs_cdf_target, absolute=True)
 
     def run_plot(self):
-        self._plot_precision(self._prepare_dataset(), self.imprecise_bits_plot, self.imprecise_bits_cdf)
+        self._plot_precision(self._prepare_dataset(), self.imprecise_bits_plot, self.imprecise_bits_cdf,
+                             self.imprecise_abs_bits_cdf)
         self._plot_precision(self._prepare_dataset_filter_common(), self.imprecise_common_bits_plot,
-                             self.imprecise_common_bits_cdf)
+                             self.imprecise_common_bits_cdf, self.imprecise_common_abs_bits_cdf)
 
 
 class CheriBSDSubobjectSizeDistribution(PlotTask):
     """
     Generate plots showing the distribution of subobject bounds sizes.
+
+    This was originally designed to work with compiler diagnostics
+    we should be able to adapt it to use both diagnostics and static data.
     """
     public = True
     task_namespace = "subobject"
@@ -868,11 +904,15 @@ class ImpreciseSetboundsSecurity(PlotTask):
 
         # Plot distribution of imprecise sub-object sizes grouped by platform, with one faced for
         # each aliasing kind.
-        with new_figure(self.categories_sizes_per_alias_kind.paths()) as fig:
-            low_size, high_size = np.log2(df["size"].min()), np.log2(df["size"].max())
-            (so.Plot(df, x="size",
-                     color="category").on(fig).add(so.Bars(), so.Hist()).scale(x="log2").facet(row="platform").plot())
-            legend_on_top(fig, loc="center left")
+        with new_facet(self.categories_sizes_per_alias_kind.paths(), df, row="platform", height=5, aspect=2.5) as facet:
+            min_size = int(np.log2(df["size"].min()))
+            max_size = int(np.log2(df["size"].max())) + 1
+            hist_bins = [2**x for x in range(min_size, max_size)]
+            # XXX can not use log_scale=2 with static bin widths
+            facet.map_dataframe(sns.histplot, x="size", hue="category", bins=hist_bins, element="step")
+            for ax in facet.axes.ravel():
+                ax.set_xscale("log", base=2)
+            facet.add_legend()
 
 
 class ImpreciseSubobjectPaddingEstimator(PlotTask):
