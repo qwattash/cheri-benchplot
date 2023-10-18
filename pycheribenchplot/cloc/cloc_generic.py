@@ -185,7 +185,6 @@ class ExtractLoCBase(SessionDataGenTask):
             if extra_cloc_args:
                 cloc_args += extra_cloc_args
             cloc_args += [f"--report-file={outfile}", config.baseline_ref, config.head_ref]
-
             cloc_cmd = SubprocessHelper(self._cloc, cloc_args)
             cloc_cmd.run(cwd=cwd_path)
 

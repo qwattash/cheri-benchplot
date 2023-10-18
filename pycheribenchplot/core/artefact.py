@@ -82,7 +82,9 @@ class DataFrameTarget(Target):
         self._df = df
 
     def get(self) -> pd.DataFrame:
-        return self._df.copy()
+        if self._df is not None:
+            return self._df.copy()
+        return None
 
 
 class FileTarget(Target):

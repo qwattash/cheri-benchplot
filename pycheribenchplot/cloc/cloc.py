@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 
+import numpy as np
 import pandas as pd
 import seaborn as sns
 
@@ -32,7 +33,8 @@ class LoCAnalysisConfig(Config):
     """
     Common analysis configuration for LoC data
     """
-    pass
+    #: When supported, show the value of the data point as a text annotation
+    show_text_annotations: bool = True
 
 
 class LoadLoCGenericData(AnalysisTask):
@@ -144,6 +146,8 @@ class LoadLoCGenericData(AnalysisTask):
 class ReportLoCGeneric(PlotTask):
     """
     Produce a plot of CLoC changed for each repository
+
+
     """
     public = True
     task_namespace = "cloc"
@@ -154,10 +158,69 @@ class ReportLoCGeneric(PlotTask):
     def loc_data(self):
         return LoadLoCGenericData(self.session, self.analysis_config, task_config=self.config)
 
-    def run_plot(self):
-        df = self.loc_data.diff_df.get()
+    def _build_display_data(self, df, base_df) -> pd.DataFrame:
+        """
+        Collect the data into a single dataframe.
+
+        This should group the data with the following columns:
+        repo: unique name of the repository, suitable for user output
+        how: {added, removed, modified}        
+        code: number of lines changed
+        code_baseline: number of lines in the baseline
+        code_pct: percent ratio of code / code_baseline
+        """
+        # Only take rows describing a change
         df = generalized_xs(df, how="same", complement=True)
-        base_df = self.loc_data.baseline_df.get()
+
+        # Aggregate counts by repo
+        base_counts_df = base_df["code"].groupby(["repo"]).sum()
+        agg_df = df.groupby(["repo", "how"]).sum().join(base_counts_df, on="repo", rsuffix="_baseline")
+        agg_df["code_pct"] = 100 * agg_df["code"] / agg_df["code_baseline"]
+        return agg_df
+
+    def _plot_absolute_sloc_diff(self, ax: "Axes", df: pd.DataFrame, colors: list):
+        show_df = df.reset_index().pivot(index="repo", columns="how", values="code")
+        show_df.reset_index().plot(x="repo",
+                                   y=["added", "modified", "removed"],
+                                   stacked=True,
+                                   kind="barh",
+                                   ax=ax,
+                                   color=colors,
+                                   legend=False)
+        # Generate text annotations for the Absolute SLoC
+        if self.config.show_text_annotations:
+            totals = show_df.sum(axis=1)
+            for y, value in zip(ax.get_yticks(), totals):
+                magnitude = np.log10(value)
+                if magnitude > 6:
+                    txt_value = f"{np.round(value / 10**6, 2):.2f}M"
+                elif magnitude > 3:
+                    txt_value = f"{np.round(value / 10**3, 2):.2f}K"
+                else:
+                    txt_value = f"{value:d}"
+                ax.text(value, y, txt_value, fontsize="xx-small", va="center")
+        ax.tick_params(axis="y", labelsize="x-small")
+        ax.set_xlabel("# of lines")
+
+    def _plot_percent_sloc_diff(self, ax: "Axes", df: pd.DataFrame, colors: list):
+        # Percent SLoC on the right
+        show_df = df.reset_index().pivot(index="repo", columns="how", values="code_pct")
+        show_df.reset_index().plot(x="repo",
+                                   y=["added", "modified", "removed"],
+                                   stacked=True,
+                                   kind="barh",
+                                   ax=ax,
+                                   color=colors,
+                                   legend=False)
+        # Generate text annotations for the Percent SLoC
+        if self.config.show_text_annotations:
+            totals = show_df.sum(axis=1)
+            for y, value in zip(ax.get_yticks(), totals):
+                ax.text(value, y, f"{value:.2f}%", fontsize="xx-small", va="center")
+        ax.set_xlabel("% of lines")
+
+    def _do_plot(self, df: pd.DataFrame, base_df: pd.DataFrame, target: PlotTarget):
+        agg_df = self._build_display_data(df, base_df)
 
         # Ensure we have the proper theme
         sns.set_theme()
@@ -166,41 +229,21 @@ class ReportLoCGeneric(PlotTask):
         # ordered as green, orange, red
         colors = [cmap[2], cmap[1], cmap[3]]
 
-        # Aggregate counts by repo
-        base_counts_df = base_df["code"].groupby(["repo"]).sum()
-        agg_df = df.groupby(["repo", "how"]).sum().join(base_counts_df, on="repo", rsuffix="_baseline")
-        agg_df["code_pct"] = 100 * agg_df["code"] / agg_df["code_baseline"]
-
-        agg_df.to_csv(self.raw_data.path)
-
-        with new_figure(self.plot.paths()) as fig:
+        with new_figure(target.paths()) as fig:
             ax_l, ax_r = fig.subplots(1, 2, sharey=True)
-            # Absolute SLoC on the left
-            show_df = agg_df.reset_index().pivot(index="repo", columns="how", values="code")
-            show_df.reset_index().plot(x="repo",
-                                       y=["added", "modified", "removed"],
-                                       stacked=True,
-                                       kind="barh",
-                                       ax=ax_l,
-                                       color=colors,
-                                       legend=False)
-            ax_l.tick_params(axis="y", labelsize="x-small")
-            ax_l.set_xlabel("# of lines")
-
-            # Percent SLoC on the right
-            show_df = agg_df.reset_index().pivot(index="repo", columns="how", values="code_pct")
-            show_df.reset_index().plot(x="repo",
-                                       y=["added", "modified", "removed"],
-                                       stacked=True,
-                                       kind="barh",
-                                       ax=ax_r,
-                                       color=colors,
-                                       legend=False)
-            ax_r.set_xlabel("% of lines")
+            # Absolute SLoC on the left, percent on the right
+            self._plot_absolute_sloc_diff(ax_l, agg_df, colors)
+            self._plot_percent_sloc_diff(ax_r, agg_df, colors)
 
             # The legend is shared at the top center
             handles, labels = ax_l.get_legend_handles_labels()
             fig.legend(handles, labels, ncol=3, loc="upper center", bbox_to_anchor=(0.5, 1.08))
+
+    def run_plot(self):
+        df = self.loc_data.diff_df.get()
+        base_df = self.loc_data.baseline_df.get()
+
+        self._do_plot(df, base_df, self.plot)
 
     @output
     def plot(self):
@@ -209,6 +252,110 @@ class ReportLoCGeneric(PlotTask):
     @output
     def raw_data(self):
         return AnalysisFileTarget(self, prefix="raw", ext="csv")
+
+
+class ReportLoCCheriBSD(ReportLoCGeneric):
+    """
+    Generate an horizontal bar plot showing kernel changes.
+
+    Extract the absolute and relative number of changes for each kernel component
+    defined in the components map. The key is used as the component name,
+    this MUST NOT alias any other existing repo being analysed.
+    Components are matched by path using a regular expression.
+
+    The plot is meant to show the distribution of kernel changes with some granularity.
+    File granularity is too confusing, while directory hierarchy may miss the
+    relationship between different kernel components.
+
+    Each component is used to create a synthetic repo in the report dataframe.
+    This set of synthetic repos replace the cheribsd kernel for the purposes of plotting.
+    """
+    public = True
+    task_namespace = "cloc"
+    task_name = "plot-cheribsd-deltas"
+
+    components = {
+        "platform": r"sys/(riscv|arm)",
+        "vm": r"sys/vm/(?!uma)",
+        "net": r"sys/net",
+        "alloc": r"(sys/(vm/uma|kern/.*vmem)|sys/sys/vmem)",
+        "dev": r"sys/dev(?!/drm)",
+        "kern": r"(sys/kern/(?!.*vmem|vfs)|sys/sys/(?!vmem))",
+        "compat": r"sys/compat(?!/freebsd64)",
+        "compat64": r"sys/compat/freebsd64",
+        "vfs": r"sys/kern/vfs",
+        "fs": r"sys/fs",
+        "cheri": r"sys/cheri",
+    }
+
+    def _generate_fake_component_repos(self, df: pd.DataFrame,
+                                       base_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """
+        The input dataframes will contain the diff and baseline entries for each repository being scanned.
+        We filter out the entries for the cheribsd repo and replace them with entries for
+        a repository named after the matching component name for the modified file.
+        """
+        gen_task = self.session.find_exec_task(ExtractLoCCheriBSD)
+        cheribsd_repo_name = gen_task.config.name
+
+        # Find out the subset of entries we care about
+        cheribsd_df_sel = df.index.get_level_values("repo") == cheribsd_repo_name
+        cheribsd_baseline_sel = base_df.index.get_level_values("repo") == cheribsd_repo_name
+
+        # Accumulators to generate the "other" group
+        all_match_sel = np.repeat(False, len(df.index))
+        all_baseline_match_sel = np.repeat(False, len(base_df.index))
+
+        # Hold the new repository name index
+        df["mapped_repo"] = None
+        base_df["mapped_repo"] = None
+
+        for name, filter_ in self.components.items():
+            match_df_sel = df.index.get_level_values("file").str.match(filter_)
+            match_baseline_sel = base_df.index.get_level_values("file").str.match(filter_)
+            df_sel = (match_df_sel & cheribsd_df_sel)
+            baseline_sel = (match_baseline_sel & cheribsd_baseline_sel)
+            self.logger.debug("Component %s ('%s') matched %d diff entries and %d baseline entries", name, filter_,
+                              df_sel.sum(), baseline_sel.sum())
+            all_match_sel = (all_match_sel | df_sel)
+            all_baseline_match_sel = (all_baseline_match_sel | baseline_sel)
+            df.loc[df_sel, "mapped_repo"] = name
+            base_df.loc[baseline_sel, "mapped_repo"] = name
+        # Produce the "other" catch-all group
+        df.loc[(~all_match_sel) & cheribsd_df_sel, "mapped_repo"] = "other"
+        base_df.loc[(~all_baseline_match_sel) & cheribsd_baseline_sel, "mapped_repo"] = "other"
+
+        # Finally swap the mapped_repo and repo index level
+        df["mapped_repo"] = df["mapped_repo"].where(cheribsd_df_sel, df.index.get_level_values("repo"))
+        base_df["mapped_repo"] = base_df["mapped_repo"].where(cheribsd_baseline_sel,
+                                                              base_df.index.get_level_values("repo"))
+        df = (df.rename(columns={"mapped_repo": "repo"}).reset_index("repo", drop=True).set_index("repo", append=True))
+        base_df = (base_df.rename(columns={
+            "mapped_repo": "repo"
+        }).reset_index("repo", drop=True).set_index("repo", append=True))
+        return (df, base_df)
+
+    def run_plot(self):
+        """
+        Produce plot variants by splitting the LoC changes by components.
+
+        We produce two plots, one with all the changes and one only considering the
+        changes that are built in the compilation DB.
+        """
+        df = self.loc_data.diff_df.get()
+        base_df = self.loc_data.baseline_df.get()
+        df, base_df = self._generate_fake_component_repos(df, base_df)
+        self._do_plot(df, base_df, self.plot)
+
+        if self.loc_data.compilation_db:
+            cdb_df = self.loc_data.cdb_diff_df.get()
+            cdb_base_df = self.loc_data.cdb_baseline_df.get()
+            df, base_df = self._generate_fake_component_repos(cdb_df, cdb_base_df)
+            self._do_plot(df, base_df, self.cdb_plot)
+
+    @output
+    def cdb_plot(self):
+        return PlotTarget(self, prefix="cdb")
 
 
 class LoCChangesSummary(AnalysisTask):
