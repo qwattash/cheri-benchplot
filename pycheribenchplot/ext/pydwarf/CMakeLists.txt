@@ -23,3 +23,17 @@ add_executable(test_dwarf_base "dwarf_base_test.cc")
 target_link_libraries(test_dwarf_base dwarf_lib GTest::gtest GTest::gtest_main)
 target_compile_options(test_dwarf_base PRIVATE "-fPIC"  "-fno-rtti")
 gtest_add_tests(TARGET test_dwarf_base TEST_LIST dwarf_unittest)
+
+
+# New tool infrastructure
+find_package(Boost REQUIRED
+  COMPONENTS graph)
+
+add_executable(dwarf_scraper
+  "dwarf_scraper.cc"
+  "storage.cc"
+  "scraper.cc"
+  "struct_layout_scraper.cc"
+  "log.cc")
+target_compile_options(dwarf_scraper PRIVATE "-fno-rtti")
+target_link_libraries(dwarf_scraper dwarf_lib Boost::headers Boost::graph)
