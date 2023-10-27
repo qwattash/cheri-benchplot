@@ -118,6 +118,8 @@ class LoadLoCGenericData(AnalysisTask):
 
         if self.compilation_db:
             cdb = self._load_compilation_db()
+            import code
+            code.interact(local=locals())
             # Filter by compilation DB files
             filtered_diff_df = diff_df.loc[diff_df.index.isin(cdb["file"], level="file")]
             filtered_baseline_df = baseline_df.loc[baseline_df.index.isin(cdb["file"], level="file")]
@@ -333,6 +335,7 @@ class ReportLoCCheriBSD(ReportLoCGeneric):
         base_df = (base_df.rename(columns={
             "mapped_repo": "repo"
         }).reset_index("repo", drop=True).set_index("repo", append=True))
+
         return (df, base_df)
 
     def run_plot(self):

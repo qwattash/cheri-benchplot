@@ -172,7 +172,7 @@ class Task(Borg, metaclass=TaskRegistry):
         #: task-specific configuration options, if any
         self.config = task_config
         #: task logger
-        self.logger = new_logger(self.task_name)
+        self.logger = new_logger(f"{self.task_namespace}.{self.task_name}")
         #: notify when task is completed
         self._completed = Event()
         #: if the task run() fails, the scheduler will set this to the exception raised by the task
@@ -436,11 +436,12 @@ class SessionTask(Task):
     """
     def __init__(self, session: "Session", task_config: Config = None):
         self._session = session
-        #: Task logger is a child of the session logger
-        self.logger = new_logger(f"{self.task_name}", parent=session.logger)
 
         # Borg initialization occurs here
         super().__init__(task_config=task_config)
+
+        #: Task logger is a child of the session logger
+        self.logger = new_logger(f"{self.task_name}", parent=session.logger)
 
     @classmethod
     def is_session_task(cls):
@@ -464,11 +465,12 @@ class BenchmarkTask(Task):
     def __init__(self, benchmark: "Benchmark", task_config: Config = None):
         #: Associated benchmark context
         self.benchmark = benchmark
-        #: Task logger is a child of the benchmark logger
-        self.logger = new_logger(f"{self.task_name}", parent=self.benchmark.logger)
 
         # Borg initialization occurs here
         super().__init__(task_config=task_config)
+
+        #: Task logger is a child of the benchmark logger
+        self.logger = new_logger(f"{self.task_name}", parent=self.benchmark.logger)
 
     @classmethod
     def is_benchmark_task(cls):

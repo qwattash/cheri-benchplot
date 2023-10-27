@@ -12,7 +12,7 @@ from git.exc import BadName, InvalidGitRepositoryError
 from ..core.artefact import LocalFileTarget
 from ..core.config import Config
 from ..core.error import ConfigurationError
-from ..core.pandas_util import generalized_xs
+from ..core.pandas_util import generalized_xs, map_index
 from ..core.plot import PlotTarget, PlotTask, new_figure
 from ..core.task import dependency, output
 from .cloc_generic import ExtractLoCBase, ExtractRepoLoCConfig
@@ -151,19 +151,10 @@ class ExtractLoCCheriBSD(ExtractLoCBase):
         # Extract zfs LoC data
         diff_zfs_df, baseline_zfs_df = self._extract_loc(self.config.zfs)
 
-        # Ensure that the subrepos are checked out ot the requested refs
-        self._drm_repo.git.checkout(self.config.drm.baseline_ref)
-        self._zfs_repo.git.checkout(self.config.zfs.baseline_ref)
-
-        # Need to do this because cloc does not understand adding a remote to drm
-        # directly in the cheribsd repo.
-        # subrepo_worktree = Path(self._drm_repo.working_tree_dir)
-        # subrepo_config = replace(self.config.drm, repo_path=self.config.repo_path, baseline_ref=subrepo_worktree)
-        # diff_drm_df, baseline_drm_df = self._extract_loc(subrepo_config, subtree="sys/dev/drm")
-
-        # subrepo_worktree = Path(self._zfs_repo.working_tree_dir)
-        # subrepo_config = replace(self.config.zfs, repo_path=self.config.repo_path, baseline_ref=subrepo_worktree)
-        # diff_zfs_df, baseline_zfs_df = self._extract_loc(subrepo_config, subtree="sys/contrib/subrepo-openzfs")
+        # Since zfs is extracted outside of the cheribsd tree, we need to prepend the
+        # subrepo path otherwise the paths will not make sense when matching to the compilation DB
+        diff_zfs_df = map_index(diff_zfs_df, "file", lambda v: "sys/contrib/subrepo-openzfs/" + v)
+        baseline_zfs_df = map_index(baseline_zfs_df, "file", lambda v: "sys/contrib/subrepo-openzfs/" + v)
 
         all_diff = pd.concat([diff_df, diff_drm_df, diff_zfs_df])
         all_diff.to_csv(self.cloc_diff.path)

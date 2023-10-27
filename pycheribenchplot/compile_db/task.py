@@ -60,6 +60,7 @@ class BuildTask(DataGenTask):
         super().__init__(benchmark, script, task_config=task_config)
 
         self._cheribuild = self.session.user_config.cheribuild_path / "cheribuild.py"
+        # Do not re-create the build root if this is a borg instance
         if not hasattr(self, "build_root"):
             self.build_root = self.session.user_config.build_path
             if self.config.ephemeral_build_root:
@@ -72,7 +73,7 @@ class BuildTask(DataGenTask):
 
     def _make_subprocess(self, build_root: Path, build_opts: list) -> SubprocessHelper:
         if self.config.builder == Builder.CheriBuild:
-            return SubprocessHelper(self._cheribuild, build_opts)
+            return SubprocessHelper(self._cheribuild, build_opts, logger=self.logger)
         elif self.config.builder == Builder.CheriBSDPorts:
             raise NotImplementedError("Can't build ports for now")
         raise ValueError(f"Invalid builder {config.builder}")
@@ -85,7 +86,14 @@ class BuildTask(DataGenTask):
 
     def _do_build_cheribuild(self, build_root: Path):
         instance_config = self.benchmark.config.instance
-        cbuild_target = self.config.target + "-" + str(instance_config.cheri_target)
+        if instance_config.platform.is_fpga():
+            cbuild_target = (self.config.target + "-mfs-root-kernel-" + str(instance_config.cheri_target))
+            # In this case, cheribuild reuses the non-mfs-root build dir
+            # so we need to create it to ensure it is there.
+            build_dir = self.build_root / f"{self.config.target}-{instance_config.cheri_target}-build"
+            build_dir.mkdir(exist_ok=True)
+        else:
+            cbuild_target = (self.config.target + "-" + str(instance_config.cheri_target))
 
         cbuild_opts = self._cheribuild_options(cbuild_target)
         cbuild_opts += ["--build-root", build_root]
@@ -191,7 +199,7 @@ class CheriBSDCompilationDB(CheriBSDBuild):
         else:
             raise NotImplementedError("Unsupported OS")
         cbuild_cmd = [self._cheribuild] + cbuild_opts
-        return SubprocessHelper(self._tracer, tracer_args + cbuild_cmd)
+        return SubprocessHelper(self._tracer, tracer_args + cbuild_cmd, logger=self.logger)
 
     def _extract_strace(self, out_path: Path) -> pd.DataFrame:
         open_re = re.compile(r"openat\(.*, ?\"([a-zA-Z0-9_/.-]+\.[hcmS])\"")
