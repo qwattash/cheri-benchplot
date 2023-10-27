@@ -377,6 +377,14 @@ class Session:
         self.logger.info("Session %s start run", self.name)
         self.scheduler.run()
         self.logger.info("Session %s run finished", self.name)
+        # Dump failed tasks info
+        for failed in self.scheduler.failed_tasks:
+            task_details = []
+            if failed.is_benchmark_task():
+                iconf = failed.benchmark.config.instance
+                task_details.append(f"on {iconf.platform}-{iconf.cheri_target}-{iconf.kernel}")
+                task_details.append(f"params: {failed.benchmark.parameters}")
+            self.logger.error("Task %s.%s failed %s", failed.task_namespace, failed.task_name, " ".join(task_details))
 
     def analyse(self, analysis_config: AnalysisConfig | None):
         """
