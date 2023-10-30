@@ -132,7 +132,7 @@ class ScriptBuilder:
             if output and isinstance(output, Target):
                 if isinstance(output, RemoteTarget):
                     # Must assume that the target points to a single file
-                    _, cmd.stdout_path = list(output.remote_paths())[0]
+                    cmd.stdout_path = output.remote_paths()[0]
                 else:
                     raise RuntimeError("add_cmd() output target must be a RemoteTarget")
             else:

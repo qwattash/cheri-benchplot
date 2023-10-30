@@ -119,9 +119,7 @@ class BenchmarkExecTask(Task):
         for output_key, output in task.outputs():
             if not isinstance(output, RemoteTarget):
                 continue
-            for remote_entry, host_entry in zip(output.remote_paths(), output.paths()):
-                _, remote_path = remote_entry
-                _, host_path = host_entry
+            for remote_path, host_path in zip(output.remote_paths(), output.paths()):
                 self.logger.debug("Extract %s guest: %s => host: %s", output_key, remote_path, host_path)
                 instance.extract_file(remote_path, host_path)
 

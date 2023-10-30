@@ -168,7 +168,7 @@ def test_session_remote_file_target(fake_datagen_task):
     target = RemoteTarget(fake_datagen_task, "OUTID", ext="EXT")
     task_uuid = fake_datagen_task.benchmark.uuid
 
-    paths = [p for _, p in target.remote_paths()]
+    paths = list(target.remote_paths())
     assert len(paths) == 1
     assert paths[0].parent == Path("/root/benchmark-output")
     assert paths[0].name == f"OUTID-test-fake-task-{task_uuid}.EXT"

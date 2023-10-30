@@ -129,7 +129,6 @@ def test_netperf_exec_task_default(netperf_session, mock_qemu_instance, mock_run
     # Verify that we tried to extract the correct files
     qemu_instance_object = mock_qemu_instance.return_value
     assert qemu_instance_object.extract_file.call_count == 2
-    print(qemu_instance_object.extract_file.calls)
     qemu_instance_object.extract_file.assert_any_call(
         Path("/root/benchmark-output/0/stats-netperf-exec-8bc941a3-f6d6-4d37-b193-4738f1da3dae.csv"), ANY)
     qemu_instance_object.extract_file.assert_any_call(

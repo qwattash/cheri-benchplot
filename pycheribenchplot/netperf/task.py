@@ -69,15 +69,16 @@ class NetperfExecTask(ExecutionTask):
         netserver = s.add_cmd(self.netserver_bin, args=self.config.netserver_options, env=run_env, background=True)
         s.add_sleep(5)
 
-        hwpmc_paths = [p for _, p in self.get_hwpmc_target().remote_paths()]
-        stats_paths = [p for _, p in self.get_stats_target().remote_paths()]
         for i in range(self.benchmark.config.iterations):
             iteration_arguments = []
             if self.config.profile.hwpmc_trace:
-                iteration_arguments += ["-G", hwpmc_paths[i]]
+                iteration_arguments += ["-G", self.get_hwpmc_target().remote_paths(iteration=i)[0]]
             full_options = self.config.netperf_options + extra_arguments + iteration_arguments
             s = self.script.benchmark_sections[i]["benchmark"]
-            s.add_cmd(self.netperf_bin, full_options, env=run_env, output=stats_paths[i])
+            s.add_cmd(self.netperf_bin,
+                      full_options,
+                      env=run_env,
+                      output=self.get_stats_target().remote_paths(iteration=i)[0])
 
         s = self.script.sections["post-benchmark"]
         s.add_kill_cmd(netserver)

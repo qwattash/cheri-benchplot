@@ -109,7 +109,7 @@ class Target(Borg):
         """
         Check that there is only one target path and return it
         """
-        paths = [p for _, p in self.paths()]
+        paths = self.paths()
         if len(paths) != 1:
             self._task.logger.error("Associated target have invalid number of paths (%s), "
                                     "expected 1.", len(paths))
@@ -120,14 +120,18 @@ class Target(Borg):
         """
         Iterate through all the parameterized paths.
         """
-        for _, path in self.paths():
+        for path in self.iter_paths():
             yield path
 
-    def paths(self) -> Iterator[tuple[str | tuple, Path]]:
+    def iter_paths(self, **kwargs) -> Iterator[Path]:
         """
         Iterate over parameterization key and path pairs.
+
+        :param **kwargs: Filter keys for the path parameterization.
+        :return: A generator of paths associated to the target.
         """
-        params = product(*self._path_parameters.values())
+        param_gen = self._filter_path_parameters(**kwargs)
+        params = product(*param_gen.values())
         for param_set in params:
             root = self.get_root_path()
             param_args = dict(zip(self._path_parameters.keys(), param_set))
@@ -135,7 +139,10 @@ class Target(Borg):
             if path.is_absolute():
                 # Never allow absolute paths, always rebase these onto root
                 path = path.relative_to("/")
-            yield param_set, root / path
+            yield root / path
+
+    def paths(self, **kwargs) -> list[Path] | Path:
+        return list(self.iter_paths(**kwargs))
 
     def get_loader(self) -> Task:
         """
@@ -150,6 +157,26 @@ class Target(Borg):
             loader_factory = make_dataframe_loader()
 
         return loader_factory(self)
+
+    def _filter_path_parameters(self, **kwargs) -> dict:
+        """
+        Helper to generate the path parameters dict filtered by
+        the key/value pairs in kwargs. If the corresponding key in kwargs
+        is a raw value, use that instead of the path_parameters[key] value.
+        If kwargs[key] is callable, use that as a filter for path_parameters[key]
+        """
+        param_gen = {}
+        for key, values in self._path_parameters.items():
+            if key not in kwargs:
+                param_gen[key] = values
+            elif callable(kwargs[key]):
+                param_gen[key] = list(filter(kwargs[key], values))
+            else:
+                restrict = kwargs[key]
+                if not isinstance(restrict, list):
+                    restrict = [restrict]
+                param_gen[key] = restrict
+        return param_gen
 
 
 class RemoteTarget(Target):
@@ -168,31 +195,42 @@ class RemoteTarget(Target):
                 return self._task.benchmark.config.remote_output_dir
         raise NotImplementedError("Need to implement remote analysis root path")
 
-    def remote_paths(self, **kwargs) -> Iterator[tuple[str | tuple, Path]]:
+    def iter_remote_paths(self, **kwargs) -> Iterator[Path]:
         """
         Iterate over parameterization key and remote path pairs.
         The target may not have any remote paths, in this case this
         returns and empty iterator.
+
+        :param **kwargs: Filter keys for the path parameterization.
+        :return: A generator of remote paths associated to the target.
         """
-        params = product(*self._path_parameters.values())
+        param_gen = self._filter_path_parameters(**kwargs)
+        params = product(*param_gen.values())
         for param_set in params:
             root = self.get_remote_root_path()
             param_args = dict(zip(self._path_parameters.keys(), param_set))
             path = Path(self._path_template.format(**param_args))
             if path.is_absolute():
                 path = path.relative_to("/")
-            yield param_set, root / path
+            yield root / path
+
+    def remote_paths(self, **kwargs) -> list[Path] | Path:
+        return list(self.iter_remote_paths(**kwargs))
 
 
 class BenchmarkIterationTarget(Target):
     """
     Target that specifies output files for different iterations.
     Note that this assumes that the path prefix is not already parameterized.
+
+    This introduces the "iteration" parameterization key for the target,
+    which can be used in the paths() method.
     """
     def __init__(self, task: Task, output_id: str, template: str | None = None, **kwargs):
-        assert "prefix" not in kwargs, "Need to support nested parameterization"
         assert task.is_benchmark_task(), "Task must be a benchmark task"
-        kwargs["prefix"] = range(task.benchmark.config.iterations)
+        if not template:
+            template = "{prefix}/{iteration}/{base}.{ext}"
+        kwargs.setdefault("iteration", list(range(task.benchmark.config.iterations)))
         # Borg state initialization occurs here
         super().__init__(task, output_id, template, **kwargs)
 
@@ -404,7 +442,7 @@ class DataFrameLoadTaskMixin:
         :return: The dataframe containing the union of the data.
         """
         df_set = []
-        for i, (_, path) in enumerate(target.paths()):
+        for i, path in enumerate(target.paths()):
             self.logger.debug("Loading data[i=%d] from %s", i, path)
             if not path.exists():
                 self.logger.error("Can not load %s, does not exist", path)
