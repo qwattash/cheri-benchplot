@@ -1,9 +1,9 @@
 import shlex
 from dataclasses import dataclass
 
-from pycheribenchplot.core.artefact import DataFileTarget
-from pycheribenchplot.core.config import Config
-from pycheribenchplot.core.task import ExecutionTask
+from ..core.artefact import BenchmarkIterationTarget
+from ..core.config import Config
+from ..core.task import ExecutionTask, output
 
 
 @dataclass
@@ -21,12 +21,13 @@ class GenericExecTask(ExecutionTask):
     task_namespace = "generic"
     task_config_class = GenericTaskConfig
 
+    @output
+    def stdout(self):
+        return BenchmarkIterationTarget(self, "stdout", ext="txt")
+
     def run(self):
-        for i in range(self.benchmark.config.iterations):
-            output = DataFileTarget.from_task(self, iteration=i)
+        for i, path_entry in range(self.benchmark.config.iterations, self.stdout.paths()):
+            _, output_path = path_entry
             section = self.script.benchmark_sections[i]["benchmark"]
             parts = shlex.split(self.config.command)
-            section.add_cmd(parts[0], parts[1:], output=output)
-
-    def outputs(self):
-        yield "stdout", DataFileTarget.from_task(self, use_iterations=True, ext="txt")
+            section.add_cmd(parts[0], parts[1:], output=output_path)

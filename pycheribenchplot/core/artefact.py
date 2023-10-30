@@ -152,13 +152,6 @@ class Target(Borg):
         return loader_factory(self)
 
 
-# Backward-compatible aliases
-LocalFileTarget = Target
-DataFileTarget = Target
-DataRunAnalysisFileTarget = Target
-AnalysisFileTarget = Target
-
-
 class RemoteTarget(Target):
     """
     Target with an associated remote file.
@@ -272,16 +265,7 @@ class HTMLTemplateTarget(Target):
     def __init__(self, task: Task, template: str):
         self._template = template
         base_name = template.split(".")[0]
-        super().__init__(task, prefix=base_name, ext="html")
-
-    def paths(self):
-        if self._task.is_benchmark_task():
-            base_path = self._task.benchmark.get_plot_path()
-        elif self._task.is_session_task():
-            base_path = self._task.session.get_plot_root_path()
-        else:
-            raise TypeError("HTMLTemplateTarget require a session or benchmark task")
-        return [base_path / self._file_name]
+        super().__init__(task, output_id=base_name, ext="html")
 
     def render(self, **kwargs):
         try:
@@ -289,7 +273,7 @@ class HTMLTemplateTarget(Target):
         except TemplateNotFound:
             self._task.logger.error("Can not find file template %s, target setup is wrong", self._template)
             raise RuntimeError("Target error")
-        with open(self.path, "w") as fd:
+        with open(self.single_path(), "w") as fd:
             fd.write(tmpl.render(**kwargs))
 
 

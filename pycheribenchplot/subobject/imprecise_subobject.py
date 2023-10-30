@@ -13,7 +13,7 @@ import seaborn as sns
 import seaborn.objects as so
 
 from ..core.analysis import AnalysisTask
-from ..core.artefact import (AnalysisFileTarget, DataFrameTarget, HTMLTemplateTarget, LocalFileTarget, Target)
+from ..core.artefact import (DataFrameTarget, HTMLTemplateTarget, Target, ValueTarget, make_dataframe_loader)
 from ..core.config import Config, ConfigPath, InstanceKernelABI
 from ..core.dwarf import DWARFManager, StructLayoutGraph
 from ..core.plot import PlotTarget, PlotTask, new_facet, new_figure
@@ -61,19 +61,6 @@ class ExtractImpreciseSubobjectConfig(Config):
     dwarf_data_sources: list[PathMatchSpec]
 
 
-class ValueTarget(Target):
-    def __init__(self, task, output_id: str | None = None):
-        self._value = None
-        # Borg state initialization occurs here
-        super().__init__(task, output_id)
-
-    def assign(self, v: any):
-        self._value = v
-
-    def get(self) -> any:
-        return self._value
-
-
 class StructLayoutLoader(BenchmarkTask):
     """
     Custom task to load the structure layout graph from GML
@@ -89,7 +76,7 @@ class StructLayoutLoader(BenchmarkTask):
 
     @output
     def graph(self):
-        return ValueTarget(self)
+        return ValueTarget(self, "imprecise-graph")
 
     def run(self):
         g = StructLayoutGraph.load(self.benchmark, self.target.path)
@@ -146,7 +133,7 @@ class ExtractImpreciseSubobject(DataGenTask):
 
     @output
     def imprecise_layouts(self):
-        return LocalFileTarget(self, ext="gml.gz", loader=StructLayoutLoader)
+        return Target(self, "imprecise", ext="gml.gz", loader=lambda tgt: StructLayoutLoader(tgt.task.benchmark, tgt))
 
     def _check_imprecise(self, offset: float, size: float) -> tuple[int, int] | None:
         """
@@ -347,7 +334,7 @@ class ImpreciseSubobjectBoundsUnion(AnalysisTask):
 
     @output
     def all_layouts(self):
-        return ValueTarget(self)
+        return ValueTarget(self, "all-layouts")
 
 
 class ImpreciseMembersPlotBase(PlotTask):
@@ -516,15 +503,15 @@ class AllImpreciseMembersPlot(ImpreciseMembersPlotBase):
 
     @output
     def imprecise_fields_plot(self):
-        return PlotTarget(self, prefix="imprecision")
+        return PlotTarget(self, "imprecision")
 
     @output
     def imprecise_fields_size_plot(self):
-        return PlotTarget(self, prefix="size")
+        return PlotTarget(self, "size")
 
     @output
     def imprecise_fields_size_hist(self):
-        return PlotTarget(self, prefix="size-hist")
+        return PlotTarget(self, "size-hist")
 
 
 class ImpreciseCommonMembersPlot(ImpreciseMembersPlotBase):
@@ -563,7 +550,7 @@ class ImpreciseCommonMembersPlot(ImpreciseMembersPlotBase):
 
     @output
     def imprecise_fields_plot(self):
-        return PlotTarget(self)
+        return PlotTarget(self, "fields")
 
 
 class RequiredSubobjectPrecision(ImpreciseMembersPlotBase):
@@ -576,27 +563,27 @@ class RequiredSubobjectPrecision(ImpreciseMembersPlotBase):
 
     @output
     def imprecise_bits_plot(self):
-        return PlotTarget(self, prefix="all")
+        return PlotTarget(self, "all")
 
     @output
     def imprecise_bits_cdf(self):
-        return PlotTarget(self, prefix="cdf")
+        return PlotTarget(self, "cdf")
 
     @output
     def imprecise_abs_bits_cdf(self):
-        return PlotTarget(self, prefix="cdf-abs")
+        return PlotTarget(self, "cdf-abs")
 
     @output
     def imprecise_common_bits_plot(self):
-        return PlotTarget(self, prefix="common")
+        return PlotTarget(self, "common")
 
     @output
     def imprecise_common_bits_cdf(self):
-        return PlotTarget(self, prefix="common-cdf")
+        return PlotTarget(self, "common-cdf")
 
     @output
     def imprecise_common_abs_bits_cdf(self):
-        return PlotTarget(self, prefix="common-cdf-abs")
+        return PlotTarget(self, "common-cdf-abs")
 
     def _compute_precision(self, base: float, top: float):
         """
@@ -807,15 +794,15 @@ class CheriBSDSubobjectSizeDistribution(PlotTask):
 
     @output
     def size_distribution_kernel(self):
-        return PlotTarget(self, prefix="size-distribution-kern")
+        return PlotTarget(self, "size-distribution-kern")
 
     @output
     def size_distribution_modules(self):
-        return PlotTarget(self, prefix="size-distribution-mods")
+        return PlotTarget(self, "size-distribution-mods")
 
     @output
     def size_distribution_all(self):
-        return PlotTarget(self, prefix="size-distribution-all")
+        return PlotTarget(self, "size-distribution-all")
 
 
 class ImpreciseSetboundsSecurity(PlotTask):
@@ -832,19 +819,19 @@ class ImpreciseSetboundsSecurity(PlotTask):
 
     @output
     def categories(self):
-        return PlotTarget(self, prefix="categories")
+        return PlotTarget(self, "categories")
 
     @output
     def categories_percent(self):
-        return PlotTarget(self, prefix="categories-percent")
+        return PlotTarget(self, "categories-percent")
 
     @output
     def categories_alias_ptr(self):
-        return PlotTarget(self, prefix="alias-ptr")
+        return PlotTarget(self, "alias-ptr")
 
     @output
     def categories_sizes_per_alias_kind(self):
-        return PlotTarget(self, prefix="sizes-per-alias-kind")
+        return PlotTarget(self, "sizes-per-alias-kind")
 
     def run_plot(self):
         containers = self.data.all_layouts.get()

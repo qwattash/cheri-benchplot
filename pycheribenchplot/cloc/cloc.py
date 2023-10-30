@@ -6,7 +6,7 @@ import seaborn as sns
 
 from ..compile_db import CompilationDB, CompilationDBModel
 from ..core.analysis import AnalysisTask
-from ..core.artefact import AnalysisFileTarget, DataFrameTarget
+from ..core.artefact import DataFrameTarget
 from ..core.config import Config
 from ..core.model import check_data_model
 from ..core.pandas_util import generalized_xs

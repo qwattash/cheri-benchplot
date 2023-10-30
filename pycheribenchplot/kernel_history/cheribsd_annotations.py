@@ -11,7 +11,7 @@ from git import Repo
 
 from ..compile_db import CompilationDB, CompilationDBModel
 from ..core.analysis import AnalysisTask
-from ..core.artefact import DataFrameTarget, LocalFileTarget
+from ..core.artefact import DataFrameTarget, Target, make_dataframe_loader
 from ..core.config import Config
 from ..core.plot import PlotTarget, PlotTask, new_figure
 from ..core.task import SessionDataGenTask, dependency, output
@@ -76,7 +76,7 @@ class CheriBSDKernelAnnotations(SessionDataGenTask):
 
     @output
     def changes(self):
-        return LocalFileTarget(self, ext="json", model=CheriBSDAnnotationsModel)
+        return Target(self, loader=make_dataframe_loader(CheriBSDAnnotationsModel), ext="json")
 
 
 class CheriBSDAnnotationsUnion(AnalysisTask):
@@ -176,15 +176,15 @@ class CheriBSDChangesByType(PlotTask):
 
     @output
     def changes(self):
-        return PlotTarget(self, prefix="changes")
+        return PlotTarget(self, "changes")
 
     @output
     def rel_changes(self):
-        return PlotTarget(self, prefix="rel-changes")
+        return PlotTarget(self, "rel-changes")
 
     @output
     def rel_total_changes(self):
-        return PlotTarget(self, prefix="rel-total-changes")
+        return PlotTarget(self, "rel-total-changes")
 
 
 class CheckMissingAnnotation(AnalysisTask):
@@ -215,4 +215,4 @@ class CheckMissingAnnotation(AnalysisTask):
 
     @output
     def failures(self):
-        return LocalFileTarget(self, ext="csv")
+        return Target(self, "failed", ext="csv")

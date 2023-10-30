@@ -11,7 +11,7 @@ import seaborn.objects as so
 
 from ..compile_db import (BuildConfig, Builder, CheriBSDBuild, CheriBSDBuildHelper)
 from ..core.analysis import AnalysisTask
-from ..core.artefact import (AnalysisFileTarget, DataFrameTarget, LocalFileTarget)
+from ..core.artefact import DataFrameTarget, Target, make_dataframe_loader
 from ..core.config import InstanceKernelABI
 from ..core.plot import PlotTarget, PlotTask, new_figure
 from ..core.task import DataGenTask, dependency, output
@@ -104,7 +104,7 @@ class CheriBSDSubobjectStats(DataGenTask):
 
     @output
     def subobject_stats(self):
-        return LocalFileTarget(self, ext="csv", model=SubobjectBoundsModel)
+        return Target(self, "stats", loader=make_dataframe_loader(SubobjectBoundsModel), ext="csv")
 
     def run(self):
         instance_config = self.benchmark.config.instance
@@ -179,7 +179,7 @@ class CheriBSDSubobjectSizeBySize(AnalysisTask):
 
     @output
     def subobject_large(self):
-        return AnalysisFileTarget(self, ext="csv")
+        return Target(self, "large", ext="csv")
 
 
 class CheriBSDSubobjectSizeDistribution(PlotTask):
@@ -230,12 +230,12 @@ class CheriBSDSubobjectSizeDistribution(PlotTask):
 
     @output
     def size_distribution_kernel(self):
-        return PlotTarget(self, prefix="size-distribution-kern")
+        return PlotTarget(self, "size-distribution-kern")
 
     @output
     def size_distribution_modules(self):
-        return PlotTarget(self, prefix="size-distribution-mods")
+        return PlotTarget(self, "size-distribution-mods")
 
     @output
     def size_distribution_all(self):
-        return PlotTarget(self, prefix="size-distribution-all")
+        return PlotTarget(self, "size-distribution-all")

@@ -7,7 +7,7 @@ import seaborn as sns
 from matplotlib.ticker import AutoLocator, AutoMinorLocator
 
 from ..core.analysis import AnalysisTask
-from ..core.artefact import (AnalysisFileTarget, DataFrameTarget, LocalFileTarget)
+from ..core.artefact import DataFrameTarget, Target, make_dataframe_loader
 from ..core.config import Config, ConfigPath, validate_path_exists
 from ..core.plot import PlotTarget, PlotTask, new_figure
 from ..core.task import SessionDataGenTask, dependency, output
@@ -35,15 +35,15 @@ class CheriBSDKernelVuln(SessionDataGenTask):
 
     @output
     def advisories(self):
-        return LocalFileTarget(self, ext="csv", model=CheriBSDAdvisories)
+        return Target(self, "advisories", loader=make_dataframe_loader(CheriBSDAdvisories), ext="csv")
 
     @output
     def history(self):
-        return LocalFileTarget(self, prefix="history", ext="csv", model=History)
+        return Target(self, "history", loader=make_dataframe_loader(History), ext="csv")
 
     @output
     def unmitigated(self):
-        return LocalFileTarget(self, prefix="unmitigated", ext="csv", model=CheriBSDUnmitigated)
+        return Target(self, "unmitigated", loader=make_dataframe_loader(CheriBSDUnmitigated), ext="csv")
 
     def _normalize_input_colname(self, column_name: str) -> str:
         """
@@ -163,19 +163,19 @@ class CheriBSDAdvisoriesHistory(PlotTask):
 
     @output
     def timeline(self):
-        return PlotTarget(self, prefix="timeline")
+        return PlotTarget(self, "timeline")
 
     @output
     def mitigated_timeline(self):
-        return PlotTarget(self, prefix="mit-timeline")
+        return PlotTarget(self, "mit-timeline")
 
     @output
     def mitigated_rel_timeline(self):
-        return PlotTarget(self, prefix="mit-rel-timeline")
+        return PlotTarget(self, "mit-rel-timeline")
 
     @output
     def mitigated_rel_mem_timeline(self):
-        return PlotTarget(self, prefix="mit-rel-mem-timeline")
+        return PlotTarget(self, "mit-rel-mem-timeline")
 
     def run_plot(self):
         df = self.sa_load.advisories_df.df.get()
@@ -325,11 +325,11 @@ class CheriBSDAdvisoriesTables(AnalysisTask):
 
     @output
     def mitigation_summary(self):
-        return AnalysisFileTarget(self, prefix="advisories-summary", ext="csv")
+        return Target(self, "advisories-summary", ext="csv")
 
     @output
     def unmitigated_summary(self):
-        return AnalysisFileTarget(self, prefix="unmitigated-summary", ext="csv")
+        return Target(self, "unmitigated-summary", ext="csv")
 
     def _advisories_summary(self):
         df = self.sa_load.advisories_df.df.get()
@@ -402,7 +402,7 @@ class CheriBSDAdvisoriesTables(PlotTask):
 
     @output
     def cdf(self):
-        return PlotTarget(self)
+        return PlotTarget(self, "cdf")
 
     def run_plot(self):
         df = self.sa_load.advisories_df.df.get()

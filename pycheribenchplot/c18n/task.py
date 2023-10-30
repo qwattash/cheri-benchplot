@@ -10,7 +10,7 @@ import pandas as pd
 import seaborn as sns
 
 from ..core.analysis import AnalysisTask, DatasetAnalysisTask
-from ..core.artefact import (DataFrameTarget, DataRunAnalysisFileTarget, LocalFileTarget)
+from ..core.artefact import DataFrameTarget, Target, make_dataframe_loader
 from ..core.config import Config, ConfigPath, validate_path_exists
 from ..core.pandas_util import generalized_xs
 from ..core.plot import DatasetPlotTask, PlotTarget, new_figure
@@ -69,7 +69,7 @@ class C18NKtraceImport(DataGenTask):
 
     @output
     def data_file(self):
-        return LocalFileTarget(self, prefix="trace", ext="csv.gz", model=C18NDomainTransitionTraceModel)
+        return Target(self, "trace", loader=make_dataframe_loader(C18NDomainTransitionTraceModel), ext="csv.gz")
 
     def _parse(self, kdump: ty.IO) -> pd.DataFrame:
         line_matcher = re.compile(
@@ -116,7 +116,7 @@ class C18NTransitionsSummary(DatasetPlotTask):
 
     @output
     def hist_plot(self):
-        return PlotTarget(self)
+        return PlotTarget(self, "hist")
 
     def run_plot(self):
         df = self.data.df.get()
@@ -180,7 +180,7 @@ class C18NTransitionGraph(DatasetPlotTask):
 
     @output
     def reachability_plot(self):
-        return PlotTarget(self)
+        return PlotTarget(self, "graph")
 
     def run_plot(self):
         df = self.data.df.get()
@@ -277,7 +277,7 @@ class C18NAnnotateTrace(DatasetAnalysisTask):
         ext = "txt"
         if self.config.compress_output:
             ext += ".gz"
-        return DataRunAnalysisFileTarget(self, ext=ext)
+        return Target(self, "annotated", ext=ext)
 
     @output
     def trace_df(self):
@@ -285,7 +285,7 @@ class C18NAnnotateTrace(DatasetAnalysisTask):
 
     @output
     def html_output(self):
-        return DataRunAnalysisFileTarget(self, prefix="webview", ext="html")
+        return Target(self, "webview", ext="html")
 
     def run(self):
         df = self.data.df.get()

@@ -12,7 +12,7 @@ import seaborn as sns
 from matplotlib import rc_context
 
 from .analysis import AnalysisTask, DatasetAnalysisTask
-from .artefact import LocalFileTarget
+from .artefact import Target
 from .config import Config, InstanceConfig
 from .task import Task
 
@@ -84,37 +84,16 @@ class PlotTaskConfig(Config):
     target_config: List[PlotTargetConfig] = field(default_factory=list)
 
 
-class PlotTarget(LocalFileTarget):
+class PlotTarget(Target):
     """
     Target pointing to a plot path.
 
     The output path depends on whether the plot is associated to the session or to
     a single dataset.
     """
-    def __init__(self, task: Task, prefix: str = "", ext: str | None = None):
-        super().__init__(task, prefix=prefix, ext=ext)
-        if ext:
-            self._plot_ext = [ext]
-        else:
-            self._plot_ext = self._task.analysis_config.plot.plot_output_format
-        # Normalize extensions to start with a '.', this is needed by pathlib
-        self._plot_ext = [f".{ext}" for ext in self._plot_ext if not ext.startswith(".")]
-
-    def _session_paths(self):
-        return [self._task.session.get_plot_root_path() / self._file_name]
-
-    def _benchmark_paths(self):
-        return [self._task.benchmark.get_plot_path() / self._file_name]
-
-    def paths(self):
-        """
-        Generate multiple plots target paths with different extensions, as configured.
-        """
-        files = []
-        for base_path in super().paths():
-            for ext in self._plot_ext:
-                files.append(base_path.with_suffix(ext))
-        return files
+    def __init__(self, task: Task, output_id: str = "plot", **kwargs):
+        kwargs.setdefault("ext", self._task.analysis_config.plot.plot_output_format)
+        super().__init__(task, output_id, **kwargs)
 
 
 class PlotTaskMixin:

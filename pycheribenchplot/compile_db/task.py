@@ -7,7 +7,7 @@ from tempfile import TemporaryDirectory
 
 import pandas as pd
 
-from ..core.artefact import LocalFileTarget
+from ..core.artefact import Target, make_dataframe_loader
 from ..core.config import Config
 from ..core.task import DataGenTask, dependency, output
 from ..core.util import SubprocessHelper, resolve_system_command
@@ -235,7 +235,7 @@ class CheriBSDCompilationDB(CheriBSDBuild):
 
     @output
     def compilation_db(self):
-        return LocalFileTarget(self, ext="csv", model=CompilationDBModel)
+        return Target(self, "cdb", loader=make_dataframe_loader(CompilationDBModel), ext="csv")
 
 
 class CompilationDB(DataGenTask):

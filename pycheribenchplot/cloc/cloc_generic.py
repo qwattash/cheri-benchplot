@@ -12,11 +12,10 @@ from git import Repo
 from git.exc import InvalidGitRepositoryError
 
 from ..core.analysis import AnalysisTask
-from ..core.artefact import DataFrameTarget, LocalFileTarget
+from ..core.artefact import DataFrameTarget, Target, make_dataframe_loader
 from ..core.config import Config, ConfigPath
 from ..core.model import check_data_model
 from ..core.pandas_util import generalized_xs, map_index
-from ..core.plot import PlotTarget, PlotTask, new_figure
 from ..core.task import SessionDataGenTask, dependency, output
 from ..core.util import SubprocessHelper, resolve_system_command
 from .model import LoCCountModel, LoCDiffModel
@@ -242,11 +241,11 @@ class ExtractLoCGenericRepo(ExtractLoCBase):
 
     @output
     def cloc_diff(self):
-        return LocalFileTarget(self, prefix="cloc-diff", ext="csv", model=LoCDiffModel)
+        return Target(self, "cloc-diff", loader=make_dataframe_loader(LoCDiffModel), ext="csv")
 
     @output
     def cloc_baseline(self):
-        return LocalFileTarget(self, prefix="cloc-baseline", ext="csv", model=LoCCountModel)
+        return Target(self, "cloc-baseline", loader=make_dataframe_loader(LoCCountModel), ext="csv")
 
 
 class ExtractLoCMultiRepo(SessionDataGenTask):
