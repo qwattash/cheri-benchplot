@@ -6,9 +6,11 @@ from pandas.testing import assert_frame_equal
 from pandera.errors import SchemaError
 from pandera.typing import Index, Series
 
+from pycheribenchplot.core.analysis import AnalysisTask, DatasetAnalysisTask
 from pycheribenchplot.core.artefact import *
+from pycheribenchplot.core.config import AnalysisConfig
 from pycheribenchplot.core.model import DataModel, GlobalModel
-from pycheribenchplot.core.task import BenchmarkTask, SessionTask
+from pycheribenchplot.core.task import DataGenTask, SessionDataGenTask
 
 
 class FakeModel(GlobalModel):
@@ -22,8 +24,8 @@ class FakeBenchmarkModel(DataModel):
 
 
 @pytest.fixture
-def fake_task(mock_task_registry, fake_session):
-    class FakeTask(SessionTask):
+def fake_s_datagen_task(mock_task_registry, fake_session):
+    class FakeTask(SessionDataGenTask):
         task_namespace = "test"
         task_name = "fake-task"
 
@@ -31,12 +33,30 @@ def fake_task(mock_task_registry, fake_session):
 
 
 @pytest.fixture
-def fake_benchmark_task(mock_task_registry, fake_simple_benchmark):
-    class FakeTask(BenchmarkTask):
+def fake_datagen_task(mock_task_registry, fake_simple_benchmark):
+    class FakeTask(DataGenTask):
         task_namespace = "test"
         task_name = "fake-task"
 
-    return FakeTask(fake_simple_benchmark)
+    return FakeTask(fake_simple_benchmark, None)
+
+
+@pytest.fixture
+def fake_s_analysis_task(mock_task_registry, fake_session):
+    class FakeTask(AnalysisTask):
+        task_namespace = "test"
+        task_name = "fake-task"
+
+    return FakeTask(fake_session, AnalysisConfig())
+
+
+@pytest.fixture
+def fake_analysis_task(mock_task_registry, fake_simple_benchmark):
+    class FakeTask(DatasetAnalysisTask):
+        task_namespace = "test"
+        task_name = "fake-task"
+
+    return FakeTask(fake_simple_benchmark, AnalysisConfig())
 
 
 @pytest.fixture
@@ -48,157 +68,168 @@ def sample_content():
     return df.set_index("index")
 
 
-def test_dataframe_target(fake_task):
-    test_df = pd.DataFrame({"index": [1, 2, 3], "value": [10, 20, 30]}).set_index("index")
-    target = DataFrameTarget(fake_task, FakeModel)
+def test_target_session_exec_task(fake_s_datagen_task):
+    target = Target(fake_s_datagen_task, "OUTID")
+    task_uuid = fake_s_datagen_task.session.uuid
+    expect_path = fake_s_datagen_task.session.get_data_root_path() / f"OUTID-test-fake-task-{task_uuid}.txt"
 
-    assert not target.is_file()
+    assert target.get_base_path() == f"OUTID-test-fake-task-{task_uuid}"
+    assert target.get_root_path() == fake_s_datagen_task.session.get_data_root_path()
+    paths = list(target)
+    assert len(paths) == 1
+    assert paths[0] == expect_path
+
+
+def test_target_exec_task(fake_datagen_task):
+    target = Target(fake_datagen_task, "OUTID")
+    task_uuid = fake_datagen_task.benchmark.uuid
+    expect_path = fake_datagen_task.benchmark.get_benchmark_data_path() / f"OUTID-test-fake-task-{task_uuid}.txt"
+
+    assert target.get_base_path() == f"OUTID-test-fake-task-{task_uuid}"
+    assert target.get_root_path() == fake_datagen_task.benchmark.get_benchmark_data_path()
+    paths = list(target)
+    assert len(paths) == 1
+    assert paths[0] == expect_path
+
+
+def test_target_session_analysis_task(fake_s_analysis_task):
+    target = Target(fake_s_analysis_task, "OUTID")
+    task_uuid = fake_s_analysis_task.session.uuid
+    expect_path = fake_s_analysis_task.session.get_analysis_root_path() / f"OUTID-test-fake-task-{task_uuid}.txt"
+
+    assert target.get_base_path() == f"OUTID-test-fake-task-{task_uuid}"
+    assert target.get_root_path() == fake_s_analysis_task.session.get_analysis_root_path()
+    paths = list(target)
+    assert len(paths) == 1
+    assert paths[0] == expect_path
+
+
+def test_target_analysis_task(fake_analysis_task):
+    target = Target(fake_analysis_task, "OUTID")
+    task_uuid = fake_analysis_task.benchmark.uuid
+    expect_path = fake_analysis_task.benchmark.get_analysis_path() / f"OUTID-test-fake-task-{task_uuid}.txt"
+
+    assert target.get_base_path() == f"OUTID-test-fake-task-{task_uuid}"
+    assert target.get_root_path() == fake_analysis_task.benchmark.get_analysis_path()
+    paths = list(target)
+    assert len(paths) == 1
+    assert paths[0] == expect_path
+
+
+def test_dataframe_target(fake_s_analysis_task):
+    test_df = pd.DataFrame({"index": [1, 2, 3], "value": [10, 20, 30]}).set_index("index")
+    target = DataFrameTarget(fake_s_analysis_task, FakeModel)
+    task_uuid = fake_s_analysis_task.session.uuid
+
+    assert target.get_base_path() == f"fakemodel-test-fake-task-{task_uuid}"
 
     target.assign(test_df)
 
     df = target.get()
     assert_frame_equal(df, test_df)
 
-    target2 = DataFrameTarget(fake_task, FakeModel)
+    # Test Borg behaviour
+    target2 = DataFrameTarget(fake_s_analysis_task, FakeModel)
     df = target2.get()
     assert_frame_equal(df, test_df)
 
 
-def test_dataframe_target_without_model(fake_task):
-    test_df = pd.DataFrame({"index": [1, 2, 3], "value": [10, 20, 30]}).set_index("index")
-    target = DataFrameTarget(fake_task, None)
+def test_dataframe_target_with_ext(fake_s_analysis_task):
+    target = DataFrameTarget(fake_s_analysis_task, FakeModel, ext="csv")
+    task_uuid = fake_s_analysis_task.session.uuid
 
-    assert not target.is_file()
+    assert target.get_base_path() == f"fakemodel-test-fake-task-{task_uuid}"
+    paths = list(target)
+    assert len(paths) == 1
+    assert paths[0].name == f"fakemodel-test-fake-task-{task_uuid}.csv"
+
+
+def test_dataframe_target_without_model(fake_s_analysis_task):
+    test_df = pd.DataFrame({"index": [1, 2, 3], "value": [10, 20, 30]}).set_index("index")
+    target = DataFrameTarget(fake_s_analysis_task, None)
+    task_uuid = fake_s_analysis_task.session.uuid
+
+    assert target.get_base_path() == f"frame-test-fake-task-{task_uuid}"
 
     target.assign(test_df)
     df = target.get()
     assert_frame_equal(df, test_df)
 
 
-def test_dataframe_target_invalid(fake_task):
+def test_dataframe_target_invalid(fake_s_analysis_task):
     invalid_df = pd.DataFrame({"invalid": [1, 2, 3], "value": ["foo", "bar", "baz"]}).set_index("invalid")
-    target = DataFrameTarget(fake_task, FakeModel)
+    target = DataFrameTarget(fake_s_analysis_task, FakeModel)
 
     with pytest.raises(SchemaError):
         target.assign(invalid_df)
 
 
-def test_session_data_file_target(fake_task):
-    with pytest.raises(TypeError):
-        DataFileTarget(fake_task)
+def test_session_remote_file_target(fake_datagen_task):
+    target = RemoteTarget(fake_datagen_task, "OUTID", ext="EXT")
+    task_uuid = fake_datagen_task.benchmark.uuid
+
+    paths = [p for _, p in target.remote_paths()]
+    assert len(paths) == 1
+    assert paths[0].parent == Path("/root/benchmark-output")
+    assert paths[0].name == f"OUTID-test-fake-task-{task_uuid}.EXT"
 
 
-def test_session_local_file_target(fake_task):
-    target = LocalFileTarget(fake_task, ext="foo")
+def test_iteration_target(fake_datagen_task):
+    fake_datagen_task.benchmark.config.iterations = 3
+    target = BenchmarkIterationTarget(fake_datagen_task, "OUTID", ext="EXT")
+    task_uuid = fake_datagen_task.benchmark.uuid
 
-    # assert target.borg_state_id == ""
-    assert target.is_file()
-    assert len(target.paths()) == 1
-    assert target.path.parent == fake_task.session.get_data_root_path()
-    assert target.path.name == f"test-fake-task-{fake_task.session.uuid}.foo"
-
-    assert not target.needs_extraction()
-    with pytest.raises(TypeError):
-        target.remote_path
-    with pytest.raises(TypeError):
-        target.remote_paths()
+    paths = list(target)
+    assert len(paths) == 3
+    for i, p in enumerate(paths):
+        assert p.parent == fake_datagen_task.benchmark.get_benchmark_data_path() / str(i)
+        assert p.name == f"OUTID-test-fake-task-{task_uuid}.EXT"
 
 
-def test_session_file_target_with_iterations(fake_task):
-    target = LocalFileTarget(fake_task, use_iterations=True)
+def test_target_with_prefix(fake_datagen_task):
+    target = Target(fake_datagen_task, "OUTID", prefix="myprefix", ext="EXT")
+    task_uuid = fake_datagen_task.benchmark.uuid
 
-    with pytest.raises(NotImplementedError):
-        target.paths()
-
-
-def test_benchmark_file_target(fake_benchmark_task):
-    target = DataFileTarget(fake_benchmark_task)
-
-    assert target.is_file()
-    assert len(target.paths()) == 1
-    assert target.path.parent == fake_benchmark_task.benchmark.get_benchmark_data_path()
-    assert target.path.name == f"test-fake-task-{fake_benchmark_task.benchmark.uuid}"
-
-    assert target.needs_extraction()
-    assert len(target.remote_paths()) == 1
-    assert target.remote_path.parent == Path("/root/benchmark-output")
-    assert target.remote_path.name == f"test-fake-task-{fake_benchmark_task.benchmark.uuid}"
+    paths = list(target)
+    assert len(paths) == 1
+    assert paths[0].parent == fake_datagen_task.benchmark.get_benchmark_data_path() / "myprefix"
+    assert paths[0].name == f"OUTID-test-fake-task-{task_uuid}.EXT"
 
 
-def test_benchmark_file_target_with_iterations(fake_benchmark_task):
-    fake_benchmark_task.benchmark.config.iterations = 2
-    target = DataFileTarget(fake_benchmark_task, use_iterations=True)
-
-    assert target.is_file()
-    assert len(target.paths()) == 2
-    with pytest.raises(ValueError):
-        target.path
-    expect = [
-        fake_benchmark_task.benchmark.get_benchmark_iter_data_path(0),
-        fake_benchmark_task.benchmark.get_benchmark_iter_data_path(1)
-    ]
-    for p, e in zip(target.paths(), expect):
-        assert p.parent == e
-        assert p.name == f"test-fake-task-{fake_benchmark_task.benchmark.uuid}"
-
-    assert target.needs_extraction()
-    assert len(target.remote_paths()) == 2
-    with pytest.raises(ValueError):
-        target.remote_path
-    expect = [Path("/root/benchmark-output/0"), Path("/root/benchmark-output/1")]
-    for p, e in zip(target.remote_paths(), expect):
-        assert p.parent == e
-        assert p.name == f"test-fake-task-{fake_benchmark_task.benchmark.uuid}"
-
-
-def test_benchmark_file_target_with_prefix(fake_benchmark_task):
-    target = DataFileTarget(fake_benchmark_task, prefix="myprefix")
-
-    assert target.is_file()
-    assert len(target.paths()) == 1
-    assert target.path.parent == fake_benchmark_task.benchmark.get_benchmark_data_path()
-    assert target.path.name == f"myprefix-test-fake-task-{fake_benchmark_task.benchmark.uuid}"
-
-    assert target.needs_extraction()
-    assert len(target.remote_paths()) == 1
-    assert target.remote_path.parent == Path("/root/benchmark-output")
-    assert target.remote_path.name == f"myprefix-test-fake-task-{fake_benchmark_task.benchmark.uuid}"
-
-
-def test_file_target_loader(fake_task, sample_content):
-    test_session = fake_task.session.uuid
+def test_file_target_loader(fake_s_datagen_task, sample_content):
+    task_uuid = fake_s_datagen_task.session.uuid
     # Expect the content to be here
-    sample_content.to_csv(fake_task.session.get_data_root_path() / f"test-fake-task-{test_session}.csv")
+    expect_path = fake_s_datagen_task.session.get_data_root_path() / f"OUTID-test-fake-task-{task_uuid}.csv"
+    sample_content.to_csv(expect_path)
 
-    target = LocalFileTarget(fake_task, model=FakeModel, ext="csv")
+    target = Target(fake_s_datagen_task, "OUTID", loader=make_dataframe_loader(FakeModel), ext="csv")
 
     loader = target.get_loader()
     assert loader.is_session_task()
-    assert loader.task_id == f"internal.target-session-load-{test_session}-for-test.fake-task-{test_session}-output"
+    assert loader.is_exec_task() == False
 
     loader.run()
     assert_frame_equal(loader.df.get(), sample_content)
 
 
-def test_benchmark_file_target_loader(fake_benchmark_task, sample_content):
-    test_benchmark = fake_benchmark_task.benchmark.uuid
+def test_benchmark_file_target_loader(fake_datagen_task, sample_content):
+    task_uuid = fake_datagen_task.benchmark.uuid
     # Expect the content to be here
-    fake_benchmark_task.benchmark.get_benchmark_data_path().mkdir(exist_ok=True)
-    sample_content.to_csv(fake_benchmark_task.benchmark.get_benchmark_data_path() /
-                          f"test-fake-task-{test_benchmark}.csv")
+    fake_datagen_task.benchmark.get_benchmark_data_path().mkdir(exist_ok=True)
+    sample_content.to_csv(fake_datagen_task.benchmark.get_benchmark_data_path() /
+                          f"OUTID-test-fake-task-{task_uuid}.csv")
     # Expect that the loaded data will have the dataset_id, dataset_gid and iteration index levels
     expect_content = sample_content.reset_index()
-    expect_content["dataset_id"] = fake_benchmark_task.benchmark.uuid
-    expect_content["dataset_gid"] = fake_benchmark_task.benchmark.g_uuid
+    expect_content["dataset_id"] = fake_datagen_task.benchmark.uuid
+    expect_content["dataset_gid"] = fake_datagen_task.benchmark.g_uuid
     expect_content["iteration"] = -1
     expect_content["iteration"] = expect_content["iteration"].astype(pd.Int64Dtype())
     expect_content = expect_content.set_index(["dataset_id", "dataset_gid", "iteration", "index"])
 
-    target = DataFileTarget(fake_benchmark_task, model=FakeBenchmarkModel, ext="csv")
+    target = Target(fake_datagen_task, "OUTID", loader=make_dataframe_loader(FakeBenchmarkModel), ext="csv")
 
     loader = target.get_loader()
     assert loader.is_benchmark_task()
-    assert loader.task_id == f"internal.target-load-{test_benchmark}-for-test.fake-task-{test_benchmark}-output"
 
     loader.run()
     assert_frame_equal(loader.df.get(), expect_content)

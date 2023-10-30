@@ -4,7 +4,7 @@ from pathlib import Path
 
 from marshmallow.validate import OneOf
 
-from ..core.artefact import DataFileTarget
+from ..core.artefact import RemoteBenchmarkIterationTarget
 from ..core.config import Config, ConfigPath, ProfileConfig
 from ..core.task import ExecutionTask
 from ..qemu.task import QEMUTracingSetupTask
@@ -42,11 +42,11 @@ class NetperfExecTask(ExecutionTask):
         self.logger.debug("Using %s %s", self.netperf_bin, self.netserver_bin)
 
     def get_stats_target(self):
-        return DataFileTarget(self, use_iterations=True, ext="csv")
+        return RemoteBenchmarkIterationTarget(self, "stats", ext="csv")
 
     def get_hwpmc_target(self) -> Path:
         """The remote profiling output target"""
-        return DataFileTarget(self, prefix="hwpmc", use_iterations=True, ext="csv")
+        return RemoteBenchmarkIterationTarget(self, "hwpmc", ext="csv")
 
     def dependencies(self):
         if self.config.profile.qemu_trace:
@@ -69,13 +69,15 @@ class NetperfExecTask(ExecutionTask):
         netserver = s.add_cmd(self.netserver_bin, args=self.config.netserver_options, env=run_env, background=True)
         s.add_sleep(5)
 
+        hwpmc_paths = [p for _, p in self.get_hwpmc_target().remote_paths()]
+        stats_paths = [p for _, p in self.get_stats_target().remote_paths()]
         for i in range(self.benchmark.config.iterations):
             iteration_arguments = []
             if self.config.profile.hwpmc_trace:
-                iteration_arguments += ["-G", self.get_hwpmc_target().remote_paths()[i]]
+                iteration_arguments += ["-G", hwpmc_paths[i]]
             full_options = self.config.netperf_options + extra_arguments + iteration_arguments
             s = self.script.benchmark_sections[i]["benchmark"]
-            s.add_cmd(self.netperf_bin, full_options, env=run_env, output=self.get_stats_target().remote_paths()[i])
+            s.add_cmd(self.netperf_bin, full_options, env=run_env, output=stats_paths[i])
 
         s = self.script.sections["post-benchmark"]
         s.add_kill_cmd(netserver)

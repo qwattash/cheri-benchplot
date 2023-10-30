@@ -179,6 +179,7 @@ def test_param_group_simple_run(mocker, register_tasks, full_session):
 
     # Simulate computed dependencies
     task_load_0 = mocker.Mock(spec=DummyLoadTask)
+    task_load_0.task_id = "text.fake-load-task.0"
     target0 = DataFrameTarget(task_load_0, None)
     target0.schema = DummyModel.to_schema(full_session)
     target0.assign(input_df0)
@@ -187,6 +188,7 @@ def test_param_group_simple_run(mocker, register_tasks, full_session):
     task_load_0.output_map = {"df": target0}
 
     task_load_1 = mocker.Mock(spec=DummyLoadTask)
+    task_load_1.task_id = "text.fake-load-task.1"
     target1 = DataFrameTarget(task_load_1, None)
     target1.schema = DummyModel.to_schema(full_session)
     target1.assign(input_df1)

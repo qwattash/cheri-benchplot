@@ -415,8 +415,10 @@ class output:
         assert self._fn is not None
         result = self._fn(instance)
 
+        from .artefact import Target
+
         # Normalize generators and iterables to a list
-        if isinstance(result, Iterable) and not isinstance(result, list):
+        if not isinstance(result, Target) and isinstance(result, Iterable) and not isinstance(result, list):
             result = list(result)
         return result
 

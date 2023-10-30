@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock
 
-from .artefact import Target
+from .artefact import RemoteTarget, Target
 from .util import new_logger
 
 
@@ -130,8 +130,11 @@ class ScriptBuilder:
             """
             cmd = ScriptCommand(cmd=command, args=args or [], env=env or {}, background=background)
             if output and isinstance(output, Target):
-                # Must assume that the target points to a single file
-                cmd.stdout_path = output.remote_path
+                if isinstance(output, RemoteTarget):
+                    # Must assume that the target points to a single file
+                    _, cmd.stdout_path = list(output.remote_paths())[0]
+                else:
+                    raise RuntimeError("add_cmd() output target must be a RemoteTarget")
             else:
                 cmd.stdout_path = output
             if cpu is not None:

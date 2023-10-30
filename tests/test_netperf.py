@@ -112,8 +112,8 @@ def test_netperf_exec_task_default(netperf_session, mock_qemu_instance, mock_run
     expect_lines = [
         r"STATCOUNTERS_NO_AUTOSAMPLE=1 /opt/{instance.cheri_target}/netperf/bin/netserver &", r"PID_5=\$!",
         r"sysctl hw.qemu_trace_perthread=1",
-        r"STATCOUNTERS_NO_AUTOSAMPLE=1 /opt/{instance.cheri_target}/netperf/bin/netperf >> /root/benchmark-output/0/netperf-exec-8bc941a3-f6d6-4d37-b193-4738f1da3dae.csv",
-        r"STATCOUNTERS_NO_AUTOSAMPLE=1 /opt/{instance.cheri_target}/netperf/bin/netperf >> /root/benchmark-output/1/netperf-exec-8bc941a3-f6d6-4d37-b193-4738f1da3dae.csv",
+        r"STATCOUNTERS_NO_AUTOSAMPLE=1 /opt/{instance.cheri_target}/netperf/bin/netperf >> /root/benchmark-output/0/stats-netperf-exec-8bc941a3-f6d6-4d37-b193-4738f1da3dae.csv",
+        r"STATCOUNTERS_NO_AUTOSAMPLE=1 /opt/{instance.cheri_target}/netperf/bin/netperf >> /root/benchmark-output/1/stats-netperf-exec-8bc941a3-f6d6-4d37-b193-4738f1da3dae.csv",
         r"kill -TERM \$PID_5"
     ]
     check_lines_match(mock_run_script.getvalue().split("\n"), expect_lines)
@@ -129,10 +129,11 @@ def test_netperf_exec_task_default(netperf_session, mock_qemu_instance, mock_run
     # Verify that we tried to extract the correct files
     qemu_instance_object = mock_qemu_instance.return_value
     assert qemu_instance_object.extract_file.call_count == 2
+    print(qemu_instance_object.extract_file.calls)
     qemu_instance_object.extract_file.assert_any_call(
-        Path("/root/benchmark-output/0/netperf-exec-8bc941a3-f6d6-4d37-b193-4738f1da3dae.csv"), ANY)
+        Path("/root/benchmark-output/0/stats-netperf-exec-8bc941a3-f6d6-4d37-b193-4738f1da3dae.csv"), ANY)
     qemu_instance_object.extract_file.assert_any_call(
-        Path("/root/benchmark-output/1/netperf-exec-8bc941a3-f6d6-4d37-b193-4738f1da3dae.csv"), ANY)
+        Path("/root/benchmark-output/1/stats-netperf-exec-8bc941a3-f6d6-4d37-b193-4738f1da3dae.csv"), ANY)
 
 
 @pytest.mark.timeout(5)
@@ -148,8 +149,8 @@ def test_netperf_exec_task_args(netperf_args_session, mock_qemu_instance, mock_r
     expect_lines = [
         r"STATCOUNTERS_NO_AUTOSAMPLE=1 /opt/{instance.cheri_target}/netperf/bin/netserver -x -y &", r"PID_5=\$!",
         r"sysctl hw.qemu_trace_perthread=1",
-        r"STATCOUNTERS_NO_AUTOSAMPLE=1 /opt/{instance.cheri_target}/netperf/bin/netperf --foo --bar >> /root/benchmark-output/0/netperf-exec-8bc941a3-f6d6-4d37-b193-4738f1da3dae.csv",
-        r"STATCOUNTERS_NO_AUTOSAMPLE=1 /opt/{instance.cheri_target}/netperf/bin/netperf --foo --bar >> /root/benchmark-output/1/netperf-exec-8bc941a3-f6d6-4d37-b193-4738f1da3dae.csv",
+        r"STATCOUNTERS_NO_AUTOSAMPLE=1 /opt/{instance.cheri_target}/netperf/bin/netperf --foo --bar >> /root/benchmark-output/0/stats-netperf-exec-8bc941a3-f6d6-4d37-b193-4738f1da3dae.csv",
+        r"STATCOUNTERS_NO_AUTOSAMPLE=1 /opt/{instance.cheri_target}/netperf/bin/netperf --foo --bar >> /root/benchmark-output/1/stats-netperf-exec-8bc941a3-f6d6-4d37-b193-4738f1da3dae.csv",
         r"kill -TERM \$PID_5"
     ]
     check_lines_match(mock_run_script.getvalue().split("\n"), expect_lines)
@@ -166,9 +167,9 @@ def test_netperf_exec_task_args(netperf_args_session, mock_qemu_instance, mock_r
     qemu_instance_object = mock_qemu_instance.return_value
     assert qemu_instance_object.extract_file.call_count == 2
     qemu_instance_object.extract_file.assert_any_call(
-        Path("/root/benchmark-output/0/netperf-exec-8bc941a3-f6d6-4d37-b193-4738f1da3dae.csv"), ANY)
+        Path("/root/benchmark-output/0/stats-netperf-exec-8bc941a3-f6d6-4d37-b193-4738f1da3dae.csv"), ANY)
     qemu_instance_object.extract_file.assert_any_call(
-        Path("/root/benchmark-output/1/netperf-exec-8bc941a3-f6d6-4d37-b193-4738f1da3dae.csv"), ANY)
+        Path("/root/benchmark-output/1/stats-netperf-exec-8bc941a3-f6d6-4d37-b193-4738f1da3dae.csv"), ANY)
 
 
 @pytest.mark.timeout(5)
@@ -184,8 +185,8 @@ def test_netperf_exec_task_qemu(netperf_qemu_session, mock_qemu_instance, mock_r
     expect_lines = [
         r"STATCOUNTERS_NO_AUTOSAMPLE=1 /opt/{instance.cheri_target}/netperf/bin/netserver &", r"PID_5=\$!",
         r"sysctl hw.qemu_trace_perthread=1",
-        r"STATCOUNTERS_NO_AUTOSAMPLE=1 /opt/{instance.cheri_target}/netperf/bin/netperf >> /root/benchmark-output/0/netperf-exec-8bc941a3-f6d6-4d37-b193-4738f1da3dae.csv",
-        r"STATCOUNTERS_NO_AUTOSAMPLE=1 /opt/{instance.cheri_target}/netperf/bin/netperf >> /root/benchmark-output/1/netperf-exec-8bc941a3-f6d6-4d37-b193-4738f1da3dae.csv",
+        r"STATCOUNTERS_NO_AUTOSAMPLE=1 /opt/{instance.cheri_target}/netperf/bin/netperf >> /root/benchmark-output/0/stats-netperf-exec-8bc941a3-f6d6-4d37-b193-4738f1da3dae.csv",
+        r"STATCOUNTERS_NO_AUTOSAMPLE=1 /opt/{instance.cheri_target}/netperf/bin/netperf >> /root/benchmark-output/1/stats-netperf-exec-8bc941a3-f6d6-4d37-b193-4738f1da3dae.csv",
         r"kill -TERM \$PID_5"
     ]
     check_lines_match(mock_run_script.getvalue().split("\n"), expect_lines)
@@ -206,6 +207,6 @@ def test_netperf_exec_task_qemu(netperf_qemu_session, mock_qemu_instance, mock_r
     qemu_instance_object = mock_qemu_instance.return_value
     assert qemu_instance_object.extract_file.call_count == 2
     qemu_instance_object.extract_file.assert_any_call(
-        Path("/root/benchmark-output/0/netperf-exec-8bc941a3-f6d6-4d37-b193-4738f1da3dae.csv"), ANY)
+        Path("/root/benchmark-output/0/stats-netperf-exec-8bc941a3-f6d6-4d37-b193-4738f1da3dae.csv"), ANY)
     qemu_instance_object.extract_file.assert_any_call(
-        Path("/root/benchmark-output/1/netperf-exec-8bc941a3-f6d6-4d37-b193-4738f1da3dae.csv"), ANY)
+        Path("/root/benchmark-output/1/stats-netperf-exec-8bc941a3-f6d6-4d37-b193-4738f1da3dae.csv"), ANY)

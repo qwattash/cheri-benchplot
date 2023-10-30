@@ -315,6 +315,12 @@ class Session:
         """
         return self.session_root_path / "plots"
 
+    def get_analysis_root_path(self) -> Path:
+        """
+        :return: The root path for generated files during analysis
+        """
+        return self.get_plot_root_path()
+
     def get_asset_root_path(self) -> Path:
         """
         :return: The root path for binary assets e.g. kernel images

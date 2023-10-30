@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from ..core.artefact import LocalFileTarget
+from ..core.artefact import Target
 from ..core.config import InstancePlatform, ProfileConfig
 from ..core.task import ExecutionTask, output
 
@@ -18,14 +18,18 @@ class QEMUTracingSetupTask(ExecutionTask):
     task_namespace = "qemu.tracing"
     task_config_class = ProfileConfig
 
-    def get_qemu_profile_target(self) -> LocalFileTarget:
+    @output
+    def qemu_profile(self) -> Target:
         """The QEMU trace output file path"""
-        return LocalFileTarget(self, file_path=f"qemu-perfetto-{self.benchmark.uuid}.pb")
+        return Target(self, "profile", template=f"qemu-perfetto-{self.benchmark.uuid}.pb")
 
-    def get_qemu_interceptor_target(self) -> LocalFileTarget:
+    @output
+    def qemu_interceptor(self) -> Target:
         """The QEMU interceptor trace output file path"""
+        if self.config.qemu_trace == "perfetto-dynamorio":
+            return None
         path = Path("qemu-trace-dir") / f"qemu-perfetto-interceptor-{self.benchmark.uuid}.trace.gz"
-        return LocalFileTarget(self, file_path=path)
+        return Target(self, "interceptor", template=str(path))
 
     def run(self):
         if self.benchmark.config.instance.platform != InstancePlatform.QEMU:
@@ -33,19 +37,14 @@ class QEMUTracingSetupTask(ExecutionTask):
         opts = self.benchmark.config.instance.platform_options
         if self.config.qemu_trace == "perfetto":
             opts.qemu_trace = "perfetto"
-            opts.qemu_trace_file = self.get_qemu_profile_target().path
+            opts.qemu_trace_file = self.qemu_profile.single_path()
         elif self.config.qemu_trace == "perfetto-dynamorio":
-            path = self.get_qemu_interceptor_target().path
+            path = self.qemu_interceptor.single_path()
             # Ensure that we have the paths
             path.parent.mkdir(exist_ok=True)
             opts.qemu_trace = "perfetto-dynamorio"
-            opts.qemu_trace_file = self.get_qemu_profile_target().path
+            opts.qemu_trace_file = self.qemu_profile.single_path()
             opts.qemu_interceptor_trace_file = path
         elif self.config.qemu_trace is not None:
             raise ValueError("Unknown configuration for ProfileConfig.qemu_trace")
         opts.qemu_trace_categories = self.config.qemu_trace_categories
-
-    def outputs(self):
-        yield "perfetto-trace", self.get_qemu_profile_target()
-        if self.config.qemu_trace == "perfetto-dynamorio":
-            yield "interceptor-trace", self.get_qemu_interceptor_target()

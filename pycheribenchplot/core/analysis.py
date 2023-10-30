@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 from pandera import Field
 
-from .artefact import DataFrameTarget, DataRunAnalysisFileTarget
+from .artefact import BenchmarkIterationTarget, DataFrameTarget
 from .benchmark import Benchmark
 from .config import AnalysisConfig, Config
 from .model import DataModel
@@ -38,9 +38,6 @@ class DatasetAnalysisTask(AnalysisTask):
     Base class for analysis tasks that operate on a single dataset context.
     These generally used to perform per-dataset operations such as loading
     benchmark output data, pre-processing and preliminary aggregation.
-
-    XXX These tasks must be scheduled by a session-wide :class:`AnalysisTask` as currently the
-    session analysis system is not smart enough to create multiple of these tasks.
     """
     task_namespace = "analysis.dataset"
 
@@ -293,13 +290,12 @@ class BenchmarkDataLoadTask(DatasetAnalysisTask):
             self.logger.error("%s can not load data from task %s, output key %s missing", self, target_task,
                               self.target_key)
             raise KeyError(f"{self.target_key} is not in task output_map")
-        if not target.is_file():
-            raise NotImplementedError("BenchmarkDataLoadTask only supports loading from files")
-        for i, path in enumerate(target.paths()):
+
+        for i, path in enumerate(target):
             if not path.exists():
                 self.logger.error("Can not load %s, does not exist", path)
                 raise FileNotFoundError(f"{path} does not exist")
-            if not target.use_iterations:
+            if not isinstance(target, BenchmarkIterationTarget):
                 i = -1
             self._load_one(path, i)
         self.output_map["df"].assign(self._output_df())

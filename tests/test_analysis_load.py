@@ -5,7 +5,7 @@ import pytest
 from pandera.typing import Index, Series
 
 from pycheribenchplot.core.analysis import AnalysisTask, BenchmarkDataLoadTask
-from pycheribenchplot.core.artefact import DataFrameTarget, LocalFileTarget
+from pycheribenchplot.core.artefact import DataFrameTarget, Target
 from pycheribenchplot.core.config import AnalysisConfig
 from pycheribenchplot.core.model import DataModel
 from pycheribenchplot.core.task import ExecutionTask
@@ -19,7 +19,7 @@ class DummyExecTask(ExecutionTask):
         pass
 
     def outputs(self):
-        yield "test-target", LocalFileTarget(self, file_path="fake-path.csv")
+        yield "test-target", Target(self, "fake", ext="csv")
 
 
 class DummyModel(DataModel):
@@ -58,16 +58,17 @@ def csv_file_content(fake_analysis_session):
     # Ensure that the loader will find the csv file where expected
     task = DummyExecTask(fake_analysis_session.benchmark_matrix.iloc[0, 0], None)
     output = task.output_map["test-target"]
-    output.path.parent.mkdir(exist_ok=True)
-    with open(output.path, "w+") as f:
+    path = list(output)[0]
+    path.parent.mkdir(exist_ok=True)
+    with open(path, "w+") as f:
         writer = csv.writer(f)
         writer.writerow(["number", "name", "surname"])
         writer.writerow([0, "Dennis", "Ritchie"])
         writer.writerow([1, "Bjarne", "Stroustroup"])
         writer.writerow([2, "Graydon", "Hoare"])
         writer.writerow([3, "Claude", "Shannon"])
-    yield output.path
-    output.path.unlink()
+    yield path
+    path.unlink()
 
 
 @pytest.fixture

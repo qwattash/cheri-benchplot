@@ -7,6 +7,7 @@ from typing import Type
 
 import pandas as pd
 
+from .artefact import RemoteTarget
 from .config import AnalysisConfig, Config, ExecTargetConfig
 from .dwarf import DWARFManager
 from .elf import AddressSpaceManager
@@ -116,9 +117,11 @@ class BenchmarkExecTask(Task):
         Extract remote files for a given task.
         """
         for output_key, output in task.outputs():
-            if not output.is_file() or not output.needs_extraction():
+            if not isinstance(output, RemoteTarget):
                 continue
-            for remote_path, host_path in zip(output.remote_paths(), output.paths()):
+            for remote_entry, host_entry in zip(output.remote_paths(), output.paths()):
+                _, remote_path = remote_entry
+                _, host_path = host_entry
                 self.logger.debug("Extract %s guest: %s => host: %s", output_key, remote_path, host_path)
                 instance.extract_file(remote_path, host_path)
 
@@ -264,12 +267,18 @@ class Benchmark:
         """
         return self.session.get_asset_root_path() / f"{self.config.instance.name}-{self.g_uuid}"
 
-    def get_plot_path(self):
+    def get_plot_path(self) -> Path:
         """
         Get base plot path for the current benchmark instance.
         Every plot should use this path as the base path to generate plots.
         """
         return self.session.get_plot_root_path() / self.config.name
+
+    def get_analysis_path(self) -> Path:
+        """
+        :return: Base path for generated analysis files related to this benchmark.
+        """
+        return self.get_plot_path()
 
     def get_benchmark_iter_data_path(self, iteration: int) -> Path:
         """
