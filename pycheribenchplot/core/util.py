@@ -60,6 +60,12 @@ def setup_logging(verbose: bool = False, logfile: Path = None):
     pko_logger.addHandler(console_handler)
     if logfile:
         pko_logger.addHandler(file_handler)
+    # Handle sqlalchemy logging
+    sql_logger = logging.getLogger("sqlalchemy")
+    sql_logger.setLevel(logging.ERROR)
+    sql_logger.addHandler(console_handler)
+    if logfile:
+        sql_logger.addHandler(file_handler)
     return logger
 
 
@@ -81,7 +87,7 @@ def timing(name, level=logging.INFO, logger=None):
         logger.log(level, "%s in %.2fs", name, end - start)
 
 
-def resolve_system_command(name: str, logger: logging.Logger | None = None):
+def resolve_system_command(name: str, logger: logging.Logger | None = None) -> Path:
     if logger is None:
         logger = logging.getLogger("cheri-benchplot")
     path = shutil.which(name)
@@ -163,6 +169,11 @@ class SubprocessHelper:
             self._failed = (self._subprocess.returncode != 0)
         self.logger.debug("Subcommand %s I/O loop done", self.executable)
 
+    @property
+    def stdin(self) -> typing.IO:
+        assert self._subprocess is not None, "Can not access stdin before starting"
+        return self._subprocess.stdin
+
     def observe_stdout(self, handler: typing.Callable[[str], None]):
         """
         Add callback invoked on every stdout line.
@@ -202,6 +213,7 @@ class SubprocessHelper:
         self.logger.debug("Subcommand: %s %s", self.executable, " ".join(map(str, self.args)))
         self._subprocess = subprocess.Popen([self.executable] + self.args,
                                             env=self.env,
+                                            stdin=subprocess.PIPE,
                                             stdout=subprocess.PIPE,
                                             stderr=subprocess.PIPE,
                                             **popen_kwargs)

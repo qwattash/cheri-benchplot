@@ -5,6 +5,8 @@ from typing import Callable, ForwardRef, Iterator, Type
 
 import pandas as pd
 import pandera as pa
+import sqlalchemy as sqla
+from sqlalchemy.orm import Session as SqlSession
 from jinja2 import (Environment, PackageLoader, TemplateNotFound, select_autoescape)
 from typing_extensions import Self
 
@@ -315,7 +317,7 @@ class HTMLTemplateTarget(Target):
             fd.write(tmpl.render(**kwargs))
 
 
-class SQLTarget:
+class SQLTarget(Target):
     """
     Target that is associated with an sqlite database.
 
@@ -323,7 +325,20 @@ class SQLTarget:
     Queries can be executed by obtaining an SQL session as a
     context manager.
     """
-    pass
+    def __init__(self, task: Task, output_id: str):
+        self._engine = None
+
+        # Borg state initialization here
+        super().__init__(task, output_id, ext="sqlite")
+        # Avoid creating useless engines
+        if self._engine is None:
+            db_path = self.single_path()
+            db_path.parent.mkdir(exist_ok=True)
+            assert db_path.is_absolute(), "The path must always be absolute here"
+            self._engine = sqla.create_engine(f"sqlite+pysqlite:///{db_path}")
+
+    def session(self) -> SqlSession:
+        return SqlSession(self._engine)
 
 
 class DataFrameLoadTaskMixin:
