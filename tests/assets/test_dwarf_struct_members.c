@@ -1,6 +1,4 @@
 
-#include <stdio.h>
-
 struct bar {
   int x;
   int y;
@@ -25,21 +23,12 @@ struct foo {
   int (*j)[10];
   baz_t k;
   struct forward *l;
+  /* char  (*(*(* m [3])(int))[4])(double); */
 };
-
-void show(struct foo *fp)
-{
-  printf("Foo %d %s\n", fp->a, fp->b);
-}
 
 int main(int argc, char *argv[])
 {
-
   struct foo f;
-
-  f.a = 10;
-  f.b = "hello";
-  show(&f);
 
   return 0;
 }

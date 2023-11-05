@@ -199,16 +199,17 @@ def benchplot_user_config(pytestconfig):
 
 
 @pytest.fixture
-def fake_session_factory(tmp_path):
+def fake_session_factory(tmp_path_factory):
     cleanup = []
 
     def factory(config: dict = None, user_config: BenchplotUserConfig = None):
+        session_path = tmp_path_factory.mktemp("session-root-", numbered=True)
         if config is None:
             config = fake_session_conf
         sess_config = SessionRunConfig.schema().load(config)
         if user_config is None:
             user_config = BenchplotUserConfig()
-        session = Session(user_config, sess_config, session_path=tmp_path)
+        session = Session(user_config, sess_config, session_path=session_path)
         session.analysis_config = AnalysisConfig()
         cleanup.append(session)
         return session
@@ -220,14 +221,15 @@ def fake_session_factory(tmp_path):
 
 
 @pytest.fixture
-def fake_benchmark_factory(fake_session):
+def fake_benchmark_factory(fake_session_factory):
     def factory(config: dict = None, randomize_uuid: bool = False):
+        session = fake_session_factory()
         if config is None:
             config = fake_benchmark_conf
         bench_config = BenchmarkRunConfig.schema().load(config)
         if randomize_uuid:
             bench_config.uuid = uuid.uuid4()
-        return Benchmark(fake_session, bench_config)
+        return Benchmark(session, bench_config)
 
     return factory
 
