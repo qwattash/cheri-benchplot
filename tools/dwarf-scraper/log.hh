@@ -15,6 +15,8 @@ enum LogLevel {
   kDebug,
 };
 
+std::ostream &operator<<(std::ostream &os, LogLevel ll);
+
 struct LogMessage {
   LogLevel level;
   std::string message;

@@ -1,4 +1,6 @@
+#include <cassert>
 #include <format>
+#include <limits>
 #include <mutex>
 #include <stdexcept>
 
@@ -8,12 +10,34 @@
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Support/TargetSelect.h>
 
+#include "cheri_compressed_cap.h"
+
 #include "log.hh"
 #include "scraper.hh"
 
 namespace fs = std::filesystem;
 namespace object = llvm::object;
 namespace dwarf = llvm::dwarf;
+
+namespace {
+
+template <typename CC>
+std::pair<uint64_t, uint64_t> FindRepresentableRangeImpl(uint64_t base,
+                                                         uint64_t length) {
+  using AddrT = typename CC::addr_t;
+  using CheriCap = typename CC::cap_t;
+
+  CheriCap cap =
+      CC::make_max_perms_cap(0, base, std::numeric_limits<AddrT>::max() + 1);
+  bool exact = CC::setbounds(&cap, length);
+  if (exact) {
+    assert(cap.base() == base && "Invalid exact base?");
+    assert(cap.length64() == length && "Invalid exact length?");
+  }
+  return std::make_pair(cap.base(), cap.length64());
+}
+
+} // namespace
 
 namespace cheri {
 
@@ -85,9 +109,7 @@ llvm::DWARFContext &DwarfSource::GetContext() const { return *dictx_; }
 
 int DwarfSource::GetABIPointerSize() const {
   auto *obj = dictx_->getDWARFObj().getFile();
-  if (obj == nullptr) {
-    return -1;
-  }
+  assert(obj != nullptr && "Invalid DWARF source");
   auto triple = obj->makeTriple();
 
   if (triple.getEnvironment() == llvm::Triple::CheriPurecap) {
@@ -105,9 +127,7 @@ int DwarfSource::GetABIPointerSize() const {
 
 int DwarfSource::GetABICapabilitySize() const {
   auto *obj = dictx_->getDWARFObj().getFile();
-  if (obj == nullptr) {
-    return -1;
-  }
+  assert(obj != nullptr && "Invalid DWARF source");
   auto triple = obj->makeTriple();
 
   if (triple.getArch() == llvm::Triple::aarch64 ||
@@ -116,6 +136,23 @@ int DwarfSource::GetABICapabilitySize() const {
   } else if (triple.getArch() == llvm::Triple::riscv32) {
     return 8;
   }
+  throw std::runtime_error("Unsupported architecture");
+}
+
+std::pair<uint64_t, uint64_t>
+DwarfSource::FindRepresentableRange(uint64_t base, uint64_t length) const {
+  auto *obj = dictx_->getDWARFObj().getFile();
+  assert(obj != nullptr && "Invalid DWARF source");
+  auto triple = obj->makeTriple();
+
+  if (triple.getArch() == llvm::Triple::aarch64) {
+    return FindRepresentableRangeImpl<CompressedCap128m>(base, length);
+  } else if (triple.getArch() == llvm::Triple::riscv64) {
+    return FindRepresentableRangeImpl<CompressedCap128>(base, length);
+  } else if (triple.getArch() == llvm::Triple::riscv32) {
+    return FindRepresentableRangeImpl<CompressedCap64>(base, length);
+  }
+
   throw std::runtime_error("Unsupported architecture");
 }
 
@@ -243,17 +280,8 @@ void DwarfScraper::GetTypeInfo(const llvm::DWARFDie &die, TypeInfo &info) {
       }
       case dwarf::DW_TAG_const_type:
       case dwarf::DW_TAG_volatile_type:
-      case dwarf::DW_TAG_typedef: {
-        // auto name = GetStrAttr(curr_die, dwarf::DW_AT_name);
-        // if (!name) {
-        //   LOG(kError) << "Found DW_TAG_typedef without a name";
-        //   throw std::runtime_error("Typedef without a name");
-        // }
-        // // XXX should add an alias table
-        // // Reset the naming to reflect the typedef.
-        // info.type_name = *name;
+      case dwarf::DW_TAG_typedef:
         break;
-      }
       case dwarf::DW_TAG_reference_type:
       case dwarf::DW_TAG_rvalue_reference_type:
       case dwarf::DW_TAG_pointer_type: {

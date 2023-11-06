@@ -9,11 +9,11 @@ namespace dwarf = llvm::dwarf;
 /* Shorthand for the kind of file-line spec we want */
 using FileLineInfoKind = llvm::DILineInfoSpecifier::FileLineInfoKind;
 
-namespace {
-
-} // namespace
-
 namespace cheri {
+
+constexpr auto record_type_mask = TypeInfoFlags::kTypeIsStruct |
+                                  TypeInfoFlags::kTypeIsUnion |
+                                  TypeInfoFlags::kTypeIsClass;
 
 /**
  * Initialize the storage schema.
@@ -85,6 +85,47 @@ void StructLayoutScraper::InitSchema() {
               "FOREIGN KEY (owner) REFERENCES struct_type (id),"
               "FOREIGN KEY (nested) REFERENCES struct_type (id),"
               "UNIQUE(owner, name, offset))");
+
+  /*
+   * Create a view to produce a flattened structure layout with all nested
+   * members.
+   */
+  // sm_.SqlExec("CREATE RECURSIVE VIEW IF NOT EXISTS flattened_layout"
+  //             "(type_id, member_id, flat_offset, flat_name) AS "
+  //             "SELECT "
+  //             "struct_type.id AS type_id,"
+  //             "struct_member.id AS member_id,"
+  //             "struct_member.offset AS flat_offset,"
+  //             "struct_member.name AS flat_name "
+  //             "FROM struct_member JOIN struct_type ON struct_member.owner =
+  //             struct_type.id " "UNION ALL " "SELECT " "struct_type.id AS
+  //             type_id," "struct_member.id AS member_id,"
+  //             "(fl.flat_offset + nested_members.offset) AS flat_offset,"
+  //             "(nested_members.name || '::' || fl.flat_name) AS flat_name "
+  //             "FROM "
+  //             "(struct_member JOIN struct_type ON struct_member.owner =
+  //             struct_type.id) AS nested_members " "INNER JOIN
+  //             flattened_layout AS fl ON nested_members.nested =
+  //             fl.type_id;");
+
+  /*
+   * Create a table holding the representable bounds for each (nested) member
+   * of a structure.
+   */
+  sm_.SqlExec("CREATE TABLE IF NOT EXISTS member_bounds ("
+              // ID of the struct_type containing this member
+              "owner INTEGER NOT NULL,"
+              // ID of the corresponding member entry in struct_members
+              "member INTEGER NOT NULL,"
+              // Cumulative offset of this member from the start of owner
+              "offset INTEGER NOT NULL,"
+              // Representable sub-object base
+              "representable_base INTEGER NOT NULL,"
+              // Representable top of the sub-object
+              "representable_top INTEGER NOT NULL,"
+              "PRIMARY KEY (owner, member, offset),"
+              "FOREIGN KEY (owner) REFERENCES struct_type (id),"
+              "FOREIGN KEY (member) REFERENCES struct_member (id))");
 }
 
 bool StructLayoutScraper::visit_structure_type(llvm::DWARFDie &die) {
@@ -231,13 +272,22 @@ void StructLayoutScraper::VisitMember(const llvm::DWARFDie &die,
   member.name = GetStrAttr(die, dwarf::DW_AT_name).value_or(name);
 
   InsertStructMember(member);
+
+  // Check member representability
+  ComputeMemberSubobjectCapability(member);
+
+  // XXX the member id should be set, verify invariant
+  if (member.id == 0) {
+    LOG(kError) << "XXX member ID should be set here";
+  }
+  if ((member.flags & record_type_mask) != TypeInfoFlags::kTypeNone) {
+    LOG(kInfo) << "Look for nested members";
+  }
 }
 
-std::optional<uint64_t> StructLayoutScraper::VisitMemberType(
-    const llvm::DWARFDie &die, StructMemberRow &member) {
-  const auto record_type_mask = TypeInfoFlags::kTypeIsStruct |
-                                TypeInfoFlags::kTypeIsUnion |
-                                TypeInfoFlags::kTypeIsClass;
+std::optional<uint64_t>
+StructLayoutScraper::VisitMemberType(const llvm::DWARFDie &die,
+                                     StructMemberRow &member) {
   /* Returned ID for the nested type, if any */
   std::optional<uint64_t> nested_type_id = std::nullopt;
 
@@ -263,6 +313,21 @@ std::optional<uint64_t> StructLayoutScraper::VisitMemberType(
     nested_type_id = member.nested;
   }
   return nested_type_id;
+}
+
+void StructLayoutScraper::ComputeMemberSubobjectCapability(
+    const StructMemberRow &row) {
+  MemberBoundsRow mb_row;
+  mb_row.member = row.id;
+  mb_row.owner = row.owner;
+  mb_row.offset = row.byte_offset;
+  // XXX bit rounding
+  auto [base, length] =
+      dwsrc_->FindRepresentableRange(row.byte_offset, row.byte_size);
+  mb_row.base = base;
+  mb_row.top = base + length;
+
+  InsertMemberBounds(mb_row);
 }
 
 uint64_t StructLayoutScraper::GetStructOrPlaceholder(StructTypeRow &row) {
@@ -333,6 +398,16 @@ bool StructLayoutScraper::InsertStructMember(StructMemberRow &row) {
     return false;
   });
   return new_entry;
+}
+
+void StructLayoutScraper::InsertMemberBounds(const MemberBoundsRow &row) {
+  std::string q = std::format(
+      "INSERT INTO member_bounds (owner, member, offset, representable_base,"
+      "representable_top) "
+      "VALUES({0}, {1}, {2}, {3}, {4})",
+      row.owner, row.member, row.offset, row.base, row.top);
+
+  sm_.SqlExec(q);
 }
 
 } /* namespace cheri */

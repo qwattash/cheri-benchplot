@@ -28,7 +28,7 @@ struct EnumTraits<StructTypeFlags> {
 };
 
 /**
- * Helper to hold the data for a row in the StructTypes table.
+ * Helper to hold the data for a row in the struct_types table.
  */
 struct StructTypeRow {
   StructTypeRow()
@@ -40,11 +40,10 @@ struct StructTypeRow {
   std::string c_name;
   uint64_t size;
   StructTypeFlags flags;
-  // std::set<std::string> aliases;
 };
 
 /**
- * Helper to hold the data for a row in the StructMembers table
+ * Helper to hold the data for a row in the struct_members table.
  */
 struct StructMemberRow {
   StructMemberRow()
@@ -63,6 +62,17 @@ struct StructMemberRow {
   std::optional<unsigned char> bit_offset;
   TypeInfoFlags flags;
   std::optional<unsigned long> array_items;
+};
+
+/**
+ * Helper to hold the data for a row in the member_bounds table.
+ */
+struct MemberBoundsRow {
+  uint64_t owner;
+  uint64_t member;
+  uint64_t offset;
+  uint64_t base;
+  uint64_t top;
 };
 
 /**
@@ -113,7 +123,13 @@ protected:
                                           StructMemberRow &member);
 
   /**
-   * insert a new struct layout into the layouts table.
+   * Compute the sub-object member capability and create a corresponding
+   * entry into the member_bounds table.
+   */
+  void ComputeMemberSubobjectCapability(const StructMemberRow &row);
+
+  /**
+   * Insert a new struct layout into the layouts table.
    * Returns true if a new row was inserted.
    */
   bool InsertStructLayout(StructTypeRow &row);
@@ -127,17 +143,15 @@ protected:
   uint64_t GetStructOrPlaceholder(StructTypeRow &row);
 
   /**
-   * insert a new struct member into the members table.
+   * Insert a new struct member into the members table.
    * Returns true if a new row was inserted.
    */
   bool InsertStructMember(StructMemberRow &row);
 
   /**
-   * Cache type information by DIE offset in the dwarf section.
-   * This is safe as long as the scraper is used to extract information
-   * from a single file.
+   * Insert a new record in the member_bounds table.
    */
-  // std::map<uint64_t, > info_cache_;
+  void InsertMemberBounds(const MemberBoundsRow &row);
 };
 
 } /* namespace cheri */

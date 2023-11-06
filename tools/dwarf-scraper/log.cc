@@ -1,3 +1,4 @@
+#include <cassert>
 #include <iostream>
 
 #include "log.hh"
@@ -6,6 +7,27 @@ namespace cheri {
 
 static std::mutex global_logger_mutex;
 static std::unique_ptr<Logger> global_logger;
+
+std::ostream &operator<<(std::ostream &os, LogLevel ll) {
+  switch (ll) {
+  case kDebug:
+    os << "[DEBUG]";
+    break;
+  case kInfo:
+    os << "[INFO]";
+    break;
+  case kWarn:
+    os << "[WARN]";
+    break;
+  case kError:
+    os << "[ERROR]";
+    break;
+  default:
+    assert(false && "Not reached!");
+  }
+
+  return os;
+}
 
 Logger &Logger::Get() {
   std::lock_guard<std::mutex> lock(global_logger_mutex);
@@ -71,10 +93,10 @@ void ConsoleLogSink::Emit(LogMessage &msg) {
   switch (msg.level) {
   case kDebug:
   case kError:
-    std::cerr << msg.message << std::endl;
+    std::cerr << msg.level << " " << msg.message << std::endl;
     break;
   default:
-    std::cout << msg.message << std::endl;
+    std::cout << msg.level << " " << msg.message << std::endl;
   }
 }
 

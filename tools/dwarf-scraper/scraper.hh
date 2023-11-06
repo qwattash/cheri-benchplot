@@ -80,6 +80,8 @@ public:
   llvm::DWARFContext &GetContext() const;
   int GetABIPointerSize() const;
   int GetABICapabilitySize() const;
+  std::pair<uint64_t, uint64_t> FindRepresentableRange(uint64_t base,
+                                                       uint64_t length) const;
 
 private:
   std::filesystem::path path_;
