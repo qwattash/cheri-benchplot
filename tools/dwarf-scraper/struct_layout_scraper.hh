@@ -24,8 +24,7 @@ enum class StructTypeFlags {
   kTypeIsClass = 1 << 3
 };
 
-template<>
-struct EnumTraits<StructTypeFlags> {
+template <> struct EnumTraits<StructTypeFlags> {
   static constexpr bool is_bitflag = true;
 };
 
@@ -58,8 +57,8 @@ struct StructMemberRow {
   static StructMemberRow FromSql(SqlRowView view);
 
   StructMemberRow()
-      : id(0), owner(0), line(0), byte_size(0),
-        byte_offset(0), flags(TypeInfoFlags::kTypeNone) {}
+      : id(0), owner(0), line(0), byte_size(0), byte_offset(0),
+        flags(TypeInfoFlags::kTypeNone) {}
   uint64_t id;
   uint64_t owner;
   std::optional<uint64_t> nested;
@@ -74,7 +73,7 @@ struct StructMemberRow {
   std::optional<unsigned long> array_items;
 };
 
-std::ostream& operator<<(std::ostream &os, const StructMemberRow &row);
+std::ostream &operator<<(std::ostream &os, const StructMemberRow &row);
 
 /**
  * Helper to hold the data for a row in the member_bounds table.

@@ -101,15 +101,17 @@ struct TimingInfo {
  * Helper scope that extracts the timing of an event.
  */
 class TimingScope {
- public:
-  TimingScope(TimingInfo &ti) : ti_(ti), start_(std::chrono::steady_clock::now()) {}
+public:
+  TimingScope(TimingInfo &ti)
+      : ti_(ti), start_(std::chrono::steady_clock::now()) {}
   ~TimingScope() {
     auto end = std::chrono::steady_clock::now();
-    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start_);
+    auto elapsed =
+        std::chrono::duration_cast<std::chrono::milliseconds>(end - start_);
     ti_.avg = ((ti_.events * ti_.avg) + elapsed) / ++ti_.events;
   }
 
- private:
+private:
   TimingInfo &ti_;
   std::chrono::steady_clock::time_point start_;
 };
@@ -135,7 +137,7 @@ struct ScrapeResult {
   unsigned long dup_members;
 };
 
-std::ostream& operator<<(std::ostream &os, const ScrapeResult &sr);
+std::ostream &operator<<(std::ostream &os, const ScrapeResult &sr);
 
 /**
  * Flags used in the StructMembers.flags table field
@@ -152,8 +154,7 @@ enum class TypeInfoFlags {
   kTypeIsClass = 1 << 6
 };
 
-template<>
-struct EnumTraits<TypeInfoFlags> {
+template <> struct EnumTraits<TypeInfoFlags> {
   static constexpr bool is_bitflag = true;
 };
 
@@ -206,7 +207,8 @@ public:
   virtual void InitSchema() = 0;
 
 protected:
-  /* Helper to resolve a type definition given a Die with a DW_AT_type attribute */
+  /* Helper to resolve a type definition given a Die with a DW_AT_type attribute
+   */
   void GetTypeInfo(const llvm::DWARFDie &die, TypeInfo &info);
 
   TypeInfo GetTypeInfo(const llvm::DWARFDie &die) {
@@ -215,7 +217,6 @@ protected:
     GetTypeInfo(die, info);
     return info;
   }
-
 
   /* Subclasses must implement this to properly invoke VisitDispatch */
   virtual bool DoVisit(llvm::DWARFDie &die) = 0;

@@ -54,8 +54,7 @@ namespace cheri {
  * This is shared between the row views and the query.
  */
 struct QueryCursor {
-  QueryCursor(sqlite3_stmt *stmt)
-      : stmt(stmt), version(0) {}
+  QueryCursor(sqlite3_stmt *stmt) : stmt(stmt), version(0) {}
 
   /**
    * Relinquish the borrowed statement object.
@@ -127,25 +126,25 @@ SqlValue SqlRowView::ValueAt(std::string column) const {
     }
 
     switch (sqlite3_column_type(qc->stmt, i)) {
-      case SQLITE_INTEGER:
-        return sqlite3_column_int64(qc->stmt, i);
-      case SQLITE_FLOAT:
-        return sqlite3_column_double(qc->stmt, i);
-      case SQLITE_BLOB: {
-        size_t bytes = sqlite3_column_bytes(qc->stmt, i);
-        const std::byte *blob = static_cast<const std::byte *>(
-            sqlite3_column_blob(qc->stmt, i));
-        return std::vector<std::byte>(blob, blob + bytes);
-      }
-      case SQLITE_NULL:
-        return std::monostate{};
-      case SQLITE_TEXT:
-        return std::string(reinterpret_cast<const char *>(
-            sqlite3_column_text(qc->stmt, i)));
-      default:
-        LOG(kError) << "Unhandled sqlite data type for column " <<
-            std::quoted(name);
-        throw std::runtime_error("sqlite3 API error");
+    case SQLITE_INTEGER:
+      return sqlite3_column_int64(qc->stmt, i);
+    case SQLITE_FLOAT:
+      return sqlite3_column_double(qc->stmt, i);
+    case SQLITE_BLOB: {
+      size_t bytes = sqlite3_column_bytes(qc->stmt, i);
+      const std::byte *blob =
+          static_cast<const std::byte *>(sqlite3_column_blob(qc->stmt, i));
+      return std::vector<std::byte>(blob, blob + bytes);
+    }
+    case SQLITE_NULL:
+      return std::monostate{};
+    case SQLITE_TEXT:
+      return std::string(
+          reinterpret_cast<const char *>(sqlite3_column_text(qc->stmt, i)));
+    default:
+      LOG(kError) << "Unhandled sqlite data type for column "
+                  << std::quoted(name);
+      throw std::runtime_error("sqlite3 API error");
     }
   }
   LOG(kError) << "Column '" << column << "' does not exist in query result";
@@ -158,14 +157,14 @@ SqlValue SqlRowView::ValueAt(std::string column) const {
  * This satisfies the LegacyInputIterator concept.
  */
 class SqlQueryImpl : public SqlQuery {
- public:
-
+public:
   SqlQueryImpl(std::shared_ptr<DbConn> conn, std::string query)
       : SqlQuery(query), conn_(conn) {
-    int rc = sqlite3_prepare_v2(conn->Get(), query.c_str(), query.size(), &stmt_, nullptr);
+    int rc = sqlite3_prepare_v2(conn->Get(), query.c_str(), query.size(),
+                                &stmt_, nullptr);
     if (rc != SQLITE_OK) {
-      LOG(kError) << "Could not compile SQL query: " << query << " error: " <<
-          sqlite3_errmsg(conn->Get());
+      LOG(kError) << "Could not compile SQL query: " << query
+                  << " error: " << sqlite3_errmsg(conn->Get());
       throw StorageException(rc, sqlite3_errstr(rc));
     }
     TakeCursor();
@@ -181,14 +180,13 @@ class SqlQueryImpl : public SqlQuery {
   /**
    * Build a view token for the current cursor.
    */
-  SqlRowView GetRow() {
-    return SqlRowView(cursor_, cursor_->version);
-  }
+  SqlRowView GetRow() { return SqlRowView(cursor_, cursor_->version); }
 
   void Run(SqlCallback callback) override {
     if (!cursor_ || cursor_->version != 0) {
-      LOG(kError) << "Can not run query with invalid cursor, " <<
-          "must call TakeCursor() first to take ownership of the cursor.";
+      LOG(kError)
+          << "Can not run query with invalid cursor, "
+          << "must call TakeCursor() first to take ownership of the cursor.";
       throw std::runtime_error("Invalid query state");
     }
 
@@ -205,8 +203,8 @@ class SqlQueryImpl : public SqlQuery {
         }
       }
     } catch (const std::exception &ex) {
-      LOG(kError) << "Failed to execute sql query: " << query_ <<
-          " reason: " << ex.what();
+      LOG(kError) << "Failed to execute sql query: " << query_
+                  << " reason: " << ex.what();
       throw;
     }
     // Reset the cursor state
@@ -251,9 +249,10 @@ class SqlQueryImpl : public SqlQuery {
   int BindPositionFor(const std::string &param) override {
     int index = sqlite3_bind_parameter_index(stmt_, param.c_str());
     if (index == 0) {
-      LOG(kError) << "Can not bind query value for " << std::quoted(param) <<
-          ", the parameter name does not exist in query " << this->query_ <<
-          " Available parameter names are " << Join(GetBindNames());
+      LOG(kError) << "Can not bind query value for " << std::quoted(param)
+                  << ", the parameter name does not exist in query "
+                  << this->query_ << " Available parameter names are "
+                  << Join(GetBindNames());
       throw std::invalid_argument("Can not bind query argument, invalid name");
     }
     return index;
@@ -268,7 +267,7 @@ class SqlQueryImpl : public SqlQuery {
     cursor_ = std::make_shared<QueryCursor>(stmt_);
   }
 
- private:
+private:
   std::vector<std::string> GetBindNames() {
     std::vector<std::string> names;
     for (int i = 1; i < sqlite3_bind_parameter_count(stmt_); i++) {
@@ -279,14 +278,15 @@ class SqlQueryImpl : public SqlQuery {
 
   void CheckBind(int pos) {
     if (!cursor_ || cursor_->version != 0) {
-      LOG(kError) << "Must take the cursor in order to bind statement " <<
-          "parameters";
+      LOG(kError) << "Must take the cursor in order to bind statement "
+                  << "parameters";
       throw std::runtime_error("Invalid query state");
     }
     if (pos < 1 || pos > sqlite3_bind_parameter_count(stmt_)) {
-      LOG(kError) << "Can not bind query value at position " << pos <<
-          " for query " << this->query_;
-      throw std::invalid_argument("Can not bind query argument, invalid position");
+      LOG(kError) << "Can not bind query value at position " << pos
+                  << " for query " << this->query_;
+      throw std::invalid_argument(
+          "Can not bind query argument, invalid position");
     }
   }
 
@@ -299,7 +299,7 @@ class SqlQueryImpl : public SqlQuery {
  * Internal implementation of the storage manager.
  */
 class StorageManager::StorageManagerImpl {
- public:
+public:
   StorageManagerImpl(fs::path db_path) {
     db_ = std::make_shared<DbConn>(db_path);
 
@@ -310,7 +310,8 @@ class StorageManager::StorageManagerImpl {
   }
 
   std::unique_ptr<SqlQuery> Sql(std::string query) {
-    return std::make_unique<SqlQueryImpl>(db_, std::forward<std::string>(query));
+    return std::make_unique<SqlQueryImpl>(db_,
+                                          std::forward<std::string>(query));
   }
 
 private:

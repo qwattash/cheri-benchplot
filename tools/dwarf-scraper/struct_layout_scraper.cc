@@ -45,22 +45,22 @@ StructMemberRow StructMemberRow::FromSql(SqlRowView view) {
   return row;
 }
 
-std::ostream& operator<<(std::ostream &os, const StructMemberRow &row) {
-  os << "StructMemberRow{" <<
-      "id=" << row.id << ", " <<
-      "owner=" << row.owner << ", " <<
-      "nested=" << (row.nested ? std::to_string(*row.nested) : "NULL") << ", " <<
-      "name=" << std::quoted(row.name) << ", " <<
-      "tname=" << std::quoted(row.type_name) << ", " <<
-      "line=" << row.line << ", " <<
-      "off=" << row.byte_offset << "/" << row.bit_offset.value_or(0) << ", " <<
-      "size=" << row.byte_size << "/" << row.bit_size.value_or(0) << ", " <<
-      "flags=0x" << std::hex << row.flags << std::dec << ", " <<
-      "arrcnt=" << (row.array_items ? std::to_string(*row.array_items) : "NULL");
+std::ostream &operator<<(std::ostream &os, const StructMemberRow &row) {
+  os << "StructMemberRow{"
+     << "id=" << row.id << ", "
+     << "owner=" << row.owner << ", "
+     << "nested=" << (row.nested ? std::to_string(*row.nested) : "NULL") << ", "
+     << "name=" << std::quoted(row.name) << ", "
+     << "tname=" << std::quoted(row.type_name) << ", "
+     << "line=" << row.line << ", "
+     << "off=" << row.byte_offset << "/" << row.bit_offset.value_or(0) << ", "
+     << "size=" << row.byte_size << "/" << row.bit_size.value_or(0) << ", "
+     << "flags=0x" << std::hex << row.flags << std::dec << ", "
+     << "arrcnt="
+     << (row.array_items ? std::to_string(*row.array_items) : "NULL");
 
   return os;
 }
-
 
 /**
  * Initialize the storage schema.
@@ -282,8 +282,9 @@ void StructLayoutScraper::EndUnit(llvm::DWARFDie &unit_die) {
   // });
 }
 
-std::optional<int64_t> StructLayoutScraper::VisitCommon(
-    const llvm::DWARFDie &die, StructTypeFlags kind) {
+std::optional<int64_t>
+StructLayoutScraper::VisitCommon(const llvm::DWARFDie &die,
+                                 StructTypeFlags kind) {
   /* Skip declarations, we don't care. */
   if (die.find(dwarf::DW_AT_declaration)) {
     return std::nullopt;
@@ -348,11 +349,10 @@ void StructLayoutScraper::VisitMember(const llvm::DWARFDie &die,
   member.line = die.getDeclLine();
   member.owner = row.id;
   if (member.owner == 0) {
-    LOG(kError) << "Can not visit member of " << std::quoted(row.name) <<
-        " with invalid owner ID";
+    LOG(kError) << "Can not visit member of " << std::quoted(row.name)
+                << " with invalid owner ID";
     throw std::runtime_error("Invalid member owner ID");
   }
-
 
   auto member_type_die = die.getAttributeValueAsReferencedDie(dwarf::DW_AT_type)
                              .resolveTypeUnitReference();
@@ -404,8 +404,8 @@ void StructLayoutScraper::VisitMember(const llvm::DWARFDie &die,
   member.name = GetStrAttr(die, dwarf::DW_AT_name).value_or(name);
 
   InsertStructMember(member);
-  LOG(kDebug) << "Insert layout member " << member.name <<
-      " of type " << member.type_name << " ID=" << member.id;
+  LOG(kDebug) << "Insert layout member " << member.name << " of type "
+              << member.type_name << " ID=" << member.id;
 }
 
 std::optional<uint64_t>
@@ -444,8 +444,7 @@ StructLayoutScraper::VisitMemberType(const llvm::DWARFDie &die,
 void StructLayoutScraper::FindSubobjectCapabilities(int64_t struct_type_id) {
 
   std::string q = std::format(
-      "SELECT * FROM flattened_layout WHERE type_id = {}",
-      struct_type_id);
+      "SELECT * FROM flattened_layout WHERE type_id = {}", struct_type_id);
 
   sm_.SqlExec(q, [this, struct_type_id](SqlRowView result) {
     MemberBoundsRow mb_row;
@@ -463,7 +462,8 @@ void StructLayoutScraper::FindSubobjectCapabilities(int64_t struct_type_id) {
   });
 }
 
-bool StructLayoutScraper::InsertStructLayout(const llvm::DWARFDie &die, StructTypeRow &row) {
+bool StructLayoutScraper::InsertStructLayout(const llvm::DWARFDie &die,
+                                             StructTypeRow &row) {
   // Try to see if we already observed the layout,
   // if so there is no need to query the DB.
   auto cached = struct_type_cache_.find(die.getOffset());
@@ -478,8 +478,8 @@ bool StructLayoutScraper::InsertStructLayout(const llvm::DWARFDie &die, StructTy
   insert_struct_query_->Bind(row.file, row.line, row.name, row.size, row.flags);
   insert_struct_query_->Run([&new_entry, &row](SqlRowView result) {
     result.Fetch("id", row.id);
-    LOG(kDebug) << "Insert record type for " << row.name <<
-        " at " << row.file << ":" << row.line << " with ID=" << row.id;
+    LOG(kDebug) << "Insert record type for " << row.name << " at " << row.file
+                << ":" << row.line << " with ID=" << row.id;
     new_entry = true;
     return true;
   });
@@ -528,21 +528,20 @@ void StructLayoutScraper::InsertStructMember(StructMemberRow &row) {
     });
   } catch (const std::exception &ex) {
     StructMemberRow existing;
-    sm_.SqlExec(
-        std::format("SELECT * FROM struct_member WHERE owner={} AND "
-                    "name='{}' AND offset={}", row.owner, row.name,
-                    row.byte_offset),
-        [&existing](SqlRowView result) {
-          existing = StructMemberRow::FromSql(result);
-          return true;
-        });
-    LOG(kError) << "Failed to insert struct member " << row <<
-        " found " << existing;
+    sm_.SqlExec(std::format("SELECT * FROM struct_member WHERE owner={} AND "
+                            "name='{}' AND offset={}",
+                            row.owner, row.name, row.byte_offset),
+                [&existing](SqlRowView result) {
+                  existing = StructMemberRow::FromSql(result);
+                  return true;
+                });
+    LOG(kError) << "Failed to insert struct member " << row << " found "
+                << existing;
     throw;
   }
   if (!member_id) {
-    LOG(kError) << "No row returned by struct member insert for " << row.name <<
-        "owner=" << row.owner;
+    LOG(kError) << "No row returned by struct member insert for " << row.name
+                << "owner=" << row.owner;
     throw std::runtime_error("Invalid struct member insert");
   }
   row.id = *member_id;
@@ -555,8 +554,9 @@ void StructLayoutScraper::InsertMemberBounds(const MemberBoundsRow &row) {
       "VALUES({0}, {1}, {2}, '{3}', {4}, {5})",
       row.owner, row.member, row.offset, row.name, row.base, row.top);
 
-  LOG(kDebug) << "Record member bounds for " << row.name << std::hex <<
-      " base=0x" << row.base << " off=0x" << row.offset << " top=0x" << row.top;
+  LOG(kDebug) << "Record member bounds for " << row.name << std::hex
+              << " base=0x" << row.base << " off=0x" << row.offset << " top=0x"
+              << row.top;
   sm_.SqlExec(q);
 }
 

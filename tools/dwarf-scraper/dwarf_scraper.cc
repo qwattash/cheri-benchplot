@@ -23,13 +23,13 @@ namespace {
  */
 enum class ScraperID { StructLayout };
 
-std::ostream& operator<<(std::ostream &os, const ScraperID &value) {
+std::ostream &operator<<(std::ostream &os, const ScraperID &value) {
   switch (value) {
-    case ScraperID::StructLayout:
-      os << "struct-layout";
-      break;
-    default:
-      os << "<unknown-scraper>";
+  case ScraperID::StructLayout:
+    os << "struct-layout";
+    break;
+  default:
+    os << "<unknown-scraper>";
   }
   return os;
 }
@@ -79,8 +79,8 @@ void Scrape(ScrapeContext &ctx, fs::path target,
             auto scr = MakeScraper(id, ctx, dwsrc);
             scr->InitSchema();
             scr->Extract(stop_tok);
-            LOG(cheri::kInfo) << "Scraper " << id << " completed job for " <<
-                dwsrc->GetPath().string();
+            LOG(cheri::kInfo) << "Scraper " << id << " completed job for "
+                              << dwsrc->GetPath().string();
             return scr->Result();
           } catch (std::exception &ex) {
             LOG(cheri::kError)
@@ -178,7 +178,8 @@ int main(int argc, char **argv) {
   ScrapeContext ctx(opt_workers, fs::path(opt_database.c_str()));
 
   if (!opt_stdin && opt_input.size() == 0) {
-    LOG(cheri::kError) << "At least one of --input or --stdin must be specified.";
+    LOG(cheri::kError)
+        << "At least one of --input or --stdin must be specified.";
     cl::PrintHelpMessage();
   }
 

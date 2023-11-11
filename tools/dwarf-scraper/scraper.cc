@@ -7,8 +7,8 @@
 #include <llvm/DebugInfo/DIContext.h>
 #include <llvm/MC/TargetRegistry.h>
 #include <llvm/Object/ObjectFile.h>
-#include <llvm/Support/raw_ostream.h>
 #include <llvm/Support/TargetSelect.h>
+#include <llvm/Support/raw_ostream.h>
 
 #include "cheri_compressed_cap.h"
 
@@ -21,40 +21,36 @@ namespace dwarf = llvm::dwarf;
 
 namespace {
 
-template<typename CC>
-struct CapTraits {};
+template <typename CC> struct CapTraits {};
 
-template<>
-struct CapTraits<CompressedCap128m> {
+template <> struct CapTraits<CompressedCap128m> {
   using CapType = typename CompressedCap128m::cap_t;
   using AddrType = typename CompressedCap128m::addr_t;
-  static CapType& SetAddr(CapType& cap, AddrType cursor) {
+  static CapType &SetAddr(CapType &cap, AddrType cursor) {
     cc128m_set_addr(&cap, cursor);
     return cap;
   }
 };
 
-template<>
-struct CapTraits<CompressedCap128> {
+template <> struct CapTraits<CompressedCap128> {
   using CapType = typename CompressedCap128::cap_t;
   using AddrType = typename CompressedCap128::addr_t;
-  static CapType& SetAddr(CapType& cap, AddrType cursor) {
+  static CapType &SetAddr(CapType &cap, AddrType cursor) {
     cc128_set_addr(&cap, cursor);
     return cap;
   }
 };
 
-template<>
-struct CapTraits<CompressedCap64> {
+template <> struct CapTraits<CompressedCap64> {
   using CapType = typename CompressedCap64::cap_t;
   using AddrType = typename CompressedCap64::addr_t;
-  static CapType& SetAddr(CapType& cap, AddrType cursor) {
+  static CapType &SetAddr(CapType &cap, AddrType cursor) {
     cc64_set_addr(&cap, cursor);
     return cap;
   }
 };
 
-template<typename CC>
+template <typename CC>
 std::pair<uint64_t, uint64_t> FindRepresentableRangeImpl(uint64_t base,
                                                          uint64_t length) {
   using AddrT = typename CC::addr_t;
@@ -80,11 +76,11 @@ TimingScope ScrapeResult::Timing(std::string_view name) {
   return TimingScope(entry->second);
 }
 
-std::ostream& operator<<(std::ostream &os, const ScrapeResult &sr) {
+std::ostream &operator<<(std::ostream &os, const ScrapeResult &sr) {
   os << "Result for " << sr.source << ":";
   for (auto &prof : sr.profile) {
-    os << " |" << prof.first << "> #" << prof.second.events <<
-        " avg:" << prof.second.avg;
+    os << " |" << prof.first << "> #" << prof.second.events
+       << " avg:" << prof.second.avg;
   }
   return os;
 }
@@ -98,12 +94,12 @@ std::optional<unsigned long> GetULongAttr(const llvm::DWARFDie &die,
 }
 
 std::optional<std::string> GetStrAttr(const llvm::DWARFDie &die,
-                                        dwarf::Attribute attr) {
-    if (auto opt = dwarf::toString(die.find(attr))) {
-      return *opt;
-    }
-    return std::nullopt;
+                                      dwarf::Attribute attr) {
+  if (auto opt = dwarf::toString(die.find(attr))) {
+    return *opt;
   }
+  return std::nullopt;
+}
 
 llvm::DWARFDie FindFirstChild(const llvm::DWARFDie &die, dwarf::Tag tag) {
   for (auto &child : die) {
@@ -260,120 +256,121 @@ void DwarfScraper::GetTypeInfo(const llvm::DWARFDie &die, TypeInfo &info) {
   while (next) {
     chain.push_back(next);
     next = next.getAttributeValueAsReferencedDie(dwarf::DW_AT_type)
-           .resolveTypeUnitReference();
+               .resolveTypeUnitReference();
   }
 
   if (chain.size() == 0) {
-    LOG(kError) << "Failed to resolve type for member " <<
-        GetStrAttr(die, dwarf::DW_AT_name).value_or("<anonymous>");
+    LOG(kError) << "Failed to resolve type for member "
+                << GetStrAttr(die, dwarf::DW_AT_name).value_or("<anonymous>");
     throw std::runtime_error("Could not resolve type");
   }
 
   for (auto iter_die = chain.rbegin(); iter_die != chain.rend(); ++iter_die) {
     switch (iter_die->getTag()) {
-      case dwarf::DW_TAG_base_type: {
-        auto size = GetULongAttr(*iter_die, dwarf::DW_AT_byte_size);
-        if (!size) {
-          LOG(kError) << "Found DW_TAG_base_type without a size";
-          throw std::runtime_error("Base type without a size");
-        }
-        info.byte_size = *size;
-        info.type_die = *iter_die;
-        break;
+    case dwarf::DW_TAG_base_type: {
+      auto size = GetULongAttr(*iter_die, dwarf::DW_AT_byte_size);
+      if (!size) {
+        LOG(kError) << "Found DW_TAG_base_type without a size";
+        throw std::runtime_error("Base type without a size");
       }
-      case dwarf::DW_TAG_structure_type:
-      case dwarf::DW_TAG_class_type:
-      case dwarf::DW_TAG_union_type: {
-        using FLIKind = llvm::DILineInfoSpecifier::FileLineInfoKind;
-        info.decl_file = iter_die->getDeclFile(FLIKind::AbsoluteFilePath);
-        info.decl_line = iter_die->getDeclLine();
-        info.decl_name = GetStrAttr(*iter_die, dwarf::DW_AT_name)
-                         .value_or(AnonymousName(*iter_die));
+      info.byte_size = *size;
+      info.type_die = *iter_die;
+      break;
+    }
+    case dwarf::DW_TAG_structure_type:
+    case dwarf::DW_TAG_class_type:
+    case dwarf::DW_TAG_union_type: {
+      using FLIKind = llvm::DILineInfoSpecifier::FileLineInfoKind;
+      info.decl_file = iter_die->getDeclFile(FLIKind::AbsoluteFilePath);
+      info.decl_line = iter_die->getDeclLine();
+      info.decl_name = GetStrAttr(*iter_die, dwarf::DW_AT_name)
+                           .value_or(AnonymousName(*iter_die));
 
-        if (iter_die->getTag() == dwarf::DW_TAG_structure_type) {
-          info.flags |= TypeInfoFlags::kTypeIsStruct;
-        } else if (iter_die->getTag() == dwarf::DW_TAG_class_type) {
-          info.flags |= TypeInfoFlags::kTypeIsClass;
-        } else {
-          info.flags |= TypeInfoFlags::kTypeIsUnion;
-        }
-        if (iter_die->find(dwarf::DW_AT_declaration)) {
-          /*
-           * This only happens when we have a pointer to something,
-           * it is safe to ignore the size here, as the pointer DIE
-           * will set it.
-           */
-          break;
-        }
-        if (!iter_die->find(dwarf::DW_AT_name)) {
-          info.flags |= TypeInfoFlags::kTypeIsAnon;
-        }
-        auto size = GetULongAttr(*iter_die, dwarf::DW_AT_byte_size);
-        if (!size) {
-          LOG(kError) << "Found aggregate type without size";
-          throw std::runtime_error("Aggregate type without size");
-        }
-        info.byte_size = *size;
-        info.type_die = *iter_die;
+      if (iter_die->getTag() == dwarf::DW_TAG_structure_type) {
+        info.flags |= TypeInfoFlags::kTypeIsStruct;
+      } else if (iter_die->getTag() == dwarf::DW_TAG_class_type) {
+        info.flags |= TypeInfoFlags::kTypeIsClass;
+      } else {
+        info.flags |= TypeInfoFlags::kTypeIsUnion;
+      }
+      if (iter_die->find(dwarf::DW_AT_declaration)) {
+        /*
+         * This only happens when we have a pointer to something,
+         * it is safe to ignore the size here, as the pointer DIE
+         * will set it.
+         */
         break;
       }
-      case dwarf::DW_TAG_enumeration_type: {
-        if (iter_die->find(dwarf::DW_AT_declaration)) {
-          LOG(kWarn) << "TODO support enum member type declarations";
-          break;
-        }
-        auto size = GetULongAttr(*iter_die, dwarf::DW_AT_byte_size);
-        if (!size) {
-          LOG(kError) << "Found enum type without a size";
-          throw std::runtime_error("Enum type without a size");
-        }
-        info.byte_size = *size;
-        info.type_die = *iter_die;
+      if (!iter_die->find(dwarf::DW_AT_name)) {
+        info.flags |= TypeInfoFlags::kTypeIsAnon;
+      }
+      auto size = GetULongAttr(*iter_die, dwarf::DW_AT_byte_size);
+      if (!size) {
+        LOG(kError) << "Found aggregate type without size";
+        throw std::runtime_error("Aggregate type without size");
+      }
+      info.byte_size = *size;
+      info.type_die = *iter_die;
+      break;
+    }
+    case dwarf::DW_TAG_enumeration_type: {
+      if (iter_die->find(dwarf::DW_AT_declaration)) {
+        LOG(kWarn) << "TODO support enum member type declarations";
         break;
       }
-      case dwarf::DW_TAG_const_type:
-      case dwarf::DW_TAG_volatile_type:
-      case dwarf::DW_TAG_typedef:
-        break;
-      case dwarf::DW_TAG_reference_type:
-      case dwarf::DW_TAG_rvalue_reference_type:
-      case dwarf::DW_TAG_pointer_type: {
-        info.byte_size = GetULongAttr(*iter_die, dwarf::DW_AT_byte_size)
-                         .value_or(dwsrc_->GetABIPointerSize());
-        if ((info.flags & TypeInfoFlags::kTypeIsFn) == TypeInfoFlags::kTypeNone)
-          info.flags = TypeInfoFlags::kTypeIsPtr;
-        // Reset # of array items, as this is a pointer to an array
-        info.array_items = std::nullopt;
-        break;
+      auto size = GetULongAttr(*iter_die, dwarf::DW_AT_byte_size);
+      if (!size) {
+        LOG(kError) << "Found enum type without a size";
+        throw std::runtime_error("Enum type without a size");
       }
-      case dwarf::DW_TAG_array_type: {
-        llvm::DWARFDie subrange_die = FindFirstChild(*iter_die, dwarf::DW_TAG_subrange_type);
-        if (!subrange_die) {
-          LOG(kError) << "Found DW_TAG_array_type without a subrange DIE";
-          throw std::runtime_error("Array without subrange");
-        }
-        auto count = GetULongAttr(subrange_die, dwarf::DW_AT_count);
-        auto upper_bound = GetULongAttr(subrange_die, dwarf::DW_AT_upper_bound);
-        unsigned long array_items = 0;
-        if (count) {
-          array_items = *count;
-        } else if (upper_bound) {
-          array_items = *upper_bound + 1;
-        }
-        info.array_items = array_items;
-        info.byte_size = info.byte_size * array_items;
-        info.flags = TypeInfoFlags::kTypeIsArray;
-        break;
+      info.byte_size = *size;
+      info.type_die = *iter_die;
+      break;
+    }
+    case dwarf::DW_TAG_const_type:
+    case dwarf::DW_TAG_volatile_type:
+    case dwarf::DW_TAG_typedef:
+      break;
+    case dwarf::DW_TAG_reference_type:
+    case dwarf::DW_TAG_rvalue_reference_type:
+    case dwarf::DW_TAG_pointer_type: {
+      info.byte_size = GetULongAttr(*iter_die, dwarf::DW_AT_byte_size)
+                           .value_or(dwsrc_->GetABIPointerSize());
+      if ((info.flags & TypeInfoFlags::kTypeIsFn) == TypeInfoFlags::kTypeNone)
+        info.flags = TypeInfoFlags::kTypeIsPtr;
+      // Reset # of array items, as this is a pointer to an array
+      info.array_items = std::nullopt;
+      break;
+    }
+    case dwarf::DW_TAG_array_type: {
+      llvm::DWARFDie subrange_die =
+          FindFirstChild(*iter_die, dwarf::DW_TAG_subrange_type);
+      if (!subrange_die) {
+        LOG(kError) << "Found DW_TAG_array_type without a subrange DIE";
+        throw std::runtime_error("Array without subrange");
       }
-      case dwarf::DW_TAG_subroutine_type: {
-        info.flags |= TypeInfoFlags::kTypeIsFn;
-        info.type_die = *iter_die;
-        break;
+      auto count = GetULongAttr(subrange_die, dwarf::DW_AT_count);
+      auto upper_bound = GetULongAttr(subrange_die, dwarf::DW_AT_upper_bound);
+      unsigned long array_items = 0;
+      if (count) {
+        array_items = *count;
+      } else if (upper_bound) {
+        array_items = *upper_bound + 1;
       }
-      default:
-        auto tag_name = dwarf::TagString(iter_die->getTag());
-        LOG(kError) << "Unhandled DIE " << tag_name.str();
-        throw std::runtime_error("Unhandled DIE");
+      info.array_items = array_items;
+      info.byte_size = info.byte_size * array_items;
+      info.flags = TypeInfoFlags::kTypeIsArray;
+      break;
+    }
+    case dwarf::DW_TAG_subroutine_type: {
+      info.flags |= TypeInfoFlags::kTypeIsFn;
+      info.type_die = *iter_die;
+      break;
+    }
+    default:
+      auto tag_name = dwarf::TagString(iter_die->getTag());
+      LOG(kError) << "Unhandled DIE " << tag_name.str();
+      throw std::runtime_error("Unhandled DIE");
     }
   }
 

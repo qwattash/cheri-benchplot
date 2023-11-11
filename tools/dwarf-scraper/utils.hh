@@ -5,7 +5,7 @@
 #include <string>
 
 namespace cheri {
-template<typename T, char S=','>
+template <typename T, char S = ','>
 std::string Join(const std::vector<T> &&vec) {
   std::string acc;
   if (vec.size() == 0)
@@ -14,7 +14,7 @@ std::string Join(const std::vector<T> &&vec) {
 
   auto JoinFn = [](std::string left, const T &right) {
     if constexpr (std::constructible_from<std::string, decltype(right)>) {
-        return std::move(left) + S + right;
+      return std::move(left) + S + right;
     } else {
       return std::move(left) + S + std::to_string(right);
     }
