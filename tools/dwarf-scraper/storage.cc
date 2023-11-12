@@ -230,7 +230,7 @@ void SqlQueryCursor::BindAt(int pos, double value) {
   sqlite3_bind_double(state->stmt, pos, value);
 }
 
-void SqlQueryCursor::BindAt(int pos, std::string &value) {
+void SqlQueryCursor::BindAt(int pos, const std::string &value) {
   auto state = LockState();
   CheckBind(state, pos);
   sqlite3_bind_text(state->stmt, pos, value.data(), value.size(),
@@ -244,7 +244,7 @@ void SqlQueryCursor::BindAt(int pos, std::string &&value) {
                     SQLITE_TRANSIENT);
 }
 
-void SqlQueryCursor::BindAt(int pos, std::vector<std::byte> &value) {
+void SqlQueryCursor::BindAt(int pos, const std::vector<std::byte> &value) {
   auto state = LockState();
   CheckBind(state, pos);
   sqlite3_bind_blob(state->stmt, pos, value.data(), value.size(),

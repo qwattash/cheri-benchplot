@@ -190,10 +190,10 @@ void StructLayoutScraper::InitSchema() {
    * of a structure.
    */
   sm_.SqlExec("CREATE TABLE IF NOT EXISTS member_bounds ("
-              // Flattened name for the layout entry
-              "name text PRIMARY KEY,"
               // ID of the struct_type containing this member
               "owner int NOT NULL,"
+              // Flattened name for the layout entry
+              "name text NOT NULL,"
               // ID of the corresponding member entry in struct_members
               "member int NOT NULL,"
               // Cumulative offset of this member from the start of owner
@@ -202,35 +202,17 @@ void StructLayoutScraper::InitSchema() {
               "representable_base int NOT NULL,"
               // Representable top of the sub-object
               "representable_top int NOT NULL,"
+              "PRIMARY KEY (owner, name),"
               "FOREIGN KEY (owner) REFERENCES struct_type (id),"
               "FOREIGN KEY (member) REFERENCES struct_member (id))");
 
   /*
-   * Create a table view that determines whether struct layout is complete
-   * (does not have any nested incomplete placeholders) and
-   * does not have member_bounds extracted.
+   * Pre-compiled queries for member_bounds
    */
-  sm_.SqlExec("CREATE VIEW IF NOT EXISTS can_extract_member_bounds AS "
-              "WITH RECURSIVE impl(type_id, valid) AS ("
-              "  SELECT"
-              "    st.id AS type_id,"
-              "    st.flags != 0 AS valid"
-              "  FROM struct_type st"
-              "    JOIN struct_member sm ON st.id = sm.owner"
-              "  UNION ALL"
-              "  SELECT"
-              "    st.id AS type_id,"
-              "    (fl.valid & (st.flags != 0)) AS valid"
-              "  FROM"
-              "    struct_member sm"
-              "    JOIN struct_type st ON st.id = sm.owner"
-              "    JOIN impl fl ON fl.type_id = sm.nested"
-              ") "
-              "SELECT type_id, MIN(valid) AS valid FROM impl "
-              "WHERE NOT EXISTS("
-              "  SELECT * FROM member_bounds"
-              "    WHERE owner = impl.type_id"
-              ") GROUP BY type_id");
+  insert_member_bounds_query_ = sm_.Sql(
+      "INSERT INTO member_bounds ("
+      "  owner, member, offset, name, representable_base, representable_top) "
+      "VALUES(@owner, @member, @offset, @name, @base, @top)");
   // clang-format on
 }
 
@@ -269,18 +251,7 @@ void StructLayoutScraper::BeginUnit(llvm::DWARFDie &unit_die) {
   LOG(kDebug) << "Enter compilation unit " << unit_name;
 }
 
-void StructLayoutScraper::EndUnit(llvm::DWARFDie &unit_die) {
-  // std::string q = "SELECT * FROM can_extract_member_bounds";
-
-  // sm_.SqlExec(q, [this](SqlRowView result) {
-  //   if (result.FetchAs<bool>("valid")) {
-  //     int64_t id = result.FetchAs<int64_t>("type_id");
-  //     LOG(kDebug) << "Trigger inspect sub-objects for " << id;
-  //     FindSubobjectCapabilities(id);
-  //   }
-  //   return false;
-  // });
-}
+void StructLayoutScraper::EndUnit(llvm::DWARFDie &unit_die) {}
 
 std::optional<int64_t>
 StructLayoutScraper::VisitCommon(const llvm::DWARFDie &die,
@@ -335,6 +306,7 @@ StructLayoutScraper::VisitCommon(const llvm::DWARFDie &die,
     InsertStructMembers(m_rows);
     // Recursion guarantees that the layout is complete here.
     // Proceed to inspect the flattened layout.
+    FindSubobjectCapabilities(row.id);
   }
 
   return row.id;
@@ -442,6 +414,7 @@ void StructLayoutScraper::FindSubobjectCapabilities(int64_t struct_type_id) {
   std::string q = std::format(
       "SELECT * FROM flattened_layout WHERE type_id = {}", struct_type_id);
 
+  auto tx = sm_.BeginTransaction();
   sm_.SqlExec(q, [this, struct_type_id](SqlRowView result) {
     MemberBoundsRow mb_row;
     mb_row.owner = struct_type_id;
@@ -456,6 +429,9 @@ void StructLayoutScraper::FindSubobjectCapabilities(int64_t struct_type_id) {
     InsertMemberBounds(mb_row);
     return false;
   });
+  tx.Commit();
+
+  // Determine the alias groups for the member capabilities
 }
 
 bool StructLayoutScraper::InsertStructLayout(const llvm::DWARFDie &die,
@@ -542,16 +518,13 @@ void StructLayoutScraper::InsertStructMembers(
 }
 
 void StructLayoutScraper::InsertMemberBounds(const MemberBoundsRow &row) {
-  std::string q = std::format(
-      "INSERT INTO member_bounds (owner, member, offset, name, "
-      "representable_base, representable_top) "
-      "VALUES({0}, {1}, {2}, '{3}', {4}, {5})",
-      row.owner, row.member, row.offset, row.name, row.base, row.top);
+  auto cursor = insert_member_bounds_query_->TakeCursor();
+  cursor.Bind(row.owner, row.member, row.offset, row.name, row.base, row.top);
+  cursor.Run();
 
   LOG(kDebug) << "Record member bounds for " << row.name << std::hex
               << " base=0x" << row.base << " off=0x" << row.offset << " top=0x"
-              << row.top;
-  sm_.SqlExec(q);
+              << row.top << std::dec;
 }
 
 } /* namespace cheri */

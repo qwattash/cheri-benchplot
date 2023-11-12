@@ -177,6 +177,11 @@ protected:
    * Pre-compiled queries for InsertStructMember.
    */
   std::unique_ptr<SqlQuery> insert_member_query_;
+
+  /**
+   * Pre-compiled queries for InsertMemberBounds.
+   */
+  std::unique_ptr<SqlQuery> insert_member_bounds_query_;
 };
 
 } /* namespace cheri */

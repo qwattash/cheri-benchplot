@@ -150,6 +150,8 @@ public:
    */
   void Run(SqlCallback callback);
 
+  void Run() { Run(nullptr); }
+
   /**
    * Reset the cursor to a clean state.
    */
@@ -160,9 +162,9 @@ public:
    */
   void BindAt(int pos, int64_t value);
   void BindAt(int pos, double value);
-  void BindAt(int pos, std::string &value);
+  void BindAt(int pos, const std::string &value);
   void BindAt(int pos, std::string &&value);
-  void BindAt(int pos, std::vector<std::byte> &value);
+  void BindAt(int pos, const std::vector<std::byte> &value);
   void BindAt(int pos, std::vector<std::byte> &&value);
   void BindAt(int pos, std::monostate _);
 
