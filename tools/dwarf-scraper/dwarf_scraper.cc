@@ -50,18 +50,24 @@ struct ScrapeContext {
   std::vector<TaskFuture> future_results;
   /* Storage manager */
   cheri::StorageManager storage;
+  /* File path prefix to strip */
+  std::optional<std::string> strip_prefix;
 };
 
 std::unique_ptr<cheri::DwarfScraper>
 MakeScraper(ScraperID id, ScrapeContext &ctx,
             std::shared_ptr<cheri::DwarfSource> dwsrc) {
+  std::unique_ptr<cheri::DwarfScraper> s;
   switch (id) {
   case ScraperID::StructLayout:
     LOG(cheri::kDebug) << "Build StructLayout scraper for " << dwsrc->GetPath();
-    return std::make_unique<cheri::StructLayoutScraper>(ctx.storage, dwsrc);
+    s = std::make_unique<cheri::StructLayoutScraper>(ctx.storage, dwsrc);
+    break;
   default:
     throw std::runtime_error("Unexpected scraper ID");
   }
+  s->SetStripPrefix(ctx.strip_prefix);
+  return std::move(s);
 }
 
 void Scrape(ScrapeContext &ctx, fs::path target,
@@ -84,7 +90,8 @@ void Scrape(ScrapeContext &ctx, fs::path target,
             return scr->Result();
           } catch (std::exception &ex) {
             LOG(cheri::kError)
-                << "DWARF scraper failed for " << dwsrc->GetPath().string();
+                << "DWARF scraper failed for " << dwsrc->GetPath().string()
+                << " reason: " << ex.what();
             return std::nullopt;
           }
         });
@@ -194,6 +201,10 @@ int main(int argc, char **argv) {
   }
   ScrapeContext ctx(opt_workers, fs::path(opt_database.getValue()));
 
+  if (opt_prefix != "") {
+    ctx.strip_prefix = opt_prefix;
+  }
+
   if (!opt_stdin && opt_input.size() == 0) {
     LOG(cheri::kError)
         << "At least one of --input or --stdin must be specified.";
@@ -217,8 +228,10 @@ int main(int argc, char **argv) {
 
   /* Report results */
   for (auto &future_result : ctx.future_results) {
-    auto result = future_result.get().value();
-    LOG(cheri::kInfo) << result;
+    auto result = future_result.get();
+    if (result) {
+      LOG(cheri::kInfo) << *result;
+    }
   }
 
   return 0;

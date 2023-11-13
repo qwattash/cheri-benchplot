@@ -4,6 +4,7 @@
 #include "log.hh"
 #include "struct_layout_scraper.hh"
 
+namespace fs = std::filesystem;
 namespace dwarf = llvm::dwarf;
 
 /* Shorthand for the kind of file-line spec we want */
@@ -339,12 +340,15 @@ StructLayoutScraper::VisitCommon(const llvm::DWARFDie &die,
   row.size = *opt_size;
   row.file = die.getDeclFile(FileLineInfoKind::AbsoluteFilePath);
   row.line = die.getDeclLine();
+  if (strip_prefix_) {
+    row.file = fs::relative(row.file, *strip_prefix_);
+  }
 
   auto name = GetStrAttr(die, dwarf::DW_AT_name);
   if (name) {
     row.name = *name;
   } else {
-    row.name = AnonymousName(die);
+    row.name = AnonymousName(die, strip_prefix_);
     row.flags |= StructTypeFlags::kTypeIsAnonymous;
   }
 

@@ -67,7 +67,10 @@ llvm::DWARFDie FindFirstChild(const llvm::DWARFDie &die, llvm::dwarf::Tag tag);
  * Helper to build an unique anonymous name for a DIE.
  * This is used to construct anonymous names of record types.
  */
-std::string AnonymousName(const llvm::DWARFDie &die);
+std::string AnonymousName(const llvm::DWARFDie &die,
+                          const std::optional<std::filesystem::path> &strip);
+
+/**/
 
 /**
  * A shared DWARF object, possibly between multiple scrapers.
@@ -200,6 +203,13 @@ public:
   ScrapeResult Result();
 
   /**
+   * Set prefix path to strip from file names before committing to storage.
+   */
+  void SetStripPrefix(std::optional<std::string> prefix) {
+    strip_prefix_ = prefix;
+  }
+
+  /**
    * Hook to initialize the storage schema.
    * This should be called when the scraper is initialized. The schema may
    * already exist.
@@ -229,6 +239,10 @@ protected:
 
   StorageManager &sm_;
   std::shared_ptr<const DwarfSource> dwsrc_;
+  /**
+   * Path prefix to strip from any file path we emit to storage.
+   */
+  std::optional<std::filesystem::path> strip_prefix_;
 
   /* Statistics */
   ScrapeResult stats_;

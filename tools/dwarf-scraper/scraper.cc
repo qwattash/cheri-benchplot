@@ -109,9 +109,13 @@ llvm::DWARFDie FindFirstChild(const llvm::DWARFDie &die, dwarf::Tag tag) {
   return llvm::DWARFDie();
 }
 
-std::string AnonymousName(const llvm::DWARFDie &die) {
+std::string AnonymousName(const llvm::DWARFDie &die,
+                          const std::optional<fs::path> &strip) {
   using FLIKind = llvm::DILineInfoSpecifier::FileLineInfoKind;
   std::string file = die.getDeclFile(FLIKind::AbsoluteFilePath);
+  if (strip) {
+    file = fs::relative(file, *strip);
+  }
   unsigned long line = die.getDeclLine();
   return std::format("<anon>@{}+{:d}", file, line);
 }
@@ -284,7 +288,7 @@ void DwarfScraper::GetTypeInfo(const llvm::DWARFDie &die, TypeInfo &info) {
       info.decl_file = iter_die->getDeclFile(FLIKind::AbsoluteFilePath);
       info.decl_line = iter_die->getDeclLine();
       info.decl_name = GetStrAttr(*iter_die, dwarf::DW_AT_name)
-                           .value_or(AnonymousName(*iter_die));
+                           .value_or(AnonymousName(*iter_die, strip_prefix_));
 
       if (iter_die->getTag() == dwarf::DW_TAG_structure_type) {
         info.flags |= TypeInfoFlags::kTypeIsStruct;
