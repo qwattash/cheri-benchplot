@@ -1,5 +1,5 @@
 
-struct test_large_subobject {
+struct test_simple {
   int skew_offset;
   char large_buffer[((1 << 13) - 7)];
 };
@@ -32,12 +32,17 @@ struct test_flexible {
   char flexbuf[];
 };
 
+struct test_nested {
+  struct test_complex a;
+};
+
 int main() {
-  struct test_large_subobject a;
+  struct test_simple a;
   struct test_small_subobject b;
   struct test_age_softc_layout c;
   struct test_flexible d;
   struct test_complex e;
+  struct test_nested f;
 
   return 0;
 }

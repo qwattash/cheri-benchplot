@@ -11,7 +11,7 @@ from ..core.model import DataModel, GlobalModel
 from enum import IntFlag
 from typing import List, Optional
 
-from sqlalchemy import ForeignKey, Integer
+from sqlalchemy import ForeignKey, Integer, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy_utils import ChoiceType
 
@@ -74,27 +74,29 @@ class StructType(SqlBase):
     Table containing unique structures in the input data set.
     """
     __tablename__ = "struct_type"
+    __table_args__ = (
+        UniqueConstraint("name", "file", "line"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     file: Mapped[str] = mapped_column(nullable=False)
     line: Mapped[int] = mapped_column(nullable=False)
     name: Mapped[str]
-    c_name: Mapped[str]
     size: Mapped[int] = mapped_column(nullable=False)
     flags: Mapped[ChoiceType] = mapped_column(
         ChoiceType(StructTypeFlags, impl=Integer()),
         nullable=False, default=0)
 
     members: Mapped[List["StructMember"]] = relationship(
-        back_populates="owner_struct",
+        back_populates="owner_entry",
         foreign_keys="StructMember.owner",
         cascade="all, delete-orphan")
     referenced: Mapped[List["StructMember"]] = relationship(
-        back_populates="nested_struct",
+        back_populates="nested_entry",
         foreign_keys="StructMember.nested")
 
     def __repr__(self):
-        return f"StructType[{self.id}] @ {self.file}:{self.line} {self.c_name}"
+        return f"StructType[{self.id}] @ {self.file}:{self.line} {self.name}"
 
 
 class StructMemberFlags(IntFlag):
@@ -102,7 +104,7 @@ class StructMemberFlags(IntFlag):
     IsPtr = 1,
     IsFnPtr = 2,
     IsArray = 1 << 2,
-    IsDecl = 1 << 3,
+    IsAnon = 1 << 3,
     IsStruct = 1 << 4,
     IsUnion = 1 << 5,
     IsClass = 1 << 6
@@ -113,6 +115,9 @@ class StructMember(SqlBase):
     Table containing structure members for each structure.
     """
     __tablename__ = "struct_member"
+    __table_args__ = (
+        UniqueConstraint("owner", "name", "offset"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     owner: Mapped[int] = mapped_column(ForeignKey("struct_type.id"))
@@ -129,11 +134,65 @@ class StructMember(SqlBase):
         nullable=False, default=0)
     array_items: Mapped[Optional[int]]
 
-    owner_struct: Mapped["StructType"] = relationship(
+    owner_entry: Mapped["StructType"] = relationship(
         foreign_keys=owner, back_populates="members")
-    nested_struct: Mapped["StructType"] = relationship(
+    nested_entry: Mapped["StructType"] = relationship(
         foreign_keys=nested, back_populates="referenced")
 
     def __repr__(self):
         return (f"StructMember[{self.id}] ({self.offset}/{self.bit_offset}) {self.type_name}"
                 f"{self.owner.name}.{self.name}")
+
+
+class SubobjectAlias(SqlBase):
+    """
+    Table to link each imprecise member_bounds entry to the set of
+    member_bounds entries that are aliased by the imprecise capability
+    """
+    __tablename__ = "subobject_alias"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    subobj: Mapped[int] = mapped_column(ForeignKey("member_bounds.id"), primary_key=True)
+    alias: Mapped[int] = mapped_column(ForeignKey("member_bounds.id"), primary_key=True)
+
+    subobj_entry: Mapped["MemberBounds"] = relationship(foreign_keys=subobj)
+    alias_entry: Mapped["MemberBounds"] = relationship(foreign_keys=alias)
+
+    def __repr__(self):
+        return (f"SubobjectAlias[{self.subobj_entry.name} ->"
+                f" {self.alias_entry.name}]")
+
+
+class MemberBounds(SqlBase):
+    """
+    Table containing the flattened layout for each structure.
+    """
+    __tablename__ = "member_bounds"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(nullable=False)
+    owner: Mapped[int] = mapped_column(ForeignKey("struct_type.id"))
+    member: Mapped[int] = mapped_column(ForeignKey("struct_member.id"))
+    offset: Mapped[int] = mapped_column(nullable=False)
+    base: Mapped[int]
+    top: Mapped[int]
+
+    owner_entry: Mapped["StructType"] = relationship(foreign_keys=owner)
+    member_entry: Mapped["StructMember"] = relationship(foreign_keys=member)
+    aliasing_with: Mapped[List["MemberBounds"]] = relationship(
+        secondary="subobject_alias",
+        primaryjoin=(id == SubobjectAlias.subobj),
+        secondaryjoin=(SubobjectAlias.alias == id),
+        order_by=offset,
+        viewonly=True)
+    aliased_by: Mapped[List["MemberBounds"]] = relationship(
+        secondary="subobject_alias",
+        primaryjoin=(id == SubobjectAlias.alias),
+        secondaryjoin=(SubobjectAlias.subobj == id),
+        order_by=offset,
+        viewonly=True)
+
+    def __repr__(self):
+        return (f"MemberBounds[{self.name}] 0x{self.offset:x} "
+                f"[0x{self.base:x}, 0x{self.top:x}]")
+

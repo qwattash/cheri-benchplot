@@ -1,8 +1,9 @@
-
 import os
+import re
 import pytest
 from pathlib import Path
 from sqlalchemy import select
+from sqlalchemy.orm import aliased
 
 from pycheribenchplot.subobject.imprecise import *
 from pycheribenchplot.subobject.model import *
@@ -20,19 +21,28 @@ def find_member(name: str, mlist: list[StructMember]) -> StructMember:
     for m in mlist:
         if m.name == name:
             matches.append(m)
-    assert len(matches) < 2, f"Too many members named '{name}'"
-    assert len(matches) == 1, f"No member '{name}' found"
+    try:
+        assert len(matches) < 2, f"Too many members named '{name}'"
+        assert len(matches) == 1, f"No member '{name}' found"
+    except Exception as ex:
+        print("Available members:")
+        for m in mlist:
+            print(m.name)
+        raise ex
     return matches[0]
 
 
-def check_member(m: StructMember, nested=None, type_name="", line=None, size=None,
-                 bit_size=0, offset=None, bit_offset=0, flags=StructMemberFlags.Unset,
-                 array_items=0):
+def check_member(m: StructMember, nested=None, type_name="", type_name_m=None, line=None, size=None,
+                 bit_size=None, offset=None, bit_offset=None, flags=StructMemberFlags.Unset,
+                 array_items=None):
     """
     Helper to check a member row.
     """
     assert m.nested == nested
-    assert m.type_name == type_name
+    if type_name_m:
+        assert re.match(type_name_m, m.type_name)
+    else:
+        assert m.type_name == type_name
     assert m.line == line
     assert m.size == size
     assert m.bit_size == bit_size
@@ -60,14 +70,14 @@ def test_raw_table_simple(find_scraper, fake_benchmark_factory, asset_file):
         foo = session.scalars(select(StructType).where(StructType.name == "foo")).one()
         assert Path(foo.file).name == "test_dwarf_simple.c"
         assert foo.line == 9
-        assert foo.c_name == "foo"
+        assert foo.name == "foo"
         assert foo.size == 48
         assert foo.flags == StructTypeFlags.IsStruct
 
         bar = session.scalars(select(StructType).where(StructType.name == "bar")).one()
         assert Path(bar.file).name == "test_dwarf_simple.c"
         assert bar.line == 4
-        assert bar.c_name == "bar"
+        assert bar.name == "bar"
         assert bar.size == 8
         assert bar.flags == StructTypeFlags.IsStruct
 
@@ -78,33 +88,33 @@ def test_raw_table_simple(find_scraper, fake_benchmark_factory, asset_file):
         assert a.type_name == "int"
         assert a.line == 10
         assert a.size == 4
-        assert a.bit_size == 0
+        assert a.bit_size == None
         assert a.offset == 0
-        assert a.bit_offset == 0
+        assert a.bit_offset == None
         assert a.flags == StructMemberFlags.Unset
-        assert a.array_items == 0
+        assert a.array_items == None
 
         b = find_member("b", foo.members)
         assert b.nested == None
         assert b.type_name == "char *"
         assert b.line == 11
         assert b.size == 0x10
-        assert b.bit_size == 0
+        assert b.bit_size == None
         assert b.offset == 0x10
-        assert b.bit_offset == 0
+        assert b.bit_offset == None
         assert b.flags == StructMemberFlags.IsPtr
-        assert b.array_items == 0
+        assert b.array_items == None
 
         c = find_member("c", foo.members)
         assert c.nested == bar.id
         assert c.type_name == "bar"
         assert c.line == 12
         assert c.size == 0x8
-        assert c.bit_size == 0
+        assert c.bit_size == None
         assert c.offset == 0x20
-        assert c.bit_offset == 0
+        assert c.bit_offset == None
         assert c.flags == StructMemberFlags.IsStruct
-        assert c.array_items == 0
+        assert c.array_items == None
 
         assert len(bar.members) == 2
         x = find_member("x", bar.members)
@@ -112,22 +122,22 @@ def test_raw_table_simple(find_scraper, fake_benchmark_factory, asset_file):
         assert x.type_name == "int"
         assert x.line == 5
         assert x.size == 4
-        assert x.bit_size == 0
+        assert x.bit_size == None
         assert x.offset == 0
-        assert x.bit_offset == 0
+        assert x.bit_offset == None
         assert x.flags == StructMemberFlags.Unset
-        assert x.array_items == 0
+        assert x.array_items == None
 
         y = find_member("y", bar.members)
         assert y.nested == None
         assert y.type_name == "int"
         assert y.line == 6
         assert y.size == 4
-        assert y.bit_size == 0
+        assert y.bit_size == None
         assert y.offset == 4
-        assert y.bit_offset == 0
+        assert y.bit_offset == None
         assert y.flags == StructMemberFlags.Unset
-        assert y.array_items == 0
+        assert y.array_items == None
 
 
 @pytest.mark.parametrize("asset_file,ptr_size", [
@@ -147,7 +157,7 @@ def test_raw_table_members(find_scraper, fake_benchmark_factory, asset_file, ptr
         bar = session.scalars(select(StructType).where(StructType.name == "bar")).one()
         baz = session.scalars(select(StructType).where(StructType.name == "baz")).one()
 
-        assert len(foo.members) == 13
+        assert len(foo.members) == 12
         a = find_member("a", foo.members)
         check_member(a, type_name="int", line=14, size=4, offset=0)
         b = find_member("b", foo.members)
@@ -185,8 +195,220 @@ def test_raw_table_members(find_scraper, fake_benchmark_factory, asset_file, ptr
         l = find_member("l", foo.members)
         check_member(l, type_name="forward *", line=25, size=ptr_size,
                      offset=(20 * ptr_size), flags=StructMemberFlags.IsPtr)
-        # The name for this breaks due to a bug in LLVM
-        m = find_member("m", foo.members)
-        check_member(m, type_name="char (*(*(*[3])(int))[4])(double)", line=26,
-                     size=ptr_size, offset=(21 * ptr_size),
-                     flags=StructMemberFlags.IsFnPtr)
+
+
+@pytest.mark.parametrize("asset_file,ptr_size", [
+    ("tests/assets/riscv_hybrid_test_dwarf_struct_members_anon", 8),
+    ("tests/assets/riscv_purecap_test_dwarf_struct_members_anon", 16)])
+def test_raw_table_anon(find_scraper, fake_benchmark_factory, asset_file, ptr_size):
+    benchmark = fake_benchmark_factory(randomize_uuid=True)
+    config = ExtractImpreciseSubobjectConfig(dwarf_data_sources=[
+        PathMatchSpec(path=Path(asset_file), matcher=None)])
+    task = ExtractImpreciseSubobject(benchmark, None, task_config=config)
+
+    task.run()
+
+    # Open the database and check the raw table data
+    with task.struct_layout_db.session() as session:
+        foo = session.scalars(select(StructType).where(StructType.name == "foo")).one()
+        bar = session.scalars(select(StructType).where(StructType.name == "bar")).one()
+        baz = session.scalars(select(StructType).where(
+            StructType.name.like("<anon>@%test_dwarf_struct_members_anon.c+4"))).one()
+        anon_s_type = session.scalars(select(StructType).where(
+            StructType.name.like("<anon>@%test_dwarf_struct_members_anon.c+10"))).one()
+        anon_u_type = session.scalars(select(StructType).where(
+            StructType.name.like("<anon>@%test_dwarf_struct_members_anon.c+14"))).one()
+
+        assert len(foo.members) == 3
+        a = find_member("a", foo.members)
+        check_member(a, type_name_m=r"<anon>@.*test_dwarf_struct_members_anon\.c\+4",
+                     line=9, size=8, offset=0, nested=baz.id,
+                     flags=StructMemberFlags.IsStruct|StructMemberFlags.IsAnon)
+        anon_s = find_member(f"<anon>@{ptr_size}", foo.members)
+        check_member(anon_s, type_name_m=r"<anon>@.*test_dwarf_struct_members_anon\.c\+10",
+                     nested=anon_s_type.id, line=10, size=2 * ptr_size, offset=ptr_size,
+                     flags=StructMemberFlags.IsStruct|StructMemberFlags.IsAnon)
+        anon_u = find_member(f"<anon>@{3 * ptr_size}", foo.members)
+        check_member(anon_u, type_name_m=r"<anon>@.*test_dwarf_struct_members_anon\.c\+14",
+                     nested=anon_u_type.id, line=14, size=ptr_size, offset=3 * ptr_size,
+                     flags=StructMemberFlags.IsUnion|StructMemberFlags.IsAnon)
+
+
+@pytest.mark.parametrize("asset_file,ptr_size", [("tests/assets/riscv_purecap_test_dwarf_nested", 16),
+                                                 ("tests/assets/riscv_hybrid_test_dwarf_nested", 8)])
+def test_raw_table_flattened(find_scraper, fake_benchmark_factory, asset_file, ptr_size):
+    benchmark = fake_benchmark_factory(randomize_uuid=True)
+    config = ExtractImpreciseSubobjectConfig(dwarf_data_sources=[
+        PathMatchSpec(path=Path(asset_file), matcher=None)])
+    task = ExtractImpreciseSubobject(benchmark, None, task_config=config)
+
+    task.run()
+
+    # Open the database and check the raw table data
+    with task.struct_layout_db.session() as session:
+        # Inspect the flattened layout member_bounds table
+        foo = session.scalars(select(StructType).where(StructType.name == "foo")).one()
+
+        foo_layout = session.scalars(
+            select(MemberBounds).where(MemberBounds.owner_entry == foo)
+            .order_by(MemberBounds.offset)
+        ).all()
+
+        assert len(foo_layout) == 12
+
+        def check_bounds(index, name, offset, base, top):
+            mb = foo_layout[index]
+            assert mb.name == name
+            assert mb.offset == offset
+            assert mb.base == base
+            assert mb.top == top
+
+        check_bounds(0, "foo::a", 0, 0, 4)
+        check_bounds(1, "foo::b", 8, 8, 24)
+        check_bounds(2, "foo::b::b_bar", 8, 8, 24)
+        check_bounds(3, "foo::b::b_baz", 8, 8, 24)
+        check_bounds(4, "foo::b::b_bar::x", 8, 8, 12)
+        check_bounds(5, "foo::b::b_baz::v", 8, 8, 12)
+        check_bounds(6, "foo::b::b_bar::u", 16, 16, 24)
+        check_bounds(7, "foo::b::b_baz::u", 16, 16, 24)
+        check_bounds(8, "foo::b::b_bar::u::x", 16, 16, 20)
+        check_bounds(9, "foo::b::b_bar::u::y", 16, 16, 24)
+        check_bounds(10, "foo::b::b_baz::u::x", 16, 16, 20)
+        check_bounds(11, "foo::b::b_baz::u::y", 16, 16, 24)
+
+
+def test_raw_table_flattened(find_scraper, fake_benchmark_factory):
+    benchmark = fake_benchmark_factory(randomize_uuid=True)
+    config = ExtractImpreciseSubobjectConfig(dwarf_data_sources=[
+        PathMatchSpec(path=Path("tests/assets/riscv_purecap_test_unrepresentable_subobject"), matcher=None)])
+    task = ExtractImpreciseSubobject(benchmark, None, task_config=config)
+
+    task.run()
+
+    # Open the database and check the raw table data
+    with task.struct_layout_db.session() as session:
+        simple_struct = session.scalars(
+            select(StructType).where(StructType.name == "test_simple")
+        ).one()
+        complex_struct = session.scalars(
+            select(StructType).where(StructType.name == "test_complex")
+        ).one()
+        age_softc_struct = session.scalars(
+            select(StructType).where(StructType.name == "test_age_softc_layout")
+        ).one()
+
+        def check_bounds(mb, name, offset, base, top):
+            assert mb.name == name
+            assert mb.offset == offset
+            assert mb.base == base
+            assert mb.top == top
+
+        simple_layout = session.scalars(
+            select(MemberBounds).where(MemberBounds.owner_entry == simple_struct)
+            .order_by(MemberBounds.offset)
+        ).all()
+        assert len(simple_layout) == 2
+        check_bounds(simple_layout[0], "test_simple::skew_offset", 0, 0, 4)
+        check_bounds(simple_layout[1], "test_simple::large_buffer", 4, 0, 8192)
+
+        complex_layout = session.scalars(
+            select(MemberBounds).where(MemberBounds.owner_entry == complex_struct)
+            .order_by(MemberBounds.offset)
+        ).all()
+        assert len(complex_layout) == 5
+        check_bounds(complex_layout[0], "test_complex::before", 0, 0, 4)
+        check_bounds(complex_layout[1], "test_complex::inner", 4, 0, 16384)
+        check_bounds(complex_layout[2], "test_complex::inner::buf_before", 4, 0, 8192)
+        check_bounds(complex_layout[3], "test_complex::inner::buf_after", 8192, 8192, 16384)
+        check_bounds(complex_layout[4], "test_complex::after", 16379, 16379, 16389)
+
+        age_layout = session.scalars(
+            select(MemberBounds).where(MemberBounds.owner_entry == age_softc_struct)
+            .order_by(MemberBounds.offset)
+        ).all()
+        assert len(age_layout) == 3
+        check_bounds(age_layout[1], "test_age_softc_layout::cdata", 0x250, 0x240, 0x240 + 0x6140 + 0x20)
+
+
+def test_raw_table_alias(find_scraper, fake_benchmark_factory):
+    benchmark = fake_benchmark_factory(randomize_uuid=True)
+    config = ExtractImpreciseSubobjectConfig(dwarf_data_sources=[
+        PathMatchSpec(path=Path("tests/assets/riscv_purecap_test_unrepresentable_subobject"), matcher=None)])
+    task = ExtractImpreciseSubobject(benchmark, None, task_config=config)
+
+    task.run()
+
+        # Open the database and check the raw table data
+    with task.struct_layout_db.session() as session:
+        simple_struct = session.scalars(
+            select(StructType).where(StructType.name == "test_simple")
+        ).one()
+        complex_struct = session.scalars(
+            select(StructType).where(StructType.name == "test_complex")
+        ).one()
+        nested_struct = session.scalars(
+            select(StructType).where(StructType.name == "test_nested")
+        ).one()
+
+        def check_entry(entry, name, offset, base, top):
+            assert entry.name == name
+            assert entry.offset == offset
+            assert entry.base == base
+            assert entry.top == top
+
+        # Inspect alias group for simple_struct
+        alias_groups = session.scalars(
+            select(MemberBounds).where((MemberBounds.owner_entry == simple_struct) &
+                                       MemberBounds.aliasing_with.any())
+        ).all()
+        assert len(alias_groups) == 1
+        entry = alias_groups[0]
+        check_entry(entry, "test_simple::large_buffer", 0x4, 0, 0x2000)
+        assert len(entry.aliasing_with) == 1
+        check_entry(entry.aliasing_with[0], "test_simple::skew_offset", 0, 0, 0x4)
+
+        # Inspect alias groups for complex_struct
+        alias_groups = session.scalars(
+            select(MemberBounds).where((MemberBounds.owner_entry == complex_struct) &
+                                       MemberBounds.aliasing_with.any())
+            .order_by(MemberBounds.offset)
+        ).all()
+        assert len(alias_groups) == 3
+        entry = alias_groups[0]
+        check_entry(entry, "test_complex::inner", 0x4, 0, 0x4000)
+        assert len(entry.aliasing_with) == 2
+        check_entry(entry.aliasing_with[0], "test_complex::before", 0, 0, 0x4)
+        check_entry(entry.aliasing_with[1], "test_complex::after", 0x3ffb, 0x3ffb, 0x4005)
+
+        entry = alias_groups[1]
+        check_entry(entry, "test_complex::inner::buf_before", 0x4, 0, 0x2000)
+        assert len(entry.aliasing_with) == 1
+        check_entry(entry.aliasing_with[0], "test_complex::before", 0, 0, 0x4)
+
+        entry = alias_groups[2]
+        check_entry(entry, "test_complex::inner::buf_after", 0x2000, 0x2000, 0x4000)
+        assert len(entry.aliasing_with) == 1
+        check_entry(entry.aliasing_with[0], "test_complex::after", 0x3ffb, 0x3ffb, 0x4005)
+
+        # Inspect alias groups for nested_struct
+        alias_groups = session.scalars(
+            select(MemberBounds).where((MemberBounds.owner_entry == nested_struct) &
+                                       MemberBounds.aliasing_with.any())
+            .order_by(MemberBounds.offset)
+        ).all()
+        assert len(alias_groups) == 3
+        entry = alias_groups[0]
+        check_entry(entry, "test_nested::a::inner", 0x4, 0, 0x4000)
+        assert len(entry.aliasing_with) == 2
+        check_entry(entry.aliasing_with[0], "test_nested::a::before", 0, 0, 0x4)
+        check_entry(entry.aliasing_with[1], "test_nested::a::after", 0x3ffb, 0x3ffb, 0x4005)
+
+        entry = alias_groups[1]
+        check_entry(entry, "test_nested::a::inner::buf_before", 0x4, 0, 0x2000)
+        assert len(entry.aliasing_with) == 1
+        check_entry(entry.aliasing_with[0], "test_nested::a::before", 0, 0, 0x4)
+
+        entry = alias_groups[2]
+        check_entry(entry, "test_nested::a::inner::buf_after", 0x2000, 0x2000, 0x4000)
+        assert len(entry.aliasing_with) == 1
+        check_entry(entry.aliasing_with[0], "test_nested::a::after", 0x3ffb, 0x3ffb, 0x4005)
