@@ -1,7 +1,7 @@
-import re
+limport re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Iterator
+from typing import Iterator, List
 
 from ..core.artefact import SQLTarget
 from ..core.config import Config, ConfigPath
@@ -30,6 +30,9 @@ class ExtractImpreciseSubobjectConfig(Config):
 
     #: Optional path to the dwarf scraper tool
     dwarf_scraper: ConfigPath|None = None
+
+    #: Optional path prefix to strip from source file paths
+    src_path_prefix: ConfigPath|None = None
 
 
 class ExtractImpreciseSubobject(DataGenTask):
@@ -96,6 +99,8 @@ class ExtractImpreciseSubobject(DataGenTask):
         self.struct_layout_db.single_path().parent.mkdir(exist_ok=True)
         args = ["--stdin", "--database", self.struct_layout_db.single_path(),
                 "--scrapers", "struct-layout"]
+        if self.config.src_path_prefix:
+            args += ["--prefix", self.config.src_path_prefix]
         scraper = SubprocessHelper(self._dwarf_scraper, args, logger=self.logger)
         scraper.start()
         for src_spec in self.config.dwarf_data_sources:
