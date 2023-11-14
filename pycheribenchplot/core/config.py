@@ -28,6 +28,13 @@ from .error import ConfigurationError
 logger = logging.getLogger("cheri-benchplot")
 
 
+def make_uuid() -> str:
+    """
+    Helper that generates an UUID string
+    """
+    return str(uuid4())
+
+
 def resolve_task_options(task_spec: str, task_options: dict, is_exec: bool = False) -> Type["Task"]:
     """
     Helper to lazily coerce task options to the correct type.
@@ -142,12 +149,30 @@ class LazyNestedConfigField(mfields.Field):
         return value
 
 
+class UUIDField(mfields.Field):
+    """
+    Field used to coerce values to a valid UUID string representation.
+    """
+    def _serialize(self, value, attr, obj, **kwargs):
+        return str(value)
+
+    def _deserialize(self, value, attr, data, **kwargs):
+        if value is None:
+            raise ValidationError(f"Invalid UUID '{value}'")
+        try:
+            uid = UUID(str(value))
+        except ValueError:
+            raise ValidationError(f"Invalid UUID '{value}'")
+        return str(uid)
+
+
 # Helper type for dataclasses to use the PathField
 ConfigTaskSpec = NewType("ConfigTaskSpec", str, field=TaskSpecField)
 ConfigExecTaskSpec = NewType("ConfigExecTaskSpec", str, field=ExecTaskSpecField)
 ConfigPath = NewType("ConfigPath", Path, field=PathField)
 ConfigAny = NewType("ConfigAny", any, field=mfields.Raw)
 LazyNestedConfig = NewType("LazyNestedConfig", dict[str, any], field=LazyNestedConfigField)
+UUIDStr = NewType("UUIDStr", str, field=UUIDField)
 
 
 class ConfigContext:
@@ -741,7 +766,7 @@ class AnalysisConfig(Config):
     parameter_constants: Dict[str, dict] = dc.field(default_factory=dict)
 
     #: Baseline dataset group id, defaults to the baseline instance uuid
-    baseline_gid: Optional[UUID] = None
+    baseline_gid: Optional[UUIDStr] = None
 
     #: Use builtin symbolizer instead of addr2line
     use_builtin_symbolizer: bool = True
@@ -855,10 +880,10 @@ class BenchmarkRunConfig(CommonBenchmarkConfig):
     This represents a resolved benchmark run, associated to an ID and set of parameters.
     """
     #: Unique benchmark run identifier
-    uuid: UUID = dc.field(default_factory=uuid4)
+    uuid: UUIDStr = dc.field(default_factory=make_uuid)
 
     #: Unique benchmark group identifier, links benchmarks that run on the same instance
-    g_uuid: Optional[UUID] = None
+    g_uuid: Optional[UUIDStr] = None
 
     #: Benchmark parameters
     parameters: Dict[str, ConfigAny] = dc.field(default_factory=dict)
@@ -951,7 +976,7 @@ class SessionRunConfig(CommonSessionConfig):
     to run with the associated instance configurations.
     """
     #: Session unique ID
-    uuid: UUID = dc.field(default_factory=uuid4)
+    uuid: UUIDStr = dc.field(default_factory=make_uuid)
 
     #: Snapshots of the relevant git repositories that should be syncronised to this session
     #: These are taken when the session is created.

@@ -92,7 +92,7 @@ class PlotTarget(Target):
     a single dataset.
     """
     def __init__(self, task: Task, output_id: str = "plot", **kwargs):
-        kwargs.setdefault("ext", self._task.analysis_config.plot.plot_output_format)
+        kwargs.setdefault("ext", task.analysis_config.plot.plot_output_format)
         super().__init__(task, output_id, **kwargs)
 
 
@@ -118,19 +118,17 @@ class PlotTaskMixin:
             base = self.session.get_plot_root_path()
         return PlotTarget(self, base / name)
 
-    def get_instance_config(self, g_uuid: UUID) -> InstanceConfig:
+    def get_instance_config(self, g_uuid: str) -> InstanceConfig:
         """
         Helper to retreive an instance configuration for the given g_uuid.
         """
         gid_column = self.session.benchmark_matrix[g_uuid]
         return gid_column[0].config.instance
 
-    def g_uuid_to_label(self, g_uuid: UUID | str) -> str:
+    def g_uuid_to_label(self, g_uuid: str) -> str:
         """
         Helper that maps group UUIDs to a human-readable label that describes the instance
         """
-        if isinstance(g_uuid, str):
-            g_uuid = UUID(g_uuid)
         instance_config = self.get_instance_config(g_uuid)
         return instance_config.name
 

@@ -228,7 +228,7 @@ def fake_benchmark_factory(fake_session_factory):
             config = fake_benchmark_conf
         bench_config = BenchmarkRunConfig.schema().load(config)
         if randomize_uuid:
-            bench_config.uuid = uuid.uuid4()
+            bench_config.uuid = str(uuid.uuid4())
         return Benchmark(session, bench_config)
 
     return factory
