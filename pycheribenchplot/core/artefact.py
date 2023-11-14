@@ -6,8 +6,8 @@ from typing import Callable, ForwardRef, Iterator, Type
 import pandas as pd
 import pandera as pa
 import sqlalchemy as sqla
-from sqlalchemy.orm import Session as SqlSession
 from jinja2 import (Environment, PackageLoader, TemplateNotFound, select_autoescape)
+from sqlalchemy.orm import Session as SqlSession
 from typing_extensions import Self
 
 from .borg import Borg
@@ -336,6 +336,10 @@ class SQLTarget(Target):
             db_path.parent.mkdir(exist_ok=True)
             assert db_path.is_absolute(), "The path must always be absolute here"
             self._engine = sqla.create_engine(f"sqlite+pysqlite:///{db_path}")
+
+    @property
+    def sql_engine(self):
+        return self._engine
 
     def session(self) -> SqlSession:
         return SqlSession(self._engine)
