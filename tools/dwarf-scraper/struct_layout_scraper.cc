@@ -571,13 +571,14 @@ void StructLayoutScraper::InsertStructMembers(
       });
     } catch (const std::exception &ex) {
       StructMemberRow existing;
-      sm_.SqlExec(std::format("SELECT * FROM struct_member WHERE owner={} AND "
-                              "name='{}' AND offset={}",
-                              row.owner, row.name, row.byte_offset),
-                  [&existing](SqlRowView result) {
-                    existing = StructMemberRow::FromSql(result);
-                    return true;
-                  });
+      std::string q = std::format(
+          "SELECT * FROM struct_member WHERE owner={} AND "
+          "name='{}' AND offset={}",
+          row.owner, row.name, row.byte_offset);
+      sm_.SqlExec(q, [&existing](SqlRowView result) {
+        existing = StructMemberRow::FromSql(result);
+        return true;
+      });
       LOG(kError) << "Failed to insert struct member " << row << " found "
                   << existing;
       throw;
