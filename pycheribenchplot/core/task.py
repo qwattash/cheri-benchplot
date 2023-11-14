@@ -7,8 +7,10 @@ from contextlib import ExitStack, contextmanager
 from queue import Queue
 from threading import Condition, Event, Lock, Semaphore, Thread
 from typing import Any, Callable, ContextManager, Hashable, Iterable, Type
+from warnings import warn
 
 import networkx as nx
+import polars as pl
 
 from .borg import Borg
 from .config import Config
@@ -144,15 +146,34 @@ TASK_NAME_REGEX = re.compile(r"[\S.-]+")
 class Task(Borg, metaclass=TaskRegistry):
     """
     Abstract base class for dataset operations.
-    This can be a task to run a benchmark or perform an analysis step.
+
+    This can be a task to run some data-generation process or perform an analysis step.
     Tasks in the pipeline have determined inputs and outputs that are derived
     from the session that creates the tasks.
+
     Tasks start as individual entities. When scheduled, if multiple tasks have
     the same ID, one task instance will be elected as the main task, the others
     will be attached to it as drones.
     The drones will share the task state with the main task instance to
     maintain consistency when producing stateful task outputs.
-    This is a relatively strange dynamic Borg pattern.
+    This is essentially a Borg pattern where aliasing is determined dynamically
+    using the task_id.
+
+    Tasks are differentiated in two categories:
+      1. Data generation tasks (also referred as "execution tasks")
+      2. Data analysis tasks
+    The former are scheduled during the session "run" phase, while the latter execute
+    during the "analysis" phase.
+
+    There are two further categories of tasks that are ortogonal to the distinction
+    between data generation and analysis:
+      1. Session-wide tasks exist as a single instance for each session.
+        These are useful to collect data that is independent from execution contexts.
+        An example may be scraping a source code repository to extract some information,
+        this is independent from the variations of the built artefacts being run.
+      2. Per-dataset context tasks (also referred as "benchmark tasks") are replicated for each
+        data generation context. This essentially means that there is a per-dataset task
+        for each parameterization in the session datagen matrix.
     """
     #: Mark the task as a top-level target, which can be named in configuration files and from CLI commands.
     public = False
@@ -218,14 +239,20 @@ class Task(Borg, metaclass=TaskRegistry):
         return False
 
     @classmethod
-    def is_benchmark_task(cls) -> bool:
+    def is_dataset_task(cls) -> bool:
         """
         Helper to determine whether a Task should be treated like a :class:`BenchmarkTask`.
         """
         return False
 
+    @classmethod
+    def is_benchmark_task(cls) -> bool:
+        warn(f"{cls.__name__}.is_benchmark_task has been renamed is_dataset_task",
+             DeprecationWarning, 2)
+        return cls.is_dataset_task()
+
     @property
-    def session(self):
+    def session(self) -> "Session":
         raise NotImplementedError("Subclasses should override")
 
     @property
@@ -458,15 +485,15 @@ class SessionTask(Task):
         return f"{self.task_namespace}.{self.task_name}-{self.session.uuid}"
 
 
-class BenchmarkTask(Task):
+class DatasetTask(Task):
     """
     Base class for all tasks that are unique within a session.
 
     These tasks do not reference a specific benchmark ID or benchmark group ID.
     """
-    def __init__(self, benchmark: "Benchmark", task_config: Config = None):
+    def __init__(self, context: "Benchmark", task_config: Config = None):
         #: Associated benchmark context
-        self.benchmark = benchmark
+        self.benchmark = context
 
         # Borg initialization occurs here
         super().__init__(task_config=task_config)
@@ -475,7 +502,7 @@ class BenchmarkTask(Task):
         self.logger = new_logger(f"{self.task_name}", parent=self.benchmark.logger)
 
     @classmethod
-    def is_benchmark_task(cls):
+    def is_dataset_task(cls) -> bool:
         return True
 
     @property
@@ -483,11 +510,41 @@ class BenchmarkTask(Task):
         return self.benchmark.session
 
     @property
-    def task_id(self):
+    def task_id(self) -> str:
         return f"{self.task_namespace}.{self.task_name}-{self.benchmark.uuid}"
 
+    def add_dataset_metadata(self, df: pl.DataFrame) -> pl.DataFrame:
+        """
+        Add metadata columns for the dataset to a given dataframe.
 
-class ExecutionTask(BenchmarkTask):
+        This will create the following columns:
+          - dataset_id set to the UUID dataset identifier
+          - dataset_gid set to the UUID platform identifier
+          - a variable number of parameter key/value entries from the datagen
+            parameterization.
+        """
+        df = df.with_columns(
+            pl.lit(self.benchmark.uuid).alias("dataset_id"),
+            pl.lit(self.benchmark.g_uuid).alias("dataset_gid"),
+            *(pl.lit(v).alias(k) for k, v in self.benchmark.parameters.items()))
+        return df
+
+
+class BenchmarkTask(DatasetTask):
+    """
+    This is an alias for the DatasetTask.
+    """
+    def __init_subclass__(self):
+        warn("BenchmarkTask has been renamed DatasetTask", DeprecationWarning, 3)
+
+    @classmethod
+    def is_benchmark_task(cls):
+        warn(f"{cls.__name__}.is_benchmark_task has been renamed is_dataset_task",
+             DeprecationWarning, 2)
+        return cls.is_dataset_task()
+
+
+class ExecutionTask(DatasetTask):
     """
     Base class for tasks that are scheduled as dependencies of the main internal benchmark
     run task.

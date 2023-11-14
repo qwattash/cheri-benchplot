@@ -53,8 +53,14 @@ class DatasetAnalysisTask(AnalysisTask):
         return False
 
     @classmethod
-    def is_benchmark_task(cls):
+    def is_dataset_task(cls):
         return True
+
+    @classmethod
+    def is_benchmark_task(cls):
+        warn(f"{cls.__name__}.is_benchmark_task has been renamed is_dataset_task",
+             DeprecationWarning, 2)
+        return cls.is_dataset_task()
 
     @property
     def uuid(self):

@@ -12,7 +12,7 @@ from typing_extensions import Self
 
 from .borg import Borg
 from .model import BaseDataModel, DerivedSchemaBuilder
-from .task import BenchmarkTask, SessionTask, Task, output
+from .task import DatasetTask, SessionTask, Task, output
 
 
 class Target(Borg):
@@ -415,7 +415,7 @@ class DataFrameLoadTaskMixin:
         benchmark_only_index = ["dataset_id", "dataset_gid", "iteration"]
         has_benchmark_index = set(names).intersection(benchmark_only_index)
         if has_benchmark_index and not self.is_benchmark_task():
-            self.logger.error("The model index %s can only be set for BenchmarkTasks.", has_benchmark_index)
+            self.logger.error("The model index %s can only be set for DatasetTasks.", has_benchmark_index)
             raise TypeError("Invalid target task type")
 
         if "dataset_id" in names and "dataset_id" not in df.columns:
@@ -477,7 +477,7 @@ class DataFrameLoadTaskMixin:
         return pd.concat(df_set)
 
 
-class DataFrameLoadTask(BenchmarkTask, DataFrameLoadTaskMixin):
+class DataFrameLoadTask(DatasetTask, DataFrameLoadTaskMixin):
     """
     Internal task to load target data.
 
