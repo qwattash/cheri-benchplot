@@ -18,6 +18,8 @@ namespace fs = std::filesystem;
 namespace {
 using namespace cheri;
 
+static std::recursive_mutex transaction_mutex;
+
 class StorageBusyException : public StorageException {
  public:
   StorageBusyException(int rc, std::string message)
@@ -25,11 +27,19 @@ class StorageBusyException : public StorageException {
 };
 
 /**
+ * Helper state that is used to synchronise transactions.
+ */
+struct DBSync {
+  std::recursive_mutex tx_mutex;
+  bool active_transaction;
+};
+
+/**
  * RAII sqlite3 connection object.
  */
-class DbConn {
+class DBConn {
 public:
-  DbConn(fs::path db_path) : db_path_{db_path} {
+  DBConn(fs::path db_path) : db_path_{db_path} {
     LOG(kDebug) << "Open database conn @ " << db_path;
     constexpr int flags =
         SQLITE_OPEN_READWRITE | SQLITE_OPEN_NOMUTEX | SQLITE_OPEN_CREATE;
@@ -39,7 +49,7 @@ public:
     }
   }
 
-  ~DbConn() {
+  ~DBConn() {
     LOG(kDebug) << "Close database conn @ " << db_path_;
     if (conn_ != nullptr)
       sqlite3_close_v2(conn_);
@@ -61,7 +71,8 @@ namespace cheri {
  * row views produced by the cursor.
  */
 struct QueryCursorState {
-  QueryCursorState(sqlite3_stmt *stmt) : active(true), index(0), stmt(stmt) {}
+  QueryCursorState(DBSync &sync, sqlite3_stmt *stmt)
+      : sync_state(sync), active(true), index(0), stmt(stmt) {}
 
   /**
    * Advance the cursor to the next element.
@@ -75,20 +86,25 @@ struct QueryCursorState {
       LOG(kError) << "Cursor is active but has invalidated statement";
       throw std::runtime_error("Invalid cursor state");
     }
+    // std::lock_guard lock(sync_state.tx_mutex);
+    std::lock_guard<std::recursive_mutex> lock(transaction_mutex);
+    LOG(kDebug) << "ACQ STEP MUTEX";
     int rc = sqlite3_step(stmt);
     if (rc == SQLITE_ROW) {
       index++;
+      LOG(kDebug) << "REL STEP MUTEX";
       return true;
     } else if (rc == SQLITE_DONE) {
       index++;
+      LOG(kDebug) << "REL STEP MUTEX";
       return false;
-    } else if (rc == SQLITE_BUSY) {
-      throw StorageBusyException(rc, sqlite3_errstr(rc));
     } else {
-      throw StorageException(rc, sqlite3_errstr(rc));
+      LOG(kDebug) << "REL STEP MUTEX";
+      throw StorageException(rc, sqlite3_errstr(rc), sqlite3_sql(stmt));
     }
   }
 
+  DBSync &sync_state;
   bool active;
   size_t index;
   sqlite3_stmt *stmt;
@@ -193,8 +209,9 @@ std::shared_ptr<QueryCursorState> SqlQueryCursor::LockState() {
 void SqlQueryCursor::Run(SqlQueryCursor::SqlCallback callback) {
   auto state = LockState();
 
-  LOG(kDebug) << "Exec query: " << sqlite3_sql(state->stmt);
+  LOG(kTrace) << "Exec query: " << sqlite3_sql(state->stmt);
 
+  std::lock_guard<std::recursive_mutex> guard(transaction_mutex);
   while (state->Next()) {
     try {
       if (callback && callback(SqlRowView(state, state->index)))
@@ -301,8 +318,8 @@ SqlQueryCursor::GetBindNames(std::shared_ptr<QueryCursorState> state) {
  */
 class SqlQueryImpl : public SqlQuery {
 public:
-  SqlQueryImpl(std::shared_ptr<DbConn> conn, std::string query)
-      : SqlQuery(std::move(query)), conn_(conn) {
+  SqlQueryImpl(DBSync &sync, std::shared_ptr<DBConn> conn, std::string query)
+      : SqlQuery(std::move(query)), sync_(sync), conn_(conn) {
     int rc = sqlite3_prepare_v2(conn->Get(), query_.c_str(), query_.size(),
                                 &stmt_, nullptr);
     if (rc != SQLITE_OK) {
@@ -326,14 +343,15 @@ public:
       LOG(kError) << "Cursor is busy for query " << this->query_;
       throw std::runtime_error("Attempted to acquire busy cursor");
     }
-    cursor_ = std::make_shared<QueryCursorState>(stmt_);
+    cursor_ = std::make_shared<QueryCursorState>(sync_, stmt_);
     return SqlQueryCursor(cursor_);
   }
 
 private:
   sqlite3_stmt *stmt_;
+  DBSync &sync_;
   std::shared_ptr<QueryCursorState> cursor_;
-  std::shared_ptr<DbConn> conn_;
+  std::shared_ptr<DBConn> conn_;
 };
 
 /**
@@ -342,20 +360,14 @@ private:
 class StorageManager::StorageManagerImpl {
 public:
   StorageManagerImpl(fs::path db_path) {
-    db_ = std::make_shared<DbConn>(db_path);
-    active_transaction_ = false;
+    db_ = std::make_shared<DBConn>(db_path);
+    sync_.active_transaction = false;
 
-    int rc = 0;
     /*
      * Always use WAL journaling, this has better concurrency properties.
      * Just spin here to avoid complicated locking across storage managers.
      */
-    rc = sqlite3_exec(db_->Get(), "PRAGMA journal_mode=WAL;", nullptr,
-                            nullptr, nullptr);
-    if (rc != SQLITE_OK) {
-      LOG(kError) << "Failed to set WAL journal mode";
-      throw StorageException(rc, sqlite3_errstr(rc));
-    }
+    SqlFastExec("PRAGMA journal_mode=WAL");
 
     /* Initialize the database if necessary */
     auto make_jobs = Sql("CREATE TABLE IF NOT EXISTS jobs ("
@@ -365,24 +377,30 @@ public:
   }
 
   std::unique_ptr<SqlQuery> Sql(std::string query) {
-    return std::make_unique<SqlQueryImpl>(db_, std::move(query));
+    return std::make_unique<SqlQueryImpl>(sync_, db_, std::move(query));
   }
 
   void Transaction(std::function<void()> fn) {
-    if (active_transaction_) {
+    // reentrant mutex required?
+    // std::lock_guard guard(sync_.tx_mutex);
+    std::lock_guard<std::recursive_mutex> guard(transaction_mutex);
+    LOG(kDebug) << "ACQ TX MUTEX";
+    if (sync_.active_transaction) {
       LOG(kError) << "Attempted to begin transaction while another "
           "transaction is active. Nested transactions not supported";
       throw std::runtime_error("Cannot nest transactions");
     }
-    active_transaction_ = true;
+    sync_.active_transaction = true;
     try {
       SqlFastExec("BEGIN TRANSACTION");
       fn();
       SqlFastExec("COMMIT TRANSACTION");
-      active_transaction_ = false;
+      sync_.active_transaction = false;
+      LOG(kDebug) << "REL TX MUTEX";
     } catch (const std::exception &ex) {
       SqlFastExec("ROLLBACK TRANSACTION");
-      active_transaction_ = false;
+      sync_.active_transaction = false;
+      LOG(kDebug) << "REL TX MUTEX";
       throw;
     }
   }
@@ -390,20 +408,21 @@ public:
 private:
   /**
    * Internal helper to execute a query string.
-   * This may be used inside a transaction. If the database is busy, this
-   * raises a StorageBusyException, which must be handled.
+   * Note that this does not lock the database for a transaction.
    */
   void SqlFastExec(std::string query) {
+    std::lock_guard<std::recursive_mutex> guard(transaction_mutex);
+    LOG(kDebug) << "ACQ FAST MUTEX";
     int rc = sqlite3_exec(db_->Get(), query.c_str(), nullptr, nullptr, nullptr);
-    if (rc == SQLITE_BUSY) {
-      throw StorageBusyException(rc, sqlite3_errstr(rc));
-    } else if (rc != SQLITE_OK) {
-      throw StorageException(rc, sqlite3_errstr(rc));
+    if (rc != SQLITE_OK) {
+      LOG(kDebug) << "REL FAST MUTEX";
+      throw StorageException(rc, sqlite3_errstr(rc), query);
     }
+    LOG(kDebug) << "REL FAST MUTEX";
   }
 
-  std::shared_ptr<DbConn> db_;
-  bool active_transaction_;
+  std::shared_ptr<DBConn> db_;
+  DBSync sync_;
 };
 
 StorageManager::StorageManager(fs::path db_path)

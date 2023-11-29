@@ -1,4 +1,5 @@
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <thread>
@@ -48,24 +49,14 @@ struct ScrapeContext {
   cheri::ThreadPool pool;
   /* Vector of future results */
   std::vector<TaskFuture> future_results;
-  /* Storage path */
+  /* Storage manager */
   fs::path db_path;
   /* File path prefix to strip */
   std::optional<std::string> strip_prefix;
 
-  std::unique_ptr<cheri::StorageManager> MakeStorage() const {
-    return std::make_unique<cheri::StorageManager>(db_path);
-  }
-
-  /**
-   * Retrieve or create a storage manager for the current worker thread.
-   */
-  cheri::StorageManager& GetWorkerStorageManager() {
-    static thread_local cheri::StorageManager sm(db_path);
-
-    LOG(cheri::kDebug) << "Worker " << std::this_thread::get_id() <<
-        " use storage manager " << &sm;
-    return sm;
+  cheri::StorageManager &GetWorkerStorage() {
+    static thread_local cheri::StorageManager worker_storage(db_path);
+    return worker_storage;
   }
 };
 
@@ -76,7 +67,8 @@ MakeScraper(ScraperID id, ScrapeContext &ctx,
   switch (id) {
   case ScraperID::StructLayout:
     LOG(cheri::kDebug) << "Build StructLayout scraper for " << dwsrc->GetPath();
-    s = std::make_unique<cheri::StructLayoutScraper>(ctx.GetWorkerStorageManager(), dwsrc);
+    s = std::make_unique<cheri::StructLayoutScraper>(ctx.GetWorkerStorage(),
+                                                     dwsrc);
     break;
   default:
     throw std::runtime_error("Unexpected scraper ID");
@@ -138,6 +130,10 @@ static cl::alias alias_verbose(
     cl::desc("Alias for --verbose"),
     cl::aliasopt(opt_verbose),
     cl::cat(cat_cheri_scraper));
+static cl::opt<bool> opt_sql_debug(
+    "sql-debug",
+    cl::desc("Enable SQL query tracing output"),
+    cl::cat(cat_cheri_scraper));
 
 static cl::opt<bool> opt_clean(
     "clean",
@@ -181,6 +177,11 @@ static cl::alias alias_input(
     cl::aliasopt(opt_input),
     cl::cat(cat_cheri_scraper));
 
+static cl::opt<std::string> opt_input_file(
+    "input-file",
+    cl::desc("Read input files list from file"),
+    cl::cat(cat_cheri_scraper));
+
 static cl::list<ScraperID> opt_scrapers(
     "scrapers",
     cl::desc("Select the scrapers to run:"),
@@ -204,6 +205,9 @@ int main(int argc, char **argv) {
   if (opt_verbose) {
     logger.SetLevel(cheri::kDebug);
   }
+  if (opt_sql_debug) {
+    logger.SetLevel(cheri::kTrace);
+  }
 
   LOG(cheri::kDebug) << "Initialize thread pool with " << opt_workers
                      << " workers";
@@ -220,9 +224,9 @@ int main(int argc, char **argv) {
     ctx.strip_prefix = opt_prefix;
   }
 
-  if (!opt_stdin && opt_input.size() == 0) {
-    LOG(cheri::kError)
-        << "At least one of --input or --stdin must be specified.";
+  if (!opt_stdin && opt_input.size() == 0 && opt_input_file.size() == 0) {
+    LOG(cheri::kError) << "At least one of --input, --input_file or --stdin "
+                          "must be specified.";
     cl::PrintHelpMessage();
   }
 
@@ -233,6 +237,14 @@ int main(int argc, char **argv) {
       TryScrape(ctx, path, &opt_scrapers);
     }
     LOG(cheri::kDebug) << "End of inputs";
+  } else if (opt_input_file.size()) {
+    LOG(cheri::kDebug) << "Reading target files from " << opt_input_file;
+    std::ifstream target_stream(opt_input_file);
+    std::string target;
+    while (std::getline(target_stream, target)) {
+      TryScrape(ctx, target, &opt_scrapers);
+    }
+    target_stream.close();
   } else {
     LOG(cheri::kDebug) << "Reading target files from --input args";
     for (auto path : opt_input) {
@@ -243,12 +255,17 @@ int main(int argc, char **argv) {
   ctx.pool.Join();
 
   /* Report results */
+  int has_error = 0;
   for (auto &future_result : ctx.future_results) {
     auto result = future_result.get();
     if (result) {
       LOG(cheri::kInfo) << *result;
+      has_error = (result->errors.size() > 0);
+      for (auto &err : result->errors) {
+        LOG(cheri::kError) << "Reason: " << err;
+      }
     }
   }
 
-  return 0;
+  return has_error;
 }

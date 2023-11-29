@@ -13,6 +13,7 @@ enum LogLevel {
   kWarn,
   kInfo,
   kDebug,
+  kTrace,
 };
 
 std::ostream &operator<<(std::ostream &os, LogLevel ll);

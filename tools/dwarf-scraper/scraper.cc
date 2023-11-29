@@ -82,6 +82,9 @@ std::ostream &operator<<(std::ostream &os, const ScrapeResult &sr) {
     os << " |" << prof.first << "> #" << prof.second.events
        << " avg:" << prof.second.avg;
   }
+  if (sr.errors.size()) {
+    os << " (WITH ERRORS)";
+  }
   return os;
 }
 
@@ -256,6 +259,7 @@ void DwarfScraper::Extract(std::stop_token stop_tok) {
       LOG(kError) << "Failed to scan compilation unit "
                   << unit_die.getName(llvm::DINameKind::LinkageName)
                   << " reason: " << ex.what();
+      stats_.errors.push_back(ex.what());
     }
     EndUnit(unit_die);
   }

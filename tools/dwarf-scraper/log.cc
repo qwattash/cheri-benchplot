@@ -11,6 +11,9 @@ static std::unique_ptr<Logger> global_logger;
 
 std::ostream &operator<<(std::ostream &os, LogLevel ll) {
   switch (ll) {
+  case kTrace:
+    os << "[TRACE]";
+    break;
   case kDebug:
     os << "[DEBUG]";
     break;
@@ -92,6 +95,7 @@ LogAs::operator bool() {
 
 void ConsoleLogSink::Emit(LogMessage &msg) {
   switch (msg.level) {
+  case kTrace:
   case kDebug:
   case kError:
     std::cerr << "[THR " << std::this_thread::get_id() << "]" << msg.level <<

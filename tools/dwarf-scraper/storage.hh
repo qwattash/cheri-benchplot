@@ -35,6 +35,11 @@ public:
   StorageException(int rc, std::string message)
       : std::runtime_error(std::format("[{:d}] {}", rc, message)), code{rc} {}
 
+  StorageException(int rc, std::string message, std::string query)
+      : std::runtime_error(
+            std::format("[{:d}] {} while running {}", rc, message, query)),
+        code{rc} {}
+
   const int code;
 };
 
