@@ -7,6 +7,8 @@
 #include <string>
 #include <unordered_map>
 
+#include <llvm/ADT/Hashing.h>
+
 #include "scraper.hh"
 
 namespace cheri {
@@ -45,6 +47,7 @@ struct StructTypeRow {
   std::string name;
   uint64_t size;
   StructTypeFlags flags;
+  bool has_imprecise;
 };
 
 /**
@@ -91,6 +94,31 @@ struct MemberBoundsRow {
 };
 
 /**
+ * Entry in the layout scraper temporary storage.
+ */
+struct StructTypeEntry {
+  // Flag this entry as already exising in the DB
+  bool skip_postprocess;
+  // Structure entry data
+  StructTypeRow data;
+  // Direct member information
+  std::vector<StructMemberRow> members;
+  // Flattened layout entries
+  std::vector<MemberBoundsRow> flattened_layout;
+};
+using StructTypeId = std::tuple<std::string, std::string, size_t>;
+
+struct StructTypeIdHash {
+  std::size_t operator()(const StructTypeId &k) const noexcept {
+    std::size_t h0 = std::hash<std::string>{}(std::get<0>(k));
+    std::size_t h1 = std::hash<std::string>{}(std::get<1>(k));
+    std::size_t h2 = std::hash<std::size_t>{}(std::get<2>(k));
+
+    return llvm::hash_combine(h0, h1, h2);
+  }
+};
+
+/**
  * Specialized scraper that extract DWARF structure layout information.
  *
  * The structure layouts are nested tree-like objects, where the top-level
@@ -121,6 +149,17 @@ protected:
   bool DoVisit(llvm::DWARFDie &die) override {
     return impl::VisitDispatch(*this, die);
   }
+
+  /**
+   * Get globally unique ID for the struct_type table
+   */
+  uint64_t GetStructTypeId();
+
+  /**
+   * Get globally unique ID for the struct_member table
+   */
+  uint64_t GetStructMemberId();
+
   /**
    * Common visitor logic for all aggregate types.
    * Returns the ID of the struct_type entry corresponding to the DIE.
@@ -146,19 +185,21 @@ protected:
    * a given type. The type is assumed to have been fully evaluated
    * and we have DB entries for all nested members.
    */
-  void FindSubobjectCapabilities(int64_t struct_type_id);
+  void FindSubobjectCapabilities(
+      std::unordered_map<uint64_t, StructTypeEntry *> &struct_by_id,
+      StructTypeEntry &entry);
 
   /**
    * Insert a new struct layout into the layouts table.
    * Returns true if a new row was inserted.
    */
-  bool InsertStructLayout(const llvm::DWARFDie &die, StructTypeRow &row);
+  bool InsertStructLayout(StructTypeRow &row);
 
   /**
    * Insert a new struct member into the members table.
    * Returns true if a new row was inserted.
    */
-  void InsertStructMembers(std::vector<StructMemberRow> &rows);
+  void InsertStructMember(StructMemberRow &row);
 
   /**
    * Insert a new record in the member_bounds table.
@@ -169,6 +210,14 @@ protected:
    * Cache DIE offsets to struct_type indices.
    */
   std::unordered_map<uint64_t, int64_t> struct_type_cache_;
+
+  /**
+   * Record structure types discovered for a compilation unit.
+   * When the CU is scanned, the structure information is
+   * dumped to the database.
+   */
+  std::unordered_map<StructTypeId, StructTypeEntry, StructTypeIdHash>
+      struct_type_map_;
 
   /*
    * Pre-compiled queries for InsertStructLayout.

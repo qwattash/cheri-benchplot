@@ -54,6 +54,13 @@ struct ScrapeContext {
   /* File path prefix to strip */
   std::optional<std::string> strip_prefix;
 
+  /**
+   * Get the storage manager for the current worker thread.
+   * Note that we use different storage managers so that we have a different
+   * sqlite connection for each thread. This allows to run sqlite in the
+   * multithreaded mode.
+   * See https://www.sqlite.org/threadsafe.html
+   */
   cheri::StorageManager &GetWorkerStorage() {
     static thread_local cheri::StorageManager worker_storage(db_path);
     return worker_storage;
