@@ -81,7 +81,7 @@ def imprecise_plot_task(mocker, extract_imprecise_task):
     extract_imprecise_task.run()
 
     mock_deps = mocker.patch.object(ImpreciseMembersPlot, "_get_datagen_tasks")
-    mock_deps.return_value = [extract_imprecise_task]
+    mock_deps.return_value = {extract_imprecise_task.benchmark.uuid: extract_imprecise_task}
 
     return ImpreciseMembersPlot(extract_imprecise_task.benchmark.session, AnalysisConfig())
 
@@ -94,7 +94,7 @@ def html_layouts_task(mocker, extract_imprecise_task):
     extract_imprecise_task.run()
 
     mock_deps = mocker.patch.object(ImpreciseSubobjectLayouts, "_get_datagen_tasks")
-    mock_deps.return_value = [extract_imprecise_task]
+    mock_deps.return_value = {extract_imprecise_task.benchmark.uuid: extract_imprecise_task}
 
     return ImpreciseSubobjectLayouts(extract_imprecise_task.benchmark.session, AnalysisConfig())
 

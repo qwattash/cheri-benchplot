@@ -723,9 +723,7 @@ void StructLayoutScraper::FindSubobjectCapabilities(StructTypeEntry &entry) {
       mb_row.base = base;
       mb_row.top = base + length;
       mb_row.is_imprecise = mb_row.offset != base || length != req_length;
-      if (mb_row.is_imprecise) {
-        entry.data.has_imprecise;
-      }
+      entry.data.has_imprecise |= mb_row.is_imprecise;
       if (m.nested) {
         assert(*m.nested != 0 && "Missing member nested ID");
         auto it = entry_by_id_.find(m.nested.value());
@@ -746,9 +744,11 @@ void StructLayoutScraper::FindSubobjectCapabilities(StructTypeEntry &entry) {
   FlattenedLayout(entry, 0, entry.data.name);
 
   // If we found imprecise members, record it
-  auto cursor = set_has_imprecise_query_->TakeCursor();
-  cursor.BindAt("@id", entry.data.id);
-  cursor.Run();
+  if (entry.data.has_imprecise) {
+    auto cursor = set_has_imprecise_query_->TakeCursor();
+    cursor.BindAt("@id", entry.data.id);
+    cursor.Run();
+  }
 }
 
 } /* namespace cheri */
