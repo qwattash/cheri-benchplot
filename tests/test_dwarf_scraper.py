@@ -75,12 +75,28 @@ def extract_imprecise_task(find_scraper, fake_benchmark_factory):
 
 @pytest.fixture
 def imprecise_plot_task(mocker, extract_imprecise_task):
+    """
+    Build a test instance of ImpreciseMembersPlot with some backing data
+    """
     extract_imprecise_task.run()
 
     mock_deps = mocker.patch.object(ImpreciseMembersPlot, "_get_datagen_tasks")
     mock_deps.return_value = [extract_imprecise_task]
 
     return ImpreciseMembersPlot(extract_imprecise_task.benchmark.session, AnalysisConfig())
+
+
+@pytest.fixture
+def html_layouts_task(mocker, extract_imprecise_task):
+    """
+    Build a test instance of ImpreciseSubobjectLayouts with some backing data
+    """
+    extract_imprecise_task.run()
+
+    mock_deps = mocker.patch.object(ImpreciseSubobjectLayouts, "_get_datagen_tasks")
+    mock_deps.return_value = [extract_imprecise_task]
+
+    return ImpreciseSubobjectLayouts(extract_imprecise_task.benchmark.session, AnalysisConfig())
 
 
 @pytest.mark.parametrize("asset_file", ["tests/assets/riscv_purecap_test_dwarf_simple"])
@@ -189,7 +205,7 @@ def test_raw_table_members(find_scraper, fake_benchmark_factory, asset_file, ptr
     with task.struct_layout_db.session() as session:
         foo = session.scalars(select(StructType).where(StructType.name == "foo")).one()
         bar = session.scalars(select(StructType).where(StructType.name == "bar")).one()
-        baz = session.scalars(select(StructType).where(StructType.name == "baz")).one()
+        baz = session.scalars(select(StructType).where(StructType.name == "baz_t")).one()
 
         assert len(foo.members) == 12
         a = find_member("a", foo.members)
@@ -287,33 +303,32 @@ def test_raw_table_anon(find_scraper, fake_benchmark_factory, asset_file, ptr_si
     with task.struct_layout_db.session() as session:
         foo = session.scalars(select(StructType).where(StructType.name == "foo")).one()
         bar = session.scalars(select(StructType).where(StructType.name == "bar")).one()
-        baz = session.scalars(
-            select(StructType).where(StructType.name.like("<anon>@%test_dwarf_struct_members_anon.c+4"))).one()
+        baz = session.scalars(select(StructType).where(StructType.name == "baz_t")).one()
         anon_s_type = session.scalars(
-            select(StructType).where(StructType.name.like("<anon>@%test_dwarf_struct_members_anon.c+10"))).one()
+            select(StructType).where(StructType.name.like("<anon@%test_dwarf_struct_members_anon.c+10>"))).one()
         anon_u_type = session.scalars(
-            select(StructType).where(StructType.name.like("<anon>@%test_dwarf_struct_members_anon.c+14"))).one()
+            select(StructType).where(StructType.name.like("<anon@%test_dwarf_struct_members_anon.c+14>"))).one()
 
         assert len(foo.members) == 3
         a = find_member("a", foo.members)
         check_member(a,
-                     type_name_m=r"<anon>@.*test_dwarf_struct_members_anon\.c\+4",
+                     type_name="baz_t",
                      line=9,
                      size=8,
                      offset=0,
                      nested=baz.id,
                      flags=StructMemberFlags.IsStruct | StructMemberFlags.IsAnon)
-        anon_s = find_member(f"<anon>@{ptr_size}", foo.members)
+        anon_s = find_member(f"<field@{ptr_size}>", foo.members)
         check_member(anon_s,
-                     type_name_m=r"<anon>@.*test_dwarf_struct_members_anon\.c\+10",
+                     type_name_m=r"<anon@.*test_dwarf_struct_members_anon\.c\+10>",
                      nested=anon_s_type.id,
                      line=10,
                      size=2 * ptr_size,
                      offset=ptr_size,
                      flags=StructMemberFlags.IsStruct | StructMemberFlags.IsAnon)
-        anon_u = find_member(f"<anon>@{3 * ptr_size}", foo.members)
+        anon_u = find_member(f"<field@{3 * ptr_size}>", foo.members)
         check_member(anon_u,
-                     type_name_m=r"<anon>@.*test_dwarf_struct_members_anon\.c\+14",
+                     type_name_m=r"<anon@.*test_dwarf_struct_members_anon\.c\+14>",
                      nested=anon_u_type.id,
                      line=14,
                      size=ptr_size,
@@ -339,7 +354,8 @@ def test_raw_table_flattened(find_scraper, fake_benchmark_factory, asset_file, p
         foo = session.scalars(select(StructType).where(StructType.name == "foo")).one()
 
         foo_layout = session.scalars(
-            select(MemberBounds).where(MemberBounds.owner_entry == foo).order_by(MemberBounds.offset)).all()
+            select(MemberBounds).where(MemberBounds.owner_entry == foo)
+            .order_by(MemberBounds.offset, MemberBounds.name)).all()
 
         assert len(foo_layout) == 12
 
@@ -353,13 +369,13 @@ def test_raw_table_flattened(find_scraper, fake_benchmark_factory, asset_file, p
         check_bounds(0, "foo::a", 0, 0, 4)
         check_bounds(1, "foo::b", 8, 8, 24)
         check_bounds(2, "foo::b::b_bar", 8, 8, 24)
-        check_bounds(3, "foo::b::b_baz", 8, 8, 24)
-        check_bounds(4, "foo::b::b_bar::x", 8, 8, 12)
+        check_bounds(3, "foo::b::b_bar::x", 8, 8, 12)
+        check_bounds(4, "foo::b::b_baz", 8, 8, 24)
         check_bounds(5, "foo::b::b_baz::v", 8, 8, 12)
         check_bounds(6, "foo::b::b_bar::u", 16, 16, 24)
-        check_bounds(7, "foo::b::b_baz::u", 16, 16, 24)
-        check_bounds(8, "foo::b::b_bar::u::x", 16, 16, 20)
-        check_bounds(9, "foo::b::b_bar::u::y", 16, 16, 24)
+        check_bounds(7, "foo::b::b_bar::u::x", 16, 16, 20)
+        check_bounds(8, "foo::b::b_bar::u::y", 16, 16, 24)
+        check_bounds(9, "foo::b::b_baz::u", 16, 16, 24)
         check_bounds(10, "foo::b::b_baz::u::x", 16, 16, 20)
         check_bounds(11, "foo::b::b_baz::u::y", 16, 16, 24)
 
@@ -384,13 +400,15 @@ def test_raw_table_flattened_subobject(extract_imprecise_task):
             assert mb.top == top
 
         simple_layout = session.scalars(
-            select(MemberBounds).where(MemberBounds.owner_entry == simple_struct).order_by(MemberBounds.offset)).all()
+            select(MemberBounds).where(MemberBounds.owner_entry == simple_struct)
+            .order_by(MemberBounds.offset, MemberBounds.name)).all()
         assert len(simple_layout) == 2
         check_bounds(simple_layout[0], "test_simple::skew_offset", 0, 0, 4)
         check_bounds(simple_layout[1], "test_simple::large_buffer", 4, 0, 8192)
 
         complex_layout = session.scalars(
-            select(MemberBounds).where(MemberBounds.owner_entry == complex_struct).order_by(MemberBounds.offset)).all()
+            select(MemberBounds).where(MemberBounds.owner_entry == complex_struct)
+            .order_by(MemberBounds.offset, MemberBounds.name)).all()
         assert len(complex_layout) == 5
         check_bounds(complex_layout[0], "test_complex::before", 0, 0, 4)
         check_bounds(complex_layout[1], "test_complex::inner", 4, 0, 16384)
@@ -405,7 +423,8 @@ def test_raw_table_flattened_subobject(extract_imprecise_task):
         check_bounds(age_layout[1], "test_age_softc_layout::cdata", 0x250, 0x240, 0x240 + 0x6140 + 0x20)
 
         nested_layout = session.scalars(
-            select(MemberBounds).where(MemberBounds.owner_entry == nested_struct).order_by(MemberBounds.offset)).all()
+            select(MemberBounds).where(MemberBounds.owner_entry == nested_struct)
+            .order_by(MemberBounds.offset, MemberBounds.name)).all()
         assert len(nested_layout) == 6
         check_bounds(nested_layout[0], "test_nested::a", 0, 0, 0x4020)
         check_bounds(nested_layout[1], "test_nested::a::before", 0, 0, 4)
@@ -442,12 +461,19 @@ def test_raw_table_alias(extract_imprecise_task):
         entry = alias_groups[0]
         check_entry(entry, "test_simple::large_buffer", 0x4, 0, 0x2000)
         assert len(entry.aliasing_with) == 1
+        assert len(entry.aliased_by) == 0
         check_entry(entry.aliasing_with[0], "test_simple::skew_offset", 0, 0, 0x4)
+
+        reverse_entry = entry.aliasing_with[0]
+        assert len(reverse_entry.aliasing_with) == 0
+        assert len(reverse_entry.aliased_by) == 1
+        assert reverse_entry.aliased_by[0] == entry
 
         # Inspect alias groups for complex_struct
         alias_groups = session.scalars(
             select(MemberBounds).where((MemberBounds.owner_entry == complex_struct)
-                                       & MemberBounds.aliasing_with.any()).order_by(MemberBounds.offset)).all()
+                                       & MemberBounds.aliasing_with.any())
+            .order_by(MemberBounds.offset, MemberBounds.name)).all()
         assert len(alias_groups) == 3
         entry = alias_groups[0]
         check_entry(entry, "test_complex::inner", 0x4, 0, 0x4000)
@@ -468,7 +494,8 @@ def test_raw_table_alias(extract_imprecise_task):
         # Inspect alias groups for nested_struct
         alias_groups = session.scalars(
             select(MemberBounds).where((MemberBounds.owner_entry == nested_struct)
-                                       & MemberBounds.aliasing_with.any()).order_by(MemberBounds.offset)).all()
+                                       & MemberBounds.aliasing_with.any())
+            .order_by(MemberBounds.offset, MemberBounds.name)).all()
         assert len(alias_groups) == 3
         entry = alias_groups[0]
         check_entry(entry, "test_nested::a::inner", 0x4, 0, 0x4000)
@@ -534,3 +561,31 @@ def test_render_imprecise_subobject_plot(imprecise_plot_task):
     Check that the imprecise plots task successfully renders the test data
     """
     imprecise_plot_task.run()
+
+
+def test_load_layouts(html_layouts_task, extract_imprecise_task):
+    """
+    Check that the ImpreciseSubobjectLayouts task generates the correct input data
+    """
+    benchmark = extract_imprecise_task.benchmark
+    data = html_layouts_task.load_layouts()
+
+    assert len(data) == 32
+
+    def check_count(type_name, cnt):
+        r = data.filter(pl.col("name") == type_name)
+        assert len(r) == cnt, "Invalid # of imprecise members"
+
+    assert (data["dataset_id"] == benchmark.uuid).all()
+    assert (data["dataset_gid"] == benchmark.g_uuid).all()
+
+    check_count("test_simple", 2)
+    check_count("test_complex", 5)
+    check_count("test_nested", 6)
+
+
+def test_render_imprecise_layout_html(html_layouts_task):
+    """
+    Check that the structure layout HTML view rendered works on the test data
+    """
+    html_layouts_task.run()

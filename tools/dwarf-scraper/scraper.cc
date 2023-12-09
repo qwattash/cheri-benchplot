@@ -333,6 +333,7 @@ void DwarfScraper::GetTypeInfo(const llvm::DWARFDie &die, TypeInfo &info) {
       }
       if (!iter_die->find(dwarf::DW_AT_name)) {
         info.flags |= TypeInfoFlags::kTypeIsAnon;
+        info.type_name = AnonymousName(*iter_die, strip_prefix_);
       }
       auto size = GetULongAttr(*iter_die, dwarf::DW_AT_byte_size);
       if (!size) {
@@ -355,6 +356,13 @@ void DwarfScraper::GetTypeInfo(const llvm::DWARFDie &die, TypeInfo &info) {
       }
       info.byte_size = *size;
       info.type_die = *iter_die;
+
+      // If the name exists, it is parsed correctly above
+      // otherwise use our own pattern.
+      if (!iter_die->find(dwarf::DW_AT_name)) {
+        info.flags |= TypeInfoFlags::kTypeIsAnon;
+        info.type_name = AnonymousName(*iter_die, strip_prefix_);
+      }
       break;
     }
     case dwarf::DW_TAG_const_type:
@@ -408,12 +416,6 @@ void DwarfScraper::GetTypeInfo(const llvm::DWARFDie &die, TypeInfo &info) {
       LOG(kError) << "Unhandled DIE " << tag_name.str();
       throw std::runtime_error("Unhandled DIE");
     }
-  }
-
-  if (!!(info.flags & TypeInfoFlags::kTypeIsAnon)) {
-    // Anonymous types must render the name according to our pattern
-    info.type_name = std::format("<anon>@{}+{:d}", info.decl_file.value(),
-                                 info.decl_line.value());
   }
 }
 

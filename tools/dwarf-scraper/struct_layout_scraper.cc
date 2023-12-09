@@ -267,22 +267,71 @@ void StructLayoutScraper::InitSchema() {
   // clang-format on
 }
 
+/*
+ * Note that we discard top-level record types that don't have a name
+ * this is because they must be nested things, otherwise they are invalid C
+ * so we already cover them with the nested mechanism.
+ * Otherwise, they are covered by visit_typedef().
+ */
 bool StructLayoutScraper::visit_structure_type(llvm::DWARFDie &die) {
-  VisitCommon(die, StructTypeFlags::kTypeIsStruct);
+  if (die.find(dwarf::DW_AT_name)) {
+    VisitCommon(die, StructTypeFlags::kTypeIsStruct);
+  }
   return false;
 }
 
 bool StructLayoutScraper::visit_class_type(llvm::DWARFDie &die) {
-  VisitCommon(die, StructTypeFlags::kTypeIsClass);
+  if (die.find(dwarf::DW_AT_name)) {
+    VisitCommon(die, StructTypeFlags::kTypeIsClass);
+  }
   return false;
 }
 
 bool StructLayoutScraper::visit_union_type(llvm::DWARFDie &die) {
-  VisitCommon(die, StructTypeFlags::kTypeIsUnion);
+  if (die.find(dwarf::DW_AT_name)) {
+    VisitCommon(die, StructTypeFlags::kTypeIsUnion);
+  }
   return false;
 }
 
-bool StructLayoutScraper::visit_typedef(llvm::DWARFDie &die) { return false; }
+bool StructLayoutScraper::visit_typedef(llvm::DWARFDie &die) {
+  auto type_die = die.getAttributeValueAsReferencedDie(dwarf::DW_AT_type)
+                      .resolveTypeUnitReference();
+  if (!type_die) {
+    // Forward declaration
+    return false;
+  }
+  std::optional<uint64_t> record_id;
+  switch (type_die.getTag()) {
+  case dwarf::DW_TAG_structure_type:
+    record_id = VisitCommon(type_die, StructTypeFlags::kTypeIsStruct);
+    break;
+  case dwarf::DW_TAG_union_type:
+    record_id = VisitCommon(type_die, StructTypeFlags::kTypeIsUnion);
+    break;
+  case dwarf::DW_TAG_class_type:
+    record_id = VisitCommon(type_die, StructTypeFlags::kTypeIsClass);
+    break;
+  default:
+    // Not interested
+    return false;
+  }
+  if (!record_id) {
+    // Forward declaration
+    return false;
+  }
+
+  auto maybe_name = GetStrAttr(die, dwarf::DW_AT_name);
+  if (!maybe_name) {
+    LOG(kError) << "Invalid typedef, missing type name";
+    throw std::runtime_error("Typedef without name");
+  }
+  auto it = entry_by_id_.find(*record_id);
+  assert(it != entry_by_id_.end() && "Invalid record type ID");
+  it->second->data.alias_name = maybe_name;
+
+  return false;
+}
 
 void StructLayoutScraper::BeginUnit(llvm::DWARFDie &unit_die) {
   auto at_name = unit_die.find(dwarf::DW_AT_name);
@@ -519,13 +568,13 @@ StructMemberRow StructLayoutScraper::VisitMember(const llvm::DWARFDie &die,
 
   std::string name;
   if (!!(row.flags & StructTypeFlags::kTypeIsUnion)) {
-    name = std::format("<union@{:d}>", member_index);
+    name = std::format("<variant@{:d}>", member_index);
   } else {
     std::string bit_index;
     if (member.bit_offset) {
       name += std::format(":{:d}", *member.bit_offset);
     }
-    name = std::format("<record@{:d}{}>", member.byte_offset, bit_index);
+    name = std::format("<field@{:d}{}>", member.byte_offset, bit_index);
   }
   member.name = GetStrAttr(die, dwarf::DW_AT_name).value_or(name);
 
@@ -578,7 +627,16 @@ bool StructLayoutScraper::InsertStructLayout(StructTypeRow &row) {
   bool new_entry = false;
   auto timing = stats_.Timing("insert_type");
   auto cursor = insert_struct_query_->TakeCursor();
-  cursor.Bind(row.id, row.file, row.line, row.name, row.size, row.flags);
+  cursor.BindAt("@id", row.id);
+  cursor.BindAt("@file", row.file);
+  cursor.BindAt("@line", row.line);
+  if (row.alias_name) {
+    cursor.BindAt("@name", *row.alias_name);
+  } else {
+    cursor.BindAt("@name", row.name);
+  }
+  cursor.BindAt("@size", row.size);
+  cursor.BindAt("@flags", row.flags);
   cursor.Run([&new_entry, &row](SqlRowView result) {
     result.Fetch("id", row.id);
     LOG(kDebug) << "Insert record type for " << row.name << " at " << row.file

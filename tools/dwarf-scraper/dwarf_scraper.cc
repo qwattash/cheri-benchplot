@@ -267,7 +267,7 @@ int main(int argc, char **argv) {
     auto result = future_result.get();
     if (result) {
       LOG(cheri::kInfo) << *result;
-      has_error = (result->errors.size() > 0);
+      has_error = has_error || (result->errors.size() > 0);
       for (auto &err : result->errors) {
         LOG(cheri::kError) << "Reason: " << err;
       }
