@@ -9,7 +9,7 @@ from pandera import Field
 
 from .artefact import BenchmarkIterationTarget, DataFrameTarget
 from .benchmark import Benchmark
-from .config import AnalysisConfig, Config
+from .config import AnalysisConfig, Config, InstanceConfig
 from .model import DataModel
 from .task import ExecutionTask, SessionTask, dependency
 
@@ -31,6 +31,20 @@ class AnalysisTask(SessionTask):
         super().__init__(session, task_config=task_config)
         #: Analysis configuration for this invocation
         self.analysis_config = analysis_config
+
+    def get_instance_config(self, g_uuid: str) -> InstanceConfig:
+        """
+        Helper to retreive an instance configuration for the given g_uuid.
+        """
+        gid_column = self.session.benchmark_matrix[g_uuid]
+        return gid_column[0].config.instance
+
+    def g_uuid_to_label(self, g_uuid: str) -> str:
+        """
+        Helper that maps group UUIDs to a human-readable label that describes the instance
+        """
+        instance_config = self.get_instance_config(g_uuid)
+        return instance_config.name
 
 
 class DatasetAnalysisTask(AnalysisTask):

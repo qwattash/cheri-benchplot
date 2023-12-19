@@ -113,6 +113,7 @@ class CommandLineTool:
         Register common options to the command line parser.
         """
         self.parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
+        self.parser.add_argument("-vv", "--debug", action="store_true", help="Additional debug output")
         self.parser.add_argument("-l", "--logfile", type=Path, help="logfile", default=None)
         self.parser.add_argument("-w",
                                  "--workers",
@@ -200,7 +201,9 @@ class CommandLineTool:
         """
         args = self.parser.parse_args()
 
-        self.logger = setup_logging(args.verbose, args.logfile)
+        if args.debug:
+            args.verbose = True
+        self.logger = setup_logging(args.verbose, args.logfile, args.debug)
         self.logger.debug("Loading user config %s", args.config)
         if not args.config.exists():
             self.logger.error("Missing user configuration file %s", args.config)

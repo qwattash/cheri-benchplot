@@ -22,10 +22,12 @@ from typing_extensions import Self
 from typing_inspect import get_args, get_origin, is_generic_type, is_union_type
 
 from .error import ConfigurationError
+from .util import new_logger, root_logger
 
 # Global configuration logger
 # We do not drag around a custom logger during configuration
-logger = logging.getLogger("cheri-benchplot")
+logger = root_logger()
+config_logger = new_logger("config")
 
 
 def make_uuid() -> str:
@@ -42,6 +44,7 @@ def resolve_task_options(task_spec: str, task_options: dict, is_exec: bool = Fal
     # Need to lazily import this to avoid circular dependencies
     from .task import TaskRegistry
 
+    config_logger.debug("Resolve task options for %s", task_spec)
     if is_exec:
         task_class = TaskRegistry.resolve_exec_task(task_spec)
         if not task_class:
@@ -55,6 +58,7 @@ def resolve_task_options(task_spec: str, task_options: dict, is_exec: bool = Fal
         task_class = matches[0]
     if task_class.task_config_class:
         conf_class = task_class.task_config_class
+        config_logger.debug("Coerce %s options to %s", task_spec, conf_class.__name__)
         try:
             return conf_class.schema().load(task_options)
         except ValidationError as err:
@@ -154,6 +158,8 @@ class UUIDField(mfields.Field):
     Field used to coerce values to a valid UUID string representation.
     """
     def _serialize(self, value, attr, obj, **kwargs):
+        if value is None:
+            return None
         return str(value)
 
     def _deserialize(self, value, attr, data, **kwargs):
@@ -162,7 +168,7 @@ class UUIDField(mfields.Field):
         try:
             uid = UUID(str(value))
         except ValueError:
-            raise ValidationError(f"Invalid UUID '{value}'")
+            raise ValidationError(f"Invalid UUID x '{value}'")
         return str(uid)
 
 
@@ -233,6 +239,7 @@ class ConfigContext:
         try:
             value = self._template_params[key]
             self._nresolved += 1
+            config_logger.debug("Resolved template key %s to %s", key, value)
             return value
         except KeyError:
             pass
@@ -253,7 +260,9 @@ class ConfigContext:
         if isinstance(ns, Config):
             return None
         self._nresolved += 1
-        return str(ns)
+        value = str(ns)
+        config_logger.debug("Resolved template key %s to %s", key, value)
+        return value
 
 
 @dc.dataclass
@@ -308,10 +317,9 @@ class Config:
 
         if dc.is_dataclass(dtype) and issubclass(dtype, Config):
             return value.bind(context)
-
         if dtype == str:
             template = value
-        elif dtype == Path or dtype == ConfigPath:
+        elif dtype == Path or dtype == ConfigPath or (type(dtype) == type and issubclass(dtype, Path)):
             # Path-like object expected here
             template = str(value)
             dtype = Path
@@ -342,18 +350,23 @@ class Config:
         """
         if dc.is_dataclass(dtype) and issubclass(dtype, Config):
             # If it is a nested dataclass, just forward it
+            config_logger.debug("Bind recurse into nested config %s", dtype.__name__)
             return value.bind(context)
         elif dtype == LazyNestedConfig:
             # If it is a lazy_nested_config field, treat this either as a dataclass or a dict
             if dc.is_dataclass(value):
+                config_logger.debug("Bind lazy config as %s", type(value).__name__)
                 return value.bind(context)
             else:
+                config_logger.debug("Bind lazy config as dict %s", value)
                 return self._bind_generic(context, dict, value)
         elif is_generic_type(dtype) or is_union_type(dtype):
             # Recurse through the type
+            config_logger.debug("Bind recurse into generic %s: %s", dtype, value)
             return self._bind_generic(context, dtype, value)
         else:
             # Handle as a single value
+            config_logger.debug("Bind single value %s to %s", value, dtype)
             return self._bind_value(context, dtype, value)
 
     def _bind_generic(self, context: ConfigContext, dtype: Type, value: any) -> any:
@@ -396,17 +409,21 @@ class Config:
         template parameters unchanged for later passes.
         """
         changes = {}
+        config_logger.debug("Begin scanning %s field templates", self.__class__.__name__)
         for f in dc.fields(self):
             if not f.init:
                 continue
             try:
                 metadata = f.metadata.get("metadata", {})
+                config_logger.debug("Scan config field %s.%s: %s",
+                                    self.__class__.__name__, f.name, f.type)
                 replaced = self._bind_field(context, f.type, getattr(source, f.name), metadata)
             except Exception as ex:
                 raise ConfigurationError(f"Failed to bind {f.name} with value "
                                          f"{getattr(source, f.name)}: {ex}")
             if replaced:
                 changes[f.name] = replaced
+        config_logger.debug("Finish scanning %s field templates", self.__class__.__name__)
         return dc.replace(source, **changes)
 
     def bind(self, context: ConfigContext) -> Self:
@@ -610,12 +627,22 @@ class InstanceCheriBSD(Enum):
     RISCV64_HYBRID = "riscv64-hybrid"
     MORELLO_PURECAP = "morello-purecap"
     MORELLO_HYBRID = "morello-hybrid"
+    MORELLO_BENCHMARK = "morello-benchmark"
 
     def is_riscv(self):
         return (self == InstanceCheriBSD.RISCV64_PURECAP or self == InstanceCheriBSD.RISCV64_HYBRID)
 
     def is_morello(self):
-        return (self == InstanceCheriBSD.MORELLO_PURECAP or self == InstanceCheriBSD.MORELLO_HYBRID)
+        return (self == InstanceCheriBSD.MORELLO_PURECAP or self == InstanceCheriBSD.MORELLO_HYBRID or self == InstanceCheriBSD.MORELLO_BENCHMARK)
+
+    def is_hybrid_abi(self):
+        return (self == InstanceCheriBSD.RISCV64_HYBRID or self == InstanceCheriBSD.MORELLO_HYBRID)
+
+    def is_purecap_abi(self):
+        return (self == InstanceCheriBSD.RISCV64_PURECAP or self == InstanceCheriBSD.MORELLO_PURECAP)
+
+    def is_benchmark_abi(self):
+        return self == InstanceCheriBSD.MORELLO_BENCHMARK
 
     def freebsd_kconf_dir(self):
         if self.is_riscv():
@@ -865,12 +892,26 @@ class CommonBenchmarkConfig(Config):
 
 
 @dc.dataclass
+class ParamOptions(Config):
+    """
+    Configure parameterization behaviour.
+    """
+    #: List of parameter combinations to skip.
+    #: For instance, the entry {"param1": "x"} will skip any combination
+    #: where param1 assumes the value "x"
+    skip: List[Dict[str, ConfigAny]] = dc.field(default_factory=list)
+
+
+@dc.dataclass
 class PipelineBenchmarkConfig(CommonBenchmarkConfig):
     """
     User-facing benchmark configuration.
     """
     #: Parameterized benchmark generator instructions. This should map (param_name => [values]).
     parameterize: Dict[str, List[ConfigAny]] = dc.field(default_factory=dict)
+
+    #: Parameterization options
+    parameterize_options: Optional[ParamOptions] = None
 
 
 @dc.dataclass
@@ -892,7 +933,8 @@ class BenchmarkRunConfig(CommonBenchmarkConfig):
     instance: Optional[InstanceConfig] = None
 
     def __str__(self):
-        common_info = f"params={self.parameters} gen={self.generators}"
+        generators = [g.handler for g in self.generators]
+        common_info = f"params={self.parameters} gen={generators}"
         if self.g_uuid and self.instance:
             return f"{self.name} ({self.uuid}/{self.g_uuid}) on {self.instance} " + common_info
         else:
@@ -1034,6 +1076,20 @@ class SessionRunConfig(CommonSessionConfig):
         return new_config
 
     @classmethod
+    def _check_valid_parameterization(cls, params: dict, opts: ParamOptions|None) -> bool:
+        """
+        Check whether the given set of parameters is allowed.
+        """
+        if opts is None:
+            return True
+        for skip in opts.skip:
+            skip_match = ft.reduce(lambda m, e: m and params.get(e[0]) == e[1],
+                                   skip.items(), True)
+            if skip_match:
+                return False
+        return True
+
+    @classmethod
     def generate(cls, user_config: BenchplotUserConfig, config: PipelineConfig) -> Self:
         """
         Generate a new :class:`SessionRunConfig` from a :class:`PipelineConfig`.
@@ -1053,38 +1109,24 @@ class SessionRunConfig(CommonSessionConfig):
         session = SessionRunConfig.from_common_conf(config)
         logger.info("Create new session %s", session.uuid)
 
-        # Collect benchmarks and the instances
-        all_conf = []
-        # Case (1)
-        if ft.reduce(lambda noparams, conf: noparams or len(conf.parameterize) == 0, config.benchmark_config, False):
-            if len(config.benchmark_config) > 1:
-                logger.error("Multiple benchmark configurations must have a parameterization key")
+        # Collect and validate extra parameterization keys
+        param_keys = None
+        for conf in config.benchmark_config:
+            if len(conf.parameterize) == 0 and param_keys is not None:
+                logger.error("Missing benchmark parameterization?")
                 raise ValueError("Invalid configuration")
-            conf = config.benchmark_config[0]
-            logger.debug("Found benchmark %s", conf.name)
-            all_conf = [BenchmarkRunConfig.from_common_conf(conf)]
-        else:
-            param_keys = None
-            # Case (2) (3)
-            for conf in config.benchmark_config:
-                if len(conf.parameterize) == 0:
-                    logger.error("Missing benchmark parameterization?")
-                    raise ValueError("Invalid configuration")
-                sorted_params = OrderedDict(conf.parameterize)
-                keys = set(conf.parameterize.keys())
-                if param_keys and param_keys != keys:
-                    logger.error("Mismatching parameterization keys %s != %s", param_keys, keys)
-                    raise ValueError("Invalid configuration")
-                elif param_keys is None:
-                    param_keys = keys
-                # XXX TODO Ensure parameter set disjointness
-                logger.debug("Found parameterized benchmark '%s'", conf.name)
-                for param_combination in it.product(*sorted_params.values()):
-                    parameters = dict(zip(sorted_params.keys(), param_combination))
-                    run_conf = BenchmarkRunConfig.from_common_conf(conf)
-                    run_conf.parameters = parameters
-                    all_conf.append(run_conf)
+            keys = set(conf.parameterize.keys())
+            if param_keys and param_keys != keys:
+                logger.error("Mismatching parameterization keys %s != %s", param_keys, keys)
+                raise ValueError("Invalid configuration")
+            elif param_keys is None:
+                param_keys = keys
 
+        # Collect the reserved instance parameterization axis
+        if param_keys and "instance" in param_keys:
+            logger.error("The 'instance' parameterization key is reserved")
+            raise ValueError("Invalid configuration")
+        instance_configs_by_name = {}
         # If there is no instance, use the local instance
         if not config.instance_config.instances:
             config.instance_config.instances.append(
@@ -1095,21 +1137,42 @@ class SessionRunConfig(CommonSessionConfig):
                                cheri_target=InstanceCheriBSD.LOCAL_NATIVE,
                                kernelabi=InstanceKernelABI.NOCHERI,
                                cheribuild_kernel=False))
+        for conf in config.instance_config.instances:
+            if conf.name in instance_configs_by_name:
+                logger.error("Duplicated instance names, instance config names must be unique: %s", conf.name)
+                raise ValueError("Invalid configuration")
+            instance_configs_by_name[conf.name] = conf
 
-        # Map instances to dataset group IDs
-        group_uuids = [uuid4() for _ in config.instance_config.instances]
-
-        # Now create all the full configurations by combining instance and benchmark configurations
+        # Map instances to platform IDs
+        # XXX should drop these and just use instance names
+        platform_uuids = {conf.name: uuid4() for conf in config.instance_config.instances}
+        assert len(platform_uuids) == len(instance_configs_by_name)
         common_platform_options = config.instance_config.platform_options
-        for run_conf in all_conf:
-            for gid, inst_conf in zip(group_uuids, config.instance_config.instances):
-                final_run_conf = BenchmarkRunConfig.copy(run_conf)
+
+        # Now create all the full configurations by combining instance and benchmark
+        # configurations
+        for run_conf in config.benchmark_config:
+            sorted_params = OrderedDict(run_conf.parameterize)
+            sorted_params["instance"] = list(instance_configs_by_name.keys())
+
+            logger.debug("Found parameterized benchmark '%s'", run_conf.name)
+            for param_combination in it.product(*sorted_params.values()):
+                parameters = dict(zip(sorted_params.keys(), param_combination))
+                if not cls._check_valid_parameterization(parameters, run_conf.parameterize_options):
+                    continue
+
+                final_run_conf = BenchmarkRunConfig.from_common_conf(run_conf)
+                final_run_conf.parameters = dict(parameters)
+                # The parameters entry should not contain the instance key, it is only
+                # a synthetic key we use here (for now)
+                del final_run_conf.parameters["instance"]
                 # Resolve merged platform options
+                inst_conf = instance_configs_by_name[parameters["instance"]]
                 final_inst_conf = InstanceConfig.copy(inst_conf)
                 final_inst_conf.platform_options.replace_common(common_platform_options)
-                # Generate new unique ID for the parameterized run
+                # Assign UUIDs
                 final_run_conf.uuid = uuid4()
-                final_run_conf.g_uuid = gid
+                final_run_conf.g_uuid = platform_uuids[parameters["instance"]]
                 final_run_conf.instance = final_inst_conf
                 session.configurations.append(final_run_conf)
 

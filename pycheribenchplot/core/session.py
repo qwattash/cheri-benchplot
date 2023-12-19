@@ -209,12 +209,6 @@ class Session:
 
         show_matrix = tabulate(bench_matrix.reset_index(), tablefmt="github", headers="keys", showindex=False)
         self.logger.debug("Benchmark matrix:\n%s", show_matrix)
-
-        assert not bench_matrix.isna().any().any(), "Incomplete benchmark matrix"
-        if bench_matrix.shape[0] * bench_matrix.shape[1] != len(self.config.configurations):
-            self.logger.error("Malformed benchmark matrix")
-            raise RuntimeError("Malformed benchmark matrix")
-
         return bench_matrix
 
     def _ensure_dir_tree(self):
@@ -334,7 +328,7 @@ class Session:
         :return: A list containing all benchmark contexts from the
         benchmark matrix.
         """
-        return list(self.benchmark_matrix.to_numpy().ravel())
+        return [b for b in self.benchmark_matrix.to_numpy().ravel() if type(b) == Benchmark]
 
     def clean_all(self):
         """
@@ -379,7 +373,8 @@ class Session:
 
         for col in self.benchmark_matrix:
             for bench in self.benchmark_matrix[col]:
-                bench.schedule_exec_tasks(self.scheduler, exec_config)
+                if type(bench) == Benchmark:
+                    bench.schedule_exec_tasks(self.scheduler, exec_config)
         self.logger.info("Session %s start run", self.name)
         self.scheduler.run()
         self.logger.info("Session %s run finished", self.name)

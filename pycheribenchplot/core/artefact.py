@@ -5,6 +5,7 @@ from typing import Callable, ForwardRef, Iterator, Type
 
 import pandas as pd
 import pandera as pa
+import polars as pl
 import sqlalchemy as sqla
 from jinja2 import (Environment, PackageLoader, TemplateNotFound, select_autoescape)
 from sqlalchemy.orm import Session as SqlSession
@@ -347,29 +348,30 @@ class SQLTarget(Target):
 
 class DataFrameLoadTaskMixin:
     """
-    Helper mixin to load a file target into a dataframe.
+    Polars version of the dataframe load task.
+    XXX This should supersede the pandas one.
     """
-    def _load_one_csv(self, path: Path, **kwargs) -> pd.DataFrame:
+    def _load_one_csv(self, path: Path, **kwargs) -> pl.DataFrame:
         """
         Load a CSV file into a dataframe.
 
         :param path: The file path.
-        :param **kwargs: Additional arguments to pandas read_csv().
+        :param **kwargs: Additional arguments to polars read_csv().
         :return: The resulting dataframe.
         """
-        return pd.read_csv(path, **kwargs)
+        return pl.read_csv(path, **kwargs)
 
-    def _load_one_json(self, path: Path, **kwargs) -> pd.DataFrame:
+    def _load_one_json(self, path: Path, **kwargs) -> pl.DataFrame:
         """
         Load a CSV file into a dataframe
 
         :param path: The file path.
-        :param **kwargs: Additional arguments to pandas read_json().
+        :param **kwargs: Additional arguments to polars read_json().
         :return: The resulting dataframe.
         """
-        return pd.io.json.read_json(path, **kwargs)
+        return pl.read_json(path, **kwargs)
 
-    def _load_one(self, path: Path) -> pd.DataFrame:
+    def _load_one(self, path: Path) -> pl.DataFrame:
         """
         Load data from a given path, the format is inferred from the file extension.
 
@@ -400,8 +402,8 @@ class DataFrameLoadTaskMixin:
             return list(self.benchmark.config.parameters.keys())
         return []
 
-    def _prepare_standard_index(self, target: Target, schema: pa.DataFrameSchema, df: pd.DataFrame,
-                                iteration: int | None) -> pd.DataFrame:
+    def _prepare_standard_columns(self, target: Target, df: pl.DataFrame,
+                                  iteration: int | None) -> pl.DataFrame:
         """
         If the target gives us a model, automatically create the standard set of index
         levels if they are part of the model.
@@ -410,49 +412,30 @@ class DataFrameLoadTaskMixin:
         :param df: Input dataframe to transform.
         :return: A new dataframe with the additional index levels.
         """
-        if schema is None:
-            return df.copy()
+        if self.is_benchmark_task():
+            # Generate benchmark identifier columns
+            new_cols = {}
+            if "dataset_id" not in df.columns:
+                new_cols["dataset_id"] = pl.lit(self.benchmark.uuid)
+            if "dataset_gid" not in df.columns:
+                new_cols["dataset_gid"] = pl.lit(self.benchmark.g_uuid)
+            if "iteration" not in df.columns:
+                if isinstance(target, BenchmarkIterationTarget):
+                    new_cols["iteration"] = pl.lit(iteration)
+                else:
+                    new_cols["iteration"] = pl.lit(-1)
 
-        df = df.reset_index()
-        names = list(schema.index.names)
+            # Generate parameterization columns
+            for name, value in self.benchmark.config.parameters.items():
+                if name in df.columns:
+                    self.logger.error("Parameterization key '%s' is already in the dataframe",
+                                      name)
+                    raise RuntimeError("Invalid configuration")
+                new_cols[name] = pl.lit(value)
+            df = df.with_columns(**new_cols)
+        return df
 
-        benchmark_only_index = ["dataset_id", "dataset_gid", "iteration"]
-        has_benchmark_index = set(names).intersection(benchmark_only_index)
-        if has_benchmark_index and not self.is_benchmark_task():
-            self.logger.error("The model index %s can only be set for DatasetTasks.", has_benchmark_index)
-            raise TypeError("Invalid target task type")
-
-        if "dataset_id" in names and "dataset_id" not in df.columns:
-            self.logger.debug("No dataset column, using default")
-            df["dataset_id"] = self.benchmark.uuid
-        if "dataset_gid" in names and "dataset_gid" not in df.columns:
-            self.logger.debug("No dataset group, using default")
-            df["dataset_gid"] = self.benchmark.g_uuid
-        if "iteration" in names and "iteration" not in df.columns:
-            self.logger.debug("No iteration index, using default")
-            if isinstance(target, BenchmarkIterationTarget):
-                df["iteration"] = iteration
-            else:
-                df["iteration"] = -1
-
-        # Generate benchmark parameter index keys if necessary
-        for pcol in self._parameter_index_columns():
-            if pcol in df.columns:
-                continue
-            param = self.benchmark.config.parameters[pcol]
-            self.logger.debug("No parameter %s column, generate from config %s=%s", pcol, pcol, param)
-            df[pcol] = param
-
-        for n in names:
-            if n is None:
-                self.logger.error("DataFrameSchema does not have name of index level, "
-                                  "if this is the only index level, it should have the "
-                                  "pandera.Field(check_name=True) descriptor")
-                raise ValueError("Invalid DataFrameSchema index")
-
-        return df.set_index(names)
-
-    def _load_from(self, target: Target, schema: pa.DataFrameSchema) -> pd.DataFrame:
+    def _load_from(self, target: Target) -> pl.DataFrame:
         """
         Load all the files defined by a target and merge the resulting dataframes
 
@@ -467,18 +450,33 @@ class DataFrameLoadTaskMixin:
                 self.logger.error("Can not load %s, does not exist", path)
                 raise FileNotFoundError(f"{path} does not exist")
             df = self._load_one(path)
-            df = self._prepare_standard_index(target, schema, df, i)
+            df = self._prepare_standard_columns(target, df, i)
             df_set.append(df)
 
         if not df_set:
-            # Bail because we can not concatenate and validate an empty frame
+            # Bail because empty data does not make much sense.
             # We could support empty data but there is no use case for it now.
             self.logger.error("No data has been loaded for %s", self)
             raise ValueError("Loader did not find any data")
-        if len(df_set) == 1:
-            # Skip concatenation. If the frame is large, time saving is significant
-            return df_set[0]
-        return pd.concat(df_set)
+        acc = df_set[0]
+        for df in df_set[1:]:
+            acc.vstack(df, in_place=True)
+        return acc.rechunk()
+
+    def _load_pandas_from(self, target: Target, schema) -> pd.DataFrame:
+        df = self._load_from(target)
+        pd_df = df.to_pandas()
+        if schema:
+            names = list(schema.index.names)
+            for n in names:
+                if n is None:
+                    self.logger.error("DataFrameSchema does not have name of index level, "
+                                      "if this is the only index level, it should have the "
+                                      "pandera.Field(check_name=True) descriptor")
+                    raise ValueError("Invalid DataFrameSchema index")
+            pd_df = pd_df.set_index(names)
+            pd_df = schema.validate(pd_df)
+        return pd_df
 
 
 class DataFrameLoadTask(DatasetTask, DataFrameLoadTaskMixin):
@@ -502,13 +500,45 @@ class DataFrameLoadTask(DatasetTask, DataFrameLoadTaskMixin):
         return super().task_id + "-for-" + self.target.borg_state_id
 
     def run(self):
-        schema = self.model.to_schema(self.session) if self.model else None
-        df = self._load_from(self.target, schema)
+        if self.model:
+            schema = self.model.to_schema(self.session)
+            df = self._load_pandas_from(self.target, schema)
+        else:
+            df = self._load_pandas_from(self.target, None)
         self.df.assign(df)
 
     @output
     def df(self):
         return DataFrameTarget(self, self.model, output_id=f"loaded-df-for-{super().task_id}")
+
+
+class PLDataFrameLoadTask(DatasetTask, DataFrameLoadTaskMixin):
+    """
+    Internal task to load target data.
+
+    This is the default loader task that loads data from file targets.
+    """
+    task_namespace = "internal"
+    task_name = "pl-target-load"
+
+    def __init__(self, target: Target):
+        self.target = target
+        if target.task.is_session_task():
+            raise TypeError("Use PLDataFrameSessionLoadTask for session-wide targets")
+
+        # Borg state initialization occurs here
+        super().__init__(target.task.benchmark)
+
+    @property
+    def task_id(self):
+        return super().task_id + "-for-" + self.target.borg_state_id
+
+    def run(self):
+        self.df.assign(self._load_from(self.target))
+
+    @output
+    def df(self):
+        return ValueTarget(self, output_id=f"loaded-df-for-{super().task_id}")
 
 
 class DataFrameSessionLoadTask(SessionTask, DataFrameLoadTaskMixin):
@@ -532,8 +562,11 @@ class DataFrameSessionLoadTask(SessionTask, DataFrameLoadTaskMixin):
         return super().task_id + "-for-" + self.target.borg_state_id
 
     def run(self):
-        schema = self.model.to_schema(self.session) if self.model else None
-        df = self._load_from(self.target, schema)
+        if self.model:
+            schema = self.model.to_schema(self.session)
+            df = self._load_pandas_from(self.target, schema)
+        else:
+            df = self._load_pandas_from(self.target, None)
         self.df.assign(df)
 
     @output

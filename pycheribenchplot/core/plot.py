@@ -13,7 +13,7 @@ from matplotlib import rc_context
 
 from .analysis import AnalysisTask, DatasetAnalysisTask
 from .artefact import Target
-from .config import Config, InstanceConfig
+from .config import Config
 from .task import Task
 
 
@@ -118,19 +118,29 @@ class PlotTaskMixin:
             base = self.session.get_plot_root_path()
         return PlotTarget(self, base / name)
 
-    def get_instance_config(self, g_uuid: str) -> InstanceConfig:
+    def adjust_legend_on_top(self, fig, ax=None, **kwargs):
         """
-        Helper to retreive an instance configuration for the given g_uuid.
-        """
-        gid_column = self.session.benchmark_matrix[g_uuid]
-        return gid_column[0].config.instance
+        Helper function that adjusts the position of a legend in the given figure/axes.
+        This works around some matplotlib quirks that are not handled cleanly by seaborn
 
-    def g_uuid_to_label(self, g_uuid: str) -> str:
+        This works by forcibly removing the legend and re-creating it using the handles
+        from the old legend.
         """
-        Helper that maps group UUIDs to a human-readable label that describes the instance
-        """
-        instance_config = self.get_instance_config(g_uuid)
-        return instance_config.name
+        if not fig.legends:
+            return
+        # Hack to remove the legend as we can not easily move it
+        # Not sure why seaborn puts the legend in the figure here
+        legend = fig.legends.pop()
+        if ax is None:
+            owner = fig
+        else:
+            owner = ax
+        kwargs.setdefault("loc", "center")
+        owner.legend(legend.legend_handles,
+                     map(lambda t: t.get_text(), legend.texts),
+                     bbox_to_anchor=(0, 1.02),
+                     ncols=4,
+                     **kwargs)
 
     def _run_with_plot_sandbox(self):
         with rc_context():

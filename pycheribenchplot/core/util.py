@@ -34,7 +34,8 @@ class LogColorFormatter(logging.Formatter):
         return msg
 
 
-def setup_logging(verbose: bool = False, logfile: Path = None):
+def setup_logging(verbose: bool = False, logfile: Path = None,
+                  debug: bool = False):
     log_fmt = "[%(levelname)s] %(name)s: %(message)s"
     date_fmt = None
     default_level = logging.INFO
@@ -66,7 +67,15 @@ def setup_logging(verbose: bool = False, logfile: Path = None):
     sql_logger.addHandler(console_handler)
     if logfile:
         sql_logger.addHandler(file_handler)
+    # Silence the configuration logger by default
+    if not debug:
+        config_logger = new_logger("config")
+        config_logger.setLevel(logging.WARNING)
     return logger
+
+
+def root_logger():
+    return logging.getLogger("cheri-benchplot")
 
 
 def new_logger(name, parent=None):
