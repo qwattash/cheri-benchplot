@@ -1,5 +1,4 @@
 import json
-import shutil
 from dataclasses import dataclass
 
 import numpy as np
@@ -81,7 +80,18 @@ class IngestQPSData(DataGenTask):
             with open(data_file, "r") as fp:
                 data = json.load(fp)
             with open(dst, "w+") as fp:
-                json.dump(data["summary"], fp)
+                summary = {}
+                summary["qps"] = data["summary"]["qps"]
+                summary["latency50"] = data["summary"]["latency50"]
+                summary["latency90"] = data["summary"]["latency90"]
+                summary["latency95"] = data["summary"]["latency95"]
+                summary["latency99"] = data["summary"]["latency99"]
+                summary["latency999"] = data["summary"]["latency999"]
+                payload_conf = data["scenario"]["clientConfig"].get("payloadConfig", {})
+                params = payload_conf.get("simpleParams", {})
+                summary["reqSize"] = params.get("reqSize", 0)
+                summary["respSize"] = params.get("respSize", 0)
+                json.dump(summary, fp)
             self.logger.debug("Ingest %s => %s", data_file, hist_dst)
             with open(hist_dst, "w+") as fp:
                 buckets = data["latencies"]["bucket"]
