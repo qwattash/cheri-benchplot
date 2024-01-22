@@ -115,7 +115,8 @@ class Session:
         #: A dataframe that organises the set of benchmarks to run or analyse.
         self.benchmark_matrix = self._resolve_benchmark_matrix()
         #: Benchmark baseline instance group UUID.
-        self.baseline_g_uuid = self._resolve_baseline()
+        #: XXX Deprecated, will be removed
+        self.baseline_g_uuid = None
 
         # Before using the workers configuration, check if we are overriding it
         if self.user_config.concurrent_workers:
@@ -137,28 +138,6 @@ class Session:
         ctx = ConfigContext()
         ctx.add_namespace(self.user_config, "user")
         return config.bind(ctx)
-
-    def _resolve_baseline(self):
-        """
-        Resolve the baseline benchmark run group ID.
-        This is necessary to identify the benchmark run that we compare against
-        (actually the column in the datarun matrix we compare against).
-
-        :return: The baseline group ID.
-        """
-        baseline = None
-        for benchmark_config in self.config.configurations:
-            if benchmark_config.instance.baseline:
-                if baseline and baseline != benchmark_config.g_uuid:
-                    self.logger.error("Multiple baseline instances?")
-                    raise RuntimeError("Too many baseline specifiers")
-                baseline = benchmark_config.g_uuid
-        if not baseline:
-            self.logger.error("Missing baseline instance")
-            raise RuntimeError("Missing baseline")
-        baseline_conf = self.benchmark_matrix[baseline].iloc[0].config
-        self.logger.debug("Benchmark baseline %s (%s)", baseline_conf.instance.name, baseline)
-        return baseline
 
     def _resolve_benchmark_matrix(self) -> tuple[pd.DataFrame, UUID]:
         """

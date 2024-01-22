@@ -351,3 +351,13 @@ def check_data_model(fn: Callable = None, warn: bool = False) -> Callable:
         return result
 
     return wrapper(fn)
+
+
+class DFSchema:
+    """
+    Base classe for declarative dataframe validation.
+
+    Could use pydantic but it seems complicated to hook into it without
+    extra conversions.
+    """
+    pass

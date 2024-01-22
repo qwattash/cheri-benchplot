@@ -793,7 +793,14 @@ class AnalysisConfig(Config):
     parameter_constants: Dict[str, dict] = dc.field(default_factory=dict)
 
     #: Baseline dataset group id, defaults to the baseline instance uuid
+    #: .. deprecated:: 1.2
+    #:    Use :attr:`baseline` instead
     baseline_gid: Optional[UUIDStr] = None
+
+    #: Baseline dataset identifier.
+    #: This can be an UUID or a set of parameter key/values that uniquely identify
+    #: a single benchmark run.
+    baseline: Optional[UUIDStr|dict] = None
 
     #: Use builtin symbolizer instead of addr2line
     use_builtin_symbolizer: bool = True
