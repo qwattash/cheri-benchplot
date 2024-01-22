@@ -16,7 +16,6 @@ from ..core.config import InstanceKernelABI
 from ..core.plot import PlotTarget, PlotTask, new_figure
 from ..core.task import DataGenTask, dependency, output
 from ..core.util import SubprocessHelper
-from ..ext import pychericap, pydwarf
 from .model import (ImpreciseSubobjectInfoModel, ImpreciseSubobjectInfoModelRecord, ImpreciseSubobjectLayoutModel,
                     SetboundsKind, SubobjectBoundsModel, SubobjectBoundsUnionModel)
 

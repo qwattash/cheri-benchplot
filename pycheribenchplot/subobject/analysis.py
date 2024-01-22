@@ -6,13 +6,14 @@ import polars as pl
 import seaborn as sns
 import seaborn.objects as so
 from sqlalchemy import func, select
+from sqlalchemy.orm import aliased
 
 from ..core.analysis import AnalysisTask
-from ..core.artefact import SQLTarget, ValueTarget
+from ..core.artefact import HTMLTemplateTarget, SQLTarget, ValueTarget
 from ..core.plot import PlotTarget, PlotTask, new_figure
 from ..core.task import dependency, output
 from .imprecise import ExtractImpreciseSubobject
-from .model import MemberBounds, StructMember, StructType
+from .model import MemberBounds, StructMember, StructType, StructMemberFlags
 
 
 class StructLayoutAnalysisMixin:
@@ -24,12 +25,30 @@ class StructLayoutAnalysisMixin:
     to observe the difference between the behaviour for Morello and
     RISC-V variants.
     """
-    def _get_datagen_tasks(self) -> dict["uuid.UUID", SQLTarget]:
+    def _get_datagen_tasks(self) -> dict["uuid.UUID", ExtractImpreciseSubobject]:
         targets = {}
         for b in self.session.all_benchmarks():
             task = b.find_exec_task(ExtractImpreciseSubobject)
-            targets[b.uuid] = task.struct_layout_db
+            targets[b.uuid] = task
         return targets
+
+    def load_layouts(self) -> pl.DataFrame:
+        """
+        Load structure layouts containing imprecise sub-objects.
+        """
+        loaded = None
+        for uuid, gen_task in self._get_datagen_tasks().items():
+            df = self.load_one_dataset(gen_task)
+            df = gen_task.add_dataset_metadata(df)
+            if loaded is not None:
+                loaded.vstack(df, in_place=True)
+            else:
+                loaded = df
+        assert loaded is not None, "No input data"
+        return loaded
+
+    def load_one_dataset(self, gen_task: ExtractImpreciseSubobject) -> pl.DataFrame:
+        raise NotImplementedError("Must override")
 
 
 class ImpreciseMembersPlot(PlotTask, StructLayoutAnalysisMixin):
@@ -47,11 +66,6 @@ class ImpreciseMembersPlot(PlotTask, StructLayoutAnalysisMixin):
     def imprecise_fields_plot(self):
         """Target for the plot showing the padding of imprecise fields"""
         return PlotTarget(self, "imprecision")
-
-    @output
-    def imprecise_fields_size_plot(self):
-        """Target for the plot showing XXX"""
-        return PlotTarget(self, "size")
 
     @output
     def imprecise_fields_size_hist(self):
@@ -73,15 +87,7 @@ class ImpreciseMembersPlot(PlotTask, StructLayoutAnalysisMixin):
         return df
 
     def load_imprecise_subobjects(self) -> pl.DataFrame:
-        loaded = None
-        for gen_task in self._get_datagen_tasks():
-            df = self.load_one_dataset(gen_task)
-            df = gen_task.add_dataset_metadata(df)
-            if loaded is not None:
-                loaded.vstack(df, in_place=True)
-            else:
-                loaded = df
-        assert loaded is not None, "No input data"
+        loaded = self.load_layouts()
         # Now that we have everything, compute the helper columns for padding
         loaded = loaded.with_columns(padding_base=pl.col("offset") - pl.col("base"),
                                      padding_top=pl.col("top") - pl.col("req_top"))
@@ -100,7 +106,8 @@ class ImpreciseMembersPlot(PlotTask, StructLayoutAnalysisMixin):
                           value_name="value")
         show_df = show_df.with_columns(
             (pl.col("side") + " " + pl.col("dataset_gid").map_elements(self.g_uuid_to_label)).alias("legend"),
-            pl.col("member_name").alias("label"))
+            pl.col("member_name").alias("label"),
+            (pl.col("req_top") - pl.col("offset")).alias("req_size"))
 
         with new_figure(self.imprecise_fields_plot.paths(), figsize=(10, 50)) as fig:
             ax = fig.subplots()
@@ -110,8 +117,144 @@ class ImpreciseMembersPlot(PlotTask, StructLayoutAnalysisMixin):
                                                                                side=show_df["side"],
                                                                                orient="y").plot())
 
-            # self.adjust_legend_on_top(fig, ax)
+            self.adjust_legend_on_top(fig, ax)
             ax.set_xscale("log", base=2)
             ax.set_xlabel("Capability imprecision (bytes)")
             ax.set_ylabel("Sub-object field")
             plt.setp(ax.get_yticklabels(), ha="right", va="center", fontsize="xx-small")
+
+        with new_figure(self.imprecise_fields_size_hist.paths()) as fig:
+            ax = fig.subplots()
+            sns.histplot(show_df, x="req_size", hue="legend", log_scale=2, ax=ax, element="step")
+            ax.set_xlabel("Sub-object requested size (bytes)")
+            ax.set_ylabel("# of imprecise sub-objects")
+
+
+class ImpreciseSubobjectLayouts(AnalysisTask, StructLayoutAnalysisMixin):
+    """
+    Render an HTML to interactively browse the structure layouts with annotated imprecise sub-objects.
+
+    This marks structures and members with imprecise array capabilities and capablities
+    that alias other pointer fields.
+    """
+    public = True
+    task_namespace = "subobject"
+    task_name = "imprecise-subobject-layouts-v2"
+
+    @output
+    def html_doc(self):
+        return HTMLTemplateTarget(self, "imprecise-subobject-layout.html.jinja")
+
+    def load_one_dataset(self, gen_task: ExtractImpreciseSubobject) -> pl.DataFrame:
+        """
+        Load structure layouts containing imprecise sub-objects.
+
+        The dataframe contains the flattened layout of data structures that contain at least
+        one imprecise sub-object member.
+        """
+        # The requested top for the member, this rounds up the size to the next byte
+        # boundary for bit fields.
+        # yapf: disable
+        aliased_bounds = aliased(MemberBounds)
+        aliased_by = (
+            select(
+                MemberBounds.id,
+                func.aggregate_strings(aliased_bounds.id, ",").label("aliased_by")
+            )
+            .join(MemberBounds.aliased_by.of_type(aliased_bounds))
+            .group_by(MemberBounds.id)
+        ).subquery()
+
+        # Is a member capability aliasing other pointer members?
+        aliasing_ptrs = (
+            select(
+                MemberBounds.id,
+                func.min(func.count(aliased_bounds.id), 1).label("is_aliasing_ptrs"),
+            )
+            .join(MemberBounds.aliasing_with.of_type(aliased_bounds))
+            .join(aliased_bounds.member_entry)
+            .group_by(MemberBounds.id)
+        ).subquery()
+
+        imprecise_layouts = (
+            select(
+                # Base columns
+                StructType.id, StructType.file, StructType.line, StructType.name,
+                StructMember.bit_offset, StructMember.name.label("member_name"),
+                StructMember.type_name, StructMember.size, StructMember.bit_size,
+                MemberBounds.name.label("flat_name"), MemberBounds.offset,
+                MemberBounds.base, MemberBounds.top, MemberBounds.is_imprecise,
+                # Synthetic columns from subqueries
+                MemberBounds.id.label("flat_member_id"),
+                aliased_by.c.aliased_by,
+                aliasing_ptrs.c.is_aliasing_ptrs,
+                func.min(StructMember.flags.op("&")(StructMemberFlags.IsArray.value), 1).label("is_array")
+            )
+            .join(MemberBounds.owner_entry)
+            .join(MemberBounds.member_entry)
+            .join(aliased_by, MemberBounds.id == aliased_by.c.id, isouter=True)
+            .join(aliasing_ptrs, MemberBounds.id == aliasing_ptrs.c.id, isouter=True)
+            .where(StructType.has_imprecise)
+        )
+        # yapf: enable
+        schema_types = {
+            'id': pl.UInt64, 'file': pl.Utf8, 'line': pl.UInt64, 'name': pl.Utf8,
+            'bit_offset': pl.Int8, 'member_name': pl.Utf8, 'type_name': pl.Utf8,
+            'size': pl.UInt64, 'bit_size': pl.Int8, 'flat_name': pl.Utf8,
+            'offset': pl.UInt64, 'base': pl.UInt64, 'top': pl.UInt64,
+            'is_imprecise': pl.Boolean, 'flat_member_id': pl.UInt64, 'aliased_by': pl.Utf8,
+            'is_aliasing_ptrs': pl.Boolean, 'is_array': pl.Boolean
+        }
+        return pl.read_database(imprecise_layouts, gen_task.struct_layout_db.sql_engine,
+                                schema_overrides=schema_types)
+
+    def run(self):
+        """
+        Render the HTML template.
+
+        The dataframe is grouped recursively to produce nested datasets that are
+        convenient to use for the template. Synthetic columns generated explicitly for
+        the template rendering are prefixed by 'tmpl_'.
+        """
+        layouts = self.load_layouts()
+        assert layouts.select("dataset_id", "flat_member_id").is_duplicated().any() == False
+
+        def gen_struct_members(df: pl.DataFrame):
+            # Helper columns for the template
+            expr_bit_suffix = (
+                pl.when(pl.col("bit_offset") != None)
+                .then(":+" + pl.col("bit_offset").cast(str))
+                .otherwise(pl.lit(""))
+            )
+            expr_bit_size_suffix = (
+                pl.when(pl.col("bit_size") != None)
+                .then(":+" + pl.col("bit_size").cast(str))
+                .otherwise(pl.lit(""))
+            )
+            df = df.with_columns(
+                (pl.col("offset").cast(str) + expr_bit_suffix).alias("tmpl_offset"),
+                (pl.col("size").cast(str) + expr_bit_size_suffix).alias("tmpl_size"),
+                pl.col("bit_size").fill_null(0),
+                (pl.col("flat_name").str.split("::").list.len()).alias("tmpl_depth")
+            )
+            return df
+
+        def gen_struct_layouts(group_name: str, df: pl.DataFrame):
+            unique_layouts = df.sort("name")["id"].unique()
+            for id_ in unique_layouts:
+                xs = df.filter(pl.col("id") == id_).with_columns(
+                    (pl.lit(group_name) + "-" + pl.lit(str(id_))).alias("tmpl_layout_id"),
+                    (pl.col("file") + ":" + pl.col("line").cast(str)).alias("tmpl_location"),
+                    pl.lit(False).alias("has_imprecise_pointer_alias"),
+                    pl.lit(False).alias("has_imprecise_array")
+                )
+                yield (xs, gen_struct_members(xs))
+
+        def gen_layout_groups():
+            for group_name, group in layouts.group_by("dataset_gid"):
+                label = self.g_uuid_to_label(group_name)
+                self.logger.debug("Prepare structures for %s", label)
+                df = group.with_columns(pl.lit(label).alias("tmpl_group_name"))
+                yield (df, gen_struct_layouts(group_name, df))
+
+        self.html_doc.render(layout_groups=gen_layout_groups())

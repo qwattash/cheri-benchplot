@@ -18,7 +18,7 @@ from ..core.config import Config, ConfigPath, InstanceKernelABI
 from ..core.dwarf import DWARFManager, StructLayoutGraph
 from ..core.plot import PlotTarget, PlotTask, new_facet, new_figure
 from ..core.task import BenchmarkTask, DataGenTask, dependency, output
-from ..ext import pychericap, pydwarf
+# from ..ext import pychericap, pydwarf
 from .model import (ImpreciseSubobjectInfoModel, ImpreciseSubobjectInfoModelRecord, ImpreciseSubobjectLayoutModel)
 
 
@@ -83,7 +83,7 @@ class StructLayoutLoader(BenchmarkTask):
         self.graph.assign(g)
 
 
-class ExtractImpreciseSubobject(DataGenTask):
+class _ExtractImpreciseSubobject(DataGenTask):
     """
     Extract CheriBSD DWARF type information for aggregate data types.
 

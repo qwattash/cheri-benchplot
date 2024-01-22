@@ -1,7 +1,7 @@
-limport re
+import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator, List
+from typing import Iterator, List, Optional
 
 from ..core.artefact import SQLTarget
 from ..core.config import Config, ConfigPath
@@ -29,10 +29,13 @@ class ExtractImpreciseSubobjectConfig(Config):
     dwarf_data_sources: List[PathMatchSpec]
 
     #: Optional path to the dwarf scraper tool
-    dwarf_scraper: ConfigPath|None = None
+    dwarf_scraper: Optional[ConfigPath] = None
 
     #: Optional path prefix to strip from source file paths
-    src_path_prefix: ConfigPath|None = None
+    src_path_prefix: Optional[ConfigPath] = None
+
+    #: Enable verbose output from dwarf_scraper
+    verbose: bool = False
 
 
 class ExtractImpreciseSubobject(DataGenTask):
@@ -101,6 +104,8 @@ class ExtractImpreciseSubobject(DataGenTask):
                 "--scrapers", "struct-layout"]
         if self.config.src_path_prefix:
             args += ["--prefix", self.config.src_path_prefix]
+        if self.config.verbose:
+            args += ["--verbose"]
         scraper = SubprocessHelper(self._dwarf_scraper, args, logger=self.logger)
         scraper.start()
         for src_spec in self.config.dwarf_data_sources:
@@ -109,7 +114,7 @@ class ExtractImpreciseSubobject(DataGenTask):
                 if not item.is_file():
                     self.logger.error("File %s is not a regular file, skipping", item)
                     continue
-                scraper.stdin.write(str(item).encode())
+                scraper.stdin.writelines([str(item).encode(), " ".encode()])
         scraper.stdin.close()
         scraper.wait()
 

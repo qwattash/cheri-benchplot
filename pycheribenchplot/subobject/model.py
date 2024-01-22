@@ -80,6 +80,7 @@ class StructType(SqlBase):
     name: Mapped[str]
     size: Mapped[int] = mapped_column(nullable=False)
     flags: Mapped[ChoiceType] = mapped_column(ChoiceType(StructTypeFlags, impl=Integer()), nullable=False, default=0)
+    has_imprecise: Mapped[bool] = mapped_column(default=False)
 
     members: Mapped[List["StructMember"]] = relationship(back_populates="owner_entry",
                                                          foreign_keys="StructMember.owner",
@@ -162,6 +163,7 @@ class MemberBounds(SqlBase):
     offset: Mapped[int] = mapped_column(nullable=False)
     base: Mapped[int]
     top: Mapped[int]
+    is_imprecise: Mapped[bool] = mapped_column(default=False)
     precision: Mapped[int]
 
     owner_entry: Mapped["StructType"] = relationship(foreign_keys=owner)

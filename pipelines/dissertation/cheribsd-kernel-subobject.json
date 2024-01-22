@@ -19,27 +19,25 @@
         "desc": "CheriBSD sub-object bounds evaluation",
         "iterations": 1,
         "generators": [{
-            "handler": "subobject.extract-imprecise",
+            "handler": "subobject.extract-imprecise-v2",
             "task_options": {
                 "dwarf_data_sources": [{
                     "path": "{user.build_path}/cheribsd-{instance.cheri_target}-build",
-                    "match": ".*/{instance.kernel}/.*/.*\\.ko\\.full"
+                    "matcher": ".*/{instance.kernel}/.*/.*\\.ko\\.full"
                 }, {
                     "path": "{user.build_path}/cheribsd-{instance.cheri_target}-build",
-                    "match": ".*/{instance.kernel}/kernel.full"
-                }]
+                    "matcher": ".*/{instance.kernel}/kernel.full"
+                }],
+                "dwarf_scraper": "{user.src_path}/cheri-benchplot/tools/build/dwarf-scraper/dwarf_scraper",
+                "src_path_prefix": "{user.src_path}/cheribsd"
             }
         }]
     }],
     "analysis_config": {
         "tasks": [{
-            "handler": "subobject.imprecise-subobject-plot"
+            "handler": "subobject.imprecise-subobject-plot-v2"
         }, {
-            "handler": "subobject.imprecise-subobject-bits-plot"
-        }, {
-            "handler": "subobject.imprecise-subobject-layouts"
-        }, {
-            "handler": "subobject.imprecise-subobject-security"
+            "handler": "subobject.imprecise-subobject-layouts-v2"
         }]
     }
 }
