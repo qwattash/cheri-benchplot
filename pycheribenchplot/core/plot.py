@@ -4,9 +4,11 @@ General purpose matplotlib helpers
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
+from threading import Lock
 from typing import List, Optional
 from uuid import UUID
 
+import polars as pl
 import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib import rc_context
@@ -104,6 +106,11 @@ class PlotTaskMixin:
     configuration.
     Each plot task is responsible for setting up a figure and axes.
     """
+
+    # XXX temporary mutex to serialize matplotlib rcParams overrides
+    # This should be moved to the figure and facet context managers
+    rc_mutex = Lock()
+
     def _plot_output(self, suffix: str = None) -> PlotTarget:
         """
         Deprecated way to build the plot target. Should use PlotTarget directly.
@@ -117,6 +124,19 @@ class PlotTaskMixin:
         else:
             base = self.session.get_plot_root_path()
         return PlotTarget(self, base / name)
+
+    def _run_with_plot_sandbox(self):
+        try:
+            rc_override = getattr(self, "rc_params")
+        except AttributeError:
+            rc_override = {}
+
+        with PlotTaskMixin.rc_mutex:
+            with rc_context():
+                # Use default theme as base
+                sns.set_theme()
+                with sns.plotting_context(rc=rc_override):
+                    self.run_plot()
 
     def adjust_legend_on_top(self, fig, ax=None, **kwargs):
         """
@@ -142,9 +162,39 @@ class PlotTaskMixin:
                      ncols=4,
                      **kwargs)
 
-    def _run_with_plot_sandbox(self):
-        with rc_context():
-            self.run_plot()
+    def baseline_slice(self, df: pl.DataFrame) -> pl.DataFrame:
+        """
+        Extract the baseline cross section of the dataframe.
+
+        The baseline must be specified in the analysis configuration.
+        """
+        baseline_sel = self.analysis_config.baseline
+        if baseline_sel is None:
+            self.logger.error("Missing baseline selector in analysis configuration")
+            raise ValueError("Invalid Configuration")
+
+        if type(baseline_sel) == dict:
+            # If we have the 'instance' parameter, replace it with the corresponding
+            # dataset_gid
+            if "instance" in baseline_sel:
+                name = baseline_sel["instance"]
+                for b in self.session.all_benchmarks():
+                    if b.config.instance.name == name:
+                        baseline_sel["dataset_gid"] = b.config.g_uuid
+                        del baseline_sel["instance"]
+                        break
+                else:
+                    self.logger.error("Invalid 'instance' value in baseline configuration")
+                    raise ValueError("Invalid configuration")
+            baseline = df.filter(**baseline_sel)
+        else:
+            # Expect a UUID
+            baseline = df.filter(dataset_id=baseline_sel)
+
+        if len(baseline) >= 1 and len(baseline["dataset_id"].unique()) == 1:
+            self.logger.error("Invalid baseline specifier %s", baseline_sel)
+            raise ValueError("Invalid configuration")
+        return baseline
 
     def run_plot(self):
         """
