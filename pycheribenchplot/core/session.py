@@ -360,7 +360,7 @@ class Session:
         # Dump failed tasks info
         for failed in self.scheduler.failed_tasks:
             task_details = []
-            if failed.is_benchmark_task():
+            if failed.is_dataset_task():
                 iconf = failed.benchmark.config.instance
                 task_details.append(f"on {iconf.platform}-{iconf.cheri_target}-{iconf.kernel}")
                 task_details.append(f"params: {failed.benchmark.parameters}")
@@ -409,7 +409,7 @@ class Session:
                 # If the task is per-dataset, schedule one instance for each dataset.
                 if task_klass.is_session_task():
                     task = task_klass(self, analysis_config, task_config=options)
-                elif task_klass.is_benchmark_task():
+                elif task_klass.is_dataset_task():
                     task = DatasetAnalysisTaskGroup(self, task_klass, analysis_config, task_config=options)
                 self.logger.debug("Schedule analysis task %s with opts %s", task, options)
                 self.scheduler.add_task(task)
@@ -438,7 +438,7 @@ class Session:
         tasks = []
         for bench in self.all_benchmarks():
             task = bench.find_exec_task(task_class)
-            if not task.is_benchmark_task() or not task.is_exec_task():
+            if not task.is_dataset_task() or not task.is_exec_task():
                 self.logger.error("The task %s is not an ExecutionTask", task_class)
                 raise TypeError("Invalid task type")
             tasks.append(task)
