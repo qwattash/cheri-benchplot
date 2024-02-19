@@ -37,7 +37,7 @@ def make_uuid() -> str:
     return str(uuid4())
 
 
-def resolve_task_options(task_spec: str, task_options: dict, is_exec: bool = False) -> Type["Task"]:
+def resolve_task_options(task_spec: str, task_options: dict, is_exec: bool = False) -> Type["Config"]:
     """
     Helper to lazily coerce task options to the correct type.
     """
@@ -415,8 +415,7 @@ class Config:
                 continue
             try:
                 metadata = f.metadata.get("metadata", {})
-                config_logger.debug("Scan config field %s.%s: %s",
-                                    self.__class__.__name__, f.name, f.type)
+                config_logger.debug("Scan config field %s.%s: %s", self.__class__.__name__, f.name, f.type)
                 replaced = self._bind_field(context, f.type, getattr(source, f.name), metadata)
             except Exception as ex:
                 raise ConfigurationError(f"Failed to bind {f.name} with value "
@@ -482,7 +481,7 @@ class BenchplotUserConfig(Config):
     #: Path to openocd, will be inferred if missing (only relevant when running FPGA)
     openocd_path: ConfigPath = Path("/usr/bin/openocd")
 
-    #: Path to flamegraph.pl flamegraph generator
+    #: Path to BrendanGregg's flamegraph repository containing flamegraph.pl
     flamegraph_path: ConfigPath = Path("flamegraph.pl")
 
     #: CHERI rootfs path
@@ -633,7 +632,8 @@ class InstanceCheriBSD(Enum):
         return (self == InstanceCheriBSD.RISCV64_PURECAP or self == InstanceCheriBSD.RISCV64_HYBRID)
 
     def is_morello(self):
-        return (self == InstanceCheriBSD.MORELLO_PURECAP or self == InstanceCheriBSD.MORELLO_HYBRID or self == InstanceCheriBSD.MORELLO_BENCHMARK)
+        return (self == InstanceCheriBSD.MORELLO_PURECAP or self == InstanceCheriBSD.MORELLO_HYBRID
+                or self == InstanceCheriBSD.MORELLO_BENCHMARK)
 
     def is_hybrid_abi(self):
         return (self == InstanceCheriBSD.RISCV64_HYBRID or self == InstanceCheriBSD.MORELLO_HYBRID)
@@ -661,6 +661,17 @@ class InstanceKernelABI(Enum):
     NOCHERI = "nocheri"
     HYBRID = "hybrid"
     PURECAP = "purecap"
+    BENCHMARK = "benchmark"
+
+    def __str__(self):
+        return self.value
+
+
+class InstanceUserABI(Enum):
+    NOCHERI = "nocheri"
+    HYBRID = "hybrid"
+    PURECAP = "purecap"
+    BENCHMARK = "benchmark"
 
     def __str__(self):
         return self.value
@@ -684,6 +695,8 @@ class InstanceConfig(Config):
     cheri_target: InstanceCheriBSD = dc.field(default=InstanceCheriBSD.RISCV64_PURECAP, metadata={"by_value": True})
     #: Kernel ABI identifier
     kernelabi: InstanceKernelABI = dc.field(default=InstanceKernelABI.HYBRID, metadata={"by_value": True})
+    #: User ABI identifier
+    userabi: Optional[InstanceUserABI] = dc.field(default=None, metadata={"by_value": True})
     #: Is the kernel config name managed by cheribuild or is it an extra one
     #: specified via --cheribsd/extra-kernel-configs?
     cheribuild_kernel: bool = True
@@ -724,6 +737,17 @@ class InstanceConfig(Config):
         if self.name is None:
             self.name = (f"{self.platform} UserABI:{self.cheri_target} "
                          f"KernABI:{self.kernelabi} KernConf:{self.kernel}")
+
+        if self.userabi is None:
+            # Infer user ABI from the cheri_target
+            if self.cheri_target.is_hybrid_abi():
+                self.userabi = InstanceUserABI.HYBRID
+            elif self.cheri_target.is_purecap_abi():
+                self.userabi = InstanceUserABI.PURECAP
+            elif self.cheri_target.is_benchmark_abi():
+                self.userabi = InstanceUserABI.BENCHMARK
+            else:
+                self.userabi = InstanceUserABI.NOCHERI
 
     def __str__(self):
         return f"{self.name}"
@@ -800,7 +824,7 @@ class AnalysisConfig(Config):
     #: Baseline dataset identifier.
     #: This can be an UUID or a set of parameter key/values that uniquely identify
     #: a single benchmark run.
-    baseline: Optional[UUIDStr|dict] = None
+    baseline: Optional[UUIDStr | dict] = None
 
     #: Use builtin symbolizer instead of addr2line
     use_builtin_symbolizer: bool = True
@@ -1083,15 +1107,14 @@ class SessionRunConfig(CommonSessionConfig):
         return new_config
 
     @classmethod
-    def _check_valid_parameterization(cls, params: dict, opts: ParamOptions|None) -> bool:
+    def _check_valid_parameterization(cls, params: dict, opts: ParamOptions | None) -> bool:
         """
         Check whether the given set of parameters is allowed.
         """
         if opts is None:
             return True
         for skip in opts.skip:
-            skip_match = ft.reduce(lambda m, e: m and params.get(e[0]) == e[1],
-                                   skip.items(), True)
+            skip_match = ft.reduce(lambda m, e: m and params.get(e[0]) == e[1], skip.items(), True)
             if skip_match:
                 return False
         return True
