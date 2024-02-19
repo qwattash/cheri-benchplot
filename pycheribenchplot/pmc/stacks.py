@@ -1,0 +1,38 @@
+import subprocess
+
+import networkx as nx
+import numpy as np
+import plotly.graph_objects as go
+
+from ..core.analysis import DatasetAnalysisTask
+from ..core.artefact import ValueTarget
+from ..core.plot import DatasetPlotTask, PlotTarget
+from ..core.task import dependency, output
+from .ingest import IngestPMCStatStacks
+
+
+class PMCStacksFlameGraph(DatasetPlotTask):
+    """
+    Build a flame graph for each benchmark configuration.
+    This uses brendandgregg's flamegraph.pl for simplicity
+
+    TODO If we have multiple iterations, we merge the trees so we have more samples.
+    """
+    task_namespace = "pmc"
+    task_name = "flamegraph"
+    public = True
+
+    @output
+    def flamegraph(self):
+        return PlotTarget(self, "stacks", ext="svg")
+
+    def run(self):
+        flamegraph_tool = self.session.user_config.flamegraph_path / "flamegraph.pl"
+        if not flamegraph_tool.exists():
+            self.logger.warning(
+                "Tool flamegraph.pl not found, try setting user config flamegraph_path -- Skipping plot")
+            return
+
+        task = self.benchmark.find_exec_task(IngestPMCStatStacks)
+        with open(self.flamegraph.paths()[0], "w+") as plot_file:
+            subprocess.run([flamegraph_tool, task.collapsed_stacks.paths()[0]], stdout=plot_file)
