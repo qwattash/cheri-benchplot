@@ -159,7 +159,7 @@ class BenchmarkExecTask(Task):
 
         if not self._need_instance:
             # We are done, nothing to run on a remote instance, any task to execute has been completed by deps
-            self.logger.info("Benchmark run completed")
+            self.logger.info("Run %s completed", self.benchmark)
             return
 
         self._handle_config_command_hooks()
@@ -183,7 +183,8 @@ class BenchmarkExecTask(Task):
         self.logger.info("Extract output files")
         for dep in self.resolved_dependencies:
             self._extract_files(instance, dep)
-        self.logger.info("Benchmark run completed")
+
+        self.logger.info("Run %s completed", self.benchmark)
 
 
 class Benchmark:
