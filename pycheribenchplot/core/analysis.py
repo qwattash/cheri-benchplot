@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Type
 from uuid import UUID
+from warnings import warn
 
 import numpy as np
 import pandas as pd
@@ -72,8 +73,7 @@ class DatasetAnalysisTask(AnalysisTask):
 
     @classmethod
     def is_benchmark_task(cls):
-        warn(f"{cls.__name__}.is_benchmark_task has been renamed is_dataset_task",
-             DeprecationWarning, 2)
+        warn(f"{cls.__name__}.is_benchmark_task has been renamed is_dataset_task", DeprecationWarning, 2)
         return cls.is_dataset_task()
 
     @property
