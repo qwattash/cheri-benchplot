@@ -1,8 +1,6 @@
+import json
 import subprocess
-
-import networkx as nx
-import numpy as np
-import plotly.graph_objects as go
+from collections import defaultdict
 
 from ..core.analysis import DatasetAnalysisTask
 from ..core.artefact import ValueTarget
@@ -26,6 +24,10 @@ class PMCStacksFlameGraph(DatasetPlotTask):
     def flamegraph(self):
         return PlotTarget(self, "stacks", ext="svg")
 
+    @output
+    def flamegraph_ref(self):
+        return PlotTarget(self, "ref-stacks", ext="svg")
+
     def run(self):
         flamegraph_tool = self.session.user_config.flamegraph_path / "flamegraph.pl"
         if not flamegraph_tool.exists():
@@ -34,5 +36,23 @@ class PMCStacksFlameGraph(DatasetPlotTask):
             return
 
         task = self.benchmark.find_exec_task(IngestPMCStatStacks)
-        with open(self.flamegraph.paths()[0], "w+") as plot_file:
-            subprocess.run([flamegraph_tool, task.collapsed_stacks.paths()[0]], stdout=plot_file)
+
+        # Load the stacks data
+        merged_data = defaultdict(lambda: 0)
+        for path in task.data.iter_paths():
+            with open(path, "r") as fd:
+                in_data = json.load(fd)
+            for key, value in in_data["stacks"].items():
+                merged_data[key] += value
+
+        with open(self.flamegraph.single_path(), "w+") as plot_file:
+            with subprocess.Popen([flamegraph_tool], stdin=subprocess.PIPE, stdout=plot_file) as proc:
+                for key, vale in merged_data.items():
+                    proc.stdin.write(f"{key} {value}\n".encode("ascii"))
+                proc.stdin.close()
+                proc.wait()
+                assert proc.returncode == 0
+
+        with open(self.flamegraph_ref.single_path(), "w+") as plot_file:
+            subprocess.run([flamegraph_tool, task.collapsed_stacks.paths()[0]],
+                           stdout=plot_file)
