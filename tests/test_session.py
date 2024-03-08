@@ -1,172 +1,215 @@
 import copy
+import inspect
 import operator
 from uuid import UUID
 
-import pandera as pa
 import pytest
 
-EXPECT_NOPARAM_INDEX_NAME = "RESERVED__unparameterized_index"
-
-base_session_conf = {
-    "uuid": "17856370-2fd1-4597-937a-42b1277da440",
-    "name": "benchplot-selftest-model",
-    "configurations": []
-}
-
-base_benchmark_conf = {
-    "name": "selftest0",
-    "iterations": 2,
-    "benchmark": {
-        "handler": "test-benchmark"  # This is registered in conftest.py
-    },
-    "instance": {
-        "kernel": "selftest-kernel",
-        "name": "selftest-instance"
-    }
-}
+from pycheribenchplot.core.benchmark import Benchmark
 
 
-def make_bench_config(uuid, g_uuid, baseline=False, params=None):
-    conf = copy.deepcopy(base_benchmark_conf)
-    if params:
-        conf["parameters"] = params
-    conf["uuid"] = uuid
-    conf["g_uuid"] = g_uuid
-    conf["instance"]["baseline"] = baseline
-    return conf
+def check_that(*predicates):
+    def _checker(descriptor: Benchmark):
+        for pred in predicates:
+            assert pred(descriptor), inspect.getsource(pred)
+
+    return _checker
 
 
-def make_session_config(*args):
-    conf = copy.deepcopy(base_session_conf)
-    conf["configurations"] = list(args)
-    return conf
-
-
-def expect_column(uuid_list, g_uuid, baseline=False):
-    get_g_uuid = operator.attrgetter("g_uuid")
-    get_uuid = operator.attrgetter("uuid")
-    get_baseline = operator.attrgetter("config.instance.baseline")
-    uuid_list = map(UUID, uuid_list)
-    return pa.Column(object, [
-        pa.Check(lambda s: s.map(get_g_uuid) == UUID(g_uuid)),
-        pa.Check(lambda s: s.map(get_baseline) == baseline),
-        pa.Check(lambda s: set(s.map(get_uuid)) == set(uuid_list))
-    ])
+def check_matrix(m, expect):
+    assert len(m.columns) == len(expect), "Configuration combinations mismatch"
+    for column in m.columns:
+        assert column in expect, f"Missing instance column {column}"
+        assert len(expect[column]) == len(m[column]), f"Matrix shape mismatch at {column}"
+        for checker, entry in zip(expect[column], m[column]):
+            if callable(checker):
+                checker(entry)
+            else:
+                assert checker == entry
 
 
 #
-# Single benchmark configuration/instance with no parameters
+# Very simple session configuration, no parameters
 #
-conf_single_bench = make_session_config(
-    make_bench_config("8bc941a3-f6d6-4d37-b193-4738f1da3dae", "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb", baseline=True))
-expect_single_bench = pa.DataFrameSchema(
-    {
-        UUID("2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb"):
-        expect_column(["8bc941a3-f6d6-4d37-b193-4738f1da3dae"], "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb", baseline=True)
-    },
-    index=pa.Index(int, name=EXPECT_NOPARAM_INDEX_NAME),
-    strict=True,
-    unique_column_names=True)
+conf_single_bench = {
+    "uuid":
+    "17856370-2fd1-4597-937a-42b1277da440",
+    "name":
+    "benchplot-selftest-model",
+    "configurations": [{
+        "name": "simple-session-config",
+        "iterations": 2,
+        "uuid": "8bc941a3-f6d6-4d37-b193-4738f1da3dae",
+        "g_uuid": "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb",
+        "generators": [{
+            "handler": "test-benchmark"  # This is registered for tests only
+        }],
+        "instance": {
+            "kernel": "selftest-kernel",
+            "name": "selftest-instance"
+        }
+    }]
+}
+expect_single_bench = {
+    "instance": ["2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb"],
+    "descriptor": [
+        check_that(lambda b: b.config.name == "simple-session-config", lambda b: b.config.iterations == 2,
+                   lambda b: b.config.uuid == "8bc941a3-f6d6-4d37-b193-4738f1da3dae",
+                   lambda b: b.config.g_uuid == "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb")
+    ]
+}
 
 #
 # Single benchmark configuration/instance with 1 parameter
 #
-conf_single_bench_with_params = make_session_config(
-    make_bench_config("8bc941a3-f6d6-4d37-b193-4738f1da3dae",
-                      "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb",
-                      baseline=True,
-                      params={"param_foo": "param_foo_value"}))
-expect_single_bench_with_params = pa.DataFrameSchema(
-    {
-        UUID("2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb"):
-        expect_column(["8bc941a3-f6d6-4d37-b193-4738f1da3dae"], "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb", baseline=True)
-    },
-    index=pa.MultiIndex([pa.Index(str, pa.Check(lambda s: s == ["param_foo_value"]), name="param_foo")]),
-    strict=True,
-    unique_column_names=True)
+conf_single_bench_with_params = {
+    "uuid":
+    "17856370-2fd1-4597-937a-42b1277da440",
+    "name":
+    "benchplot-selftest-model",
+    "configurations": [{
+        "name": "simple-session-config",
+        "iterations": 2,
+        "uuid": "8bc941a3-f6d6-4d37-b193-4738f1da3dae",
+        "g_uuid": "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb",
+        "parameters": {
+            "param_foo": "param_foo_value"
+        },
+        "generators": [{
+            "handler": "test-benchmark"  # This is registered for tests only
+        }],
+        "instance": {
+            "kernel": "selftest-kernel",
+            "name": "selftest-instance"
+        }
+    }]
+}
+expect_single_bench_with_params = {
+    "param_foo": ["param_foo_value"],
+    "instance": ["2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb"],
+    "descriptor": [
+        check_that(lambda b: b.config.name == "simple-session-config", lambda b: b.config.iterations == 2,
+                   lambda b: b.config.uuid == "8bc941a3-f6d6-4d37-b193-4738f1da3dae",
+                   lambda b: b.config.g_uuid == "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb",
+                   lambda b: b.parameters == dict(param_foo="param_foo_value"))
+    ]
+}
 
 #
-# Two benchmark configurations on the same instance with 2 parameters
+# Two benchmark configurations on the same instance with 2 parameter values
 #
-conf_multi_bench_same_instance = make_session_config(
-    make_bench_config("8bc941a3-f6d6-4d37-b193-4738f1da3dae",
-                      "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb",
-                      baseline=True,
-                      params={
-                          "param_foo": "param_foo_value0",
-                          "param_bar": "param_bar_value0"
-                      }),
-    make_bench_config("1f7e70f5-f15b-4a07-9ab4-d3cb711d7b21",
-                      "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb",
-                      baseline=True,
-                      params={
-                          "param_foo": "param_foo_value1",
-                          "param_bar": "param_bar_value1"
-                      }),
-)
-expect_multi_bench_same_instance = pa.DataFrameSchema(
-    {
-        UUID("2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb"):
-        expect_column(["8bc941a3-f6d6-4d37-b193-4738f1da3dae", "1f7e70f5-f15b-4a07-9ab4-d3cb711d7b21"],
-                      "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb",
-                      baseline=True)
-    },
-    index=pa.MultiIndex([
-        pa.Index(str, pa.Check(lambda s: s.isin(["param_foo_value0", "param_foo_value1"])), name="param_foo"),
-        pa.Index(str, pa.Check(lambda s: s.isin(["param_bar_value0", "param_bar_value1"])), name="param_bar"),
-    ]),
-    strict=True,
-    unique_column_names=True)
+conf_multi_bench_same_instance = {
+    "uuid":
+    "17856370-2fd1-4597-937a-42b1277da440",
+    "name":
+    "benchplot-selftest-model",
+    "configurations": [
+        {
+            "name": "simple-session-config/0",
+            "iterations": 2,
+            "uuid": "8bc941a3-f6d6-4d37-b193-4738f1da3dae",
+            "g_uuid": "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb",
+            "parameters": {
+                "param_foo": "param_foo_value0"
+            },
+            "generators": [{
+                "handler": "test-benchmark"  # This is registered for tests only
+            }],
+            "instance": {
+                "kernel": "selftest-kernel",
+                "name": "selftest-instance"
+            }
+        },
+        {
+            "name": "simple-session-config/1",
+            "iterations": 2,
+            "uuid": "1f7e70f5-f15b-4a07-9ab4-d3cb711d7b21",
+            "g_uuid": "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb",
+            "parameters": {
+                "param_foo": "param_foo_value1"
+            },
+            "generators": [{
+                "handler": "test-benchmark"  # This is registered for tests only
+            }],
+            "instance": {
+                "kernel": "selftest-kernel",
+                "name": "selftest-instance"
+            }
+        }
+    ]
+}
+expect_multi_bench_same_instance = {
+    "param_foo": ["param_foo_value0", "param_foo_value1"],
+    "instance": ["2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb", "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb"],
+    "descriptor": [
+        check_that(lambda b: b.config.name == "simple-session-config/0", lambda b: b.config.iterations == 2,
+                   lambda b: b.config.uuid == "8bc941a3-f6d6-4d37-b193-4738f1da3dae",
+                   lambda b: b.config.g_uuid == "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb",
+                   lambda b: b.parameters == dict(param_foo="param_foo_value0")),
+        check_that(lambda b: b.config.name == "simple-session-config/1", lambda b: b.config.iterations == 2,
+                   lambda b: b.config.uuid == "1f7e70f5-f15b-4a07-9ab4-d3cb711d7b21",
+                   lambda b: b.config.g_uuid == "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb",
+                   lambda b: b.parameters == dict(param_foo="param_foo_value1"))
+    ]
+}
 
 #
-# Two benchmark configurations on two instances with 2 parameters
+# Benchmark configurations on two instances with 1 parameters
 #
-conf_multi_bench_multi_instance = make_session_config(
-    make_bench_config("8bc941a3-f6d6-4d37-b193-4738f1da3dae",
-                      "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb",
-                      baseline=True,
-                      params={
-                          "param_foo": "param_foo_value0",
-                          "param_bar": "param_bar_value0"
-                      }),
-    make_bench_config("1f7e70f5-f15b-4a07-9ab4-d3cb711d7b21",
-                      "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb",
-                      baseline=True,
-                      params={
-                          "param_foo": "param_foo_value1",
-                          "param_bar": "param_bar_value1"
-                      }),
-    make_bench_config("e412237c-2a89-46c0-8635-cac8f3bf0886",
-                      "c73169b7-5797-41c8-9edc-656d666cb45a",
-                      baseline=False,
-                      params={
-                          "param_foo": "param_foo_value0",
-                          "param_bar": "param_bar_value0"
-                      }),
-    make_bench_config("d9a6ee34-eb92-4942-b157-87c9bd6c045c",
-                      "c73169b7-5797-41c8-9edc-656d666cb45a",
-                      baseline=False,
-                      params={
-                          "param_foo": "param_foo_value1",
-                          "param_bar": "param_bar_value1"
-                      }))
-expect_multi_bench_multi_instance = pa.DataFrameSchema(
-    {
-        UUID("2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb"):
-        expect_column(["8bc941a3-f6d6-4d37-b193-4738f1da3dae", "1f7e70f5-f15b-4a07-9ab4-d3cb711d7b21"],
-                      "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb",
-                      baseline=True),
-        UUID("c73169b7-5797-41c8-9edc-656d666cb45a"):
-        expect_column(["e412237c-2a89-46c0-8635-cac8f3bf0886", "d9a6ee34-eb92-4942-b157-87c9bd6c045c"],
-                      "c73169b7-5797-41c8-9edc-656d666cb45a",
-                      baseline=False)
-    },
-    index=pa.MultiIndex([
-        pa.Index(str, pa.Check(lambda s: s.isin(["param_foo_value0", "param_foo_value1"])), name="param_foo"),
-        pa.Index(str, pa.Check(lambda s: s.isin(["param_bar_value0", "param_bar_value1"])), name="param_bar"),
-    ]),
-    strict=True,
-    unique_column_names=True)
+conf_multi_bench_multi_instance = {
+    "uuid":
+    "17856370-2fd1-4597-937a-42b1277da440",
+    "name":
+    "benchplot-selftest-model",
+    "configurations": [
+        {
+            "name": "simple-session-config/0",
+            "iterations": 2,
+            "uuid": "8bc941a3-f6d6-4d37-b193-4738f1da3dae",
+            "g_uuid": "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb",
+            "parameters": {
+                "param_foo": "param_foo_value0"
+            },
+            "generators": [{
+                "handler": "test-benchmark"  # This is registered for tests only
+            }],
+            "instance": {
+                "kernel": "selftest-kernel",
+                "name": "selftest-instance"
+            }
+        },
+        {
+            "name": "simple-session-config/1",
+            "iterations": 2,
+            "uuid": "1f7e70f5-f15b-4a07-9ab4-d3cb711d7b21",
+            "g_uuid": "c73169b7-5797-41c8-9edc-656d666cb45a",
+            "parameters": {
+                "param_foo": "param_foo_value0"
+            },
+            "generators": [{
+                "handler": "test-benchmark"  # This is registered for tests only
+            }],
+            "instance": {
+                "kernel": "selftest-kernel",
+                "name": "selftest-instance"
+            }
+        }
+    ]
+}
+expect_multi_bench_multi_instance = {
+    "param_foo": ["param_foo_value0", "param_foo_value0"],
+    "instance": ["2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb", "c73169b7-5797-41c8-9edc-656d666cb45a"],
+    "descriptor": [
+        check_that(lambda b: b.config.name == "simple-session-config/0", lambda b: b.config.iterations == 2,
+                   lambda b: b.config.uuid == "8bc941a3-f6d6-4d37-b193-4738f1da3dae",
+                   lambda b: b.config.g_uuid == "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb",
+                   lambda b: b.parameters == dict(param_foo="param_foo_value0")),
+        check_that(lambda b: b.config.name == "simple-session-config/1", lambda b: b.config.iterations == 2,
+                   lambda b: b.config.uuid == "1f7e70f5-f15b-4a07-9ab4-d3cb711d7b21",
+                   lambda b: b.config.g_uuid == "c73169b7-5797-41c8-9edc-656d666cb45a",
+                   lambda b: b.parameters == dict(param_foo="param_foo_value0")),
+    ]
+}
 
 
 @pytest.mark.parametrize("session_conf,expect", [
@@ -175,55 +218,13 @@ expect_multi_bench_multi_instance = pa.DataFrameSchema(
     (conf_multi_bench_same_instance, expect_multi_bench_same_instance),
     (conf_multi_bench_multi_instance, expect_multi_bench_multi_instance),
 ])
-def test_benchmark_matrix(fake_session_factory, session_conf, expect):
+def test_param_matrix(fake_session_factory, session_conf, expect):
     """
-    Test benchmark matrix generation from configurations
+    Test parameterization matrix generation from configurations
     """
     assert session_conf is not None
     session = fake_session_factory(session_conf)
-    expect.validate(session.benchmark_matrix)
-
-
-#
-# Invalid configuration with missing baseline marker
-#
-conf_missing_baseline = make_session_config(
-    make_bench_config("8bc941a3-f6d6-4d37-b193-4738f1da3dae",
-                      "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb",
-                      baseline=False,
-                      params={"param_foo": "param_foo_value"}))
-
-#
-# Invalid configuration with too many baseline markers
-#
-conf_too_many_baselines = make_session_config(
-    make_bench_config("8bc941a3-f6d6-4d37-b193-4738f1da3dae",
-                      "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb",
-                      baseline=True,
-                      params={
-                          "param_foo": "param_foo_value0",
-                          "param_bar": "param_bar_value0"
-                      }),
-    make_bench_config("e412237c-2a89-46c0-8635-cac8f3bf0886",
-                      "c73169b7-5797-41c8-9edc-656d666cb45a",
-                      baseline=True,
-                      params={
-                          "param_foo": "param_foo_value0",
-                          "param_bar": "param_bar_value0"
-                      }))
-
-
-@pytest.mark.parametrize("session_conf,expect", [
-    (conf_missing_baseline, pytest.raises(RuntimeError, match=r"Missing baseline")),
-    (conf_too_many_baselines, pytest.raises(RuntimeError, match=r"Too many baseline")),
-])
-def test_benchmark_matrix_invalid(fake_session_factory, session_conf, expect):
-    """
-    Test benchmark matrix generation from configurations
-    """
-    assert session_conf is not None
-    with expect:
-        session = fake_session_factory(session_conf)
+    check_matrix(session.parameterization_matrix, expect)
 
 
 @pytest.mark.timeout(5)

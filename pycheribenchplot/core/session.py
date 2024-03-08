@@ -10,23 +10,23 @@ from pathlib import Path
 from typing import Type
 from uuid import UUID
 
-import pandas as pd
+import polars as pl
 from marshmallow.exceptions import ValidationError
-from tabulate import tabulate
 from typing_extensions import Self
 
 from .analysis import AnalysisTask, DatasetAnalysisTaskGroup
 from .benchmark import Benchmark, BenchmarkExecMode, ExecTaskConfig
-from .config import (AnalysisConfig, BenchplotUserConfig, Config, ConfigContext, ExecTargetConfig, PipelineConfig,
-                     SessionRunConfig, TaskTargetConfig)
+from .config import (AnalysisConfig, BenchplotUserConfig, Config, ConfigContext, ExecTargetConfig, InstanceConfig,
+                     PipelineConfig, SessionRunConfig, TaskTargetConfig)
 from .instance import InstanceManager
-from .model import UNPARAMETERIZED_INDEX_NAME
 from .task import (ExecutionTask, SessionExecutionTask, TaskRegistry, TaskScheduler)
 from .util import new_logger
 
 #: Constant name of the generated session configuration file
 SESSION_RUN_FILE = "session-run.json"
 benchplot_logger = logging.getLogger("cheri-benchplot")
+
+RESERVED_PARAMETER_NAMES = ["instance", "descriptor"]
 
 
 class Session:
@@ -113,7 +113,7 @@ class Session:
         #: Mapping from g_uuid to platform configurations. Note that this should be readonly.
         self.platform_map = {}
         #: A dataframe that organises the set of benchmarks to run or analyse.
-        self.benchmark_matrix = self._resolve_benchmark_matrix()
+        self.parameterization_matrix = self._resolve_parameterization_matrix()
         #: Benchmark baseline instance group UUID.
         #: XXX Deprecated, will be removed
         self.baseline_g_uuid = None
@@ -139,56 +139,70 @@ class Session:
         ctx.add_namespace(self.user_config, "user")
         return config.bind(ctx)
 
-    def _resolve_benchmark_matrix(self) -> tuple[pd.DataFrame, UUID]:
+    def _resolve_parameterization_matrix(self) -> pl.DataFrame:
         """
-        Generate the datarun matrix from the generators configurations.
-        In the resulting dataframe:
-         - rows are different parameterizations of the benchmark, indexed by param keys.
-         - columns are different instances on which the benchmark is run, indexed by dataset_gid.
+        Generate the parameterization matrix from the generators configurations.
 
-        :return: The benchmark matrix as a pandas dataframe
+        This is assembled as a dataframe containing the following columns:
+         - descriptor: Benchmark descriptor objects
+         - instance: Implicit instance (target) parameterization axis
+         - <params>: A variable number of columns depending on the benchmark parameterization.
+
+        XXX modify the instance logic so that instances become a real parameter?
+
+        :return: The benchmark matrix as a polars dataframe
         """
-        # First pass, just collect instances and parameters
+        # First pass, collect the parameterization axes
         instances = {}
         parameters = defaultdict(list)
-        for benchmark_config in self.config.configurations:
-            self.logger.debug("Found benchmark run config %s", benchmark_config)
-            instances[benchmark_config.g_uuid] = benchmark_config.instance.name
-            self.platform_map[benchmark_config.g_uuid] = benchmark_config.instance
-            for k, p in benchmark_config.parameters.items():
+        for dataset_config in self.config.configurations:
+            self.logger.debug("Found benchmark run config %s", dataset_config)
+            instances[dataset_config.g_uuid] = dataset_config.instance.name
+            self.platform_map[dataset_config.g_uuid] = dataset_config.instance
+            for k, p in dataset_config.parameters.items():
+                if not re.fullmatch(r"[a-zA-Z0-9_]+", k):
+                    self.logger.exception(
+                        "Invalid parameterization key '%s': "
+                        "keys must be valid python property names", k)
+                    raise RuntimeError("Configuration error")
                 parameters[k].append(p)
-        if parameters:
-            index_frame = pd.DataFrame(parameters)
-            index = pd.MultiIndex.from_frame(index_frame)
-            if not index.is_unique:
-                index = index.unique()
-        else:
-            # If there is no parameterization, just use a flat index, there will be only
-            # one row in the benchmark matrix.
-            index = pd.Index([0], name=UNPARAMETERIZED_INDEX_NAME)
 
-        # Second pass, fill the matrix
-        bench_matrix = pd.DataFrame(index=index, columns=instances.keys())
-        for index_name in bench_matrix.index.names:
-            if not re.fullmatch(r"[a-zA-Z0-9_]+", index_name):
-                self.logger.exception(
-                    "Benchmark parameter keys must be valid python property names, only [a-zA-Z0-9_] allowed")
-                raise ValueError("Invalid parameter key")
-        BenchParams = namedtuple("BenchParams", bench_matrix.index.names)
-        for benchmark_config in self.config.configurations:
-            benchmark = Benchmark(self, benchmark_config)
-            if benchmark_config.parameters:
-                # Note: config.parameters is unordered, use namedtuple to ensure
-                # the key ordering
-                i = BenchParams(**benchmark_config.parameters)
-                bench_matrix.loc[i, benchmark_config.g_uuid] = benchmark
-            else:
-                bench_matrix[benchmark_config.g_uuid] = benchmark
-            benchmark.get_plot_path().mkdir(exist_ok=True)
+        all_parameters = set(parameters.keys())
+        dataset_axes = {k: [] for k in all_parameters}
+        for name in RESERVED_PARAMETER_NAMES:
+            if name in dataset_axes:
+                self.logger.error("Invalid parameterization axis: '%s', reserved name.", name)
+                raise RuntimeError("Configuration error")
+        # Instance identifier column
+        instance_axis = []
+        # Dataset descriptor object
+        descriptors = []
 
-        show_matrix = tabulate(bench_matrix.reset_index(), tablefmt="github", headers="keys", showindex=False)
-        self.logger.debug("Benchmark matrix:\n%s", show_matrix)
-        return bench_matrix
+        # Collect all configurations and produce the complete session dataset
+        # parameterization table.
+        # The invariant is that all configurations must have the same set of
+        # parameterization axes, although may not have all the possible combinations
+        # of values.
+        for dataset_config in self.config.configurations:
+            descriptor_axes = set(dataset_config.parameters.keys())
+            if descriptor_axes.symmetric_difference(all_parameters):
+                self.logger.error(
+                    "Dataset parameterization for '%s' is incomplete: "
+                    "found parameter axes %s, expected %s", dataset_config.name, descriptor_axes, all_parameters)
+                raise RuntimeError("Configuration error")
+            # Add one row to the table skeleton
+            descriptor = Benchmark(self, dataset_config)
+            for key, value in dataset_config.parameters.items():
+                dataset_axes[key].append(value)
+            instance_axis.append(dataset_config.g_uuid)
+            descriptors.append(descriptor)
+
+        dataset_axes.update({"instance": instance_axis, "descriptor": descriptors})
+        # Actually create the table
+        parameterization_table = pl.DataFrame(dataset_axes)
+        self.logger.debug("Parameterization table:\n%s", parameterization_table)
+
+        return parameterization_table
 
     def _ensure_dir_tree(self):
         """
@@ -212,11 +226,7 @@ class Session:
         """
         The set of parameter keys that index the rows of the benchmark matrix.
         """
-        names = self.benchmark_matrix.index.names
-        if len(names) == 1 and names[0] == UNPARAMETERIZED_INDEX_NAME:
-            return []
-        else:
-            return list(names)
+        return [col for col in self.parameterization_matrix.columns if col not in RESERVED_PARAMETER_NAMES]
 
     def get_public_tasks(self) -> list[Type[AnalysisTask]]:
         """
@@ -260,14 +270,22 @@ class Session:
             self.logger.error("Failed to produce bundle")
         self.logger.info("Archive created at %s", bundle_file)
 
-    def machine_configuration_name(self, g_uuid: UUID) -> str:
+    def get_instance_configuration(self, g_uuid: UUID | str) -> InstanceConfig:
+        """
+        Helper to retreive an instance configuration for the given g_uuid.
+        """
+        # Descriptors with the same instance share the same instance configuration
+        # just grab the first one
+        match_instance = self.parameterization_matrix.filter(instance=str(g_uuid))
+        descriptor = match_instance["descriptor"][0]
+        return descriptor.config.instance
+
+    def machine_configuration_name(self, g_uuid: UUID | str) -> str:
         """
         Retrieve the human-readable form of the machine configuration identified by a given UUID.
         This is useful for producing readable output.
         """
-        col = self.benchmark_matrix[g_uuid]
-        # column shares that same instance configuration, just grab the first
-        instance_config = col.iloc[0].config.instance
+        instance_config = self.get_instance_configuration(g_uuid)
         return instance_config.name
 
     def get_metadata_root_path(self) -> Path:
@@ -307,7 +325,7 @@ class Session:
         :return: A list containing all benchmark contexts from the
         benchmark matrix.
         """
-        return [b for b in self.benchmark_matrix.to_numpy().ravel() if type(b) == Benchmark]
+        return self.parameterization_matrix["descriptor"]
 
     def clean_all(self):
         """
@@ -350,10 +368,9 @@ class Session:
         instance_manager = InstanceManager(self)
         self.scheduler.register_resource(instance_manager)
 
-        for col in self.benchmark_matrix:
-            for bench in self.benchmark_matrix[col]:
-                if type(bench) == Benchmark:
-                    bench.schedule_exec_tasks(self.scheduler, exec_config)
+        for descriptor in self.parameterization_matrix["descriptor"]:
+            descriptor.schedule_exec_tasks(self.scheduler, exec_config)
+
         self.logger.info("Session %s start run", self.name)
         self.scheduler.run()
         self.logger.info("Session %s run finished", self.name)
@@ -380,16 +397,6 @@ class Session:
         if analysis_config is None:
             # Load analysis configuration from the session
             analysis_config = self.config.analysis_config
-
-        # Override the baseline ID if configured
-        if (analysis_config.baseline_gid is not None and analysis_config.baseline_gid != self.baseline_g_uuid):
-            self.baseline_g_uuid = analysis_config.baseline_gid
-            try:
-                baseline_conf = self.benchmark_matrix[self.baseline_g_uuid].iloc[0].config
-            except KeyError:
-                self.logger.error("Invalid baseline instance ID %s", self.baseline_g_uuid)
-                raise
-            self.logger.info("Using alternative baseline %s (%s)", baseline_conf.instance.name, self.baseline_g_uuid)
 
         for task_spec in analysis_config.tasks:
             resolved = TaskRegistry.resolve_task(task_spec.handler)

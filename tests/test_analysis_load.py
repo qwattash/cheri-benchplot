@@ -47,7 +47,7 @@ class DummyAnalysisRoot(AnalysisTask):
     task_name = "fake-analysis-main"
 
     def dependencies(self):
-        yield DummyLoadTask(self.session.benchmark_matrix.iloc[0, 0], self.analysis_config)
+        yield DummyLoadTask(self.session.parameterization_matrix["descriptor"][0], self.analysis_config)
 
     def run(self):
         return
@@ -56,7 +56,7 @@ class DummyAnalysisRoot(AnalysisTask):
 @pytest.fixture
 def csv_file_content(fake_analysis_session):
     # Ensure that the loader will find the csv file where expected
-    task = DummyExecTask(fake_analysis_session.benchmark_matrix.iloc[0, 0], None)
+    task = DummyExecTask(fake_analysis_session.parameterization_matrix["descriptor"][0], None)
     output = task.output_map["test-target"]
     path = list(output)[0]
     path.parent.mkdir(exist_ok=True)

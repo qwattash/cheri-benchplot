@@ -3,18 +3,15 @@ import json
 from functools import partial
 from typing import NewType, Type, get_origin
 
-import pandas as pd
+import polars as pl
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 from PyQt6.QtGui import QStandardItemModel
-from PyQt6.QtWidgets import (QApplication, QCheckBox, QFrame, QGridLayout,
-                             QHeaderView, QLabel, QLayout, QLineEdit,
-                             QMainWindow, QPushButton, QTableWidget,
-                             QTableWidgetItem, QTabWidget, QVBoxLayout,
-                             QWidget)
+from PyQt6.QtWidgets import (QApplication, QCheckBox, QFrame, QGridLayout, QHeaderView, QLabel, QLayout, QLineEdit,
+                             QMainWindow, QPushButton, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
 
 from .analysis import AnalysisTask
 from .config import AnalysisConfig, Config, TaskTargetConfig
-from .session import UNPARAMETERIZED_INDEX_NAME, Session
+from .session import Session
 from .util import new_logger
 
 
@@ -46,7 +43,6 @@ class SessionRunner(QObject):
     XXX currently this finishes running after all tasks are done.
     This should be converted to a proper thread pool.
     """
-
     def __init__(self, session: Session):
         super().__init__()
         self.session = session
@@ -54,9 +50,7 @@ class SessionRunner(QObject):
     def run_session(self, ctx: RunContext):
         target = f"{ctx.task_type.task_namespace}.{ctx.task_type.task_name}"
         analysis_config = AnalysisConfig()
-        analysis_config.tasks = [
-            TaskTargetConfig(handler=target, task_options=dc.asdict(ctx.task_options))
-        ]
+        analysis_config.tasks = [TaskTargetConfig(handler=target, task_options=dc.asdict(ctx.task_options))]
         self.session.analyse(analysis_config)
 
         for task in self.session.scheduler.completed_tasks.values():
@@ -105,8 +99,7 @@ class GUITaskWidget(QWidget):
         for idx, field in enumerate(self._task_config_fields.values()):
             if field.type is bool:
                 input_widget = QCheckBox(field.name)
-                input_widget.stateChanged.connect(
-                    lambda value: self._update_config(field.name, bool(value)))
+                input_widget.stateChanged.connect(lambda value: self._update_config(field.name, bool(value)))
                 input_widget.setChecked(bool(field.default))
                 wl.addWidget(input_widget, idx, 0)
             else:
@@ -114,8 +107,7 @@ class GUITaskWidget(QWidget):
                 label = QLabel(field.name + ":")
                 wl.addWidget(label, idx, 0)
                 input_widget = QLineEdit()
-                input_widget.textChanged.connect(
-                    partial(self._update_config, field.name))
+                input_widget.textChanged.connect(partial(self._update_config, field.name))
                 wl.addWidget(input_widget, idx, 1)
         w.setLayout(wl)
         return w
@@ -142,8 +134,7 @@ class GUITaskWidget(QWidget):
         try:
             finished_task.populate(self.layout())
         except Exception as ex:
-            self.logger.error("Failed to populate GUI tab for %s: %s",
-                              finished_task.task_id, ex)
+            self.logger.error("Failed to populate GUI tab for %s: %s", finished_task.task_id, ex)
 
 
 class GUIManager:
@@ -152,7 +143,6 @@ class GUIManager:
 
     This is a top-level interface to manage tasks interactions with GUI tools.
     """
-
     def __init__(self, session: Session):
         self.session = session
         self.logger = new_logger("gui", self.session.logger)
@@ -179,15 +169,12 @@ class GUIManager:
         info_label = QLabel("Session datagen configuration:")
         wl.addWidget(info_label)
         # Fill the session matrix view
-        rows, cols = self.session.benchmark_matrix.shape
-        datagen_matrix = QTableWidget(rows, cols + self.session.benchmark_matrix.index.nlevels)
+        rows, cols = self.session.parameterization_matrix.shape
+        datagen_matrix = QTableWidget(rows, cols + len(self.session.parameter_keys))
         header = []
-        for name in self.session.benchmark_matrix.index.names:
-            if name == UNPARAMETERIZED_INDEX_NAME:
-                header.append("index")
-            else:
-                header.append(name)
-        for g_uuid in self.session.benchmark_matrix.columns:
+        for name in self.session.parameter_keys:
+            header.append(name)
+        for g_uuid in self.session.parameterization_matrix["instance"]:
             conf = self.session.platform_map[g_uuid]
             header.append(conf.name + "\n" + str(g_uuid))
         datagen_matrix.setHorizontalHeaderLabels(header)
@@ -195,15 +182,10 @@ class GUIManager:
         header_widget = datagen_matrix.horizontalHeader()
         header_widget.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
 
-        for rownum, (index, row) in enumerate(self.session.benchmark_matrix.iterrows()):
-            if not isinstance(index, tuple):
-                index = (index,)
-            for colnum, value in enumerate(index):
+        for colnum, name in enumerate(self.session.parameterization_matrix.columns):
+            for rownum, value in enumerate(self.session.parameterization_matrix[name]):
                 item = QTableWidgetItem(str(value))
                 datagen_matrix.setItem(rownum, colnum, item)
-            for colnum, value in enumerate(row):
-                item = QTableWidgetItem(str(value))
-                datagen_matrix.setItem(rownum, colnum + len(index), item)
 
         wl.addWidget(datagen_matrix)
 
@@ -224,13 +206,13 @@ class GUIManager:
         Create a widget to host the GUI for the given task
         """
         if not task_type.is_session_task():
-            self.logger.warning("Skipping task %s as we only support direct scheduling of session analysis tasks.", task_type)
+            self.logger.warning("Skipping task %s as we only support direct scheduling of session analysis tasks.",
+                                task_type)
             return
 
         w = GUITaskWidget(self, task_type)
         w.run_trigger.connect(self._session_worker.run_session)
-        task_tabs.addTab(w, f"{task_type.task_namespace}.{task_type.task_name}" )
-
+        task_tabs.addTab(w, f"{task_type.task_namespace}.{task_type.task_name}")
 
     def run(self):
         window = QMainWindow()
@@ -246,4 +228,3 @@ class GUIManager:
         # but I'm lazy and so I will just have a new scheduler run every time.
 
         self._app.exec()
-

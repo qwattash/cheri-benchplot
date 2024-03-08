@@ -6,6 +6,7 @@ from warnings import warn
 
 import numpy as np
 import pandas as pd
+import polars as pl
 from pandera import Field
 
 from .artefact import BenchmarkIterationTarget, DataFrameTarget
@@ -37,8 +38,7 @@ class AnalysisTask(SessionTask):
         """
         Helper to retreive an instance configuration for the given g_uuid.
         """
-        gid_column = self.session.benchmark_matrix[g_uuid]
-        return gid_column.iloc[0].config.instance
+        self.session.get_instance_configuration(g_uuid)
 
     def g_uuid_to_label(self, g_uuid: str) -> str:
         """
@@ -482,15 +482,14 @@ class StatsByParamGroupTask(ParamGroupAnalysisTask):
 
     def dependencies(self):
         # Generate dependencies for our parameter set, this corresponds to a benchmark matrix row
-        contexts = self.session.benchmark_matrix
-        for key, value in self.parameters.items():
-            contexts = contexts.xs(value, level=key)
+        contexts = self.session.parameterization_matrix.filter(**self.parameters)
+
         if len(contexts) != 1:
             self.logger.error(
                 "Unexpected set of benchmarks resolved: %s. A single benchmark matrix row should be selected by %s",
                 contexts.index, self.parameters)
             raise RuntimeError("Invalid benchmark parameters set")
-        for ctx in contexts.to_numpy().ravel():
+        for ctx in contexts["descriptor"]:
             yield self._make_load_depend(ctx)
 
     def run(self):
@@ -566,8 +565,10 @@ class StatsForAllParamSetsTask(AnalysisTask):
         if not self.session.parameter_keys:
             yield self.stats_task(self.session, self.analysis_config, {})
         else:
-            for param_set in self.session.benchmark_matrix.index:
-                params = dict(zip(self.session.parameter_keys, param_set))
+            param_sets = self.session.parameterization_matrix.with_columns(
+                pl.concat_list(self.session.parameter_keys).alias("param_sets")).select("param_sets")
+            for entry in param_sets:
+                params = dict(zip(self.session.parameter_keys, entry))
                 yield self.stats_task(self.session, self.analysis_config, params)
 
     def run(self):

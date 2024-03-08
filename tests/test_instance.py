@@ -49,7 +49,7 @@ def instance_request(fake_session):
     """
     Build a valid instance request
     """
-    bench = fake_session.benchmark_matrix.iloc[0, 0]
+    bench = fake_session.parameterization_matrix["descriptor"][0]
     pool_uuid = bench.g_uuid
     req = InstanceManager.request(pool_uuid, instance_config=bench.config.instance)
     return req
@@ -103,7 +103,7 @@ def test_instance_manager_invalid_request(manager, fake_session):
     """
     Test that we do not allow malformed instance requests
     """
-    bench = fake_session.benchmark_matrix.iloc[0, 0]
+    bench = fake_session.parameterization_matrix["descriptor"][0]
 
     with pytest.raises(ValueError, match=r"[iI]nvalid resource"):
         req = InstanceManager.request("invalid-uuid", instance_config=bench.config.instance)

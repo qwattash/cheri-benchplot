@@ -880,7 +880,7 @@ class InstanceManager(ResourceManager):
         self.logger.info("Initialized %s manager", self.resource_name)
 
     def _validate_request(self, req):
-        if req.pool not in self.session.benchmark_matrix.columns:
+        if req.pool not in self.session.parameterization_matrix["instance"]:
             self.logger.error("Invalid resource request: pool %s does not correspond to any g_uuid", req.pool)
             raise ValueError("Invalid resource request")
         if "instance_config" not in req.acquire_args:

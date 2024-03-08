@@ -24,7 +24,6 @@ fake_benchmark_conf = {
     "g_uuid": "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb",
     "instance": {
         "kernel": "selftest-kernel",
-        "baseline": True,
         "name": "selftest-instance",
         "cheribuild_kernel": False
     }
@@ -55,7 +54,6 @@ fake_session_conf_with_params = {
         "g_uuid": "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb",
         "instance": {
             "kernel": "selftest-kernel",
-            "baseline": True,
             "name": "selftest-instance"
         }
     }]
@@ -93,7 +91,6 @@ def single_benchmark_config(empty_session_config):
         "g_uuid": "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb",
         "instance": {
             "kernel": "selftest-kernel",
-            "baseline": True,
             "name": "selftest-instance",
             "cheribuild_kernel": False
         }
@@ -120,7 +117,6 @@ def multi_benchmark_config(empty_session_config):
         "g_uuid": "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb",
         "instance": {
             "kernel": "selftest-kernel",
-            "baseline": True,
             "name": "selftest-instance",
             "cheribuild_kernel": False
         }
@@ -138,7 +134,6 @@ def multi_benchmark_config(empty_session_config):
         "g_uuid": "2d2fe5b2-7f8f-4a52-8f68-d673e60acbfb",
         "instance": {
             "kernel": "selftest-kernel",
-            "baseline": True,
             "name": "selftest-instance",
             "cheribuild_kernel": False
         }
@@ -166,7 +161,6 @@ def fullmatrix_benchmark_config(multi_benchmark_config):
         "g_uuid": "4995a8b2-4852-4310-9b34-26cbd28494f0",
         "instance": {
             "kernel": "selftest-kernel",
-            "baseline": False,
             "name": "selftest-instance",
             "cheribuild_kernel": False
         }
@@ -184,7 +178,6 @@ def fullmatrix_benchmark_config(multi_benchmark_config):
         "g_uuid": "4995a8b2-4852-4310-9b34-26cbd28494f0",
         "instance": {
             "kernel": "selftest-kernel",
-            "baseline": False,
             "name": "selftest-instance",
             "cheribuild_kernel": False
         }

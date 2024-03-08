@@ -132,6 +132,7 @@ class CheriBSDKernelVulnLoad(AnalysisTask):
         return task.unmitigated.get_loader()
 
     def run(self):
+        # TODO why is this disabled?
         # XXX the datagen task should be made session-scoped so that we don't have to
         # pass a random benchmark there.
         return

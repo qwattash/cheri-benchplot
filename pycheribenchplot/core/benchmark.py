@@ -250,6 +250,12 @@ class Benchmark:
             raise ValueError(f"Invalid rootfs path {rootfs_path} for benchmark instance")
         return rootfs_path
 
+    def _ensure_dir_tree(self):
+        """
+        Ensure that per-dataset directories are ready
+        """
+        pass
+
     def get_run_script_path(self) -> Path:
         """
         :return: The path to the run script to import to the guest for this benchmark

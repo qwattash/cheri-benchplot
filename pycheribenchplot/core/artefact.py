@@ -230,7 +230,7 @@ class BenchmarkIterationTarget(Target):
     which can be used in the paths() method.
     """
     def __init__(self, task: Task, output_id: str, template: str | None = None, **kwargs):
-        assert task.is_benchmark_task(), "Task must be a benchmark task"
+        assert task.is_dataset_task(), "Task must be a benchmark task"
         if not template:
             template = "{prefix}/{iteration}/{base}.{ext}"
         kwargs.setdefault("iteration", list(range(task.benchmark.config.iterations)))
@@ -398,12 +398,11 @@ class DataFrameLoadTaskMixin:
 
         :return: A list of key names for the index levels
         """
-        if self.is_benchmark_task() and self.benchmark.config.parameters:
+        if self.is_dataset_task() and self.benchmark.config.parameters:
             return list(self.benchmark.config.parameters.keys())
         return []
 
-    def _prepare_standard_columns(self, target: Target, df: pl.DataFrame,
-                                  iteration: int | None) -> pl.DataFrame:
+    def _prepare_standard_columns(self, target: Target, df: pl.DataFrame, iteration: int | None) -> pl.DataFrame:
         """
         If the target gives us a model, automatically create the standard set of index
         levels if they are part of the model.
@@ -412,7 +411,7 @@ class DataFrameLoadTaskMixin:
         :param df: Input dataframe to transform.
         :return: A new dataframe with the additional index levels.
         """
-        if self.is_benchmark_task():
+        if self.is_dataset_task():
             # Generate benchmark identifier columns
             new_cols = {}
             if "dataset_id" not in df.columns:
@@ -428,8 +427,7 @@ class DataFrameLoadTaskMixin:
             # Generate parameterization columns
             for name, value in self.benchmark.config.parameters.items():
                 if name in df.columns:
-                    self.logger.error("Parameterization key '%s' is already in the dataframe",
-                                      name)
+                    self.logger.error("Parameterization key '%s' is already in the dataframe", name)
                     raise RuntimeError("Invalid configuration")
                 new_cols[name] = pl.lit(value)
             df = df.with_columns(**new_cols)

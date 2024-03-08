@@ -173,7 +173,7 @@ def test_invalid_task_check():
 
 def test_task_schedule_simple(fake_session_with_params):
     sched = TaskScheduler(fake_session_with_params)
-    bench = fake_session_with_params.benchmark_matrix.iloc[0, 0]
+    bench = fake_session_with_params.parameterization_matrix["descriptor"][0]
     sched.add_task(FakeTaskB(bench))
 
     schedule = [t.task_id for t in sched.resolve_schedule()]
@@ -184,7 +184,7 @@ def test_task_schedule_simple(fake_session_with_params):
 
 def test_task_schedule_horizontal_deps(fake_session_with_params):
     sched = TaskScheduler(fake_session_with_params)
-    bench = fake_session_with_params.benchmark_matrix.iloc[0, 0]
+    bench = fake_session_with_params.parameterization_matrix["descriptor"][0]
     sched.add_task(FakeTaskHorizontalDeps(bench))
 
     schedule = [t.task_id for t in sched.resolve_schedule()]
@@ -197,7 +197,7 @@ def test_task_schedule_horizontal_deps(fake_session_with_params):
 
 def test_task_schedule_cyclic_deps(fake_session_with_params):
     sched = TaskScheduler(fake_session_with_params)
-    bench = fake_session_with_params.benchmark_matrix.iloc[0, 0]
+    bench = fake_session_with_params.parameterization_matrix["descriptor"][0]
     sched.add_task(FakeTaskCycle(bench))
 
     with pytest.raises(RuntimeError):
@@ -208,7 +208,7 @@ def test_task_schedule_cyclic_deps(fake_session_with_params):
 def test_task_run(fake_session_with_params, mocker):
     fake_session_with_params.config.concurrent_workers = 2
     sched = TaskScheduler(fake_session_with_params)
-    bench = fake_session_with_params.benchmark_matrix.iloc[0, 0]
+    bench = fake_session_with_params.parameterization_matrix["descriptor"][0]
     task = FakeTaskB(bench)
 
     sched.add_task(task)
@@ -227,7 +227,7 @@ def test_task_run_with_error(single_benchmark_config, fake_session_factory, mock
     session = fake_session_factory(single_benchmark_config)
     # Required test objects setup
     sched = TaskScheduler(session)
-    bench = session.benchmark_matrix.iloc[0, 0]
+    bench = session.parameterization_matrix["descriptor"][0]
     task = FakeTaskError(bench)
 
     # Run the scheduler and check
@@ -246,7 +246,7 @@ def test_task_run_with_dependency_error(single_benchmark_config, fake_session_fa
     # Required test objects setup
 
     sched = TaskScheduler(session)
-    bench = session.benchmark_matrix.iloc[0, 0]
+    bench = session.parameterization_matrix["descriptor"][0]
     task = FakeTaskDepError(bench)
 
     # Run the scheduler and check
@@ -315,7 +315,7 @@ def test_task_scheduler_rman_simple(mocker, single_benchmark_config, fake_sessio
     """
     single_benchmark_config["concurrent_workers"] = 2
     session = fake_session_factory(single_benchmark_config)
-    bench = session.benchmark_matrix.iloc[0, 0]
+    bench = session.parameterization_matrix["descriptor"][0]
     sched = TaskScheduler(session)
     rman = DummyResource(session, limit=1)
     sched.register_resource(rman)

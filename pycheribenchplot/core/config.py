@@ -685,8 +685,6 @@ class InstanceConfig(Config):
     """
     #: Name of the kernel configuration file used
     kernel: str
-    #: Is this the baseline reference platform for analysis?
-    baseline: bool = False
     #: Optional name used for user-facing output such as plot legends
     name: Optional[str] = None
     #: Platform identifier, this affects the strategy used to run execution tasks
@@ -822,11 +820,6 @@ class AnalysisConfig(Config):
     # The dictionary maps parameters of the benchmark parameterisation to a dict
     # mapping description -> constant value
     parameter_constants: Dict[str, dict] = dc.field(default_factory=dict)
-
-    #: Baseline dataset group id, defaults to the baseline instance uuid
-    #: .. deprecated:: 1.2
-    #:    Use :attr:`baseline` instead
-    baseline_gid: Optional[UUIDStr] = None
 
     #: Baseline dataset identifier.
     #: This can be an UUID or a set of parameter key/values that uniquely identify

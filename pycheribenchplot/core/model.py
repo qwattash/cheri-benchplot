@@ -20,9 +20,6 @@ from typing_extensions import Self
 
 from .pandas_util import apply_or
 
-#: Constant name to mark the datarun matrix index as unparameterized
-UNPARAMETERIZED_INDEX_NAME = "RESERVED__unparameterized_index"
-
 # Helper type
 SchemaTransform = Callable[[DataFrameSchema], DataFrameSchema]
 
@@ -87,9 +84,9 @@ class BaseDataModel(SchemaModel):
         assert session is not None, "Need to specify a session for dynamic fields"
         s = super().to_schema()
         index_names = list(s.index.names)
-        param_index = session.benchmark_matrix.index
+        param_index = session.parameter_keys
         extra_columns = {}
-        if param_index.names[0] != UNPARAMETERIZED_INDEX_NAME:
+        if param_index:
             for param in param_index.names:
                 try:
                     dt = param_index.dtypes[param]
@@ -233,9 +230,7 @@ class DataModel(BaseDataModel):
         """
         def index_transform(session, schema):
             index_names = list(schema.index.names)
-            param_names = session.benchmark_matrix.index.names
-            if param_names[0] == UNPARAMETERIZED_INDEX_NAME:
-                param_names = []
+            param_names = session.parameter_keys
             drop = ["dataset_id", "dataset_gid", "iteration"] + param_names
             return schema.reset_index(drop, drop=True)
 
