@@ -227,6 +227,15 @@ class Benchmark:
         return self.config.parameters
 
     @property
+    def metadata_columns(self) -> list[str]:
+        """
+        Helper to find the metadata columns for the current benchmark.
+        The metadata columns are the standard dataset_id, dataset_gid and iteration, plus
+        the parameterzation keys.
+        """
+        return ["dataset_id", "dataset_gid", "iteration"] + list(self.parameters.keys())
+
+    @property
     def user_config(self):
         return self.session.user_config
 
