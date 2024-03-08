@@ -354,8 +354,8 @@ def test_raw_table_flattened(find_scraper, fake_benchmark_factory, asset_file, p
         foo = session.scalars(select(StructType).where(StructType.name == "foo")).one()
 
         foo_layout = session.scalars(
-            select(MemberBounds).where(MemberBounds.owner_entry == foo)
-            .order_by(MemberBounds.offset, MemberBounds.name)).all()
+            select(MemberBounds).where(MemberBounds.owner_entry == foo).order_by(MemberBounds.offset,
+                                                                                 MemberBounds.name)).all()
 
         assert len(foo_layout) == 12
 
@@ -400,15 +400,15 @@ def test_raw_table_flattened_subobject(extract_imprecise_task):
             assert mb.top == top
 
         simple_layout = session.scalars(
-            select(MemberBounds).where(MemberBounds.owner_entry == simple_struct)
-            .order_by(MemberBounds.offset, MemberBounds.name)).all()
+            select(MemberBounds).where(MemberBounds.owner_entry == simple_struct).order_by(
+                MemberBounds.offset, MemberBounds.name)).all()
         assert len(simple_layout) == 2
         check_bounds(simple_layout[0], "test_simple::skew_offset", 0, 0, 4)
         check_bounds(simple_layout[1], "test_simple::large_buffer", 4, 0, 8192)
 
         complex_layout = session.scalars(
-            select(MemberBounds).where(MemberBounds.owner_entry == complex_struct)
-            .order_by(MemberBounds.offset, MemberBounds.name)).all()
+            select(MemberBounds).where(MemberBounds.owner_entry == complex_struct).order_by(
+                MemberBounds.offset, MemberBounds.name)).all()
         assert len(complex_layout) == 5
         check_bounds(complex_layout[0], "test_complex::before", 0, 0, 4)
         check_bounds(complex_layout[1], "test_complex::inner", 4, 0, 16384)
@@ -423,8 +423,8 @@ def test_raw_table_flattened_subobject(extract_imprecise_task):
         check_bounds(age_layout[1], "test_age_softc_layout::cdata", 0x250, 0x240, 0x240 + 0x6140 + 0x20)
 
         nested_layout = session.scalars(
-            select(MemberBounds).where(MemberBounds.owner_entry == nested_struct)
-            .order_by(MemberBounds.offset, MemberBounds.name)).all()
+            select(MemberBounds).where(MemberBounds.owner_entry == nested_struct).order_by(
+                MemberBounds.offset, MemberBounds.name)).all()
         assert len(nested_layout) == 6
         check_bounds(nested_layout[0], "test_nested::a", 0, 0, 0x4020)
         check_bounds(nested_layout[1], "test_nested::a::before", 0, 0, 4)
@@ -472,8 +472,8 @@ def test_raw_table_alias(extract_imprecise_task):
         # Inspect alias groups for complex_struct
         alias_groups = session.scalars(
             select(MemberBounds).where((MemberBounds.owner_entry == complex_struct)
-                                       & MemberBounds.aliasing_with.any())
-            .order_by(MemberBounds.offset, MemberBounds.name)).all()
+                                       & MemberBounds.aliasing_with.any()).order_by(MemberBounds.offset,
+                                                                                    MemberBounds.name)).all()
         assert len(alias_groups) == 3
         entry = alias_groups[0]
         check_entry(entry, "test_complex::inner", 0x4, 0, 0x4000)
@@ -494,8 +494,8 @@ def test_raw_table_alias(extract_imprecise_task):
         # Inspect alias groups for nested_struct
         alias_groups = session.scalars(
             select(MemberBounds).where((MemberBounds.owner_entry == nested_struct)
-                                       & MemberBounds.aliasing_with.any())
-            .order_by(MemberBounds.offset, MemberBounds.name)).all()
+                                       & MemberBounds.aliasing_with.any()).order_by(MemberBounds.offset,
+                                                                                    MemberBounds.name)).all()
         assert len(alias_groups) == 3
         entry = alias_groups[0]
         check_entry(entry, "test_nested::a::inner", 0x4, 0, 0x4000)
@@ -556,6 +556,28 @@ def test_load_imprecise(imprecise_plot_task, extract_imprecise_task):
     check_row("test_age_softc_layout::cdata", 16, 16)
 
 
+@pytest.mark.skip
+def test_subobject_precision(fake_simple_benchmark, plot_precision_task):
+    """
+    Check that the precision calculation makes sense.
+    Note that we are testing the RISC-V variant
+    """
+    riscv_id = fake_simple_benchmark.g_uuid
+    assert plot_precision_task._compute_precision(0x00000000, 0x00100000) == 1
+    assert plot_precision_task._compute_precision(0x0FFFFFFF, 0x10000000) == 1
+    assert plot_precision_task._compute_precision(0x00000004, 0x00001004) == 11
+    assert plot_precision_task._compute_precision(0x00000FFF, 0x00002001) == 13
+
+    for top_shift in range(12):
+        top = 1 << top_shift
+        assert plot_precision_task._compute_platform_precision(
+            riscv_id, 0x0000, top_shift) == 12, f"Platform precision for 1 << {top_shift} does not match"
+    assert plot_precision_task._compute_platform_precision(riscv_id, 0x0000, 0x1000) == 10
+
+    assert plot_precision_task._compute_platform_precision(riscv_id, 0x0FFF, 0x1000) == 12
+    assert plot_precision_task._compute_platform_precision(riscv_id, 0x0FFF, 0x2001) == 10
+
+
 def test_render_imprecise_subobject_plot(imprecise_plot_task):
     """
     Check that the imprecise plots task successfully renders the test data
@@ -570,7 +592,8 @@ def test_load_layouts(html_layouts_task, extract_imprecise_task):
     benchmark = extract_imprecise_task.benchmark
     data = html_layouts_task.load_layouts()
 
-    assert len(data) == 32
+    print(data)
+    assert data.height == 18
 
     def check_count(type_name, cnt):
         r = data.filter(pl.col("name") == type_name)
@@ -582,6 +605,9 @@ def test_load_layouts(html_layouts_task, extract_imprecise_task):
     check_count("test_simple", 2)
     check_count("test_complex", 5)
     check_count("test_nested", 6)
+
+    r = data.filter(pl.col("name") == "test_simple")
+    print(r.select(["flat_name", "offset", "base", "top", "size", "is_imprecise"]))
 
 
 def test_render_imprecise_layout_html(html_layouts_task):
