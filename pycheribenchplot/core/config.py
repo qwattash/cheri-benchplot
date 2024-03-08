@@ -800,10 +800,17 @@ class PlotConfig(Config):
     Plotting configuration.
     This is separated in case it needs to be propagated separately.
     """
+    #: Parallel plotting (hacky and unstable)
+    parallel: bool = False
     #: Generate multiple split plots instead of combining
     split_subplots: bool = False
     #: Output formats
     plot_output_format: List[str] = dc.field(default_factory=lambda: ["pdf"])
+
+    def __post_init__(self):
+        if self.parallel:
+            from .plot import setup_matplotlib_hooks
+            setup_matplotlib_hooks()
 
 
 @dc.dataclass

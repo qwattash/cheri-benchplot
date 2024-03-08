@@ -4,19 +4,71 @@ General purpose matplotlib helpers
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from threading import Lock
+from threading import Lock, local
 from typing import List, Optional
 from uuid import UUID
 
 import polars as pl
-import matplotlib.pyplot as plt
+import matplotlib as mpl
 import seaborn as sns
-from matplotlib import rc_context
 
 from .analysis import AnalysisTask, DatasetAnalysisTask
 from .artefact import Target
 from .config import Config
 from .task import Task
+
+class RcParamsThreadWrapper:
+    """
+    Evil matplotlib monkey patch to make rcParams thread local.
+    This will allow concurrent plotting.
+    """
+    def __init__(self, mpl_rc):
+        self.thr_params = local()
+        self.thr_params.rc = mpl_rc
+
+    def __getattr__(self, name):
+        return getattr(self.thr_params.rc, name)
+
+    def __contains__(self, name):
+        return name in self.thr_params.rc
+
+    def __getitem__(self, key):
+        return self.thr_params.rc.__getitem__(key)
+
+    def __setitem__(self, key, value):
+        self.thr_params.rc.__setitem__(key, value)
+
+    def __delitem__(self, key):
+        del self.thr_params.rc[key]
+
+    def __repr__(self):
+        return f"ThreadedRcParams{{{self.thr_params.rc}}}"
+
+    def setup_thread(self):
+        self.thr_params.rc = getattr(self.thr_params, "rc", default_rc.copy())
+
+
+@contextmanager
+def wrap_rc_context(rc=None, fname=None):
+    """
+    Evil monkey patch to update rcParams correctly.
+    Patched rc_context code for matplotlib to play well with the Rc params wrapper
+    """
+    orig = dict(mpl.rcParams.copy())
+    del orig['backend']
+    try:
+        if fname:
+            mpl.rc_file(fname)
+        if rc:
+            mpl.rcParams.update(rc)
+        yield
+    finally:
+        mpl.rcParams.update(orig)   # Revert to the original rcs.
+
+def setup_matplotlib_hooks():
+    default_rc = mpl.rcParams
+    mpl.rc_context = wrap_rc_context
+    mpl.rcParams = RcParamsThreadWrapper(default_rc.copy())
 
 
 @contextmanager
@@ -25,13 +77,13 @@ def new_figure(dest: Path | list[Path], bbox_inches="tight", **kwargs):
     Helper context manager to produce a new figure
     """
     kwargs.setdefault("constrained_layout", True)
-    fig = plt.figure(**kwargs)
+    fig = mpl.pyplot.figure(**kwargs)
     yield fig
     if isinstance(dest, Path):
         dest = [dest]
     for path in dest:
         fig.savefig(path, bbox_inches=bbox_inches)
-    plt.close(fig)
+    mpl.pyplot.close(fig)
 
 
 class CustomFacetGrid(sns.FacetGrid):
@@ -60,7 +112,7 @@ def new_facet(dest: Path | list[Path], *args, savefig_kws: dict | None = None, *
     yield facet
     for path in dest:
         facet.savefig(path, **savefig_kws)
-    plt.close(facet.figure)
+    mpl.pyplot.close(facet.figure)
 
 
 @dataclass
@@ -131,12 +183,19 @@ class PlotTaskMixin:
         except AttributeError:
             rc_override = {}
 
-        with PlotTaskMixin.rc_mutex:
-            with rc_context():
+        def do_run():
+            with mpl.rc_context():
                 # Use default theme as base
                 sns.set_theme()
                 with sns.plotting_context(rc=rc_override):
                     self.run_plot()
+
+        if self.analysis_config.plot.parallel:
+            matplotlib.rcParams.setup_thread()
+            do_run()
+        else:
+            with PlotTaskMixin.rc_mutex:
+                do_run()
 
     def adjust_legend_on_top(self, fig, ax=None, **kwargs):
         """
@@ -158,7 +217,7 @@ class PlotTaskMixin:
         kwargs.setdefault("loc", "center")
         owner.legend(legend.legend_handles,
                      map(lambda t: t.get_text(), legend.texts),
-                     bbox_to_anchor=(0, 1.02),
+                     bbox_to_anchor=(0.05, 1.02),
                      ncols=4,
                      **kwargs)
 
