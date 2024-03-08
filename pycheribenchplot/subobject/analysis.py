@@ -13,7 +13,7 @@ from ..core.artefact import HTMLTemplateTarget, SQLTarget, ValueTarget
 from ..core.plot import PlotTarget, PlotTask, new_figure
 from ..core.task import dependency, output
 from .imprecise import ExtractImpreciseSubobject
-from .model import MemberBounds, StructMember, StructType, StructMemberFlags
+from .model import MemberBounds, StructMember, StructMemberFlags, StructType
 
 
 class StructLayoutAnalysisMixin:
@@ -106,8 +106,7 @@ class ImpreciseMembersPlot(PlotTask, StructLayoutAnalysisMixin):
                           value_name="value")
         show_df = show_df.with_columns(
             (pl.col("side") + " " + pl.col("dataset_gid").map_elements(self.g_uuid_to_label)).alias("legend"),
-            pl.col("member_name").alias("label"),
-            (pl.col("req_top") - pl.col("offset")).alias("req_size"))
+            pl.col("member_name").alias("label"), (pl.col("req_top") - pl.col("offset")).alias("req_size"))
 
         with new_figure(self.imprecise_fields_plot.paths(), figsize=(10, 50)) as fig:
             ax = fig.subplots()
@@ -198,15 +197,26 @@ class ImpreciseSubobjectLayouts(AnalysisTask, StructLayoutAnalysisMixin):
         )
         # yapf: enable
         schema_types = {
-            'id': pl.UInt64, 'file': pl.Utf8, 'line': pl.UInt64, 'name': pl.Utf8,
-            'bit_offset': pl.Int8, 'member_name': pl.Utf8, 'type_name': pl.Utf8,
-            'size': pl.UInt64, 'bit_size': pl.Int8, 'flat_name': pl.Utf8,
-            'offset': pl.UInt64, 'base': pl.UInt64, 'top': pl.UInt64,
-            'is_imprecise': pl.Boolean, 'flat_member_id': pl.UInt64, 'aliased_by': pl.Utf8,
-            'is_aliasing_ptrs': pl.Boolean, 'is_array': pl.Boolean
+            'id': pl.UInt64,
+            'file': pl.Utf8,
+            'line': pl.UInt64,
+            'name': pl.Utf8,
+            'bit_offset': pl.Int8,
+            'member_name': pl.Utf8,
+            'type_name': pl.Utf8,
+            'size': pl.UInt64,
+            'bit_size': pl.Int8,
+            'flat_name': pl.Utf8,
+            'offset': pl.UInt64,
+            'base': pl.UInt64,
+            'top': pl.UInt64,
+            'is_imprecise': pl.Boolean,
+            'flat_member_id': pl.UInt64,
+            'aliased_by': pl.Utf8,
+            'is_aliasing_ptrs': pl.Boolean,
+            'is_array': pl.Boolean
         }
-        return pl.read_database(imprecise_layouts, gen_task.struct_layout_db.sql_engine,
-                                schema_overrides=schema_types)
+        return pl.read_database(imprecise_layouts, gen_task.struct_layout_db.sql_engine, schema_overrides=schema_types)
 
     def run(self):
         """
@@ -221,22 +231,14 @@ class ImpreciseSubobjectLayouts(AnalysisTask, StructLayoutAnalysisMixin):
 
         def gen_struct_members(df: pl.DataFrame):
             # Helper columns for the template
-            expr_bit_suffix = (
-                pl.when(pl.col("bit_offset") != None)
-                .then(":+" + pl.col("bit_offset").cast(str))
-                .otherwise(pl.lit(""))
-            )
-            expr_bit_size_suffix = (
-                pl.when(pl.col("bit_size") != None)
-                .then(":+" + pl.col("bit_size").cast(str))
-                .otherwise(pl.lit(""))
-            )
-            df = df.with_columns(
-                (pl.col("offset").cast(str) + expr_bit_suffix).alias("tmpl_offset"),
-                (pl.col("size").cast(str) + expr_bit_size_suffix).alias("tmpl_size"),
-                pl.col("bit_size").fill_null(0),
-                (pl.col("flat_name").str.split("::").list.len()).alias("tmpl_depth")
-            )
+            expr_bit_suffix = (pl.when(
+                pl.col("bit_offset").is_not_null()).then(":+" + pl.col("bit_offset").cast(str)).otherwise(pl.lit("")))
+            expr_bit_size_suffix = (pl.when(
+                pl.col("bit_size").is_not_null()).then(":+" + pl.col("bit_size").cast(str)).otherwise(pl.lit("")))
+            df = df.with_columns((pl.col("offset").cast(str) + expr_bit_suffix).alias("tmpl_offset"),
+                                 (pl.col("size").cast(str) + expr_bit_size_suffix).alias("tmpl_size"),
+                                 pl.col("bit_size").fill_null(0),
+                                 (pl.col("flat_name").str.split("::").list.len()).alias("tmpl_depth"))
             return df
 
         def gen_struct_layouts(group_name: str, df: pl.DataFrame):
@@ -246,12 +248,11 @@ class ImpreciseSubobjectLayouts(AnalysisTask, StructLayoutAnalysisMixin):
                     (pl.lit(group_name) + "-" + pl.lit(str(id_))).alias("tmpl_layout_id"),
                     (pl.col("file") + ":" + pl.col("line").cast(str)).alias("tmpl_location"),
                     pl.lit(False).alias("has_imprecise_pointer_alias"),
-                    pl.lit(False).alias("has_imprecise_array")
-                )
+                    pl.lit(False).alias("has_imprecise_array"))
                 yield (xs, gen_struct_members(xs))
 
         def gen_layout_groups():
-            for group_name, group in layouts.group_by("dataset_gid"):
+            for (group_name, ), group in layouts.group_by(["dataset_gid"]):
                 label = self.g_uuid_to_label(group_name)
                 self.logger.debug("Prepare structures for %s", label)
                 df = group.with_columns(pl.lit(label).alias("tmpl_group_name"))

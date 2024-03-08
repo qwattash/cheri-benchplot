@@ -17,7 +17,7 @@ from ..core.artefact import (DataFrameTarget, HTMLTemplateTarget, Target, ValueT
 from ..core.config import Config, ConfigPath, InstanceKernelABI
 from ..core.dwarf import DWARFManager, StructLayoutGraph
 from ..core.plot import PlotTarget, PlotTask, new_facet, new_figure
-from ..core.task import BenchmarkTask, DataGenTask, dependency, output
+from ..core.task import DataGenTask, DatasetTask, dependency, output
 # from ..ext import pychericap, pydwarf
 from .model import (ImpreciseSubobjectInfoModel, ImpreciseSubobjectInfoModelRecord, ImpreciseSubobjectLayoutModel)
 
@@ -61,7 +61,7 @@ class ExtractImpreciseSubobjectConfig(Config):
     dwarf_data_sources: list[PathMatchSpec]
 
 
-class StructLayoutLoader(BenchmarkTask):
+class StructLayoutLoader(DatasetTask):
     """
     Custom task to load the structure layout graph from GML
     """
