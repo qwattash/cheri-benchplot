@@ -38,7 +38,7 @@ class AnalysisTask(SessionTask):
         Helper to retreive an instance configuration for the given g_uuid.
         """
         gid_column = self.session.benchmark_matrix[g_uuid]
-        return gid_column[0].config.instance
+        return gid_column.iloc[0].config.instance
 
     def g_uuid_to_label(self, g_uuid: str) -> str:
         """
