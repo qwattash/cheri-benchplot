@@ -82,6 +82,7 @@ class IngestQPSData(DataGenTask):
             with open(dst, "w+") as fp:
                 summary = {}
                 summary["qps"] = data["summary"]["qps"]
+                summary["message_count"] = data["summary"].get("messageCount", None)
                 summary["latency50"] = data["summary"]["latency50"]
                 summary["latency90"] = data["summary"]["latency90"]
                 summary["latency95"] = data["summary"]["latency95"]
@@ -89,8 +90,8 @@ class IngestQPSData(DataGenTask):
                 summary["latency999"] = data["summary"]["latency999"]
                 payload_conf = data["scenario"]["clientConfig"].get("payloadConfig", {})
                 params = payload_conf.get("simpleParams", {})
-                summary["reqSize"] = params.get("reqSize", 0)
-                summary["respSize"] = params.get("respSize", 0)
+                summary["req_size"] = params.get("reqSize", 0)
+                summary["resp_size"] = params.get("respSize", 0)
                 json.dump(summary, fp)
             self.logger.debug("Ingest %s => %s", data_file, hist_dst)
             with open(hist_dst, "w+") as fp:
