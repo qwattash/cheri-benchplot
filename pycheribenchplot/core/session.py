@@ -277,8 +277,8 @@ class Session:
         # Descriptors with the same instance share the same instance configuration
         # just grab the first one
         match_instance = self.parameterization_matrix.filter(instance=str(g_uuid))
-        descriptor = match_instance["descriptor"][0]
-        return descriptor.config.instance
+        descriptor_config = match_instance["descriptor"][0].config
+        return descriptor_config.instance
 
     def machine_configuration_name(self, g_uuid: UUID | str) -> str:
         """
