@@ -250,7 +250,7 @@ class PlotTaskMixin:
             # Expect a UUID
             baseline = df.filter(dataset_id=baseline_sel)
 
-        if len(baseline) >= 1 and len(baseline["dataset_id"].unique()) == 1:
+        if len(baseline["dataset_gid"].unique()) != 1:
             self.logger.error("Invalid baseline specifier %s", baseline_sel)
             raise ValueError("Invalid configuration")
         return baseline
