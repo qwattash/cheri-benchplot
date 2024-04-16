@@ -38,7 +38,7 @@ class AnalysisTask(SessionTask):
         """
         Helper to retreive an instance configuration for the given g_uuid.
         """
-        self.session.get_instance_configuration(g_uuid)
+        return self.session.get_instance_configuration(g_uuid)
 
     def g_uuid_to_label(self, g_uuid: str) -> str:
         """
