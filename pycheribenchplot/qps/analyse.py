@@ -1,9 +1,10 @@
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 import polars as pl
 import seaborn as sns
+import matplotlib.pyplot as plt
 
 from ..core.analysis import AnalysisTask
 from ..core.artefact import Target, ValueTarget
@@ -22,6 +23,10 @@ class QPSPlotConfig(Config):
     parameter_names: Optional[Dict[str, str]] = None
     #: Relabel parameter axes values
     parameter_labels: Optional[Dict[str, Dict[str, str]]] = None
+    #: Parameterization axes for the combined plot hue, use all remaining by default
+    hue_parameters: Optional[List[str]] = None
+    #: Filter only the given subset of counters
+    metrics_filter: Optional[List[str]] = None
 
 
 class LoadQPSData(AnalysisTask):
@@ -75,6 +80,10 @@ class QPSPlot(PlotTask):
     def summary_plot(self):
         return PlotTarget(self, "summary")
 
+    @output
+    def summary_table(self):
+        return Target(self, f"tbl-summary")
+
     def outputs(self):
         # Dynamically generate the output map
         yield from super().outputs()
@@ -120,6 +129,8 @@ class QPSPlot(PlotTask):
                 facet.map_dataframe(sns.stripplot, x="target", y="qps", dodge=True,
                                     hue="flavor/protection", palette=palette)
                 facet.add_legend()
+
+        df.group_by(["target", "flavor/protection", "scenario"]).mean().write_csv(self.summary_table.single_path())
 
 
 class LatencyPlot(PlotTask):
@@ -304,17 +315,17 @@ class QPSByMsgSizePlot(PlotTask):
 @dataclass
 class QPSOverheadPlotConfig(QPSPlotConfig):
     #: Control which parameterization axis is used for the facet grid columns
-    facet_columns: Optional[str] = None
+    facet_column: Optional[str] = None
+    #: Label for the baseline combination
+    baseline_label: Optional[str] = "baseline"
 
 
 class QPSOverheadPlot(PlotTask):
     """
-    Simple QPS plot that shows the QPS metric on the Y axis and the target ABI
-    on the X axis.
-    The distribution among iterations is shown with a box plot.
+    QPS plot that shows the QPS metric and the relative % overhead respectively on
+    on the left and right Y axes, the target ABI on the X axis.
 
-    This generates a plot for each different scenario plus a summary plot containing
-    all scenarios.
+    This generates a bar plot for each different scenario.
     """
     task_config_class = QPSOverheadPlotConfig
     task_namespace = "qps"
@@ -337,6 +348,7 @@ class QPSOverheadPlot(PlotTask):
         yield from super().outputs()
         for scenario in self.get_scenarios():
             yield (scenario, PlotTarget(self, scenario))
+            yield (f"tbl-{scenario}", Target(self, f"tbl-{scenario}"))
 
     def get_scenarios(self):
         df = self.data.merged_df.get()
@@ -357,11 +369,10 @@ class QPSOverheadPlot(PlotTask):
         baseline_qps = baseline.select(["qps", "scenario"]).group_by("scenario").mean().rename(dict(qps="qps_baseline"))
         # Create the overhead column and optionally drop the baseline data
         df = df.join(baseline_qps, on="scenario").with_columns(
-            (pl.col("qps") * 100 / pl.col("qps_baseline")).alias("overhead"),
+            ((pl.col("qps_baseline") - pl.col("qps")) * 100 / pl.col("qps_baseline")).alias("overhead"),
         ).join(baseline, on="dataset_id", how="anti")
 
         # Proceeed with plot-specific dataframe transforms
-
         df = df.with_columns(
             pl.col("dataset_gid").map_elements(self.g_uuid_to_label).alias("target"),
         )
@@ -390,14 +401,14 @@ class QPSOverheadPlot(PlotTask):
             params = [self.config.parameter_names.get(p, p) for p in params]
 
         # If we have an axis to use for the facet grid, remove it from the parameters set
-        if self.config.facet_columns is not None:
-            if self.config.facet_columns not in params:
+        if self.config.facet_column is not None:
+            if self.config.facet_column not in params:
                 self.logger.warning("Configured facet columns key '%s' is missing, "
                                     "maybe it was renamed by QPSPlotConfig.parameter_names. "
                                     "Note that column renaming occurs before this step, so the "
                                     "QPSOverheadPlotConfig.facet_columns key must contain the "
-                                    "new parameter name.", self.config.facet_columns)
-            params.remove(self.config.facet_columns)
+                                    "new parameter name.", self.config.facet_column)
+            params.remove(self.config.facet_column)
 
         # Check if there is variation on the flavor/protection axes, otherwise drop them
         drop_params = []
@@ -409,13 +420,12 @@ class QPSOverheadPlot(PlotTask):
 
         # Honor error bars configuration
         if self.config.show_errorbars:
-            assert False, "TODO, need to implement"
-            err_conf = ("pi", 90)
+            err_conf = ("sd",)
         else:
             err_conf = None
 
         self.logger.info("Generate QPS overhead plot with facet_columns=%s, params=%s",
-                         self.config.facet_columns, params)
+                         self.config.facet_column, params)
 
         # Now merge all the parameter columns into the target label
         df = df.with_columns(
@@ -439,12 +449,19 @@ class QPSOverheadPlot(PlotTask):
                 ax.set_xticks(x_pos)
                 ax.set_xticklabels(x_labels)
 
+                if self.config.facet_column:
+                    facet_labels = s_df[self.config.facet_column].unique()
+                    assert len(facet_labels) == 1
+                    facet_label = facet_labels[0]
+                    ax.set_title(f"{self.config.facet_column} = {facet_label}")
+
                 ax.set_xlabel("Target")
                 ax.set_ylabel("QPS (messages/sec)")
-                axr.set_ylabel("% Relative to no memory safety")
-                axr.set_ylim(0, 110)
-                ax.legend(handles=[abs_bars, pct_bars], labels=["QPS (msg/s)", "% of no memory safety"],
-                          bbox_to_anchor=(0, 1.), loc="lower left", ncols=4)
+                axr.set_ylabel(f"% Overhead relative to {self.config.baseline_label}")
+                ax.legend(handles=[abs_bars, pct_bars], labels=["QPS (msg/s)", "% Overhead"],
+                          bbox_to_anchor=(0, 1.1), loc="lower left", ncols=4)
+            table_target = self.output_map[f"tbl-{scenario}"]
+            mean_df.write_csv(table_target.single_path())
 
 
 class QPSPerfCountersPlot(PlotTask):
@@ -515,9 +532,17 @@ class QPSPerfCountersPlot(PlotTask):
                 hide_params.append(p)
         params = [p for p in params if p not in hide_params]
         # Generate the combined hue column flavor/protection
+        if self.config.hue_parameters:
+            hue_params = [p for p in params if p in self.config.hue_parameters]
+        else:
+            hue_params = params
         df = df.with_columns(
-            pl.concat_str([pl.col(p) for p in params], separator=" ").alias("flavor/protection")
+            pl.concat_str([pl.col(p) for p in hue_params], separator=" ").alias("flavor/protection")
         )
+
+        # Filter the counters based on configuration
+        if self.config.metrics_filter:
+            df = df.filter(pl.col("metric").is_in(self.config.metrics_filter))
         return df
 
     def run_plot(self):
@@ -571,6 +596,12 @@ class QPSPerfCountersPlot(PlotTask):
         df = self.apply_display_transforms(df)
         prot_combinations = len(df["flavor/protection"].unique())
         palette = sns.color_palette(n_colors=prot_combinations)
+        if prot_combinations == 2:
+            # Hack, allow in config
+            palette = sns.color_palette().as_hex()
+            palette = [palette[0], palette[3]]  # blue/red
+        else:
+            palette = sns.color_palette(n_colors=prot_combinations)
 
         self.logger.info("Generate QPS PMC metrics")
         with new_facet(self.qps_metrics.paths(), df, col="scenario", row="metric",
@@ -580,3 +611,4 @@ class QPSPerfCountersPlot(PlotTask):
                                 hue="flavor/protection", dodge=True,
                                 palette=palette)
             facet.add_legend()
+        # df.group_by(["target", "scenario", "flavor/protection", "metric"]).mean().write_csv("metrics.csv")

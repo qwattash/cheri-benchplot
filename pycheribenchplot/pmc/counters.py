@@ -24,6 +24,8 @@ class PMCPlotConfig(Config):
     parameter_labels: Optional[Dict[str, Dict[str, str]]] = None
     #: Filter only the given subset of counters
     pmc_filter: Optional[List[str]] = None
+    #: Parameterization axes for the combined plot hue, use all remaining by default
+    hue_parameters: Optional[List[str]] = None
     #: Lock Y axis
     lock_y_axis: bool = False
 
@@ -230,8 +232,12 @@ class PMCStatSummary(PlotTask):
                 hide_params.append(p)
         params = [p for p in params if p not in hide_params]
         # Generate the combined hue column flavor/protection
+        if self.config.hue_parameters:
+            hue_params = [p for p in params if p in self.config.hue_parameters]
+        else:
+            hue_params = params
         df = df.with_columns(
-            pl.concat_str([pl.col(p) for p in params], separator=" ").alias("flavor/protection")
+            pl.concat_str([pl.col(p) for p in hue_params], separator=" ").alias("flavor/protection")
         )
 
         # Filter the counters based on configuration
@@ -287,7 +293,12 @@ class PMCStatSummary(PlotTask):
 
         df = self.apply_display_transforms(df)
         prot_combinations = len(df["flavor/protection"].unique())
-        palette = sns.color_palette(n_colors=prot_combinations)
+        if prot_combinations == 2:
+            # Hack, allow in config
+            sns.set_palette(sns.color_palette())
+            palette = ["b", "r"]
+        else:
+            palette = sns.color_palette(n_colors=prot_combinations)
 
         self.gen_summary(df, palette)
         self.gen_delta(df, baseline, palette)

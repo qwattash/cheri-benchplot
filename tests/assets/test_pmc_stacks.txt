@@ -1,0 +1,16 @@
+@ inst_retired [292475 samples]
+
+50.0%  [100]     tcp_default_output @ /boot/kernel.GENERIC-MORELLO-PURECAP-NODEBUG/kernel
+ 45.0%  [45]      tcp_usr_send
+  100.0%  [45]       sosend_generic
+   100.0%  [45]        sousrsend
+ 65.0%  [65]        tcp_usr_rcvd
+  100.0%  [65]         soreceive_generic
+   100.0%  [65]          soreceive
+
+50.0%  [100]     foo
+ 50.0%  [50]      bar
+  100.0%  [50]      .L_ZN9grpc_core22ParseBackendMetricDataENSt3__117basic_string_viewIcNS0_11char_traitsIcEEEEPNS_31BackendMetricAllocatorInterfaceE$eh_alias @ /usr/local/lib/libgrpc.so.31.0.0
+ 50.0%  [50]      bar2
+  40.0%  [20]       baz
+  40.0%  [20]       baz2
