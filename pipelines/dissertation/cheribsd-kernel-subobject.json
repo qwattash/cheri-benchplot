@@ -3,13 +3,11 @@
         "instances": [{
             "name": "Cheri-riscv64 purecap",
             "kernel": "CHERI-PURECAP-QEMU",
-            "baseline": true,
             "cheri_target": "riscv64-purecap",
             "kernelabi": "purecap"
         }, {
             "name": "Morello purecap",
             "kernel": "GENERIC-MORELLO-PURECAP",
-            "baseline": false,
             "cheri_target": "morello-purecap",
             "kernelabi": "purecap"
         }]

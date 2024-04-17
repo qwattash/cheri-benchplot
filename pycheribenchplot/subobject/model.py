@@ -160,6 +160,7 @@ class MemberBounds(SqlBase):
     name: Mapped[str] = mapped_column(nullable=False)
     owner: Mapped[int] = mapped_column(ForeignKey("struct_type.id"))
     member: Mapped[int] = mapped_column(ForeignKey("struct_member.id"))
+    mindex: Mapped[int] = mapped_column(nullable=False)
     offset: Mapped[int] = mapped_column(nullable=False)
     base: Mapped[int]
     top: Mapped[int]

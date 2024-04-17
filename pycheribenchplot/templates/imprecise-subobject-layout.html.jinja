@@ -84,11 +84,11 @@
           <div class="accordion-body">
             <!-- Nested accordion with one item for each structure layout -->
             <div class="accordion m-2" id="group-{{ html_group_name }}">
-              {%- for struct_layout, members_for_layout in struct_layouts_for_group %}
-              {%- set html_layout_id = struct_layout.tmpl_layout_id[0]|e -%}
-              {%- set html_struct_location = struct_layout.tmpl_location[0]|e -%}
-              {%- set html_struct_name = struct_layout.name[0]|e -%}
-              {%- set html_struct_size = "%#0x" | format(struct_layout.size[0]) -%}
+              {%- for info, struct_layout, members_for_layout in struct_layouts_for_group %}
+              {%- set html_layout_id = info['tmpl_layout_id']|e -%}
+              {%- set html_struct_location = info['tmpl_location']|e -%}
+              {%- set html_struct_name = info['tmpl_name']|e -%}
+              {%- set html_struct_size = info['tmpl_layout_size']|e -%}
 
               <div class="accordion-item">
                 <!-- accordion header -->
@@ -98,17 +98,17 @@
                           data-bs-target="#data-{{ html_layout_id }}"
                           aria-expanded="false"
                           aria-controls="data-{{ html_layout_id }}">
-                    <span>
+                    <span class="m-1">
                       Layout of
                       <strong>{{ html_struct_name }}</strong>
-                      @ {{ html_struct_location }} ({{ html_struct_size }})
+                      @ {{ html_struct_location }} size={{ html_struct_size }}
                     </span>
                     <small>
-                      {%- if struct_layout.has_imprecise_pointer_alias[0] -%}
-                      <span class="badge rounded-pill bg-secondary">Ptr</span>
+                      {%- if info['tmpl_has_imprecise_alias_pointer'] -%}
+                      <span class="m-1 badge rounded-pill bg-secondary">Ptr</span>
                       {%- endif -%}
-                      {%- if struct_layout.has_imprecise_array[0] -%}
-                      <span class="badge rounded-pill bg-secondary">Array</span>
+                      {%- if info['tmpl_has_imprecise_array'] -%}
+                      <span class="m-1 badge rounded-pill bg-secondary">Array</span>
                       {%- endif -%}
                     </small>
                   </button>

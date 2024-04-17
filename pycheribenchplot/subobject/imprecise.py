@@ -35,7 +35,7 @@ class ExtractImpreciseSubobjectConfig(Config):
     src_path_prefix: Optional[ConfigPath] = None
 
     #: Enable verbose output from dwarf_scraper
-    verbose: bool = False
+    verbose_scraper: bool = False
 
 
 class ExtractImpreciseSubobject(DataGenTask):
@@ -87,8 +87,7 @@ class ExtractImpreciseSubobject(DataGenTask):
         if self.config.dwarf_scraper:
             self._dwarf_scraper = self.config.dwarf_scraper
             if not self._dwarf_scraper.exists():
-                self.logger.error("dwarf_scraper tool does not exist at %s",
-                                  self.config.dwarf_scraper)
+                self.logger.error("dwarf_scraper tool does not exist at %s", self.config.dwarf_scraper)
                 raise RuntimeError("Can not find dwarf_scraper")
         else:
             self._dwarf_scraper = resolve_system_command("dwarf_scraper")
@@ -100,11 +99,10 @@ class ExtractImpreciseSubobject(DataGenTask):
     def run(self):
         # Ensure that the database directory exists
         self.struct_layout_db.single_path().parent.mkdir(exist_ok=True)
-        args = ["--stdin", "--database", self.struct_layout_db.single_path(),
-                "--scrapers", "struct-layout"]
+        args = ["--stdin", "--database", self.struct_layout_db.single_path(), "--scrapers", "struct-layout"]
         if self.config.src_path_prefix:
             args += ["--prefix", self.config.src_path_prefix]
-        if self.config.verbose:
+        if self.config.verbose_scraper:
             args += ["--verbose"]
         scraper = SubprocessHelper(self._dwarf_scraper, args, logger=self.logger)
         scraper.start()
@@ -126,7 +124,9 @@ class ExtractImpreciseSubobject(DataGenTask):
             yield from [target.path]
         else:
             matcher = re.compile(target.matcher)
+
             def match_path(p: Path):
                 r = p.relative_to(target.path)
                 return matcher.match(str(r))
+
             yield from filter(match_path, target.path.rglob("*"))

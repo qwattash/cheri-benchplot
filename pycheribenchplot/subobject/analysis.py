@@ -131,10 +131,11 @@ class ImpreciseMembersPlot(PlotTask, StructLayoutAnalysisMixin):
 
 class ImpreciseSubobjectLayouts(AnalysisTask, StructLayoutAnalysisMixin):
     """
-    Render an HTML to interactively browse the structure layouts with annotated imprecise sub-objects.
+    Render an HTML to interactively browse the structure layouts with annotated
+    imprecise sub-objects.
 
-    This marks structures and members with imprecise array capabilities and capablities
-    that alias other pointer fields.
+    This marks structures and members with imprecise array capabilities and
+    capablities that alias other pointer fields.
     """
     public = True
     task_namespace = "subobject"
@@ -148,30 +149,33 @@ class ImpreciseSubobjectLayouts(AnalysisTask, StructLayoutAnalysisMixin):
         """
         Load structure layouts containing imprecise sub-objects.
 
-        The dataframe contains the flattened layout of data structures that contain at least
-        one imprecise sub-object member.
+        The dataframe contains the flattened layout of data structures that
+        contain at least one imprecise sub-object member.
         """
         # The requested top for the member, this rounds up the size to the next byte
         # boundary for bit fields.
         # yapf: disable
-        aliased_bounds = aliased(MemberBounds)
+        aliased_bounds_by = aliased(MemberBounds)
         aliased_by = (
             select(
                 MemberBounds.id,
-                func.aggregate_strings(aliased_bounds.id, ",").label("aliased_by")
+                func.aggregate_strings(aliased_bounds_by.id, ",").label("aliased_by")
             )
-            .join(MemberBounds.aliased_by.of_type(aliased_bounds))
+            .join(MemberBounds.aliased_by.of_type(aliased_bounds_by))
             .group_by(MemberBounds.id)
         ).subquery()
 
         # Is a member capability aliasing other pointer members?
+        aliased_bounds_with = aliased(MemberBounds)
+        any_ptr_flag = StructMemberFlags.IsPtr | StructMemberFlags.IsFnPtr
         aliasing_ptrs = (
             select(
                 MemberBounds.id,
-                func.min(func.count(aliased_bounds.id), 1).label("is_aliasing_ptrs"),
+                func.min(func.count(aliased_bounds_with.id), 1).label("is_aliasing_ptrs"),
             )
-            .join(MemberBounds.aliasing_with.of_type(aliased_bounds))
-            .join(aliased_bounds.member_entry)
+            .join(MemberBounds.aliasing_with.of_type(aliased_bounds_with))
+            .join(aliased_bounds_with.member_entry)
+            .where(StructMember.flags.op("&")(any_ptr_flag.value) != 0)
             .group_by(MemberBounds.id)
         ).subquery()
 
@@ -179,10 +183,12 @@ class ImpreciseSubobjectLayouts(AnalysisTask, StructLayoutAnalysisMixin):
             select(
                 # Base columns
                 StructType.id, StructType.file, StructType.line, StructType.name,
+                StructType.size.label("total_size"),
                 StructMember.bit_offset, StructMember.name.label("member_name"),
                 StructMember.type_name, StructMember.size, StructMember.bit_size,
                 MemberBounds.name.label("flat_name"), MemberBounds.offset,
-                MemberBounds.base, MemberBounds.top, MemberBounds.is_imprecise,
+                MemberBounds.is_imprecise,
+                MemberBounds.mindex,
                 # Synthetic columns from subqueries
                 MemberBounds.id.label("flat_member_id"),
                 aliased_by.c.aliased_by,
@@ -197,26 +203,28 @@ class ImpreciseSubobjectLayouts(AnalysisTask, StructLayoutAnalysisMixin):
         )
         # yapf: enable
         schema_types = {
-            'id': pl.UInt64,
-            'file': pl.Utf8,
-            'line': pl.UInt64,
-            'name': pl.Utf8,
-            'bit_offset': pl.Int8,
-            'member_name': pl.Utf8,
-            'type_name': pl.Utf8,
-            'size': pl.UInt64,
-            'bit_size': pl.Int8,
-            'flat_name': pl.Utf8,
-            'offset': pl.UInt64,
-            'base': pl.UInt64,
-            'top': pl.UInt64,
-            'is_imprecise': pl.Boolean,
-            'flat_member_id': pl.UInt64,
-            'aliased_by': pl.Utf8,
-            'is_aliasing_ptrs': pl.Boolean,
-            'is_array': pl.Boolean
+            "id": pl.UInt64,
+            "file": pl.Utf8,
+            "line": pl.UInt64,
+            "name": pl.Utf8,
+            "total_size": pl.UInt64,
+            "bit_offset": pl.Int8,
+            "member_name": pl.Utf8,
+            "type_name": pl.Utf8,
+            "size": pl.UInt64,
+            "bit_size": pl.Int8,
+            "flat_name": pl.Utf8,
+            "offset": pl.UInt64,
+            "is_imprecise": pl.Boolean,
+            "mindex": pl.UInt64,
+            "flat_member_id": pl.UInt64,
+            "aliased_by": pl.Utf8,
+            "is_aliasing_ptrs": pl.Boolean,
+            "is_array": pl.Boolean
         }
-        return pl.read_database(imprecise_layouts, gen_task.struct_layout_db.sql_engine, schema_overrides=schema_types)
+        self.logger.info("Loading struct layout data for %s", gen_task)
+        df = pl.read_database(imprecise_layouts, gen_task.struct_layout_db.sql_engine, schema_overrides=schema_types)
+        return df
 
     def run(self):
         """
@@ -231,25 +239,50 @@ class ImpreciseSubobjectLayouts(AnalysisTask, StructLayoutAnalysisMixin):
 
         def gen_struct_members(df: pl.DataFrame):
             # Helper columns for the template
-            expr_bit_suffix = (pl.when(
-                pl.col("bit_offset").is_not_null()).then(":+" + pl.col("bit_offset").cast(str)).otherwise(pl.lit("")))
-            expr_bit_size_suffix = (pl.when(
-                pl.col("bit_size").is_not_null()).then(":+" + pl.col("bit_size").cast(str)).otherwise(pl.lit("")))
-            df = df.with_columns((pl.col("offset").cast(str) + expr_bit_suffix).alias("tmpl_offset"),
-                                 (pl.col("size").cast(str) + expr_bit_size_suffix).alias("tmpl_size"),
-                                 pl.col("bit_size").fill_null(0),
-                                 (pl.col("flat_name").str.split("::").list.len()).alias("tmpl_depth"))
-            return df
+            # yapf: disable
+            expr_bit_suffix = (
+                pl.when(pl.col("bit_offset").is_not_null())
+                .then(":+" + pl.col("bit_offset").cast(str))
+                .otherwise(pl.lit(""))
+            )
+            expr_bit_size_suffix = (
+                pl.when(pl.col("bit_size").is_not_null())
+                .then(":+" + pl.col("bit_size").cast(str))
+                .otherwise(pl.lit(""))
+            )
+            df = df.with_columns(
+                (pl.col("offset").map_elements(lambda o: f"{o:#x}") + expr_bit_suffix).alias("tmpl_offset"),
+                # (pl.col("offset").cast(str) + expr_bit_suffix).alias("tmpl_offset"),
+                (pl.col("size").cast(str) + expr_bit_size_suffix).alias("tmpl_size"),
+                pl.col("bit_size").fill_null(0),
+                (pl.col("flat_name").str.split("::").list.len()).alias("tmpl_depth")
+            )
+            # yapf: enable
+            return df.sort(pl.col("mindex"), descending=False)
 
         def gen_struct_layouts(group_name: str, df: pl.DataFrame):
-            unique_layouts = df.sort("name")["id"].unique()
-            for id_ in unique_layouts:
-                xs = df.filter(pl.col("id") == id_).with_columns(
-                    (pl.lit(group_name) + "-" + pl.lit(str(id_))).alias("tmpl_layout_id"),
-                    (pl.col("file") + ":" + pl.col("line").cast(str)).alias("tmpl_location"),
-                    pl.lit(False).alias("has_imprecise_pointer_alias"),
-                    pl.lit(False).alias("has_imprecise_array"))
-                yield (xs, gen_struct_members(xs))
+            # Get layouts ordered by name
+            layouts = df.select("name", "id").unique().sort("name")["id"]
+            # For each layout, emit information and group cross section
+            for struct_id in layouts:
+                xs = df.filter(pl.col("id") == struct_id)
+                # Per-layout information
+                assert xs["file"].n_unique() == 1, \
+                    f"Invalid layout with non-unique 'file' for {group_name}:{name}"
+                assert xs["line"].n_unique() == 1, \
+                    f"Invalid layout with non-unique 'line' for {group_name}:{name}"
+                assert xs["total_size"].n_unique() == 1, \
+                    f"Invalid layout with non-unique 'total_size' for {group_name}:{name}"
+                name = xs["name"][0]
+                info = {
+                    "tmpl_name": name,
+                    "tmpl_layout_id": group_name + "-" + name,
+                    "tmpl_location": xs["file"][0] + ":" + str(xs["line"][0]),
+                    "tmpl_layout_size": "{:#x}".format(xs["total_size"][0]),
+                    "tmpl_has_imprecise_alias_pointer": xs["is_aliasing_ptrs"].any(),
+                    "tmpl_has_imprecise_array": (xs["is_imprecise"] & xs["is_array"]).any()
+                }
+                yield (info, xs, gen_struct_members(xs))
 
         def gen_layout_groups():
             for (group_name, ), group in layouts.group_by(["dataset_gid"]):
