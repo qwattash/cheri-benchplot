@@ -181,35 +181,37 @@ void StructLayoutScraper::InitSchema() {
    * of a structure.
    */
   sm_.SqlExec("CREATE TABLE IF NOT EXISTS member_bounds ("
-               // ID of the flattened layout entry
-               "id INTEGER NOT NULL PRIMARY KEY,"
-               // ID of the struct_type containing this member
-               "owner INTEGER NOT NULL,"
-               // Flattened name for the layout entry
-               "name TEXT NOT NULL,"
-               // ID of the corresponding member entry in struct_members
-               "member INTEGER NOT NULL,"
-               // Cumulative offset of this member from the start of owner
-               "offset INTEGER NOT NULL,"
-               // Representable sub-object base
-               "base INTEGER NOT NULL,"
-               // Representable top of the sub-object
-               "top INTEGER NOT NULL,"
-               // Mark whether the member is not precisely representable
-               "is_imprecise BOOL DEFAULT 0,"
-               // Require number of precision bits required to exactly represent
-               // the capability
-               "precision INTEGER,"
-               "FOREIGN KEY (owner) REFERENCES struct_type (id),"
-               "FOREIGN KEY (member) REFERENCES struct_member (id))");
+              // ID of the flattened layout entry
+              "id INTEGER NOT NULL PRIMARY KEY,"
+              // ID of the struct_type containing this member
+              "owner INTEGER NOT NULL,"
+              // Flattened member index
+              "mindex INTEGER NOT NULL,"
+              // Flattened name for the layout entry
+              "name TEXT NOT NULL,"
+              // ID of the corresponding member entry in struct_members
+              "member INTEGER NOT NULL,"
+              // Cumulative offset of this member from the start of owner
+              "offset INTEGER NOT NULL,"
+              // Representable sub-object base
+              "base INTEGER NOT NULL,"
+              // Representable top of the sub-object
+              "top INTEGER NOT NULL,"
+              // Mark whether the member is not precisely representable
+              "is_imprecise BOOL DEFAULT 0,"
+              // Require number of precision bits required to exactly represent
+              // the capability
+              "precision INTEGER,"
+              "FOREIGN KEY (owner) REFERENCES struct_type (id),"
+              "FOREIGN KEY (member) REFERENCES struct_member (id))");
 
   /*
    * Pre-compiled queries for member_bounds
    */
   insert_member_bounds_query_ = sm_.Sql(
       "INSERT INTO member_bounds ("
-      "  owner, member, offset, name, base, top, is_imprecise, precision) "
-      "VALUES(@owner, @member, @offset, @name, @base, @top, @is_imprecise,"
+      "  owner, member, mindex, offset, name, base, top, is_imprecise, precision) "
+      "VALUES(@owner, @member, @mindex, @offset, @name, @base, @top, @is_imprecise,"
       "  @precision)");
 
   /*
@@ -614,7 +616,7 @@ StructMemberRow StructLayoutScraper::VisitMember(const llvm::DWARFDie &die,
 
 void StructLayoutScraper::InsertMemberBounds(const MemberBoundsRow &row) {
   auto cursor = insert_member_bounds_query_->TakeCursor();
-  cursor.Bind(row.owner, row.member, row.offset, row.name, row.base, row.top,
+  cursor.Bind(row.owner, row.member, row.mindex, row.offset, row.name, row.base, row.top,
               row.is_imprecise, row.required_precision);
   cursor.Run();
 
@@ -705,14 +707,18 @@ void StructLayoutScraper::FindSubobjectCapabilities(StructTypeEntry &entry) {
   }
 
   std::function<void(StructTypeEntry &, uint64_t, std::string)> FlattenedLayout;
+  uint64_t member_index = 0;
 
-  FlattenedLayout = [this, &entry, &FlattenedLayout](StructTypeEntry &curr,
-                                                     uint64_t offset,
-                                                     std::string prefix) {
+  FlattenedLayout = [this, &member_index, &entry, &FlattenedLayout](
+      StructTypeEntry &curr,
+      uint64_t offset,
+      std::string prefix)
+  {
     for (auto m : curr.members) {
       MemberBoundsRow mb_row;
       mb_row.owner = entry.data.id;
       mb_row.member = m.id;
+      mb_row.mindex = member_index++;
       mb_row.name = prefix + "::" + m.name;
       mb_row.offset = offset + m.byte_offset;
       uint64_t req_length = m.byte_size + (m.bit_size ? 1 : 0);

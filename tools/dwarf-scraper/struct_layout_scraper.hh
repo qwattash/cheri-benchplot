@@ -104,11 +104,13 @@ std::ostream &operator<<(std::ostream &os, const StructMemberRow &row);
 
 /**
  * Helper to hold the data for a row in the member_bounds table.
+ * This represents the flattened layout of a strucutre.
  */
 struct MemberBoundsRow {
   uint64_t id;
   uint64_t owner;
   uint64_t member;
+  uint64_t mindex;
   std::string name;
   uint64_t offset;
   uint64_t base;
