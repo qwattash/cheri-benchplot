@@ -17,7 +17,7 @@
         "desc": "CheriBSD sub-object bounds evaluation",
         "iterations": 1,
         "generators": [{
-            "handler": "subobject.extract-imprecise-v2",
+            "handler": "subobject.extract-imprecise",
             "task_options": {
                 "dwarf_data_sources": [{
                     "path": "{user.build_path}/cheribsd-{instance.cheri_target}-build",
@@ -33,9 +33,9 @@
     }],
     "analysis_config": {
         "tasks": [{
-            "handler": "subobject.imprecise-subobject-plot-v2"
+            "handler": "subobject.imprecise-subobject-plot"
         }, {
-            "handler": "subobject.imprecise-subobject-layouts-v2"
+            "handler": "subobject.imprecise-subobject-layouts"
         }]
     }
 }

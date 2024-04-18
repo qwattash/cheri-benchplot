@@ -78,7 +78,7 @@ class ExtractImpreciseSubobject(DataGenTask):
     """
     public = True
     task_namespace = "subobject"
-    task_name = "extract-imprecise-v2"
+    task_name = "extract-imprecise"
     task_config_class = ExtractImpreciseSubobjectConfig
 
     def __init__(self, benchmark, script, task_config):
