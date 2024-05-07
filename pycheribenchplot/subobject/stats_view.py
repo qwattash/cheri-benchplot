@@ -4,7 +4,8 @@ import seaborn as sns
 import seaborn.objects as so
 from sqlalchemy import func, select
 
-from ..core.plot import PlotTarget, PlotTask, new_figure
+from ..core.artefact import Target
+from ..core.plot import PlotTarget, PlotTask, new_figure, new_facet
 from ..core.task import output
 from .imprecise import ExtractImpreciseSubobject
 from .layouts_view import StructLayoutAnalysisMixin
@@ -22,24 +23,44 @@ class ImpreciseMembersPlot(PlotTask, StructLayoutAnalysisMixin):
     task_namespace = "subobject"
     task_name = "imprecise-subobject-plot"
 
+    rc_params = {
+        "axes.labelsize": "medium",
+        "font.size": 9,
+        "xtick.labelsize": 9
+    }
+
     @output
     def imprecise_fields_size_hist(self):
         """Target for the plot showing the padding of imprecise fields"""
         return PlotTarget(self, "size-hist")
 
     @output
-    def imprecise_fields_hist(self):
+    def imprecise_fields_padding(self):
         """
         Target for the plot showing the distribution of the representability
         padding sizes.
         """
-        return PlotTarget(self, "imprecision")
+        return PlotTarget(self, "pad")
+
+    @output
+    def imprecise_fields_padding_by_size(self):
+        """
+        Target for the plot showing the distribution of the representability
+        padding sizes separated into base and top rounding.
+        """
+        return PlotTarget(self, "pad-by-size")
+
+    @output
+    def imprecise_fields_stats(self):
+        """
+        Target for a csv file that summarizes the imprecise fields and where they are from.
+        """
+        return Target(self, "stats", ext="csv")
 
     def load_one_dataset(self, gen_task: ExtractImpreciseSubobject) -> pl.DataFrame:
         # The requested top for the member, this rounds up the size to the next byte
         # boundary for bit fields.
-        req_top = (MemberBounds.offset + StructMember.size +
-                   func.min(func.coalesce(StructMember.bit_size, 0), 1))
+        req_top = (MemberBounds.offset + StructMember.size + func.min(func.coalesce(StructMember.bit_size, 0), 1))
         # yapf: disable
         imprecise_members = (
             select(
@@ -63,8 +84,13 @@ class ImpreciseMembersPlot(PlotTask, StructLayoutAnalysisMixin):
     def load_imprecise_subobjects(self) -> pl.DataFrame:
         loaded = self.load_layouts()
         # Now that we have everything, compute the helper columns for padding
-        loaded = loaded.with_columns(padding_base=pl.col("offset") - pl.col("base"),
-                                     padding_top=pl.col("top") - pl.col("req_top"))
+        loaded = loaded.with_columns(
+            padding_base=pl.col("offset") - pl.col("base"),
+            padding_top=pl.col("top") - pl.col("req_top")
+        )
+        loaded = loaded.with_columns(
+            padding_total=pl.col("padding_base") + pl.col("padding_top")
+        )
         # Sanity checks
         assert (loaded["padding_base"] >= 0).all()
         assert (loaded["padding_top"] >= 0).all()
@@ -75,15 +101,25 @@ class ImpreciseMembersPlot(PlotTask, StructLayoutAnalysisMixin):
         df = self.load_imprecise_subobjects()
         sns.set_theme()
 
-        df = df.with_columns(
-            pl.col("dataset_gid").map_elements(self.g_uuid_to_label)).alias("legend")
-        )
+        df = df.with_columns(pl.col("dataset_gid").map_elements(self.g_uuid_to_label).alias("target"))
+
+        stat_cols = ["target", "member_name", "size", "padding_base", "padding_top", "padding_total"]
+        df.select(stat_cols).sort("member_name", "size").write_csv(self.imprecise_fields_stats.single_path())
+
         with new_figure(self.imprecise_fields_size_hist.paths()) as fig:
             ax = fig.subplots()
-            sns.histplot(df, x="size", log_scale=2, ax=ax)
+            sns.histplot(df, x="size", hue="target", log_scale=2, ax=ax)
 
             ax.set_xlabel("Requested sub-object size (bytes)")
-            ax.set_ylabel("# of occurrences")
+            ax.set_ylabel("# of imprecise fields")
+
+        with new_figure(self.imprecise_fields_padding.paths()) as fig:
+            ax = fig.subplots()
+            sns.histplot(df, x="padding_total", hue="target", multiple="dodge",
+                         log_scale=2, ax=ax)
+
+            ax.set_xlabel("Capability imprecision (bytes)")
+            ax.set_ylabel("# of imprecise fields")
 
         show_df = df.melt(id_vars=df.columns,
                           value_vars=["padding_base", "padding_top"],
@@ -91,16 +127,18 @@ class ImpreciseMembersPlot(PlotTask, StructLayoutAnalysisMixin):
                           value_name="value")
         # yapf: disable
         show_df = show_df.with_columns(
-            (pl.col("side") + " " + pl.col("dataset_gid").map_elements(self.g_uuid_to_label)).alias("legend"),
+            pl.col("side").alias("legend"),
             pl.col("member_name").alias("label"),
             (pl.col("req_top") - pl.col("offset")).alias("req_size"))
         # yapf: enable
 
-        with new_figure(self.imprecise_fields_hist.paths()) as fig:
-            ax = fig.subplots()
-            sns.histplot(show_df, x="req_size", hue="legend", log_scale=2, ax=ax, element="step")
-            ax.set_xlabel("Capability imprecision (bytes)")
-            ax.set_ylabel("# of occurrences")
+        with new_facet(self.imprecise_fields_padding_by_size.paths(), show_df,
+                       col="target", col_wrap=2, sharey=False) as facet:
+            facet.map_dataframe(sns.histplot, "value", hue="legend",
+                                element="step", log_scale=2)
+            facet.add_legend()
+            facet.set_axis_labels(x_var="Capability imprecision (bytes)",
+                                  y_var="# of imprecise fields")
 
 
 class LLVMSubobjectSizeDistribution(PlotTask, StructLayoutAnalysisMixin):
@@ -121,8 +159,7 @@ class LLVMSubobjectSizeDistribution(PlotTask, StructLayoutAnalysisMixin):
     def load_one_dataset(self, gen_task: ExtractImpreciseSubobject) -> pl.DataFrame:
         # The requested top for the member, this rounds up the size to the next byte
         # boundary for bit fields.
-        req_top = (MemberBounds.offset + StructMember.size +
-                   func.min(func.coalesce(StructMember.bit_size, 0), 1))
+        req_top = (MemberBounds.offset + StructMember.size + func.min(func.coalesce(StructMember.bit_size, 0), 1))
         # yapf: disable
         all_members = (
             select(
