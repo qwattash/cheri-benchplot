@@ -47,6 +47,54 @@ class AnalysisTask(SessionTask):
         instance_config = self.get_instance_config(g_uuid)
         return instance_config.name
 
+    def baseline_selector(self) -> dict[str, str]:
+        """
+        Generate a dictionary of selectors that identify the baseline data slice.
+
+        These are suitable to use with polars dataframe filter().
+        The baseline must be specified in the analysis configuration.
+        """
+        baseline_sel = self.analysis_config.baseline
+        if baseline_sel is None:
+            self.logger.error("Missing baseline selector in analysis configuration")
+            raise ValueError("Invalid Configuration")
+
+        if type(baseline_sel) == dict:
+            # If we have the 'instance' parameter, replace it with the corresponding
+            # dataset_gid
+            if "instance" in baseline_sel:
+                name = baseline_sel["instance"]
+                for b in self.session.all_benchmarks():
+                    if b.config.instance.name == name:
+                        baseline_sel["dataset_gid"] = b.config.g_uuid
+                        del baseline_sel["instance"]
+                        break
+                else:
+                    self.logger.error("Invalid 'instance' value in baseline configuration")
+                    raise ValueError("Invalid configuration")
+            selectors = dict(baseline_sel)
+        else:
+            # Expect a UUID
+            selectors = { "dataset_id": baseline_sel }
+        return selectors
+
+
+    def baseline_slice(self, df: pl.DataFrame) -> pl.DataFrame:
+        """
+        Extract the baseline cross section of the dataframe.
+        Note that the dataframe may be missing some of the parameterization axes,
+        assuming that there is no variation along that axis.
+
+        The baseline must be specified in the analysis configuration.
+        """
+        baseline_sel = self.baseline_selector()
+        selectors = {k: v for k, v in baseline_sel.items() if k in df.columns}
+        baseline = df.filter(**selectors)
+        if len(baseline["dataset_gid"].unique()) != 1:
+            self.logger.error("Invalid baseline specifier %s", baseline_sel)
+            raise ValueError("Invalid configuration")
+        return baseline
+
 
 class DatasetAnalysisTask(AnalysisTask):
     """

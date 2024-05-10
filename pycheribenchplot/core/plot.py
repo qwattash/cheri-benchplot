@@ -221,40 +221,6 @@ class PlotTaskMixin:
                      ncols=4,
                      **kwargs)
 
-    def baseline_slice(self, df: pl.DataFrame) -> pl.DataFrame:
-        """
-        Extract the baseline cross section of the dataframe.
-
-        The baseline must be specified in the analysis configuration.
-        """
-        baseline_sel = self.analysis_config.baseline
-        if baseline_sel is None:
-            self.logger.error("Missing baseline selector in analysis configuration")
-            raise ValueError("Invalid Configuration")
-
-        if type(baseline_sel) == dict:
-            # If we have the 'instance' parameter, replace it with the corresponding
-            # dataset_gid
-            if "instance" in baseline_sel:
-                name = baseline_sel["instance"]
-                for b in self.session.all_benchmarks():
-                    if b.config.instance.name == name:
-                        baseline_sel["dataset_gid"] = b.config.g_uuid
-                        del baseline_sel["instance"]
-                        break
-                else:
-                    self.logger.error("Invalid 'instance' value in baseline configuration")
-                    raise ValueError("Invalid configuration")
-            baseline = df.filter(**baseline_sel)
-        else:
-            # Expect a UUID
-            baseline = df.filter(dataset_id=baseline_sel)
-
-        if len(baseline["dataset_gid"].unique()) != 1:
-            self.logger.error("Invalid baseline specifier %s", baseline_sel)
-            raise ValueError("Invalid configuration")
-        return baseline
-
     def run_plot(self):
         """
         Plot task body.

@@ -14,19 +14,13 @@ from ..core.task import dependency, output
 from ..pmc.ingest import IngestPMCStatCounters
 from .ingest import IngestQPSData
 
+from ..core.tvrs import TVRSTaskConfig, TVRSParamsMixin
+
 @dataclass
 class QPSPlotConfig(Config):
     show_errorbars: bool = True
-    #: Weigth for determining the order of labels based on the parameters
-    parameter_weight: Optional[Dict[str, Dict[str, int]]] = None
-    #: Relabel parameter axes
-    parameter_names: Optional[Dict[str, str]] = None
-    #: Relabel parameter axes values
-    parameter_labels: Optional[Dict[str, Dict[str, str]]] = None
-    #: Parameterization axes for the combined plot hue, use all remaining by default
-    hue_parameters: Optional[List[str]] = None
-    #: Filter only the given subset of counters
-    metrics_filter: Optional[List[str]] = None
+    #: Common plot parameterization options
+    parameterize_options: TVRSTaskConfig = field(default_factory=TVRSTaskConfig)
 
 
 class LoadQPSData(AnalysisTask):
@@ -49,6 +43,9 @@ class LoadQPSData(AnalysisTask):
     def run(self):
         merged = pl.concat((loader.df.get() for loader in self.all_runs), how="vertical",
                            rechunk=True)
+        # Backward compatible with missing message_count column
+        if "message_count" in merged.columns:
+            merged = merged.with_columns(pl.col("message_count").fill_null(0))
         self.merged_df.assign(merged)
 
     def get_parameter_columns(self):
@@ -59,7 +56,7 @@ class LoadQPSData(AnalysisTask):
         return list(all_bench[0].parameters.keys())
 
 
-class QPSPlot(PlotTask):
+class QPSPlot(TVRSParamsMixin, PlotTask):
     """
     Simple QPS plot that shows the QPS metric on the Y axis and the target ABI
     on the X axis.
@@ -87,53 +84,51 @@ class QPSPlot(PlotTask):
     def outputs(self):
         # Dynamically generate the output map
         yield from super().outputs()
-        for scenario in self.get_scenarios():
+        for scenario in self.get_param_axis("scenario"):
             yield (scenario, PlotTarget(self, scenario))
-
-    def get_scenarios(self):
-        df = self.data.merged_df.get()
-        if "scenario" not in df.columns:
-            self.logger.error("Invalid parameterization, missing scenario parameter key")
-            raise RuntimeError("Invalid configuration")
-        return df["scenario"].unique()
 
     def run_plot(self):
         df = self.data.merged_df.get()
-        params = self.data.get_parameter_columns()
-        # Drop the scenario column from params as we use it as a facet axis
-        params.remove("scenario")
 
-        # Merge dataset description from all parameters
-        df = df.with_columns(
-            pl.col("dataset_gid").map_elements(self.g_uuid_to_label).alias("target"),
-            pl.concat_str([pl.col(p) for p in params], separator=" ").alias("flavor/protection")
-        )
+        ctx = self.make_param_context(df)
+        ctx.suppress_const_params(keep=["target", "scenario"])
+        ctx.derived_param_strcat("_flavor", ["variant", "runtime"], sep="/")
+        ctx.relabel(default={"_flavor": "flavor/protection"})            
 
-        for scenario, s_df in df.groupby("scenario"):
+        def plot_one_scenario(scenario, s_df):
             target = self.output_map[scenario]
             self.logger.info("Generate QPS plot for %s", scenario)
             with new_figure(target.paths()) as fig:
                 ax = fig.subplots()
-                sns.stripplot(s_df, x="target", y="qps", hue="flavor/protection",
+                sns.stripplot(s_df, x=ctx.r.target, y="qps", hue=ctx.r._flavor,
                               dodge=True, ax=ax)
                 ax.set_title(scenario)
                 ax.set_ylabel("QPS")
                 ax.set_xlabel("Target")
 
-        # Make the summary plot
+        with self.config_plotting_context():
+            ctx.map_by_param("scenario", plot_one_scenario)
+
         self.logger.info("Generate QPS summary plot")
-        prot_combinations = len(df["flavor/protection"].unique())
-        palette = sns.color_palette(n_colors=prot_combinations)
-        with sns.plotting_context(font_scale=0.4):
-            with new_facet(self.summary_plot.paths(), df, col="scenario", col_wrap=4) as facet:
-                facet.map_dataframe(sns.stripplot, x="target", y="qps", dodge=True,
-                                    hue="flavor/protection", palette=palette)
+        flavor_combinations = len(ctx.df[ctx.r._flavor].unique())
+        palette = sns.color_palette(n_colors=flavor_combinations)
+        with self.config_plotting_context(font_scale=0.4):
+            with new_facet(self.summary_plot.paths(), ctx.df, col=ctx.r.scenario,
+                           col_wrap=4) as facet:
+                facet.map_dataframe(sns.stripplot, x=ctx.r.target, y="qps", dodge=True,
+                                    hue=ctx.r._flavor, palette=palette)
                 facet.add_legend()
 
-        df.group_by(["target", "flavor/protection", "scenario"]).mean().write_csv(self.summary_table.single_path())
+        # Generate a summary of the results in CSV with mean/std
+        (ctx.df.group_by([ctx.r.target, ctx.r._flavor, ctx.r.scenario])
+         .agg(
+             pl.col("qps").mean().alias("qps-mean"),
+             pl.col("qps").std().alias("qps-std")
+         )
+         .write_csv(self.summary_table.single_path()))
 
 
-class LatencyPlot(PlotTask):
+class LatencyPlot(TVRSParamsMixin, PlotTask):
     """
     Simple QPS plot that shows the Latency summary distribution on the Y axis and
     target ABI on the X axis.
@@ -158,50 +153,43 @@ class LatencyPlot(PlotTask):
     def outputs(self):
         # Dynamically generate the output map
         yield from super().outputs()
-        for scenario in self.get_scenarios():
+        for scenario in self.get_param_axis("scenario"):
             yield (scenario, PlotTarget(self, scenario))
-
-    def get_scenarios(self):
-        df = self.data.merged_df.get()
-        if "scenario" not in df.columns:
-            self.logger.error("Invalid parameterization, missing scenario parameter key")
-            raise RuntimeError("Invalid configuration")
-        return df["scenario"].unique()
 
     def run_plot(self):
         df = self.data.merged_df.get()
-        params = self.data.get_parameter_columns()
-        # Drop the scenario column from params as we use it as a facet axis
-        params.remove("scenario")
-
-        # Merge dataset description from all parameters
+        # nsec to msec
         df = df.with_columns(
-            pl.col("dataset_gid").map_elements(self.g_uuid_to_label).alias("target"),
-            pl.concat_str([pl.col(p) for p in params], separator=" ").alias("flavor/protection"),
             pl.col("latency50") / 1000,
             pl.col("latency90") / 1000,
             pl.col("latency95") / 1000,
-            pl.col("latency99") / 1000
+            pl.col("latency99") / 1000            
         )
-        df = df.melt(id_vars=["target", "flavor/protection", "scenario"],
-                     value_vars=["latency50", "latency90", "latency95", "latency99"],
-                     variable_name="percentile",
-                     value_name="latency")
 
-        prot_combinations = len(df["flavor/protection"].unique())
-        palette = sns.color_palette(n_colors=prot_combinations)
-        for scenario, s_df in df.groupby("scenario"):
+        ctx = self.make_param_context(df)
+        ctx.suppress_const_params(keep=["target", "scenario"])
+        ctx.derived_param_strcat("_flavor", ["variant", "runtime"], sep="/")
+        ctx.relabel(default={"_flavor": "flavor/protection"})
+        ctx.melt(value_vars=["latency50", "latency90", "latency95", "latency99"],
+                 variable_name="percentile",
+                 value_name="latency")
+        palette = ctx.build_palette_for("_flavor")
+
+        def plot_one_scenario(scenario, s_df):
             target = self.output_map[scenario]
             self.logger.info("Generate Latency plot for %s", scenario)
-            with new_facet(target.paths(), df, col="percentile", col_wrap=2) as facet:
-                facet.map_dataframe(sns.boxplot, x="target", y="latency",
-                                    hue="flavor/protection", palette=palette)
+            with new_facet(target.paths(), s_df, col="percentile", col_wrap=2) as facet:
+                facet.map_dataframe(sns.boxplot, x=ctx.r.target, y="latency",
+                                    hue=ctx.r._flavor, palette=palette)
                 facet.add_legend()
                 facet.fig.subplots_adjust(top=0.9)
                 facet.fig.suptitle(scenario)
 
+        with self.config_plotting_context():
+            ctx.map_by_param("scenario", plot_one_scenario)
 
-class QPSByMsgSizePlot(PlotTask):
+
+class QPSByMsgSizePlot(TVRSParamsMixin, PlotTask):
     """
     Plot the QPS metric across the different message sizes to show how the overhead scales.
 
@@ -242,85 +230,86 @@ class QPSByMsgSizePlot(PlotTask):
     def overhead_tbl(self):
         return Target(self, "tbl", ext="csv")
 
-    def run_plot(self):
-        df = self.data.merged_df.get()
-        params = self.data.get_parameter_columns()
-        # Drop the scenario column from params as we use the message size axis instead
-        params.remove("scenario")
+    def tvrs_config(self):
+        return self.config.parameterize_options
 
-        # If the 'variant' parameter has only one alternative, we skip it in the legend
-        if len(df["variant"].unique()) == 1:
-            params.remove("variant")
-
-        df = df.with_columns(
-            pl.col("dataset_gid").map_elements(self.g_uuid_to_label).alias("target"),
-            pl.concat_str([pl.col(p) for p in params], separator=" ").alias("flavor/protection")
-        )
-
-        # Honor error bars configuration
-        if self.config.show_errorbars:
-            err_conf = ("pi", 90)
-        else:
-            err_conf = None
-
-        self.logger.info("Generate QPSByMsgSize plot")
+    def gen_msgsize_plot(self, ctx, err_conf):
+        self.logger.info("Generate QPS vs MsgSize plot")
         with new_figure(self.qps_plot.paths()) as fig:
             ax = fig.subplots()
-            sns.lineplot(df, x="req_size", y="qps", hue="target", style="flavor/protection",
-                         markers=True, dashes=True, ax=ax, estimator="mean",
+            sns.lineplot(ctx.df, x="req_size", y="qps", hue=ctx.r.target,
+                         style=ctx.r._flavor, markers=True, dashes=True,
+                         ax=ax, estimator="mean",
                          err_style="band", errorbar=err_conf)
             ax.set_xscale("log", base=2)
-            ax.set_xticks(sorted(df["req_size"].unique()))
+            ax.set_xticks(sorted(ctx.df["req_size"].unique()))
             ax.set_xlabel("Request size")
             ax.set_ylabel("QPS")
 
-        self.logger.info("Generate QPS overhead plot")
-        baseline = self.baseline_slice(df)
-        baseline_qps = baseline.select(["qps", "scenario"]).group_by("scenario").mean().rename(dict(qps="qps_baseline"))
-        # Create the overhead column and drop the baseline data
-        df = df.join(baseline_qps, on="scenario").with_columns(
-            ((pl.col("qps_baseline") - pl.col("qps")) * 100 / pl.col("qps_baseline")).alias("overhead")
-        ).join(baseline, on="dataset_id", how="anti")
+    def gen_overhead_plot(self, ctx, err_conf):
+        self.logger.info("Generate QPS vs MsgSize overhead plot")
         with new_figure(self.overhead_plot.paths()) as fig:
             ax = fig.subplots()
-            sns.lineplot(df, x="req_size", y="overhead", hue="target", style="flavor/protection",
-                         markers=True, dashes=True, ax=ax, estimator="mean",
+            sns.lineplot(ctx.df, x="req_size", y="qps_overhead", hue=ctx.r.target,
+                         style=ctx.r._flavor, markers=True, dashes=True,
+                         ax=ax, estimator="mean",
                          err_style="band", errorbar=err_conf)
             ax.set_xscale("log", base=2)
-            ax.set_xticks(sorted(df["req_size"].unique()))
+            ax.set_xticks(sorted(ctx.df["req_size"].unique()))
             ax.set_xlabel("Request size")
             ax.set_ylabel("% Overhead")
 
-        with new_facet(self.overhead_box_plot.paths(), df, col="target") as facet:
-            prot_combinations = len(df["flavor/protection"].unique())
-            palette = sns.color_palette(n_colors=prot_combinations)
-
-            facet.map_dataframe(sns.boxplot, x="req_size", y="overhead",
-                                hue="flavor/protection", log_scale=(2, None),
+    def gen_overhead_boxes(self, ctx, err_conf):
+        self.logger.info("Generate QPS vs MsgSize overhead box plot")
+        palette = ctx.build_palette_for("_flavor")
+        with new_facet(self.overhead_box_plot.paths(), ctx.df, col=ctx.r.target) as facet:
+            facet.map_dataframe(sns.boxplot, x="req_size", y="qps_overhead",
+                                hue=ctx.r._flavor, log_scale=(2, None),
                                 palette=palette, native_scale=True)
             facet.set_axis_labels(x_var="Request size", y_var="% Overhead")
             for ax in facet.axes.flatten():
-                ax.set_xticks(sorted(df["req_size"].unique()))
+                ax.set_xticks(sorted(ctx.df["req_size"].unique()))
             facet.add_legend()
             self.adjust_legend_on_top(facet.fig, loc="lower left")
 
+    def run_plot(self):
+        df = self.data.merged_df.get()
 
-        # Print out the mean overhead in tabular form
-        idcols = ["req_size", "target", "flavor/protection"]
-        tbl = df.group_by(idcols).mean().select(idcols + ["overhead"]).sort(idcols)
-        with open(self.overhead_tbl.single_path(), "w+") as fp:
-            tbl.write_csv(fp)
+        ctx = self.make_param_context(df)
+        ctx.suppress_const_params(keep=["target", "scenario"])
+        ctx.derived_param_strcat("_flavor", ["variant", "runtime"], sep="/")
+        ctx.compute_overhead(metrics=["qps"])
+        ctx.relabel(default={"_flavor": "flavor/protection"})
+
+        # Honor error bars configuration
+        err_conf = None
+        if self.config.show_errorbars:
+            err_conf = ("pi", 90)
+        with self.config_plotting_context():
+            self.gen_msgsize_plot(ctx, err_conf)
+            self.gen_overhead_plot(ctx, err_conf)
+            self.gen_overhead_boxes(ctx, err_conf)
+
+        # Generate summary of the overheads in CSV with mean/std
+        (ctx.df.group_by(["req_size", ctx.r.target, ctx.r._flavor])
+         .agg(
+             pl.col("qps_overhead").mean().alias("qps-overhead-mean"),
+             pl.col("qps_overhead").std().alias("qps-overhead-std")
+         )
+         .sort(["req_size", ctx.r.target, ctx.r._flavor])
+         .write_csv(self.overhead_tbl.single_path())
+        )
 
 
 @dataclass
 class QPSOverheadPlotConfig(QPSPlotConfig):
-    #: Control which parameterization axis is used for the facet grid columns
+    #: Control which parameterization axis is used for the L/R Y axis selection
     facet_column: Optional[str] = None
     #: Label for the baseline combination
     baseline_label: Optional[str] = "baseline"
 
 
-class QPSOverheadPlot(PlotTask):
+class QPSOverheadPlot(TVRSParamsMixin, PlotTask):
     """
     QPS plot that shows the QPS metric and the relative % overhead respectively on
     on the left and right Y axes, the target ABI on the X axis.
@@ -346,129 +335,91 @@ class QPSOverheadPlot(PlotTask):
     def outputs(self):
         # Dynamically generate the output map
         yield from super().outputs()
-        for scenario in self.get_scenarios():
+        for scenario in self.get_param_axis("scenario"):
             yield (scenario, PlotTarget(self, scenario))
             yield (f"tbl-{scenario}", Target(self, f"tbl-{scenario}"))
 
-    def get_scenarios(self):
-        df = self.data.merged_df.get()
-        if "scenario" not in df.columns:
-            self.logger.error("Invalid parameterization, missing scenario parameter key")
-            raise RuntimeError("Invalid configuration")
-        return df["scenario"].unique()
+    def tvrs_config(self):
+        return self.config.parameterize_options
 
-    def run_plot(self):
-        df = self.data.merged_df.get()
-        params = self.data.get_parameter_columns()
-        # Drop the scenario column from params as we use it as a facet axis
-        params.remove("scenario")
-
-        # Compute the overhead
-        # IMPORTANT: this must occur before we do any of the plot-specific renaming
-        baseline = self.baseline_slice(df)
-        baseline_qps = baseline.select(["qps", "scenario"]).group_by("scenario").mean().rename(dict(qps="qps_baseline"))
-        # Create the overhead column and optionally drop the baseline data
-        df = df.join(baseline_qps, on="scenario").with_columns(
-            ((pl.col("qps_baseline") - pl.col("qps")) * 100 / pl.col("qps_baseline")).alias("overhead"),
-        ).join(baseline, on="dataset_id", how="anti")
-
-        # Proceeed with plot-specific dataframe transforms
-        df = df.with_columns(
-            pl.col("dataset_gid").map_elements(self.g_uuid_to_label).alias("target"),
-        )
-
-        # Compute the parameterization weight for consistent label ordering
-        if self.config.parameter_weight:
-            df = df.with_columns(pl.lit(0).alias("param_weight"))
-            for name, mapping in self.config.parameter_weight.items():
-                self.logger.debug("Set weight for %s => %s", name, mapping)
-                df = df.with_columns(
-                    pl.col("param_weight") + pl.col(name).replace(mapping, default=0)
-                )
-
-        # Relabel parameterization axes according to the task configuration overrides
-        if self.config.parameter_labels:
-            relabeling = []
-            for name, mapping in self.config.parameter_labels.items():
-                if name not in df.columns:
-                    self.logger.warning("Skipping re-labeling of parameter '%s', does not exist", name)
-                    continue
-                relabeling.append(pl.col(name).replace(mapping))
-            df = df.with_columns(*relabeling)
-
-        if self.config.parameter_names:
-            df = df.rename(self.config.parameter_names)
-            params = [self.config.parameter_names.get(p, p) for p in params]
-
-        # If we have an axis to use for the facet grid, remove it from the parameters set
-        if self.config.facet_column is not None:
-            if self.config.facet_column not in params:
-                self.logger.warning("Configured facet columns key '%s' is missing, "
-                                    "maybe it was renamed by QPSPlotConfig.parameter_names. "
-                                    "Note that column renaming occurs before this step, so the "
-                                    "QPSOverheadPlotConfig.facet_columns key must contain the "
-                                    "new parameter name.", self.config.facet_column)
-            params.remove(self.config.facet_column)
-
-        # Check if there is variation on the flavor/protection axes, otherwise drop them
-        drop_params = []
-        for p in params:
-            if len(df.select(p).unique()) == 1:
-                self.logger.debug("No variation on the '%s' axis detected, drop parameterization axis in plot", p)
-                drop_params.append(p)
-        params = [p for p in params if p not in drop_params]
-
+    def plot_one_scenario(self, ctx, scenario, s_df):
         # Honor error bars configuration
         if self.config.show_errorbars:
             err_conf = ("sd",)
         else:
             err_conf = None
+        target = self.output_map[scenario]
+        self.logger.info("Generate condensed QPS overhead plot for %s", scenario)
+        with new_figure(target.paths()) as fig:
+            ax = fig.subplots()
+            axr = ax.twinx()
+            axr.grid(False)
 
-        self.logger.info("Generate QPS overhead plot with facet_columns=%s, params=%s",
-                         self.config.facet_column, params)
+            mean_df = s_df.group_by(ctx.r.target).mean().sort("param_weight")
+            x_labels = mean_df[ctx.r.target]
+            x_pos = np.arange(len(x_labels))
 
-        # Now merge all the parameter columns into the target label
-        df = df.with_columns(
-            pl.concat_str([pl.col(p) for p in sorted(params)], separator="\n").alias("target")
-        )
+            abs_bars = ax.bar(x_pos - 0.125, mean_df["qps"], color="r", width=0.25)
+            pct_bars = axr.bar(x_pos + 0.125, mean_df["qps_overhead"], color="b", width=0.25)
+            ax.set_xticks(x_pos)
+            ax.set_xticklabels(x_labels)
 
-        for scenario, s_df in df.groupby("scenario"):
-            target = self.output_map[scenario]
-            self.logger.info("Generate QPS overhead plot for %s", scenario)
-            with new_figure(target.paths()) as fig:
-                ax = fig.subplots()
-                axr = ax.twinx()
-                axr.grid(False)
+            if self.config.facet_column:
+                facet_labels = s_df[self.config.facet_column].unique()
+                assert len(facet_labels) == 1
+                facet_label = facet_labels[0]
+                ax.set_title(f"{self.config.facet_column} = {facet_label}")
 
-                mean_df = s_df.group_by("target").mean().sort("param_weight")
-                x_labels = mean_df["target"]
-                x_pos = np.arange(len(x_labels))
+            ax.set_xlabel("Target")
+            ax.set_ylabel("QPS (messages/sec)")
+            axr.set_ylabel(f"% Overhead relative to {self.config.baseline_label}")
+            ax.legend(handles=[abs_bars, pct_bars], labels=["QPS (msg/s)", "% Overhead"],
+                      bbox_to_anchor=(0, 1.1), loc="lower left", ncols=4)
 
-                abs_bars = ax.bar(x_pos - 0.125, mean_df["qps"], color="r", width=0.25)
-                pct_bars = axr.bar(x_pos + 0.125, mean_df["overhead"], color="b", width=0.25)
-                ax.set_xticks(x_pos)
-                ax.set_xticklabels(x_labels)
+        table_target = self.output_map[f"tbl-{scenario}"]
+        mean_df.write_csv(table_target.single_path())
 
-                if self.config.facet_column:
-                    facet_labels = s_df[self.config.facet_column].unique()
-                    assert len(facet_labels) == 1
-                    facet_label = facet_labels[0]
-                    ax.set_title(f"{self.config.facet_column} = {facet_label}")
+    def run_plot(self):
+        df = self.data.merged_df.get()
 
-                ax.set_xlabel("Target")
-                ax.set_ylabel("QPS (messages/sec)")
-                axr.set_ylabel(f"% Overhead relative to {self.config.baseline_label}")
-                ax.legend(handles=[abs_bars, pct_bars], labels=["QPS (msg/s)", "% Overhead"],
-                          bbox_to_anchor=(0, 1.1), loc="lower left", ncols=4)
-            table_target = self.output_map[f"tbl-{scenario}"]
-            mean_df.write_csv(table_target.single_path())
+        ctx = self.make_param_context(df)
+        # If we have an axis to use for the facet grid, we need to keep it
+        keep_params = ["target", "scenario"]
+        if self.config.facet_column:
+            if self.config.facet_column not in ctx.base_params:
+                self.logger.error("Configured facet columns parameter '%s' is missing",
+                                  self.config.facet_column)
+                raise RuntimeError("Invalid config")
+            keep_params.append(self.config.facet_column)
+        ctx.suppress_const_params(keep=keep_params)
+        # Now merge all the parameter columns, except facet_column into
+        # the derived _label param
+        other_params = list(ctx.params)
+        other_params.remove("scenario")
+        if self.config.facet_column in other_params:
+            other_params.remove(self.config.facet_column)
+        ctx.derived_param_strcat("_label", other_params, sep="\n")
+        ctx.compute_overhead(metrics=["qps"], inverted=True)
+        ctx.relabel(default={"_label": "label"})
+
+        self.logger.info("Generate condensed QPS overhead plots with "
+                         "facet_columns=%s, params=%s",
+                         self.config.facet_column, other_params)
+        with self.config_plotting_context():
+            ctx.map_by_param("scenario", lambda s_id, s_df: self.plot_one_scenario(ctx, s_id, s_df))
 
 
-class QPSPerfCountersPlot(PlotTask):
+@dataclass
+class QPSPmcConfig(QPSPlotConfig):
+    #: Filter only the given subset of columns/counters
+    metrics_filter: Optional[List[str]] = None
+
+
+class QPSPerfCountersPlot(TVRSParamsMixin, PlotTask):
     """
     Generate mixed qps/pmc metrics when hardware performance counters data is available.
     """
-    task_config_class = QPSPlotConfig
+    task_config_class = QPSPmcConfig
     task_namespace = "qps"
     task_name = "pmc-metrics"
     public = True
@@ -476,11 +427,11 @@ class QPSPerfCountersPlot(PlotTask):
     derived_metrics = {
         "ex_entry_per_msg": {
             "requires": ["executive_entry", "message_count"],
-            "column": (pl.col("executive_entry") / pl.col("message_count"))
+            "expr": (pl.col("executive_entry") / pl.col("message_count"))
         },
         "ex_entry_per_byte": {
             "requires": ["executive_entry", "message_count", "resp_size"],
-            "column": (pl.col("executive_entry") / (pl.col("message_count") * pl.col("resp_size")))
+            "expr": (pl.col("executive_entry") / (pl.col("message_count") * pl.col("resp_size")))
         }
     }
 
@@ -498,52 +449,8 @@ class QPSPerfCountersPlot(PlotTask):
     def qps_metrics(self):
         return PlotTarget(self, "metrics")
 
-    def get_metadata_columns(self):
-        # Note that all benchmarks must have the same set of parameter keys.
-        # This is enforced during configuration
-        return self.qps_data.get_parameter_columns() + ["iteration", "target"]
-
-    def apply_display_transforms(self, df):
-        """
-        Transform the dataframe to adjust displayed properties.
-
-        This applies the plot configuration to rename parameter levels, axes and
-        filters.
-        """
-        params = self.qps_data.get_parameter_columns()
-        # Parameter renames
-        if self.config.parameter_labels:
-            relabeling = []
-            for name, mapping in self.config.parameter_labels.items():
-                if name not in df.columns:
-                    self.logger.warning("Skipping re-labeling of parameter '%s', does not exist", name)
-                    continue
-                relabeling.append(pl.col(name).replace(mapping))
-            df = df.with_columns(*relabeling)
-
-        if self.config.parameter_names:
-            df = df.rename(self.config.parameter_names)
-            params = [self.config.parameter_names.get(p, p) for p in params]
-
-        # Hide unnecessary parameter axes
-        hide_params = ["scenario"]
-        for p in params:
-            if len(df[p].unique()) == 1:
-                hide_params.append(p)
-        params = [p for p in params if p not in hide_params]
-        # Generate the combined hue column flavor/protection
-        if self.config.hue_parameters:
-            hue_params = [p for p in params if p in self.config.hue_parameters]
-        else:
-            hue_params = params
-        df = df.with_columns(
-            pl.concat_str([pl.col(p) for p in hue_params], separator=" ").alias("flavor/protection")
-        )
-
-        # Filter the counters based on configuration
-        if self.config.metrics_filter:
-            df = df.filter(pl.col("metric").is_in(self.config.metrics_filter))
-        return df
+    def tvrs_config(self):
+        return self.config.parameterize_options
 
     def run_plot(self):
         if self.pmc is None:
@@ -577,38 +484,30 @@ class QPSPerfCountersPlot(PlotTask):
                     break
             if not has_cols:
                 continue
-            df = df.with_columns((spec["column"]).alias(name))
+            df = df.with_columns((spec["expr"]).alias(name))
             found_metrics.append(name)
 
         if not found_metrics:
             self.logger.info("Skipping plot, no data")
             return
 
-        # Now produce a plot for each derived metric we found
-        df = df.with_columns(
-            pl.col("dataset_gid").map_elements(self.g_uuid_to_label).alias("target")
-        ).melt(
-            id_vars=self.get_metadata_columns(),
-            value_vars=found_metrics,
-            variable_name="metric",
-            value_name="value"
-        )
-        df = self.apply_display_transforms(df)
-        prot_combinations = len(df["flavor/protection"].unique())
-        palette = sns.color_palette(n_colors=prot_combinations)
-        if prot_combinations == 2:
-            # Hack, allow in config
-            palette = sns.color_palette().as_hex()
-            palette = [palette[0], palette[3]]  # blue/red
-        else:
-            palette = sns.color_palette(n_colors=prot_combinations)
+        # XXX aggregate over iterations?
+        ctx = self.make_param_context(df)
+        ctx.derived_param_strcat("_flavor", ["variant", "runtime"], sep="/")
+        ctx.melt(value_vars=found_metrics, variable_name="metric", value_name="value")
+        ctx.relabel(default={"_flavor": "flavor/protection"})
 
+        # Filter the counters based on configuration
+        if self.config.metrics_filter:
+            ctx.df = ctx.df.filter(pl.col("metric").is_in(self.config.metrics_filter))
+
+        palette = ctx.build_palette_for("_flavor")
         self.logger.info("Generate QPS PMC metrics")
-        with new_facet(self.qps_metrics.paths(), df, col="scenario", row="metric",
+        with new_facet(self.qps_metrics.paths(), ctx.df, col=ctx.r.scenario, row="metric",
                        sharex="col", sharey="row", margin_titles=True,
                        aspect=0.85) as facet:
-            facet.map_dataframe(sns.barplot, x="target", y="value",
-                                hue="flavor/protection", dodge=True,
+            facet.map_dataframe(sns.barplot, x=ctx.r.target, y="value",
+                                hue=ctx.r._flavor, dodge=True,
                                 palette=palette)
             facet.add_legend()
         # df.group_by(["target", "scenario", "flavor/protection", "metric"]).mean().write_csv("metrics.csv")
