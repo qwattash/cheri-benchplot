@@ -11,7 +11,7 @@ import pandas as pd
 from pandera import Field
 from pandera.typing import DataFrame, Index, Series
 
-from ..ext import pydwarf
+# from ..ext import pydwarf
 from .model import DataModel
 from .util import gzopen, new_logger
 
@@ -73,7 +73,7 @@ class StructLayoutGraph:
         #: Normalized source file path of the top-level structure
         layout_file: str
         #: Top-level type info
-        root_info: pydwarf.TypeInfo
+        root_info: "pydwarf.TypeInfo"
         #: Root node ID
         root_node: "NodeID" = None
         #: Stack of parent member objects
@@ -169,7 +169,7 @@ class StructLayoutGraph:
             return strpath
         return str(path.relative_to(src_root))
 
-    def _add_member(self, ctx: "AddLayoutContext", member: pydwarf.Member):
+    def _add_member(self, ctx: "AddLayoutContext", member: "pydwarf.Member"):
         """
         Create a graph node corresponding to the given member and attach it to the last parent.
 
@@ -211,7 +211,7 @@ class StructLayoutGraph:
         self.layouts.add_edge(ctx.parent, member_node)
         return member_node
 
-    def _do_add_layout(self, ctx: "AddLayoutContext", type_info: pydwarf.TypeInfo):
+    def _do_add_layout(self, ctx: "AddLayoutContext", type_info: "pydwarf.TypeInfo"):
         """
         Visit nested members and create the corresponding tree structure in the graph.
         """
@@ -240,7 +240,7 @@ class StructLayoutGraph:
             data = nx.node_link_data(self.layouts)
             json.dump(data, fd, cls=self.Encoder)
 
-    def add_layout(self, type_info: pydwarf.TypeInfo):
+    def add_layout(self, type_info: "pydwarf.TypeInfo"):
         """
         Given a TypeInfo object describing a structure union or class,
         produce a tree that represents is hierarchical structure.
