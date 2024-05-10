@@ -37,6 +37,10 @@ class SessionSubCommand(SubCommand):
                                 "--force",
                                 action="store_true",
                                 help="Force re-create the session if it already exists. Use with caution.")
+        sub_create.add_argument("-u",
+                                "--update",
+                                action="store_true",
+                                help="Only update the embedded analysis config")
 
         sub_run = session_subparsers.add_parser("run",
                                                 help="Run the session datagen tasks, this must be done "
@@ -84,6 +88,8 @@ class SessionSubCommand(SubCommand):
         elif args.force:
             session.delete()
             session = Session.make_new(user_config, config, args.target)
+        elif args.update:
+            session.update_config(config)
         else:
             self.logger.error("Session %s already exists", args.target)
             raise FileExistsError(f"Session {args.target} already exists")

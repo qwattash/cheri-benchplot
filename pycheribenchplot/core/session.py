@@ -228,6 +228,17 @@ class Session:
         """
         return [col for col in self.parameterization_matrix.columns if col not in RESERVED_PARAMETER_NAMES]
 
+    def update_config(self, config):
+        """
+        Update the current configuration, given a new configuration.
+
+        This currently only updates the analysis configuration, since modifiying
+        anything else is more complicated than simply re-creating from scratch.
+        """
+        self.config.analysis_config = config.analysis_config
+        with open(self.session_root_path / SESSION_RUN_FILE, "w") as runfile:
+            runfile.write(run_config.emit_json())
+
     def get_public_tasks(self) -> list[Type[AnalysisTask]]:
         """
         Return the public tasks available for this session.
