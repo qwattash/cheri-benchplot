@@ -59,7 +59,6 @@ def test_instance_config():
     default = InstanceConfig.schema().load({"kernel": "GENERIC"})
 
     assert default.kernel == "GENERIC"
-    assert default.baseline == False
     assert default.name == "qemu UserABI:riscv64-purecap KernABI:hybrid KernConf:GENERIC"
     assert default.platform == InstancePlatform.QEMU
     assert default.cheri_target == InstanceCheriBSD.RISCV64_PURECAP
@@ -462,7 +461,6 @@ def test_session_config_substitution(mock_task_registry, fake_user_config, fake_
         "instance_config": {
             "instances": [{
                 "kernel": "GENERIC-FAKE-TEST",
-                "baseline": True
             }]
         },
         "benchmark_config": [{

@@ -1161,7 +1161,6 @@ class SessionRunConfig(CommonSessionConfig):
         if not config.instance_config.instances:
             config.instance_config.instances.append(
                 InstanceConfig(kernel="unknown",
-                               baseline=True,
                                name="local",
                                platform=InstancePlatform.LOCAL,
                                cheri_target=InstanceCheriBSD.LOCAL_NATIVE,
