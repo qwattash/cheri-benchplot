@@ -572,6 +572,33 @@ class DataFrameSessionLoadTask(SessionTask, DataFrameLoadTaskMixin):
         return DataFrameTarget(self, self.model, output_id=f"loaded-df-for-{super().task_id}")
 
 
+class PLDataFrameSessionLoadTask(SessionTask, DataFrameLoadTaskMixin):
+    """
+    Internal task to load session-wide target data.
+    """
+    task_namespace = "internal"
+    task_name = "pl-target-session-load"
+
+    def __init__(self, target: Target):
+        self.target = target
+        if target.task.is_dataset_task():
+            raise TypeError("Use PLDataFrameLoadTask for per-dataset targets")
+
+        # Borg state initialization occurs here
+        super().__init__(target.task.session)
+
+    @property
+    def task_id(self):
+        return super().task_id + "-for-" + self.target.borg_state_id
+
+    def run(self):
+        self.df.assign(self._load_from(self.target))
+
+    @output
+    def df(self):
+        return ValueTarget(self, output_id=f"loaded-df-for-{super().task_id}")
+
+
 def make_dataframe_loader(model: BaseDataModel | None = None) -> Callable[[Target], Task]:
     """
     Helper to build a DataFrameLoader task for a given model, given a target object.
