@@ -6,8 +6,7 @@ import pytest
 from sqlalchemy import select
 
 from pycheribenchplot.core.config import AnalysisConfig
-from pycheribenchplot.subobject.analysis import *
-from pycheribenchplot.subobject.imprecise import *
+from pycheribenchplot.subobject import *
 from pycheribenchplot.subobject.model import *
 
 

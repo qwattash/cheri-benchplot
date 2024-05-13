@@ -1,13 +1,12 @@
 import csv
+import re
 
-import pandas as pd
+import polars as pl
 import pytest
-from pandera.typing import Index, Series
 
-from pycheribenchplot.core.analysis import AnalysisTask, BenchmarkDataLoadTask
-from pycheribenchplot.core.artefact import DataFrameTarget, Target
+from pycheribenchplot.core.analysis import AnalysisTask
+from pycheribenchplot.core.artefact import ValueTarget, Target, PLDataFrameLoadTask
 from pycheribenchplot.core.config import AnalysisConfig
-from pycheribenchplot.core.model import DataModel
 from pycheribenchplot.core.task import ExecutionTask
 
 
@@ -19,21 +18,7 @@ class DummyExecTask(ExecutionTask):
         pass
 
     def outputs(self):
-        yield "test-target", Target(self, "fake", ext="csv")
-
-
-class DummyModel(DataModel):
-    number: Index[int]
-    name: Series[str]
-    surname: Series[str]
-
-
-class DummyLoadTask(BenchmarkDataLoadTask):
-    task_namespace = "test.analysis-load"
-    task_name = "fake-load-task"
-    exec_task = DummyExecTask
-    target_key = "test-target"
-    model = DummyModel
+        yield "test-target", Target(self, "fake", ext="csv", loader=PLDataFrameLoadTask)
 
 
 class DummyAnalysisRoot(AnalysisTask):
@@ -47,7 +32,8 @@ class DummyAnalysisRoot(AnalysisTask):
     task_name = "fake-analysis-main"
 
     def dependencies(self):
-        yield DummyLoadTask(self.session.parameterization_matrix["descriptor"][0], self.analysis_config)
+        exec_task = self.session.all_benchmarks()[0].find_exec_task(DummyExecTask)
+        yield exec_task.output_map["test-target"].get_loader()
 
     def run(self):
         return
@@ -93,20 +79,25 @@ def test_simple_load_task(csv_file_content, fake_analysis_session):
     Test loading data from a simple CSV file.
     This exercises the common dataframe load task with data validation.
     """
-    aconf = AnalysisConfig.schema().load({"tasks": [{"handler": "test.analysis-load.fake-analysis-main"}]})
+    aconf = AnalysisConfig.schema().load({
+        "tasks": [{"handler": "test.analysis-load.fake-analysis-main"}]
+    })
     fake_analysis_session.analyse(aconf)
 
     assert not fake_analysis_session.scheduler.failed_tasks
     # Now check that we produced the dataframe output we are looking for
     tasks = fake_analysis_session.scheduler.completed_tasks
+    load_task = None
+    for task_id, task in tasks.items():
+        print(task_id)
+        if re.match(r"internal.pl-target-load-.*-for-test.analysis-load.*-output-fake", task_id):
+            load_task = task
+            break
+    assert load_task is not None, "Load task did not run"
 
-    # benchmark UUID is appended for task ID, see conftest single_benchmark_config
-    expect_id = "test.analysis-load.fake-load-task-8bc941a3-f6d6-4d37-b193-4738f1da3dae"
-    assert expect_id in tasks
-    load_task = tasks[expect_id]
     target = load_task.output_map["df"]
     df = target.get()
-    assert isinstance(target, DataFrameTarget)
-    assert df.index.names == ["dataset_id", "dataset_gid", "iteration", "param_key", "number"]
-    assert (df.columns == ["name", "surname"]).all()
+    assert isinstance(target, ValueTarget)
+    expect_columns = {"dataset_id", "dataset_gid", "iteration", "param_key", "number", "name", "surname"}
+    assert set(df.columns) == expect_columns
     assert len(df) == 4
