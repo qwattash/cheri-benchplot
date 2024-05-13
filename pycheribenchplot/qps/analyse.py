@@ -1,20 +1,20 @@
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
+import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
 import seaborn as sns
-import matplotlib.pyplot as plt
 
 from ..core.analysis import AnalysisTask
 from ..core.artefact import Target, ValueTarget
 from ..core.config import Config
-from ..core.plot import new_facet, new_figure, PlotTask, PlotTarget
+from ..core.plot import PlotTarget, PlotTask, new_facet, new_figure
 from ..core.task import dependency, output
+from ..core.tvrs import TVRSParamsMixin, TVRSTaskConfig
 from ..pmc.ingest import IngestPMCStatCounters
 from .ingest import IngestQPSData
 
-from ..core.tvrs import TVRSTaskConfig, TVRSParamsMixin
 
 @dataclass
 class QPSPlotConfig(Config):
@@ -41,8 +41,7 @@ class LoadQPSData(AnalysisTask):
         return ValueTarget(self, "merged")
 
     def run(self):
-        merged = pl.concat((loader.df.get() for loader in self.all_runs), how="vertical",
-                           rechunk=True)
+        merged = pl.concat((loader.df.get() for loader in self.all_runs), how="vertical", rechunk=True)
         # Backward compatible with missing message_count column
         if "message_count" in merged.columns:
             merged = merged.with_columns(pl.col("message_count").fill_null(0))
@@ -93,15 +92,14 @@ class QPSPlot(TVRSParamsMixin, PlotTask):
         ctx = self.make_param_context(df)
         ctx.suppress_const_params(keep=["target", "scenario"])
         ctx.derived_param_strcat("_flavor", ["variant", "runtime"], sep="/")
-        ctx.relabel(default={"_flavor": "flavor/protection"})            
+        ctx.relabel(default={"_flavor": "flavor/protection"})
 
         def plot_one_scenario(scenario, s_df):
             target = self.output_map[scenario]
             self.logger.info("Generate QPS plot for %s", scenario)
             with new_figure(target.paths()) as fig:
                 ax = fig.subplots()
-                sns.stripplot(s_df, x=ctx.r.target, y="qps", hue=ctx.r._flavor,
-                              dodge=True, ax=ax)
+                sns.stripplot(s_df, x=ctx.r.target, y="qps", hue=ctx.r._flavor, dodge=True, ax=ax)
                 ax.set_title(scenario)
                 ax.set_ylabel("QPS")
                 ax.set_xlabel("Target")
@@ -113,19 +111,19 @@ class QPSPlot(TVRSParamsMixin, PlotTask):
         flavor_combinations = len(ctx.df[ctx.r._flavor].unique())
         palette = sns.color_palette(n_colors=flavor_combinations)
         with self.config_plotting_context(font_scale=0.4):
-            with new_facet(self.summary_plot.paths(), ctx.df, col=ctx.r.scenario,
-                           col_wrap=4) as facet:
-                facet.map_dataframe(sns.stripplot, x=ctx.r.target, y="qps", dodge=True,
-                                    hue=ctx.r._flavor, palette=palette)
+            with new_facet(self.summary_plot.paths(), ctx.df, col=ctx.r.scenario, col_wrap=4) as facet:
+                facet.map_dataframe(sns.stripplot,
+                                    x=ctx.r.target,
+                                    y="qps",
+                                    dodge=True,
+                                    hue=ctx.r._flavor,
+                                    palette=palette)
                 facet.add_legend()
 
         # Generate a summary of the results in CSV with mean/std
-        (ctx.df.group_by([ctx.r.target, ctx.r._flavor, ctx.r.scenario])
-         .agg(
-             pl.col("qps").mean().alias("qps-mean"),
-             pl.col("qps").std().alias("qps-std")
-         )
-         .write_csv(self.summary_table.single_path()))
+        (ctx.df.group_by([ctx.r.target, ctx.r._flavor, ctx.r.scenario
+                          ]).agg(pl.col("qps").mean().alias("qps-mean"),
+                                 pl.col("qps").std().alias("qps-std")).write_csv(self.summary_table.single_path()))
 
 
 class LatencyPlot(TVRSParamsMixin, PlotTask):
@@ -140,11 +138,7 @@ class LatencyPlot(TVRSParamsMixin, PlotTask):
     task_name = "latency-plot"
     public = True
 
-    rc_params = {
-        "axes.labelsize": "large",
-        "font.size": 6,
-        "xtick.labelsize": 5
-    }
+    rc_params = {"axes.labelsize": "large", "font.size": 6, "xtick.labelsize": 5}
 
     @dependency
     def data(self):
@@ -163,8 +157,7 @@ class LatencyPlot(TVRSParamsMixin, PlotTask):
             pl.col("latency50") / 1000,
             pl.col("latency90") / 1000,
             pl.col("latency95") / 1000,
-            pl.col("latency99") / 1000            
-        )
+            pl.col("latency99") / 1000)
 
         ctx = self.make_param_context(df)
         ctx.suppress_const_params(keep=["target", "scenario"])
@@ -179,8 +172,7 @@ class LatencyPlot(TVRSParamsMixin, PlotTask):
             target = self.output_map[scenario]
             self.logger.info("Generate Latency plot for %s", scenario)
             with new_facet(target.paths(), s_df, col="percentile", col_wrap=2) as facet:
-                facet.map_dataframe(sns.boxplot, x=ctx.r.target, y="latency",
-                                    hue=ctx.r._flavor, palette=palette)
+                facet.map_dataframe(sns.boxplot, x=ctx.r.target, y="latency", hue=ctx.r._flavor, palette=palette)
                 facet.add_legend()
                 facet.fig.subplots_adjust(top=0.9)
                 facet.fig.suptitle(scenario)
@@ -203,12 +195,7 @@ class QPSByMsgSizePlot(TVRSParamsMixin, PlotTask):
     public = True
 
     # Plot styling overrides
-    rc_params = {
-        "axes.labelsize": "large",
-        "font.size": 8,
-        "xtick.labelsize": 10,
-        "ytick.labelsize": 10
-    }
+    rc_params = {"axes.labelsize": "large", "font.size": 8, "xtick.labelsize": 10, "ytick.labelsize": 10}
 
     @dependency
     def data(self):
@@ -237,10 +224,17 @@ class QPSByMsgSizePlot(TVRSParamsMixin, PlotTask):
         self.logger.info("Generate QPS vs MsgSize plot")
         with new_figure(self.qps_plot.paths()) as fig:
             ax = fig.subplots()
-            sns.lineplot(ctx.df, x="req_size", y="qps", hue=ctx.r.target,
-                         style=ctx.r._flavor, markers=True, dashes=True,
-                         ax=ax, estimator="mean",
-                         err_style="band", errorbar=err_conf)
+            sns.lineplot(ctx.df,
+                         x="req_size",
+                         y="qps",
+                         hue=ctx.r.target,
+                         style=ctx.r._flavor,
+                         markers=True,
+                         dashes=True,
+                         ax=ax,
+                         estimator="mean",
+                         err_style="band",
+                         errorbar=err_conf)
             ax.set_xscale("log", base=2)
             ax.set_xticks(sorted(ctx.df["req_size"].unique()))
             ax.set_xlabel("Request size")
@@ -250,10 +244,17 @@ class QPSByMsgSizePlot(TVRSParamsMixin, PlotTask):
         self.logger.info("Generate QPS vs MsgSize overhead plot")
         with new_figure(self.overhead_plot.paths()) as fig:
             ax = fig.subplots()
-            sns.lineplot(ctx.df, x="req_size", y="qps_overhead", hue=ctx.r.target,
-                         style=ctx.r._flavor, markers=True, dashes=True,
-                         ax=ax, estimator="mean",
-                         err_style="band", errorbar=err_conf)
+            sns.lineplot(ctx.df,
+                         x="req_size",
+                         y="qps_overhead",
+                         hue=ctx.r.target,
+                         style=ctx.r._flavor,
+                         markers=True,
+                         dashes=True,
+                         ax=ax,
+                         estimator="mean",
+                         err_style="band",
+                         errorbar=err_conf)
             ax.set_xscale("log", base=2)
             ax.set_xticks(sorted(ctx.df["req_size"].unique()))
             ax.set_xlabel("Request size")
@@ -263,9 +264,13 @@ class QPSByMsgSizePlot(TVRSParamsMixin, PlotTask):
         self.logger.info("Generate QPS vs MsgSize overhead box plot")
         palette = ctx.build_palette_for("_flavor")
         with new_facet(self.overhead_box_plot.paths(), ctx.df, col=ctx.r.target) as facet:
-            facet.map_dataframe(sns.boxplot, x="req_size", y="qps_overhead",
-                                hue=ctx.r._flavor, log_scale=(2, None),
-                                palette=palette, native_scale=True)
+            facet.map_dataframe(sns.boxplot,
+                                x="req_size",
+                                y="qps_overhead",
+                                hue=ctx.r._flavor,
+                                log_scale=(2, None),
+                                palette=palette,
+                                native_scale=True)
             facet.set_axis_labels(x_var="Request size", y_var="% Overhead")
             for ax in facet.axes.flatten():
                 ax.set_xticks(sorted(ctx.df["req_size"].unique()))
@@ -291,14 +296,10 @@ class QPSByMsgSizePlot(TVRSParamsMixin, PlotTask):
             self.gen_overhead_boxes(ctx, err_conf)
 
         # Generate summary of the overheads in CSV with mean/std
-        (ctx.df.group_by(["req_size", ctx.r.target, ctx.r._flavor])
-         .agg(
-             pl.col("qps_overhead").mean().alias("qps-overhead-mean"),
-             pl.col("qps_overhead").std().alias("qps-overhead-std")
-         )
-         .sort(["req_size", ctx.r.target, ctx.r._flavor])
-         .write_csv(self.overhead_tbl.single_path())
-        )
+        (ctx.df.group_by(["req_size", ctx.r.target, ctx.r._flavor]).agg(
+            pl.col("qps_overhead").mean().alias("qps-overhead-mean"),
+            pl.col("qps_overhead").std().alias("qps-overhead-std")).sort(["req_size", ctx.r.target, ctx.r._flavor
+                                                                          ]).write_csv(self.overhead_tbl.single_path()))
 
 
 @dataclass
@@ -345,7 +346,7 @@ class QPSOverheadPlot(TVRSParamsMixin, PlotTask):
     def plot_one_scenario(self, ctx, scenario, s_df):
         # Honor error bars configuration
         if self.config.show_errorbars:
-            err_conf = ("sd",)
+            err_conf = ("sd", )
         else:
             err_conf = None
         target = self.output_map[scenario]
@@ -373,8 +374,11 @@ class QPSOverheadPlot(TVRSParamsMixin, PlotTask):
             ax.set_xlabel("Target")
             ax.set_ylabel("QPS (messages/sec)")
             axr.set_ylabel(f"% Overhead relative to {self.config.baseline_label}")
-            ax.legend(handles=[abs_bars, pct_bars], labels=["QPS (msg/s)", "% Overhead"],
-                      bbox_to_anchor=(0, 1.1), loc="lower left", ncols=4)
+            ax.legend(handles=[abs_bars, pct_bars],
+                      labels=["QPS (msg/s)", "% Overhead"],
+                      bbox_to_anchor=(0, 1.1),
+                      loc="lower left",
+                      ncols=4)
 
         table_target = self.output_map[f"tbl-{scenario}"]
         mean_df.write_csv(table_target.single_path())
@@ -387,8 +391,7 @@ class QPSOverheadPlot(TVRSParamsMixin, PlotTask):
         keep_params = ["target", "scenario"]
         if self.config.facet_column:
             if self.config.facet_column not in ctx.base_params:
-                self.logger.error("Configured facet columns parameter '%s' is missing",
-                                  self.config.facet_column)
+                self.logger.error("Configured facet columns parameter '%s' is missing", self.config.facet_column)
                 raise RuntimeError("Invalid config")
             keep_params.append(self.config.facet_column)
         ctx.suppress_const_params(keep=keep_params)
@@ -403,8 +406,7 @@ class QPSOverheadPlot(TVRSParamsMixin, PlotTask):
         ctx.relabel(default={"_label": "label"})
 
         self.logger.info("Generate condensed QPS overhead plots with "
-                         "facet_columns=%s, params=%s",
-                         self.config.facet_column, other_params)
+                         "facet_columns=%s, params=%s", self.config.facet_column, other_params)
         with self.config_plotting_context():
             ctx.map_by_param("scenario", lambda s_id, s_df: self.plot_one_scenario(ctx, s_id, s_df))
 
@@ -449,6 +451,10 @@ class QPSPerfCountersPlot(TVRSParamsMixin, PlotTask):
     def qps_metrics(self):
         return PlotTarget(self, "metrics")
 
+    @output
+    def qps_table(self):
+        return PlotTarget(self, "tbl-metrics")
+
     def tvrs_config(self):
         return self.config.parameterize_options
 
@@ -458,14 +464,10 @@ class QPSPerfCountersPlot(TVRSParamsMixin, PlotTask):
             return
 
         # Merge the counter data from everywhere
-        pmc_df = pl.concat([loader.df.get() for loader in self.pmc]).with_columns(
-            pl.col("iteration").cast(pl.Int32)
-        )
+        pmc_df = pl.concat([loader.df.get() for loader in self.pmc]).with_columns(pl.col("iteration").cast(pl.Int32))
         assert len(pmc_df.filter(iteration=-1)) == 0, "Missing iteration number on PMC frame"
         # Join with the QPS data
-        qps_df = self.qps_data.merged_df.get().with_columns(
-            pl.col("iteration").cast(pl.Int32)
-        )
+        qps_df = self.qps_data.merged_df.get().with_columns(pl.col("iteration").cast(pl.Int32))
         assert len(qps_df.filter(iteration=-1)) == 0, "Missing iteration number on QPS frame"
 
         df = qps_df.join(pmc_df, on=["dataset_id", "iteration"])
@@ -478,8 +480,7 @@ class QPSPerfCountersPlot(TVRSParamsMixin, PlotTask):
             has_cols = True
             for required_column in spec["requires"]:
                 if required_column not in df.columns:
-                    self.logger.info("Skip derived metric %s: requires missing column %s",
-                                     name, required_column)
+                    self.logger.info("Skip derived metric %s: requires missing column %s", name, required_column)
                     has_cols = False
                     break
             if not has_cols:
@@ -503,11 +504,16 @@ class QPSPerfCountersPlot(TVRSParamsMixin, PlotTask):
 
         palette = ctx.build_palette_for("_flavor")
         self.logger.info("Generate QPS PMC metrics")
-        with new_facet(self.qps_metrics.paths(), ctx.df, col=ctx.r.scenario, row="metric",
-                       sharex="col", sharey="row", margin_titles=True,
+        with new_facet(self.qps_metrics.paths(),
+                       ctx.df,
+                       col=ctx.r.scenario,
+                       row="metric",
+                       sharex="col",
+                       sharey="row",
+                       margin_titles=True,
                        aspect=0.85) as facet:
-            facet.map_dataframe(sns.barplot, x=ctx.r.target, y="value",
-                                hue=ctx.r._flavor, dodge=True,
-                                palette=palette)
+            facet.map_dataframe(sns.barplot, x=ctx.r.target, y="value", hue=ctx.r._flavor, dodge=True, palette=palette)
             facet.add_legend()
-        # df.group_by(["target", "scenario", "flavor/protection", "metric"]).mean().write_csv("metrics.csv")
+
+        group_cols = [ctx.r.target, ctx.r.scenario, ctx.r._flavor, "metric"]
+        ctx.df.group_by(group_cols).mean().write_csv(self.qps_table.single_path())
