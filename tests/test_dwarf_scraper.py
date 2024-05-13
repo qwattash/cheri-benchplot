@@ -6,8 +6,10 @@ import pytest
 from sqlalchemy import select
 
 from pycheribenchplot.core.config import AnalysisConfig
-from pycheribenchplot.subobject import *
+from pycheribenchplot.subobject.imprecise import *
+from pycheribenchplot.subobject.layouts_view import *
 from pycheribenchplot.subobject.model import *
+from pycheribenchplot.subobject.stats_view import *
 
 
 @pytest.fixture(scope="session")
@@ -606,7 +608,9 @@ def test_load_layouts(html_layouts_task, extract_imprecise_task):
     check_count("test_nested", 6)
 
     r = data.filter(pl.col("name") == "test_simple")
-    print(r.select(["flat_name", "offset", "base", "top", "size", "is_imprecise"]))
+    expect_columns = {"flat_name", "offset", "base", "top", "size", "is_imprecise"}
+    assert expect_columns.issubset(set(r.columns)), \
+        f"Missing expected columns {expect_columns}, found {r.columns}"
 
 
 def test_render_imprecise_layout_html(html_layouts_task):

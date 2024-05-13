@@ -104,6 +104,8 @@ class ImpreciseSubobjectLayouts(AnalysisTask, StructLayoutAnalysisMixin):
                 MemberBounds.name.label("flat_name"), MemberBounds.offset,
                 MemberBounds.is_imprecise,
                 MemberBounds.mindex,
+                MemberBounds.base,
+                MemberBounds.top,
                 # Synthetic columns from subqueries
                 MemberBounds.id.label("flat_member_id"),
                 aliased_by.c.aliased_by,
