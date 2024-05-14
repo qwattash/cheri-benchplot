@@ -8,7 +8,7 @@ from matplotlib.ticker import AutoLocator, AutoMinorLocator
 
 from ..core.analysis import AnalysisTask
 from ..core.artefact import DataFrameTarget, Target, make_dataframe_loader
-from ..core.config import Config, ConfigPath, validate_path_exists
+from ..core.config import Config, ConfigPath, validate_file_exists
 from ..core.plot import PlotTarget, PlotTask, new_figure
 from ..core.task import SessionDataGenTask, dependency, output
 from .model import CheriBSDAdvisories, CheriBSDUnmitigated, History, Marker
@@ -18,8 +18,8 @@ from .model import CheriBSDAdvisories, CheriBSDUnmitigated, History, Marker
 class CheriBSDKernelVulnConfig(Config):
     #: Vulnerability classification input csv.
     #: This is required.
-    classification_file: ConfigPath = field(metadata={"validate": validate_path_exists})
-    unmitigated_file: ConfigPath = field(metadata={"validate": validate_path_exists})
+    classification_file: ConfigPath = field(metadata={"validate": validate_file_exists})
+    unmitigated_file: ConfigPath = field(metadata={"validate": validate_file_exists})
 
 
 class CheriBSDKernelVuln(SessionDataGenTask):

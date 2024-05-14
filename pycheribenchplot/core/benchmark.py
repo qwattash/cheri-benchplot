@@ -8,12 +8,12 @@ from typing import Type
 import pandas as pd
 
 from .artefact import RemoteTarget
-from .config import AnalysisConfig, Config, ExecTargetConfig
+from .config import AnalysisConfig, CommandHookConfig, Config, ExecTargetConfig
 from .dwarf import DWARFManager
 from .elf import AddressSpaceManager
 from .error import TaskNotFound
 from .instance import InstanceManager
-from .shellgen import ScriptBuilder
+from .shellgen import ScriptContext, ScriptHook
 from .task import (ExecutionTask, SessionExecutionTask, Task, TaskRegistry, TaskScheduler)
 from .util import new_logger, timing
 
@@ -48,9 +48,10 @@ class BenchmarkExecTask(Task):
     def __init__(self, benchmark, task_config: ExecTaskConfig):
         #: Associated benchmark context
         self.benchmark = benchmark
-        #: Script builder for this benchmark context
-        self.script = ScriptBuilder(benchmark)
-        #: Whether we need to request a VM instance, this becomes valid after dependency scanning
+        #: Script template context for this benchmark context
+        self.script = ScriptContext(benchmark)
+        #: Whether we need to request a VM instance, this becomes valid after
+        #: dependency scanning
         self._need_instance = None
 
         # Borg initialization occurs here
@@ -71,46 +72,31 @@ class BenchmarkExecTask(Task):
             self.logger.error("Invalid task %s, must be ExecutionTask or SessionExecutionTask", task_klass)
             raise TypeError("Invalid task type")
 
-    def _handle_config_command_hooks_for_section(self, section_name: str, cmd_list: list[str | dict]):
+    def _handle_command_hook(self, phase: str, hook_config: CommandHookConfig):
         """
-        Helper to handle config command hooks for a specific section.
+        Verify whether the given command hook configuration is enabled for the
+        current parameterization.
+        If it is enabled, issue all commands to the corresponding script context phase.
         """
-        global_section = self.script.sections[section_name]
-        # Accumulate here any non-global command hook specification
-        iter_sections = defaultdict(list)
-        for cmd_spec in cmd_list:
-            if isinstance(cmd_spec, str):
-                parts = shlex.split(cmd_spec)
-                global_section.add_cmd(parts[0], parts[1:])
-            else:
-                iter_sections.update({k: iter_sections[k] + v for k, v in cmd_spec.items()})
-        # Now resolve the merged iteration spec
-        for iter_section_spec, iter_cmd_list in iter_sections.items():
-            if iter_section_spec == "*":
-                # Wildcard for all iterations
-                for group in self.script.benchmark_sections:
-                    for cmd in iter_cmd_list:
-                        parts = shlex.split(cmd)
-                        group[section_name].add_cmd(cmd[0], cmd[1:])
-            else:
-                # Must be an integer index
-                index = int(iteration_spec)
-                for cmd in iter_cmd_list:
-                    parts = shlex.split(cmd)
-                    self.script.benchmark_sections[index][section_name].add_cmd(parts[0], parts[1:])
+        for match_param, match_value in hook_config.matches.items():
+            if match_param not in self.benchmark.config.parameters:
+                self.logger.error("Invalid parameter '%s' in command hook", match_param)
+                raise RuntimeError("Invalid configuration")
+            if self.benchmark.config.parameters[match_param] != match_value:
+                return
+
+        match_str = " && ".join([f"{k}={v}" for k, v in hook_config.matches.items()])
+        hook = ScriptHook(name=f"User hook when {match_str}", commands=hook_config.commands)
+        self.script.add_hook(phase, hook)
 
     def _handle_config_command_hooks(self):
         """
         Add the extra commands from :attr:`BenchmarkRunConfig.command_hooks`
         See the :class:`BenchmarkRunConfig` class for a description of the format we expect.
         """
-        for section_name, cmd_list in self.benchmark.config.command_hooks.items():
-            if section_name not in self.script.sections:
-                self.logger.warning(
-                    "Configuration file wants to add hooks to script" +
-                    " section %s but the section does not exist: %s", section_name, self.script.sections.keys())
-                continue
-            self._handle_config_command_hooks_for_section(section_name, cmd_list)
+        for phase, hooks in self.benchmark.config.command_hooks.items():
+            for hook_config in hooks:
+                self._handle_command_hook(phase, hook_config)
 
     def _extract_files(self, instance, task):
         """
@@ -133,7 +119,7 @@ class BenchmarkExecTask(Task):
 
     def resources(self):
         assert self._need_instance is not None, "need_instance must have been set, did not scan dependencies?"
-        if self._need_instance:
+        if self._need_instance and self.config.mode != BenchmarkExecMode.SHELLGEN:
             self.instance_req = InstanceManager.request(self.benchmark.g_uuid,
                                                         instance_config=self.benchmark.config.instance)
             yield self.instance_req
@@ -166,7 +152,7 @@ class BenchmarkExecTask(Task):
         script_path = self.benchmark.get_run_script_path()
         remote_script_path = Path(f"{self.benchmark.config.name}-{self.benchmark.uuid}.sh")
         with open(script_path, "w+") as script_file:
-            self.script.generate(script_file)
+            self.script.render(script_file)
         script_path.chmod(0o755)
         if self.config.mode == BenchmarkExecMode.SHELLGEN:
             # Just stop after shell script generation

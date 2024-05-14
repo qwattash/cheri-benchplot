@@ -247,8 +247,7 @@ class Task(Borg, metaclass=TaskRegistry):
 
     @classmethod
     def is_benchmark_task(cls) -> bool:
-        warn(f"{cls.__name__}.is_benchmark_task has been renamed is_dataset_task",
-             DeprecationWarning, 2)
+        warn(f"{cls.__name__}.is_benchmark_task has been renamed is_dataset_task", DeprecationWarning, 2)
         return cls.is_dataset_task()
 
     @property
@@ -539,8 +538,7 @@ class BenchmarkTask(DatasetTask):
 
     @classmethod
     def is_benchmark_task(cls):
-        warn(f"{cls.__name__}.is_benchmark_task has been renamed is_dataset_task",
-             DeprecationWarning, 2)
+        warn(f"{cls.__name__}.is_benchmark_task has been renamed is_dataset_task", DeprecationWarning, 2)
         return cls.is_dataset_task()
 
 
@@ -558,17 +556,17 @@ class ExecutionTask(DatasetTask):
     The run() method for ExecutionTasks is a good place to perform any of the following:
     1. Extract any static information from benchmark binary files.
     2. Configure the benchmark instance via platform_options.
-    3. Add commands to the benchmark run script sections.
+    3. Add commands to the benchmark run hooks.
 
-    Note that the task_id generation currently assumes that tasks with the same name are not issued
-    more than once for each benchmark run UUID. If this is violated, we need to
+    Note that the task_id generation currently assumes that tasks with the same name are
+    not issued more than once for each benchmark run UUID. If this is violated, we need to
     change the task ID generation.
     """
     task_name = "exec"
     #: Whether the task requires a running VM instance or not. Instead of changing this use :class:`DataGenTask`.
     require_instance = True
 
-    def __init__(self, benchmark: "Benchmark", script: "ScriptBuilder", task_config: Config = None):
+    def __init__(self, benchmark: "Benchmark", script: "ScriptContext", task_config: Config = None):
         super().__init__(benchmark, task_config=task_config)
         #: Script builder associated to the current benchmark context.
         self.script = script

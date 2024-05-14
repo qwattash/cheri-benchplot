@@ -16,7 +16,7 @@ from uuid import UUID, uuid4
 import marshmallow.fields as mfields
 from git import Repo
 from marshmallow import Schema, ValidationError, validates_schema
-from marshmallow.validate import And, OneOf, Predicate
+from marshmallow.validate import And, ContainsOnly, OneOf, Predicate
 from marshmallow_dataclass import NewType, class_schema
 from typing_extensions import Self
 from typing_inspect import get_args, get_origin, is_generic_type, is_union_type
@@ -86,8 +86,11 @@ class PathField(mfields.Field):
 
 
 #: Helper to validate that a PathField points to an existing regular file
-validate_path_exists = And(Predicate("exists", error="File does not exist"),
-                           Predicate("is_file", error="File is not regular file"))
+validate_file_exists = And(Predicate("exists", error="File does not exist"),
+                           Predicate("is_file", error="Path is not regular file"))
+
+validate_dir_exists = And(Predicate("exists", error="Directory does not exist"),
+                          Predicate("is_dir", error="Path is not a directory"))
 
 
 class TaskSpecField(mfields.Field):
@@ -467,7 +470,7 @@ class BenchplotUserConfig(Config):
     session_path: ConfigPath = dc.field(default_factory=Path.cwd)
 
     #: CHERI sdk path
-    sdk_path: ConfigPath = Path("~/cheri/cherisdk")
+    sdk_path: ConfigPath = dc.field(default=Path("~/cheri/cherisdk"), metadata=dict(validate=validate_dir_exists))
 
     #: CHERI projects build directory, expects the format from cheribuild
     build_path: ConfigPath = Path("~/cheri/build")
@@ -847,6 +850,19 @@ class PipelineInstanceConfig(Config):
 
 
 @dc.dataclass
+class CommandHookConfig(Config):
+    """
+    Configuration for additional command hooks to generate the runner scripts.
+    """
+
+    #: Match parameterization key/values to enable this set of commands
+    matches: Dict[str, ConfigAny] = dc.field(default_factory=dict)
+
+    #: Set of commands to run when the matcher is satisfied.
+    commands: List[str] = dc.field(default_factory=list)
+
+
+@dc.dataclass
 class CommonBenchmarkConfig(Config):
     """
     Common benchmark configuration parameters.
@@ -856,42 +872,57 @@ class CommonBenchmarkConfig(Config):
 
     #: The name of the benchmark
     name: str
+
     #: The number of iterations to run
     iterations: int = 1
+
     #: Benchmark configuration
     #: .. deprecated:: 1.2
     #:    Use :attr:`generators` instead.
     benchmark: Optional[ExecTargetConfig] = None
+
     #: Auxiliary data generators
     #: .. deprecated:: 1.2
     #:    Use :attr:`generators` instead.
     aux_tasks: List[ExecTargetConfig] = dc.field(default_factory=list)
+
     #: Data generator tasks.
     #: These are used to produce the benchmark data and loading it during the analysis phase.
     generators: List[ExecTargetConfig] = dc.field(default_factory=list)
+
     #: Number of iterations to drop to reach steady-state
     drop_iterations: int = 0
+
     #: Benchmark description, used for plot titles (can contain a template), defaults to :attr:`name`.
     desc: Optional[str] = None
+
     #: Name of the benchmark output directory in the Guest instance OS filesystem
+    #: XXX DEPRECATED
     remote_output_dir: ConfigPath = Path("/root/benchmark-output")
+
     #: Extra commands to run in the benchmark script.
-    #: Keys in the dictionary are shell generator sections (see :class:`ScriptBuilder.Section`)
-    #: 'pre_benchmark', 'benchmark', 'post_benchmark', 'last'. Each key maps to a list containing either
-    #: commmands as strings or a dictionary. Commands are added directyl to the corresponding global section,
-    #: dictionaries map an iteration index to the corresponding list of commands.
+    #: Keys in the dictionary are shell generator sections (see :class:`ScriptContext`).
+    #: Valid hook groups are:
+    #: setup -- global benchmark setup phase, before any iteration is run
+    #: iter_setup -- per-iteration setup phase
+    #: iter_teardown -- per-iteration teardown phase
+    #: teardown -- global teardown phase, after all iterations are run
+    #:
+    #: Each hook group contains a list of matchers that allow to enable certain commands
+    #: for specific sets of parameters.
     #:
     #: .. code-block:: python
     #:
-    #:    { "pre_benchmark": [
-    #:        "cmd1", "cmd2", # added to the global pre_benchmark section
-    #:        {
-    #:            "*": ["cmd3"], # added to all iterations pre_benchmark section
-    #:            1: ["cmd4"], # added only to the first iteration pre_benchmark section
-    #:        }
-    #:    ]}
+    #:    {
+    #:        "setup": [{
+    #:            "matches": { "my_param": "my_value" },
+    #:            "commands": ["echo 'hello world!'"]
+    #:        }]
+    #:    }
     #:
-    command_hooks: Dict[str, List[Union[str, dict]]] = dc.field(default_factory=dict)
+    command_hooks: Dict[str, List[CommandHookConfig]] = dc.field(
+        default_factory=dict,
+        metadata=dict(validate=ContainsOnly(["setup", "teardown", "iter_setup", "iter_teardown"])))
 
     def __post_init__(self):
         super().__post_init__()
@@ -999,6 +1030,9 @@ class CommonSessionConfig(Config):
 
     #: Extract symbols with elftools instead of llvm
     use_builtin_symbolizer: bool = True
+
+    #: Path to the session directory tree in the benchmark host
+    remote_session_path: ConfigPath = Path("/opt/benchmark-output")
 
     #: Default analysis task configuration
     analysis_config: AnalysisConfig = dc.field(default_factory=AnalysisConfig)

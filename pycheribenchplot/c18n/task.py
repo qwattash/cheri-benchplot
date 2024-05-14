@@ -11,7 +11,7 @@ import seaborn as sns
 
 from ..core.analysis import AnalysisTask, DatasetAnalysisTask
 from ..core.artefact import DataFrameTarget, Target, make_dataframe_loader
-from ..core.config import Config, ConfigPath, validate_path_exists
+from ..core.config import Config, ConfigPath, validate_file_exists
 from ..core.pandas_util import generalized_xs
 from ..core.plot import DatasetPlotTask, PlotTarget, new_figure
 from ..core.task import DataGenTask, dependency, output
@@ -25,7 +25,7 @@ class TraceImportConfig(Config):
     # #: install rootfs where the binaries recorded in the kdump are found
     # rootfs: ConfigPath = None
     #: kdump file to import
-    kdump: ConfigPath = None
+    kdump: ConfigPath = field(default=None, metadata=dict(validate=validate_file_exists))
 
 
 @dataclass

@@ -191,12 +191,11 @@ class RemoteTarget(Target):
         Build the remote root directory path for the target.
         This is only supported for exec tasks.
         """
+        root = self.get_root_path()
+        relative_root = root.relative_to(self._task.session.session_root_path)
         if self._task.is_exec_task():
-            if self._task.is_session_task():
-                raise NotImplementedError("Need to implement")
-            else:
-                return self._task.benchmark.config.remote_output_dir
-        raise NotImplementedError("Need to implement remote analysis root path")
+            return self._task.session.config.remote_session_path / relative_root
+        raise RuntimeError("Remote analysis path is not supported")
 
     def iter_remote_paths(self, **kwargs) -> Iterator[Path]:
         """
