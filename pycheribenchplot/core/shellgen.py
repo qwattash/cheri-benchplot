@@ -5,9 +5,6 @@ from typing import IO
 
 from jinja2 import (Environment, PackageLoader, TemplateNotFound, select_autoescape)
 
-from .artefact import RemoteTarget, Target
-from .util import new_logger
-
 
 @dataclass
 class ScriptHook:

@@ -3,12 +3,29 @@ from functools import reduce
 from typing import Any, Dict, List, Optional
 
 import polars as pl
-import polars.selectors as cs
 import polars.datatypes as dt
+import polars.selectors as cs
 import seaborn as sns
 
 from .analysis import AnalysisTask
 from .config import Config
+from .task import ExecutionTask
+
+
+class TVRSExecTask(ExecutionTask):
+    """
+    Generic execution task that parameterizes benchmark runs with
+    the common parameterization.
+
+    target: the CHERI compilation target, e.g. purecap/hybrid
+    variant: benchmark variant, e.g. package built with stack zero-init
+    runtime: run-time configuration, e.g. with/without temporal memory safety
+    scenario: benchmark-specific parameters
+
+    Note that the target axis is already taken into account by the dataset_gid
+    and instance configuration.
+    We need to determine the setup/teardown hooks for the current parameter set.
+    """
 
 
 @dataclass
@@ -42,7 +59,6 @@ class TVRSParamsContext:
         def __getattr__(self, name: str) -> str:
             return self._rename[name]
 
-
     def __init__(self, task: "TVRSParamsMixin", df: pl.DataFrame):
         assert isinstance(task, AnalysisTask), "Task must be an AnalysisTask"
         self.task = task
@@ -64,18 +80,13 @@ class TVRSParamsContext:
             # If the `target` is missing, generate one
             # This uses the `name` field from the instance configuration as
             # the display name.
-            expr = (
-                pl.col("dataset_gid")
-                .map_elements(self.task.g_uuid_to_label, return_dtype=dt.String)
-            )
+            expr = (pl.col("dataset_gid").map_elements(self.task.g_uuid_to_label, return_dtype=dt.String))
             self.derived_param("target", expr)
         else:
             self.logger.warning("The column `target` is reserved")
         if not set(self.TVRS_PARAMETERS).issubset(self.df.columns):
-            self.logger.error(
-                "Invalid dataframe, the following columns are required: %s, found: %s",
-                self.TVRS_PARAMETERS,
-                self.df.columns)
+            self.logger.error("Invalid dataframe, the following columns are required: %s, found: %s",
+                              self.TVRS_PARAMETERS, self.df.columns)
             raise RuntimeError("Invalid dataframe")
 
         all_bench = self.task.session.all_benchmarks()
@@ -111,7 +122,7 @@ class TVRSParamsContext:
         id_vars = [self._rename[p] for p in self.params]
         self.df = self.df.melt(id_vars=id_vars, **kwargs)
 
-    def suppress_const_params(self, keep: list|None=None):
+    def suppress_const_params(self, keep: list | None = None):
         """
         Suppress parameter axes with no variation from the dataframe.
         The parameterization axes in keep are not suppressed.
@@ -175,8 +186,9 @@ class TVRSParamsContext:
         for k, v in baseline_sel.items():
             if k in self.base_params:
                 if k not in self.params:
-                    self.logger.warn("Overhead calculation will ignore baseline selector %s=%s "
-                                     "because it is not active in the parameterization context", k, v)
+                    self.logger.warn(
+                        "Overhead calculation will ignore baseline selector %s=%s "
+                        "because it is not active in the parameterization context", k, v)
                 else:
                     df_baseline_sel[self._rename[k]] = v  # XXX not resistent to re-labeling
             else:
@@ -186,18 +198,11 @@ class TVRSParamsContext:
         # Generate the baseline dataframe slice.
         # We compute the mean of the baseline metrics columns to compute the overhead.
         # XXX We should deal with error propagation here...
-        baseline = (
-            self.df.filter(**df_baseline_sel)
-            .select(ID_COLUMNS + param_columns + metrics)
-            .group_by(param_columns)
-            .agg(
+        baseline = (self.df.filter(
+            **df_baseline_sel).select(ID_COLUMNS + param_columns + metrics).group_by(param_columns).agg(
                 cs.by_name(metrics).mean(),
-                cs.by_name(ID_COLUMNS + param_columns).first()
-            )
-            .with_columns(
-                cs.by_name(metrics).name.suffix("_baseline"))
-            .drop(metrics)
-        )
+                cs.by_name(ID_COLUMNS + param_columns).first()).with_columns(
+                    cs.by_name(metrics).name.suffix("_baseline")).drop(metrics))
         # Determine how to join the baseline slice. This is done using
         # the keys that identify the baseline selector to find the degrees of freedom
         # that the baseline slice has and join on those.
@@ -217,14 +222,10 @@ class TVRSParamsContext:
         # Prepare to filter out the baseline
         baseline_eq_exprs = map(lambda i: pl.col(i[0]).eq(i[1]), df_baseline_sel.items())
         not_baseline_sel = reduce(lambda x, y: x & y, baseline_eq_exprs).not_()
-        overhead_df = (
-            join_df
-            .with_columns(overhead_expr)
-            .filter(not_baseline_sel)
-        )
+        overhead_df = (join_df.with_columns(overhead_expr).filter(not_baseline_sel))
         self.df = overhead_df
 
-    def relabel(self, default: dict[str, str]=None):
+    def relabel(self, default: dict[str, str] = None):
         """
         Transform the dataframe to adjust displayed properties.
 
@@ -241,9 +242,7 @@ class TVRSParamsContext:
                 if name in df.columns:
                     self.logger.debug("Set weight for %s => %s", name, mapping)
                     df = df.with_columns(
-                        pl.col("param_weight") +
-                        pl.col(name).replace(mapping, default=0, return_dtype=dt.Decimal)
-                    )
+                        pl.col("param_weight") + pl.col(name).replace(mapping, default=0, return_dtype=dt.Decimal))
                 else:
                     self.logger.warning("Skipping weight for parameter '%s', does not exist", name)
             self.df = df

@@ -1,0 +1,6 @@
+{
+    "protocol": "tcp",
+    "mode": "client-send",
+    "transfer_mode": "bytes",
+    "transfer_limit": "10G"
+}
