@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..core.artefact import PLDataFrameLoadTask, RemoteBenchmarkIterationTarget
-from ..core.config import Config, ConfigPath
+from ..core.config import Config, ConfigPath, validate_dir_exists
 from ..core.task import output
 from ..core.tvrs import TVRSExecTask
 
@@ -84,7 +84,7 @@ class IPerfConfig(Config):
     IPerf benchmark configuration.
     """
     #: Scenarios directory where to find the scenarios named by the configuration
-    scenario_path: ConfigPath = Path("scenarios")
+    scenario_path: ConfigPath = field(default=Path("scenarios"), metadata=dict(validate=validate_dir_exists))
 
     #: Iperf PATH in the remote host
     iperf_path: Optional[ConfigPath] = None
