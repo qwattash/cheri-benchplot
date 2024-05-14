@@ -37,10 +37,7 @@ class SessionSubCommand(SubCommand):
                                 "--force",
                                 action="store_true",
                                 help="Force re-create the session if it already exists. Use with caution.")
-        sub_create.add_argument("-u",
-                                "--update",
-                                action="store_true",
-                                help="Only update the embedded analysis config")
+        sub_create.add_argument("-u", "--update", action="store_true", help="Only update the embedded analysis config")
 
         sub_run = session_subparsers.add_parser("run",
                                                 help="Run the session datagen tasks, this must be done "
@@ -171,7 +168,13 @@ class TaskInfoSubCommand(SubCommand):
         configurations = session.config.configurations
         print(f"Session {session.config.name} ({session.config.uuid}):")
         for c in session.config.configurations:
-            print("\t", c)
+            print(f"\t{c.name} ({c.uuid}) on {c.instance}")
+            print("\t\tParameterization:")
+            for pk, pv in c.parameters.items():
+                print(f"\t\t - {pk} = {pv}")
+            print("\t\tGenerators:")
+            for g in c.generators:
+                print(f"\t\t - {g.handler}")
 
         if args.show_analysis_tasks:
             print("\tAvailable analysis tasks:\n")
