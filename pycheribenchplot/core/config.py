@@ -80,12 +80,13 @@ class PathField(mfields.Field):
         if value == "":
             return None
         try:
-            return Path(value)
+            return Path(value).expanduser()
         except TypeError as ex:
             raise ValidationError(f"Invalid path {value}") from ex
 
 
 #: Helper to validate that a PathField points to an existing regular file
+
 validate_file_exists = And(Predicate("exists", error="File does not exist"),
                            Predicate("is_file", error="Path is not regular file"))
 
