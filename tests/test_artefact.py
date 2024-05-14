@@ -25,6 +25,7 @@ def fake_datagen_task(mock_task_registry, fake_simple_benchmark):
         task_namespace = "test"
         task_name = "fake-task"
 
+    fake_simple_benchmark.session.config.remote_session_path = Path("/test/remote")
     return FakeTask(fake_simple_benchmark, None)
 
 
@@ -157,13 +158,14 @@ def test_dataframe_target_invalid(fake_s_analysis_task):
     #     target.assign(invalid_df)
     pass
 
+
 def test_session_remote_file_target(fake_datagen_task):
     target = RemoteTarget(fake_datagen_task, "OUTID", ext="EXT")
     task_uuid = fake_datagen_task.benchmark.uuid
 
     paths = list(target.remote_paths())
     assert len(paths) == 1
-    assert paths[0].parent == Path("/root/benchmark-output")
+    assert paths[0].parent == Path(f"/test/remote/run/selftest0-{fake_datagen_task.uuid}")
     assert paths[0].name == f"OUTID-test-fake-task-{task_uuid}.EXT"
 
 
@@ -216,8 +218,7 @@ def test_benchmark_file_target_loader(fake_datagen_task, sample_content):
     expect_content = sample_content.with_columns(
         pl.lit(fake_datagen_task.benchmark.uuid).alias("dataset_id"),
         pl.lit(fake_datagen_task.benchmark.g_uuid).alias("dataset_gid"),
-        pl.lit(-1).alias("iteration")
-    )
+        pl.lit(-1).alias("iteration"))
 
     target = Target(fake_datagen_task, "OUTID", loader=PLDataFrameLoadTask, ext="csv")
 

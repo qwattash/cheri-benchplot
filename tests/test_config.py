@@ -116,9 +116,9 @@ def test_pipeline_config_missing_instance():
             "name": "test-valid",
             "iterations": 1,
             "parameterize": {},
-            "benchmark": {
+            "generators": [{
                 "handler": "test-benchmark"
-            }
+            }]
         }]
     }
 
@@ -137,9 +137,9 @@ def test_run_config_gen_without_parametrization(fake_user_config):
             "name": "test-valid",
             "iterations": 1,
             "parameterize": {},
-            "benchmark": {
+            "generators": [{
                 "handler": "test-benchmark"
-            }
+            }]
         }]
     }
     input_config = PipelineConfig.schema().load(data)
@@ -167,16 +167,16 @@ def test_run_config_gen_without_parametrization_fail(fake_user_config):
             "name": "test-valid",
             "iterations": 1,
             "parameterize": {},
-            "benchmark": {
+            "generators": [{
                 "handler": "test-benchmark"
-            }
+            }]
         }, {
             "name": "test-valid2",
             "iterations": 1,
             "parameterize": {},
-            "benchmark": {
+            "generators": [{
                 "handler": "test-benchmark"
-            }
+            }]
         }]
     }
     input_config = PipelineConfig.schema().load(data)
@@ -197,12 +197,12 @@ def test_run_config_gen_single_parametrization(fake_user_config):
             "parameterize": {
                 "fakeparam": ["value0", "value1"]
             },
-            "benchmark": {
+            "generators": [{
                 "handler": "test-benchmark",
                 "task_options": {
                     "fake_arg": "{fakeparam}"
                 }
-            }
+            }]
         }]
     }
     input_config = PipelineConfig.schema().load(data)
@@ -243,24 +243,24 @@ def test_run_config_gen_multi_parametrization(fake_user_config):
             "parameterize": {
                 "fakeparam": ["value0"]
             },
-            "benchmark": {
+            "generators": [{
                 "handler": "test-benchmark",
                 "task_options": {
                     "fake_arg": "{fakeparam}"
                 }
-            }
+            }]
         }, {
             "name": "test-second-{fakeparam}",
             "iterations": 1,
             "parameterize": {
                 "fakeparam": ["value1"]
             },
-            "benchmark": {
+            "generators": [{
                 "handler": "test-benchmark",
                 "task_options": {
                     "fake_arg": "{fakeparam}"
                 }
-            }
+            }]
         }]
     }
     input_config = PipelineConfig.schema().load(data)
@@ -301,24 +301,26 @@ def test_run_config_gen_multi_parametrization_mismatch(fake_user_config):
             "parameterize": {
                 "fakeparam": ["value0"]
             },
-            "benchmark": {
+            "generators": [{
                 "handler": "test-benchmark",
                 "task_options": {
                     "fake_arg": "{fakeparam}"
                 }
-            }
+            }]
         }, {
-            "name": "test-second-{otherfakeparam}",
-            "iterations": 1,
+            "name":
+            "test-second-{otherfakeparam}",
+            "iterations":
+            1,
             "parameterize": {
                 "otherfakeparam": ["value1"]
             },
-            "benchmark": {
+            "generators": [{
                 "handler": "test-benchmark",
                 "task_options": {
                     "fake_arg": "{otherfakeparam}"
                 }
-            }
+            }]
         }]
     }
     input_config = PipelineConfig.schema().load(data)
@@ -339,19 +341,19 @@ def test_run_config_gen_multi_parametrization_missing(fake_user_config):
             "parameterize": {
                 "fakeparam": ["value0"]
             },
-            "benchmark": {
+            "generators": [{
                 "handler": "test-benchmark",
                 "task_options": {
                     "fake_arg": "{fakeparam}"
                 }
-            }
+            }]
         }, {
             "name": "test-second",
             "iterations": 1,
             "parameterize": {},
-            "benchmark": {
+            "generators": [{
                 "handler": "test-benchmark"
-            }
+            }]
         }]
     }
     input_config = PipelineConfig.schema().load(data)
@@ -464,18 +466,20 @@ def test_session_config_substitution(mock_task_registry, fake_user_config, fake_
             }]
         },
         "benchmark_config": [{
-            "name": "test-valid-{fakeparam}-{benchmark.iterations}",
-            "iterations": 1,
+            "name":
+            "test-valid-{fakeparam}-{benchmark.iterations}",
+            "iterations":
+            1,
             "parameterize": {
                 "fakeparam": ["value-{instance.cheri_target}-0", "value-{instance.kernel}-1"]
             },
-            "benchmark": {
+            "generators": [{
                 "handler": "test-benchmark.test-config",
                 "task_options": {
                     "fake_arg": "{fakeparam}",
                     "other_arg": "{fakeparam}-{user.sdk_path}"
                 }
-            }
+            }]
         }]
     }
     input_config = PipelineConfig.schema().load(data)

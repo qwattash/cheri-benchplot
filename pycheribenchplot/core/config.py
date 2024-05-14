@@ -876,16 +876,6 @@ class CommonBenchmarkConfig(Config):
     #: The number of iterations to run
     iterations: int = 1
 
-    #: Benchmark configuration
-    #: .. deprecated:: 1.2
-    #:    Use :attr:`generators` instead.
-    benchmark: Optional[ExecTargetConfig] = None
-
-    #: Auxiliary data generators
-    #: .. deprecated:: 1.2
-    #:    Use :attr:`generators` instead.
-    aux_tasks: List[ExecTargetConfig] = dc.field(default_factory=list)
-
     #: Data generator tasks.
     #: These are used to produce the benchmark data and loading it during the analysis phase.
     generators: List[ExecTargetConfig] = dc.field(default_factory=list)
@@ -895,10 +885,6 @@ class CommonBenchmarkConfig(Config):
 
     #: Benchmark description, used for plot titles (can contain a template), defaults to :attr:`name`.
     desc: Optional[str] = None
-
-    #: Name of the benchmark output directory in the Guest instance OS filesystem
-    #: XXX DEPRECATED
-    remote_output_dir: ConfigPath = Path("/root/benchmark-output")
 
     #: Extra commands to run in the benchmark script.
     #: Keys in the dictionary are shell generator sections (see :class:`ScriptContext`).
@@ -923,24 +909,6 @@ class CommonBenchmarkConfig(Config):
     command_hooks: Dict[str, List[CommandHookConfig]] = dc.field(
         default_factory=dict,
         metadata=dict(validate=ContainsOnly(["setup", "teardown", "iter_setup", "iter_teardown"])))
-
-    def __post_init__(self):
-        super().__post_init__()
-        assert self.remote_output_dir.is_absolute(), f"Remote output path must be absolute {self.remote_output_dir}"
-        conftype = self.__class__.__name__
-        if self.benchmark is None:
-            if self.aux_tasks:
-                raise ValueError(f"Can not use `{conftype}.aux_tasks` and `{conftype}.generators` at the same time")
-            if not self.generators:
-                raise ValueError(f"At least one `{conftype}.generators` must be specified.")
-        else:
-            if self.generators:
-                raise ValueError(f"Can not use both `{conftype}.benchmark` and `{conftype}.generators`")
-            self.generators.append(self.benchmark)
-            self.generators.extend(self.aux_tasks)
-        # Wipe deprecated fields
-        self.benchmark = None
-        self.aux_tasks = []
 
     @classmethod
     def from_common_conf(cls, other: "CommonBenchmarkConfig"):
