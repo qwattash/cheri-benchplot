@@ -467,16 +467,16 @@ class BenchplotUserConfig(Config):
     """
 
     #: Path to write the cheri-benchplot sessions to
-    session_path: ConfigPath = dc.field(default_factory=Path.cwd)
+    session_path: ConfigPath = dc.field(default_factory=Path.cwd, metadata=dict(validate=validate_dir_exists))
 
     #: CHERI sdk path
     sdk_path: ConfigPath = dc.field(default=Path("~/cheri/cherisdk"), metadata=dict(validate=validate_dir_exists))
 
     #: CHERI projects build directory, expects the format from cheribuild
-    build_path: ConfigPath = Path("~/cheri/build")
+    build_path: ConfigPath = dc.field(default=Path("~/cheri/build"), metadata=dict(validate=validate_dir_exists))
 
     #: git repositories path
-    src_path: ConfigPath = Path("~/cheri")
+    src_path: ConfigPath = dc.field(default=Path("~/cheri"), metadata=dict(validate=validate_dir_exists))
 
     #: Path to the CHERI perfetto fork build directory
     perfetto_path: ConfigPath = Path("~/cheri/cheri-perfetto/build")
