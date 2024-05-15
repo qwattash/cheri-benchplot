@@ -271,6 +271,23 @@ class ConfigContext:
         return value
 
 
+def config_field(default: any, desc: str = None, **metadata) -> dc.Field:
+    """
+    Helper to define configuration fields defaults
+
+    Use dataclasses.MISSING as default for required fields.
+    """
+    kwargs = dict(metadata=metadata)
+    if callable(default):
+        kwargs["default_factory"] = default
+    else:
+        kwargs["default"] = default
+    if issubclass(type(default), Enum):
+        kwargs["metadata"].setdefault("by_value", True)
+    kwargs["metadata"]["desc"] = desc
+    return dc.field(**kwargs)
+
+
 @dc.dataclass
 class Config:
     """
@@ -309,11 +326,14 @@ class Config:
         Produce a human-readable description of the configuration.
         """
         desc = StringIO()
-        for field in dc.fields(cls):
-            help_ = field.metadata.get("help")
+        for idx, field in enumerate(dc.fields(cls)):
+            help_ = field.metadata.get("desc")
             if help_:
-                help_string = indent(wrap(help_), "#: ")
-                desc.write(help_string + "\n")
+                if idx > 0:
+                    # Extra space to separate docstring from previous field
+                    desc.write("\n")
+                help_string = "".join(map(lambda l: f"#: {l}\n", wrap(help_)))
+                desc.write(help_string)
 
             dtype = field.type if is_generic_type(field.type) else field.type.__name__
             dtype = str(dtype).split(".")[-1]

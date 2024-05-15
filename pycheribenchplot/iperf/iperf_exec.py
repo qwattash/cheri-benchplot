@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..core.artefact import PLDataFrameLoadTask, RemoteBenchmarkIterationTarget
-from ..core.config import Config, ConfigPath, validate_dir_exists
+from ..core.config import Config, ConfigPath, config_field, validate_dir_exists
 from ..core.task import output
 from ..core.tvrs import TVRSExecTask
 
@@ -43,39 +43,21 @@ class IPerfScenario(Config):
 
     This is the configuration schema that loads the iperf scenario to run.
     """
-    #: Protocol to use
-    protocol: IPerfProtocol = field(default=IPerfProtocol.TCP, metadata={"by_value": True})
-
-    #: How the transfer limit is interpreted
-    transfer_mode: IPerfTransferLimit = field(default=IPerfTransferLimit.BYTES, metadata={"by_value": True})
-    #: Transfer limit
-    transfer_limit: int | str = 2**32
-
-    #: Hostname of the server. By default we operate on localhost; however
-    #: it should be possible to run the server/client on two different CHERI machines.
-    #: The server setup is expected to be manually done in this case.
-    remote_host: str = "localhost"
-
-    #: Stream mode
-    mode: IPerfMode = field(default=IPerfMode.CLIENT_SEND, metadata={"by_value": True})
-
-    #: Number of parallel client streams
-    streams: int = 1
-
-    #: Size of the send/recv buffer (bytes)
-    buffer_size: int = 128 * 2**10
-
-    #: Set MSS size
-    mss: Optional[int] = None
-
-    #: Set socket buffer size (bytes) (indirectly the TCP window)
-    window_size: Optional[int] = None
-
-    #: Warmup seconds
-    warmup: Optional[int] = None
-
-    #: CPU Affinity for send/receive
-    cpu_affinity: Optional[str] = None
+    protocol: IPerfProtocol = config_field(IPerfProtocol.TCP, desc="Protocol to use")
+    transfer_mode: IPerfTransferLimit = config_field(IPerfTransferLimit.BYTES,
+                                                     desc="How the transfer limit is interpreted")
+    transfer_limit: int | str = config_field(2**32, desc="Transfer limit")
+    remote_host: str = config_field(
+        "localhost",
+        desc="Hostname of the server. By default we operate on localhost. When this is set to anything other "
+        "than localhost, the server setup is expected to be done manually")
+    mode: IPerfMode = config_field(IPerfMode.CLIENT_SEND, desc="Stream mode")
+    streams: int = config_field(1, desc="Number of parallel client streams")
+    buffer_size: int = config_field(128 * 2**10, desc="Size of the send/recv buffer (bytes)")
+    mss: Optional[int] = config_field(None, desc="Set MSS size")
+    window_size: Optional[int] = config_field(None, desc="Set socket buffer size (bytes) (indirectly the TCP window)")
+    warmup: Optional[int] = config_field(None, desc="Warmup seconds")
+    cpu_affinity: Optional[str] = config_field(None, desc="CPU Affinity for send/receive sides")
 
 
 @dataclass
@@ -83,14 +65,14 @@ class IPerfConfig(Config):
     """
     IPerf benchmark configuration.
     """
-    #: Scenarios directory where to find the scenarios named by the configuration
-    scenario_path: ConfigPath = field(default=Path("scenarios"), metadata=dict(validate=validate_dir_exists))
-
-    #: Iperf PATH in the remote host
-    iperf_path: Optional[ConfigPath] = None
-
-    #: Use local server
-    use_localhost_server: bool = True
+    scenario_path: ConfigPath = config_field(
+        Path("scenarios"),
+        desc="Scenarios directory where to find the scenarios named by the configuration",
+        validate=validate_dir_exists)
+    iperf_path: Optional[ConfigPath] = config_field(
+        None, desc="Path of iperf executable in the remote host, appended to PATH")
+    use_localhost_server: bool = config_field(
+        True, desc="Spawn server on localhost, if False, the scenario must specify a remote_host")
 
     #: Enable hwpmc measurement
     hwpmc: bool = False
