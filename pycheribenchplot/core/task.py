@@ -4,7 +4,9 @@ import re
 from collections import defaultdict
 from collections.abc import Iterable
 from contextlib import ExitStack, contextmanager
+from io import StringIO
 from queue import Queue
+from textwrap import indent
 from threading import Condition, Event, Lock, Semaphore, Thread
 from typing import Any, Callable, ContextManager, Hashable, Iterable, Type
 from warnings import warn
@@ -226,6 +228,36 @@ class Task(Borg, metaclass=TaskRegistry):
 
     def __eq__(self, other: "Task"):
         return self.task_id == other.task_id
+
+    @classmethod
+    def describe(cls):
+        """
+        Describe the task in and human-readable way.
+
+        By default this takes the current task docstring content.
+        """
+        desc = StringIO()
+        desc.write(f"# {cls.task_namespace}.{cls.task_name} ({cls.__name__}):\n")
+        desc.write(cls.__doc__ + "\n")
+
+        if cls.task_config_class:
+            conf_class = cls.task_config_class
+            desc.write(f"    Task configuration: {conf_class.__name__}\n")
+            desc.write(conf_class.__doc__ + "\n")
+            desc.write(indent(conf_class.describe(), " " * 4))
+        return desc.getvalue()
+
+    @classmethod
+    def sample_config(cls) -> Config | None:
+        """
+        Generate a sample configuration for this task.
+
+        This is intended to help setup benchmarks.
+        """
+        if cls.task_config_class:
+            return cls.task_config_class()
+        else:
+            return None
 
     @classmethod
     def is_exec_task(cls):

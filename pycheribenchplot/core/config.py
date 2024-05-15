@@ -9,7 +9,9 @@ import shutil
 from collections import OrderedDict
 from datetime import date, datetime
 from enum import Enum, auto
+from io import StringIO
 from pathlib import Path
+from textwrap import indent, wrap
 from typing import Dict, List, Optional, Set, Type, Union
 from uuid import UUID, uuid4
 
@@ -300,6 +302,30 @@ class Config:
         with open(jsonpath, "r") as jsonfile:
             data = json.load(jsonfile)
         return cls.schema().load(data)
+
+    @classmethod
+    def describe(cls):
+        """
+        Produce a human-readable description of the configuration.
+        """
+        desc = StringIO()
+        for field in dc.fields(cls):
+            help_ = field.metadata.get("help")
+            if help_:
+                help_string = indent(wrap(help_), "#: ")
+                desc.write(help_string + "\n")
+
+            dtype = field.type if is_generic_type(field.type) else field.type.__name__
+            dtype = str(dtype).split(".")[-1]
+            desc.write(f"{field.name}: {dtype}")
+            if field.default != dc.MISSING:
+                desc.write(f" = {field.default}")
+            elif field.default_factory != dc.MISSING:
+                desc.write(f" = {field.default_factory.__name__}()")
+            else:
+                desc.write(" <required>")
+            desc.write("\n")
+        return desc.getvalue()
 
     def __post_init__(self):
         return

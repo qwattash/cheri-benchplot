@@ -5,12 +5,10 @@ import logging
 import re
 import traceback
 import uuid
-from dataclasses import MISSING, fields
 from json.decoder import JSONDecodeError
 from pathlib import Path
 
 from marshmallow.exceptions import ValidationError
-from typing_inspect import is_generic_type
 
 from pycheribenchplot.core.config import (AnalysisConfig, BenchplotUserConfig, PipelineConfig, TaskTargetConfig)
 from pycheribenchplot.core.error import ToolArgparseError
@@ -194,26 +192,8 @@ class TaskInfoSubCommand(SubCommand):
                     break
             if not match:
                 continue
-            # Dump the task
-            spec_line = f"# {task_class.task_namespace}.{task_class.task_name} ({task_class.__name__}):\n"
-            spec_line += task_class.__doc__ + "\n"
-            if task_class.task_config_class:
-                ## XXX the config printing logic should probably go in core/config.py
-                conf_name = task_class.task_config_class.__name__
-                spec_line += f"## Using configuration {conf_name}:"
-                spec_line += task_class.task_config_class.__doc__ + "\n"
-                spec_line += "    Configuration fields:\n"
-                for field in fields(task_class.task_config_class):
-                    if field.default != MISSING:
-                        default = "= " + str(field.default)
-                    elif field.default_factory != MISSING:
-                        default = "= <factory>"
-                    else:
-                        default = "<required>"
-                    dtype = field.type if is_generic_type(field.type) else field.type.__name__
-                    dtype = str(dtype).split(".")[-1]
-                    spec_line += f"\t{field.name}: {field.type} {default}\n"
-            print(spec_line)
+            # Write out the task description
+            print(task_class.describe())
 
     def handle_config(self, user_config, args):
         """
