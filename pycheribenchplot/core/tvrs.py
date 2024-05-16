@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import reduce
 from typing import Any, Dict, List, Optional
@@ -307,6 +308,7 @@ class TVRSParamsMixin:
             values = self.session.parameterization_matrix[name].unique()
         return values
 
+    @contextmanager
     def config_plotting_context(self, **defaults):
         """
         Enter plotting context that overrides plot configuration
@@ -315,4 +317,5 @@ class TVRSParamsMixin:
         config = self.tvrs_config()
         defaults.update(config.plot_params)
         font_scale = defaults.pop("font_scale", 1)
-        return sns.plotting_context(font_scale=font_scale, rc=defaults)
+        with sns.plotting_context(font_scale=font_scale, rc=defaults):
+            yield
