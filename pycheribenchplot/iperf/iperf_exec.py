@@ -1,7 +1,12 @@
+import json
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Optional
+
+import polars as pl
+import polars.selectors as cs
+from marshmallow.validate import Regexp
 
 from ..core.artefact import PLDataFrameLoadTask, RemoteBenchmarkIterationTarget
 from ..core.config import Config, ConfigPath, config_field, validate_dir_exists
@@ -42,6 +47,13 @@ class IPerfScenario(Config):
     The iperf benchmark parameters are encoded in a scenario json file.
 
     This is the configuration schema that loads the iperf scenario to run.
+
+    In the standard configuration, the client sends data to the server. The
+    `mode` parameter can be used to modify this behaviour.
+    Only one stream is used by default. For multiple parellel streams, increase
+    the `streams` configuration key.
+    The CPU affinity is a comma-separated tuple of core IDs (0 to MAXCPU) that determine
+    the sender/receiver affinity. This sets both the client and server affinity.
     """
     protocol: IPerfProtocol = config_field(IPerfProtocol.TCP, desc="Protocol to use")
     transfer_mode: IPerfTransferLimit = config_field(IPerfTransferLimit.BYTES,
@@ -57,7 +69,10 @@ class IPerfScenario(Config):
     mss: Optional[int] = config_field(None, desc="Set MSS size")
     window_size: Optional[int] = config_field(None, desc="Set socket buffer size (bytes) (indirectly the TCP window)")
     warmup: Optional[int] = config_field(None, desc="Warmup seconds")
-    cpu_affinity: Optional[str] = config_field(None, desc="CPU Affinity for send/receive sides")
+    cpu_affinity: Optional[str] = config_field(None,
+                                               desc="CPU Affinity for send/receive sides",
+                                               validate=Regexp(r"[0-9]+(,[0-9+])?",
+                                                               error="CPU Affinty must be of the form 'N[,M]'"))
 
 
 @dataclass
@@ -78,6 +93,34 @@ class IPerfConfig(Config):
     hwpmc: bool = False
 
 
+class IngestIPerfStats(PLDataFrameLoadTask):
+    """
+    Loader for stats data that produces a standard polars dataframe.
+    """
+    task_namespace = "iperf"
+    task_name = "ingest-stats"
+
+    def _load_one(self, path: Path) -> pl.DataFrame:
+        """
+        Load data for a benchmark run from the given target file.
+
+        We extract the summary information from the "end" record.
+        RTT measurements for latency are taken for each stream, so we
+        generate one row for each stream for each iteration.
+        """
+        data = json.load(open(path, "r"))
+        end_info = data["end"]
+        df = pl.DataFrame(end_info["streams"])
+        df = df.with_row_index("stream")
+        snd_df = (df.select("stream", "sender").unnest("sender").select("stream",
+                                                                        cs.all().exclude("stream").name.prefix("snd_")))
+        rcv_df = (df.select("stream",
+                            "receiver").unnest("receiver").select("stream",
+                                                                  cs.all().exclude("stream").name.prefix("rcv_")))
+        df = snd_df.join(rcv_df, on="stream")
+        return df
+
+
 class IPerfExecTask(TVRSExecTask):
     """
     Generate the iperf benchmark scripts
@@ -94,13 +137,14 @@ class IPerfExecTask(TVRSExecTask):
     @output
     def stats(self):
         """IPerf json output"""
-        return RemoteBenchmarkIterationTarget(self, "stats", ext="json")
+        return RemoteBenchmarkIterationTarget(self, "stats", ext="json", loader=IngestIPerfStats)
 
     def hwpmc(self):
         """The remote profiling output target"""
         return RemoteBenchmarkIterationTarget(self, "hwpmc", ext="json")
 
     def run(self):
+        super().run()
         self.script.set_template("iperf.sh.jinja")
         scenario = self.config.scenario_path / self.benchmark.parameters["scenario"]
         scenario_config = IPerfScenario.load_json(scenario.with_suffix(".json"))
