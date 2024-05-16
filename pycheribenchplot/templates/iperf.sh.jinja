@@ -1,0 +1,69 @@
+{#
+ # Runner script for iperf benchmarks.
+ # This extends the standard runner-script.sh.jinja template
+ #}
+{% extends "runner-script.sh.jinja" %}
+
+{% block global_setup %}
+  {{ super() }}
+  {% if iperf_config.iperf_path %}
+    # Make sure iperf3 is in PATH
+    export PATH="${PATH}:{{ iperf_config.iperf_path }}"
+  {% endif %}
+{% endblock global_setup %}
+
+{% block iteration_setup %}
+  {{ super() }}
+  # Per-iteration iperf setup
+  {% if iperf_config.use_localhost_server %}
+    # Start localhost iperf server
+    verbose "Start iperf server for iteration {{ current_iteration }}"
+    iperf3 -s --one-off --daemon --pidfile /tmp/iperf_server.pid --interval 120
+    sleep 1
+  {% endif %}
+{% endblock iteration_setup %}
+
+{% macro limit_flag() %}
+  {% if scenario_config.transfer_mode == IPerfTransferLimit.BYTES %}
+    -n
+  {% elif scenario_config.transfer_mode == IPerfTransferLimit.TIME %}
+    -t
+  {% elif scenario_config.transfer_mode == IPerfTransferLimit.PACKETS %}
+    -k
+  {% endif %}
+{% endmacro %}
+
+{% macro mode_flag() %}
+  {% if scenario_config.mode == IPerfMode.CLIENT_RECV %}
+    --reverse
+  {% elif scenario_config.mode == IPerfMode.BIDIRECTIONAL %}
+    --bidir
+  {% endif %}
+  {# else IPerfMode.CLIENT_SEND leave empty #}
+{% endmacro %}
+
+{% macro protocol_flag() %}
+  {% if scenario_config.protocol == IPerfProtocol.UDP %}
+    --udp
+  {% elif scenario_config.protocol == IPerfProtocol.SCTP %}
+    --sctp
+  {% endif %}
+  {# else IPerfProtocol.TCP leave empty #}
+{% endmacro %}
+
+{% macro cpuaffinity() %}
+  {% if scenario_config.cpu_affinity %}
+    -A {{ scenario_config.cpu_affinity }}
+  {% endif %}
+{% endmacro %}
+
+{% block iteration_exec %}
+  verbose "Run iperf3 iteration {{ current_iteration }} {{ 'hwpmc' if iperf_config.hwpmc }}"
+
+  iperf3 -c {{ scenario_config.remote_host }} \
+	{{ limit_flag() | trim }} {{ scenario_config.transfer_limit | int }} \
+	-P {{ scenario_config.streams }} \
+    --interval 120 \
+	{{ protocol_flag() | trim }} {{ mode_flag() | trim }} {{ cpuaffinity() | trim }} -J \
+	--logfile {{ iperf_output_path[current_iteration] }}
+{% endblock iteration_exec %}
