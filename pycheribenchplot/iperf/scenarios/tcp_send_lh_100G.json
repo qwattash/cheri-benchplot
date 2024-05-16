@@ -2,6 +2,6 @@
     "protocol": "tcp",
     "mode": "client-send",
     "transfer_mode": "bytes",
-    "transfer_limit": "10G",
+    "transfer_limit": "100G",
     "cpu_affinity": "0,2"
 }
