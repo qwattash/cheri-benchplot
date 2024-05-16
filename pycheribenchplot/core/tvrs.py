@@ -253,6 +253,8 @@ class TVRSParamsContext:
             o_m = f"{m}_overhead"
             ovh = (pl.col(m) - pl.col(b_m)) * sign * 100 / pl.col(b_m)
             overhead_expr.append(ovh.alias(o_m))
+            # Record the overhead columns in the column rename map
+            self._rename[o_m] = o_m
         # Prepare to filter out the baseline
         baseline_eq_exprs = map(lambda i: pl.col(i[0]).eq(i[1]), df_baseline_sel.items())
         not_baseline_sel = reduce(lambda x, y: x & y, baseline_eq_exprs).not_()
@@ -266,7 +268,6 @@ class TVRSParamsContext:
         This applies the plot configuration to rename parameter levels, axes and
         filters.
         """
-        col_rename_map = default or dict()
         config = self.task.tvrs_config()
 
         # Compute the parameterization weight for consistent label ordering
@@ -291,18 +292,21 @@ class TVRSParamsContext:
                 relabeling.append(pl.col(name).replace(mapping))
             self.df = self.df.with_columns(*relabeling)
 
-        if config.parameter_names:
-            for p, v in config.parameter_names:
-                if p not in self.params or p not in self.df.columns:
-                    self.logger.warning("Skipping re-naming of parameter '%s', missing or suppressed", p)
-                    continue
-                col_name_map[p] = v
-        if config.metric_names:
-            for m, v in config.metric_names:
-                if m not in self.df.columns:
-                    self.logger.warning("Skipping re-naming of column '%s', missing or suppressed", m)
-                    continue
-                col_name_map[m] = v
+        col_rename_map = default or dict()
+        col_rename_map.update(config.parameter_names or {})
+        col_rename_map.update(config.metric_names or {})
+
+        # Ensure that we do not try to rename suppressed columns in the name mapping
+        def _filter_suppressed(name):
+            if name not in self.df.columns:
+                self.logger.info(
+                    "Skipping re-naming of column '%s' because it is not active in "
+                    "the parameterization context", name)
+                return False
+            return True
+
+        col_rename_map = {c: v for c, v in col_rename_map.items() if _filter_suppressed(c)}
+
         self.df = self.df.rename(col_rename_map)
         self._rename.update(col_rename_map)
 
@@ -311,7 +315,10 @@ class TVRSParamsContext:
         Generate a color palette with colors associated to the given parameterization axis
         """
         name = self._rename[param_name]
-        ncolors = len(self.df[name].unique())
+        if name:
+            ncolors = len(self.df[name].unique())
+        else:
+            ncolors = 1
         return sns.color_palette(n_colors=ncolors)
 
 
