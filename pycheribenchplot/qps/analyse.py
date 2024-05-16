@@ -47,13 +47,6 @@ class LoadQPSData(AnalysisTask):
             merged = merged.with_columns(pl.col("message_count").fill_null(0))
         self.merged_df.assign(merged)
 
-    def get_parameter_columns(self):
-        # Note that all benchmarks must have the same set of parameter keys.
-        # This is enforced during configuration
-        all_bench = self.session.all_benchmarks()
-        assert len(all_bench) > 0
-        return list(all_bench[0].parameters.keys())
-
 
 class QPSPlot(TVRSParamsMixin, PlotTask):
     """
