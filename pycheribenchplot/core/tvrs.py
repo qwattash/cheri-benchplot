@@ -167,6 +167,30 @@ class TVRSParamsContext:
         expr = pl.concat_str([pl.col(p).cast(dt.String) for p in to_combine], separator=sep)
         self.derived_param(name, expr)
 
+    def derived_hue_param(self, default: list[str], sep=" "):
+        """
+        Produce the _hue derived parameter by combining the given set of parameter columns.
+
+        If the TVRS configuration specifies hue_parameters, this will override the
+        `default` hue setting.
+        If the given parameters have been suppressed, the hue column is not generated
+        and the rename map will contain an entry mapping to None.
+        """
+        config = self.task.tvrs_config()
+        hue_params = config.hue_parameters if config.hue_parameters is not None else default
+
+        requested = set(hue_params)
+        hue_params = [hp for hp in hue_params if hp in self.base_params]
+        for name in requested.difference(hue_params):
+            self.logger.warning("Hue parameter '%s' is invalid and will be ignored", name)
+        hue_params = [hp for hp in hue_params if hp in self.params]
+        for name in requested.difference(hue_params):
+            self.logger.info("Hue parameter '%s' is suppressed and will be ignored", name)
+        if hue_params:
+            self.derived_param_strcat("_hue", hue_params, sep=sep)
+        else:
+            self._rename["_hue"] = None
+
     def map_by_param(self, axis: str, mapper):
         """
         Run the given function for every group of the given parameter axis.
