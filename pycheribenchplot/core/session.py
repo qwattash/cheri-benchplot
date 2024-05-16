@@ -267,7 +267,7 @@ class Session:
         """
         Produce a compressed archive with all the session output.
         """
-        bundle_file = self.session_root_path.with_suffix(".tar.xz")
+        bundle_file = self.session_root_path.with_suffix(".tar.gz")
         self.logger.info("Generate %s bundle", self.session_root_path)
         if bundle_file.exists():
             self.logger.info("Replacing old bundle %s", bundle_file)
@@ -276,7 +276,10 @@ class Session:
             archive_src = self.session_root_path
         else:
             archive_src = self.get_plot_root_path()
-        result = subprocess.run(["tar", "-J", "-c", "-f", bundle_file, archive_src])
+        result = subprocess.run([
+            "tar", "-z", "-c", "-C", self.session_root_path, "-f", bundle_file,
+            archive_src.relative_to(self.session_root_path)
+        ])
         if result.returncode:
             self.logger.error("Failed to produce bundle")
         self.logger.info("Archive created at %s", bundle_file)
