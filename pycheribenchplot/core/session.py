@@ -237,7 +237,7 @@ class Session:
         """
         self.config.analysis_config = config.analysis_config
         with open(self.session_root_path / SESSION_RUN_FILE, "w") as runfile:
-            runfile.write(run_config.emit_json())
+            runfile.write(self.config.emit_json())
 
     def get_public_tasks(self) -> list[Type[AnalysisTask]]:
         """
