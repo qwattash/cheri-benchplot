@@ -1,4 +1,5 @@
 import polars as pl
+import polars.selectors as cs
 import seaborn as sns
 
 from ..core.analysis import AnalysisTask
@@ -37,6 +38,13 @@ class IPerfSummaryPlot(TVRSParamsMixin, PlotTask):
     The target is used as the categorical X axis. Boxes are aggregated by target
     and each bar group shows combinations of variant/runtime parameterization,
     if any.
+
+    Param columns for renaming:
+    - target, variant, runtime, scenario
+    - _hue: derived hue parameter, combines variant/runtime by default.
+
+    Metric columns for renaming:
+    - rcv_bits_per_second{_overhead}: The throughput as measured on the receiver
     """
     task_namespace = "iperf"
     task_name = "summary-plot"
@@ -50,21 +58,57 @@ class IPerfSummaryPlot(TVRSParamsMixin, PlotTask):
     def summary_plot(self):
         return PlotTarget(self, "summary")
 
-    def run_plot(self):
-        df = self.iperf_data.df.get()
+    @output
+    def summary_overhead_plot(self):
+        return PlotTarget(self, "summary-overhead")
 
-        ctx = self.make_param_context(df)
+    def _get_agg_stream_stats(self):
+        """
+        Produce a parameterization context with aggregated data from all iperf streams.
+        """
+        df = self.iperf_data.df.get()
+        ctx = self.make_param_context(df.clone())
         # First, we aggregate along the parameterization + iterations to
         # combine per-stream information
         ctx.df = (ctx.df.group_by(["target", "variant", "runtime", "scenario", "iteration"]).agg(
+            pl.col("dataset_id").first(),
+            cs.by_name(ctx.extra_params).first(),
             pl.col("^.*_bytes$").sum(),
             pl.col("^.*_seconds$").max(),
             pl.col("^.*_bits_per_second$").sum(),
         ))
         ctx.suppress_const_params(keep=["target", "scenario"])
-        ctx.relabel(default=dict(rcv_bits_per_second="Throughput (bits/s)"))
+        ctx.derived_hue_param(default=["variant", "runtime"])
+        return ctx
 
+    def _plot_summary(self):
+        ctx = self._get_agg_stream_stats()
+        ctx.relabel(default=dict(
+            _hue="Variant",
+            rcv_bits_per_second="Throughput (bits/s)",
+        ))
+
+        hue_kwargs = dict()
+        if ctx.r._hue:
+            hue_kwargs.update(dict(palette=ctx.build_palette_for("_hue"), hue=ctx.r._hue))
+        with new_facet(self.summary_plot.paths(), ctx.df, col=ctx.r.scenario, col_wrap=3) as facet:
+            facet.map_dataframe(sns.boxplot, x=ctx.r.target, y=ctx.r.rcv_bits_per_second, **hue_kwargs)
+            facet.add_legend()
+
+    def _plot_overhead(self):
+        ctx = self._get_agg_stream_stats()
+        ctx.compute_overhead(["rcv_bits_per_second"])
+        ctx.relabel(default=dict(_hue="Variant", rcv_bits_per_second_overhead="% Throughput"))
+
+        hue_kwargs = dict()
+        if ctx.r._hue:
+            hue_kwargs.update(dict(palette=ctx.build_palette_for("_hue"), hue=ctx.r._hue))
+        with new_facet(self.summary_overhead_plot.paths(), ctx.df, col=ctx.r.scenario, col_wrap=3) as facet:
+            facet.map_dataframe(sns.boxplot, x=ctx.r.target, y=ctx.r.rcv_bits_per_second_overhead, **hue_kwargs)
+            facet.add_legend()
+
+    def run_plot(self):
         with self.config_plotting_context():
-            with new_facet(self.summary_plot.paths(), ctx.df, col=ctx.r.scenario, col_wrap=3) as facet:
-                facet.map_dataframe(sns.boxplot, x=ctx.r.target, y=ctx.r.rcv_bits_per_second)
-                facet.add_legend()
+            self._plot_summary()
+        with self.config_plotting_context():
+            self._plot_overhead()

@@ -55,24 +55,34 @@ class IPerfScenario(Config):
     The CPU affinity is a comma-separated tuple of core IDs (0 to MAXCPU) that determine
     the sender/receiver affinity. This sets both the client and server affinity.
     """
+    # yapf: disable
     protocol: IPerfProtocol = config_field(IPerfProtocol.TCP, desc="Protocol to use")
-    transfer_mode: IPerfTransferLimit = config_field(IPerfTransferLimit.BYTES,
-                                                     desc="How the transfer limit is interpreted")
+    transfer_mode: IPerfTransferLimit = config_field(
+        IPerfTransferLimit.BYTES,
+        desc="How the transfer limit is interpreted"
+    )
     transfer_limit: int | str = config_field(2**32, desc="Transfer limit")
     remote_host: str = config_field(
         "localhost",
-        desc="Hostname of the server. By default we operate on localhost. When this is set to anything other "
-        "than localhost, the server setup is expected to be done manually")
+        desc="Hostname of the server. By default we operate on localhost. "
+        "When this is set to anything other than localhost, the server setup "
+        "is expected to be done manually"
+    )
     mode: IPerfMode = config_field(IPerfMode.CLIENT_SEND, desc="Stream mode")
     streams: int = config_field(1, desc="Number of parallel client streams")
     buffer_size: int = config_field(128 * 2**10, desc="Size of the send/recv buffer (bytes)")
     mss: Optional[int] = config_field(None, desc="Set MSS size")
-    window_size: Optional[int] = config_field(None, desc="Set socket buffer size (bytes) (indirectly the TCP window)")
+    window_size: Optional[int] = config_field(
+        None,
+        desc="Set socket buffer size (bytes) (indirectly the TCP window)"
+    )
     warmup: Optional[int] = config_field(None, desc="Warmup seconds")
-    cpu_affinity: Optional[str] = config_field(None,
-                                               desc="CPU Affinity for send/receive sides",
-                                               validate=Regexp(r"[0-9]+(,[0-9+])?",
-                                                               error="CPU Affinty must be of the form 'N[,M]'"))
+    cpu_affinity: Optional[str] = config_field(
+        None,
+        desc="CPU Affinity for send/receive sides",
+        validate=Regexp(r"[0-9]+(,[0-9+])?", error="CPU Affinty must be of the form 'N[,M]'")
+    )
+    # yapf: enable
 
 
 @dataclass
