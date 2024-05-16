@@ -41,6 +41,8 @@ class TVRSTaskConfig(Config):
     parameter_weight: Optional[Dict[str, Dict[str, int]]] = None
     #: Relabel parameter axes
     parameter_names: Optional[Dict[str, str]] = None
+    #: Relabel metric columns
+    metric_names: Optional[Dict[str, str]] = None
     #: Relabel parameter axes values
     parameter_labels: Optional[Dict[str, Dict[str, str]]] = None
     #: Parameterization axes for the combined plot hue, use all remaining by default
@@ -77,6 +79,7 @@ class TVRSParamsContext:
         self.params = list(self.base_params)
         self.extra_params = set(self.base_params).difference(self.TVRS_PARAMETERS)
         self._rename.update({p: p for p in self.base_params})
+        self._rename.update({m: m for m in df.columns if m not in self.params})
 
     def _ensure_parameterization(self):
         """
@@ -265,7 +268,17 @@ class TVRSParamsContext:
             self.df = self.df.with_columns(*relabeling)
 
         if config.parameter_names:
-            col_rename_map.update(config.parameter_names)
+            for p, v in config.parameter_names:
+                if p not in self.params or p not in self.df.columns:
+                    self.logger.warning("Skipping re-naming of parameter '%s', missing or suppressed", p)
+                    continue
+                col_name_map[p] = v
+        if config.metric_names:
+            for m, v in config.metric_names:
+                if m not in self.df.columns:
+                    self.logger.warning("Skipping re-naming of column '%s', missing or suppressed", m)
+                    continue
+                col_name_map[m] = v
         self.df = self.df.rename(col_rename_map)
         self._rename.update(col_rename_map)
 
