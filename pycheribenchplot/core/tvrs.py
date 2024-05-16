@@ -26,6 +26,12 @@ class TVRSExecTask(ExecutionTask):
     and instance configuration.
     We need to determine the setup/teardown hooks for the current parameter set.
     """
+    def run(self):
+        pkeys = set(self.benchmark.parameters.keys())
+        for p in ["variant", "runtime", "scenario"]:
+            if p not in pkeys:
+                self.logger.error("Invalid parameterization: '%s' is required", p)
+                raise RuntimeError("Invalid configuration")
 
 
 @dataclass
