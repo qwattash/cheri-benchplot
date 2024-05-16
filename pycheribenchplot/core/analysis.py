@@ -75,9 +75,8 @@ class AnalysisTask(SessionTask):
             selectors = dict(baseline_sel)
         else:
             # Expect a UUID
-            selectors = { "dataset_id": baseline_sel }
+            selectors = {"dataset_id": baseline_sel}
         return selectors
-
 
     def baseline_slice(self, df: pl.DataFrame) -> pl.DataFrame:
         """
@@ -181,6 +180,7 @@ class DatasetAnalysisTaskGroup(AnalysisTask):
 
 class MachineGroupAnalysisTask(AnalysisTask):
     """
+    DEPRECATED
     Base class for analysis tasks that operate on a group of benchmark contexts that
     have the same g_uuid (machine configuration), i.e. columns in the benchmark matrix.
     This is used for operations such as merging multiple data from benchmark parameterizations
@@ -210,6 +210,7 @@ class MachineGroupAnalysisTask(AnalysisTask):
 
 class ParamGroupAnalysisTask(AnalysisTask):
     """
+    DEPRECATED
     Base class for analysis tasks that operate on a group of benchmark contexts that
     have the same set of parameterization values, i.e. rows in the benchmark matrix.
     This is used for operations such as merging multiple data from the same benchmark
@@ -240,6 +241,7 @@ class ParamGroupAnalysisTask(AnalysisTask):
 
 class StatsByParamGroupTask(ParamGroupAnalysisTask):
     """
+    DEPRECATED
     Base task that computes statistics for a group of benchmarks with the same parameter keys.
     This will produce a dataframe with different benchmark runs and machine g_uuids in the index, with the same parameterization values.
     This task depends on the load tasks for all benchmarks with a given set of parameter keys.
@@ -436,6 +438,7 @@ class StatsByParamGroupTask(ParamGroupAnalysisTask):
 
 def StatsField(name, **kwargs):
     """
+    DEPRECATED
     Pandera model field that matches a column with the expected column multi-index pattern
     from the :class:`StatsByParamGroupTask`.
     Note: this is a function in pandera, we have to keep it this way.
@@ -446,6 +449,7 @@ def StatsField(name, **kwargs):
 
 class StatsForAllParamSetsTask(AnalysisTask):
     """
+    DEPRECATED
     Generate statistics for each set of parameters in the benchmark matrix.
     Merge the statistics in the output dataframe.
     """
