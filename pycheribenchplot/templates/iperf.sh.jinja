@@ -18,7 +18,7 @@
   {% if iperf_config.use_localhost_server %}
     # Start localhost iperf server
     verbose "Start iperf server for iteration {{ current_iteration }}"
-    iperf3 -s --one-off --daemon --pidfile /tmp/iperf_server.pid --interval 120
+    iperf3 -s --one-off --daemon --pidfile /tmp/iperf_server.pid --interval 60
     sleep 1
   {% endif %}
 {% endblock iteration_setup %}
@@ -63,7 +63,7 @@
   iperf3 -c {{ scenario_config.remote_host }} \
 	{{ limit_flag() | trim }} {{ scenario_config.transfer_limit | int }} \
 	-P {{ scenario_config.streams }} \
-    --interval 120 \
+    --interval 60 \
 	{{ protocol_flag() | trim }} {{ mode_flag() | trim }} {{ cpuaffinity() | trim }} -J \
 	--logfile {{ iperf_output_path[current_iteration] }}
 {% endblock iteration_exec %}
