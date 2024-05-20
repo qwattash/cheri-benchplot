@@ -1,9 +1,0 @@
-{
-    "protocol": "tcp",
-    "mode": "client-send",
-    "transfer_mode": "bytes",
-    "transfer_limit": "100G",
-    "cpu_affinity": "0,2",
-    "window_size": "64K",
-    "buffer_size": "256"
-}
