@@ -3,5 +3,6 @@
     "mode": "client-send",
     "transfer_mode": "bytes",
     "transfer_limit": "10G",
-    "cpu_affinity": "0,2"
+    "cpu_affinity": "0,2",
+    "remote_host": "10.0.0.1"
 }

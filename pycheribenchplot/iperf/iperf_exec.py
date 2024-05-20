@@ -61,7 +61,11 @@ class IPerfScenario(Config):
         IPerfTransferLimit.BYTES,
         desc="How the transfer limit is interpreted"
     )
-    transfer_limit: int | str = config_field(2**32, desc="Transfer limit")
+    transfer_limit: str = config_field(
+        "1G",
+        desc="Transfer limit, format depends on `transfer_mode`",
+        validate=Regexp(r"[0-9]+[KMG]?", error="Must be formatted as <N>{KMG}")
+    )
     remote_host: str = config_field(
         "localhost",
         desc="Hostname of the server. By default we operate on localhost. "
@@ -122,11 +126,18 @@ class IngestIPerfStats(PLDataFrameLoadTask):
         end_info = data["end"]
         df = pl.DataFrame(end_info["streams"])
         df = df.with_row_index("stream")
-        snd_df = (df.select("stream", "sender").unnest("sender").select("stream",
-                                                                        cs.all().exclude("stream").name.prefix("snd_")))
-        rcv_df = (df.select("stream",
-                            "receiver").unnest("receiver").select("stream",
-                                                                  cs.all().exclude("stream").name.prefix("rcv_")))
+        # yapf: disable
+        snd_df = (
+            df.select("stream", "sender")
+            .unnest("sender")
+            .select("stream", cs.all().exclude("stream").name.prefix("snd_"))
+        )
+        rcv_df = (
+            df.select("stream", "receiver")
+            .unnest("receiver")
+            .select("stream", cs.all().exclude("stream").name.prefix("rcv_"))
+        )
+        # yapf: enable
         df = snd_df.join(rcv_df, on="stream")
         return df
 
