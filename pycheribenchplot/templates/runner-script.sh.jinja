@@ -30,6 +30,7 @@ echo -e "\t{{ pkey }}='{{ pval }}'"
     {% include 'templates/hooks/%s' % hook.template %}
   {% else %}
     {% for cmd in hook.commands %}
+      verbose "{{ cmd }}"
       {{ cmd }}
     {% endfor %}
   {% endif %}
