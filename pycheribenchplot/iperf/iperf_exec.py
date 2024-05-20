@@ -74,9 +74,9 @@ class IPerfScenario(Config):
     )
     mode: IPerfMode = config_field(IPerfMode.CLIENT_SEND, desc="Stream mode")
     streams: int = config_field(1, desc="Number of parallel client streams")
-    buffer_size: int = config_field(128 * 2**10, desc="Size of the send/recv buffer (bytes)")
+    buffer_size: int|str = config_field(128 * 2**10, desc="Size of the send/recv buffer (bytes)")
     mss: Optional[int] = config_field(None, desc="Set MSS size")
-    window_size: Optional[int] = config_field(
+    window_size: Optional[int|str] = config_field(
         None,
         desc="Set socket buffer size (bytes) (indirectly the TCP window)"
     )
