@@ -17,7 +17,7 @@ from uuid import UUID, uuid4
 
 import marshmallow.fields as mfields
 from git import Repo
-from marshmallow import Schema, ValidationError, validates_schema
+from marshmallow import Schema, ValidationError, validates, validates_schema
 from marshmallow.validate import And, ContainsOnly, OneOf, Predicate
 from marshmallow_dataclass import NewType, class_schema
 from typing_extensions import Self
@@ -82,7 +82,7 @@ class PathField(mfields.Field):
         if value == "":
             return None
         try:
-            return Path(value).expanduser()
+            return Path(value).expanduser().resolve()
         except TypeError as ex:
             raise ValidationError(f"Invalid path {value}") from ex
 
@@ -736,7 +736,7 @@ class InstanceConfig(Config):
     #: Name of the kernel configuration file used
     kernel: str
     #: Optional name used for user-facing output such as plot legends
-    name: Optional[str] = None
+    name: str = dc.field(default_factory=lambda: str(uuid4()))
     #: Platform identifier, this affects the strategy used to run execution tasks
     platform: InstancePlatform = dc.field(default=InstancePlatform.QEMU, metadata={"by_value": True})
     #: Userspace ABI identifier
@@ -782,10 +782,6 @@ class InstanceConfig(Config):
 
     def __post_init__(self):
         super().__post_init__()
-        if self.name is None:
-            self.name = (f"{self.platform} UserABI:{self.cheri_target} "
-                         f"KernABI:{self.kernelabi} KernConf:{self.kernel}")
-
         if self.userabi is None:
             # Infer user ABI from the cheri_target
             if self.cheri_target.is_hybrid_abi():
@@ -980,15 +976,45 @@ class ParamOptions(Config):
 
 
 @dc.dataclass
+class SystemConfig(Config):
+    """
+    Host system to use for each specific group of parameters.
+    """
+    #: Match a set of key/values from the parameterization to which apply
+    #: the system configuration.
+    matches: Dict[str, ConfigAny]
+
+    #: System configuration
+    host_system: InstanceConfig
+
+
+@dc.dataclass
 class PipelineBenchmarkConfig(CommonBenchmarkConfig):
     """
     User-facing benchmark configuration.
     """
-    #: Parameterized benchmark generator instructions. This should map (param_name => [values]).
+    #: Parameterized benchmark generator instructions. This should map
+    #: (param_name => [values]).
+    #: Note that there must be a 'target' parameter axis, otherwise it is implied
+    #: and generated from the instance_config
     parameterize: Dict[str, List[ConfigAny]] = dc.field(default_factory=dict)
 
     #: Parameterization options
     parameterize_options: Optional[ParamOptions] = None
+
+    #: System configuration.
+    #: Note that matching is done in-order, therefore the last entry may have
+    #: `"matches": {}` to catch-all.
+    #: XXX replaces instance_config
+    system: List[SystemConfig] = dc.field(default_factory=list)
+
+    @validates("parameterize")
+    def validate_paramaterize(self, data, **kwargs):
+        if (type(data) != dict):
+            raise ValidationError("Must be a dictionary")
+        for pk in data.keys():
+            if not re.fullmatch(r"[a-zA-Z0-9_]+", pk):
+                raise ValidationError(f"Parameterization key '{pk}' must be a valid python property name")
 
 
 @dc.dataclass
@@ -1075,19 +1101,14 @@ class PipelineConfig(CommonSessionConfig):
     the templates will be retained in the session instructions file so that
     the substitution can be replicated with a different user configuration every time.
     """
+    #: Configuration format version
+    version: str = "0.0",
+
     #: Instances configuration, required
     instance_config: PipelineInstanceConfig = dc.field(default_factory=PipelineInstanceConfig)
 
     #: Benchmark configuration, required
-    benchmark_config: List[PipelineBenchmarkConfig] = dc.field(default_factory=list)
-
-    def __post_init__(self):
-        super().__post_init__()
-        self.ssh_key = self.ssh_key.resolve()
-        if self.instance_config is None:
-            raise ValueError("Missing instance_config")
-        if len(self.benchmark_config) == 0:
-            raise ValueError("Missing benchmark_config")
+    benchmark_config: Union[List[PipelineBenchmarkConfig] | PipelineBenchmarkConfig] = dc.field(default_factory=list)
 
 
 @dc.dataclass
@@ -1156,30 +1177,123 @@ class SessionRunConfig(CommonSessionConfig):
         return new_config
 
     @classmethod
-    def _check_valid_parameterization(cls, params: dict, opts: ParamOptions | None) -> bool:
+    def _match_params(cls, params: dict[str, any], matcher: dict[str, str]) -> bool:
+        """
+        Check whether a given set of parameters satisfies a matcher dictionary.
+
+        This checks that every element in the matcher is present and satisfies the
+        match expression.
+        An empty matcher acts as catch-all.
+        """
+        for mkey, mexpr in matcher.items():
+            if mkey not in params:
+                return False
+            if params[mkey] != mexpr:
+                return False
+        return True
+
+    @classmethod
+    def _valid_parameterization(cls, params: dict, opts: ParamOptions | None) -> bool:
         """
         Check whether the given set of parameters is allowed.
         """
         if opts is None:
             return True
         for skip in opts.skip:
-            skip_match = ft.reduce(lambda m, e: m and params.get(e[0]) == e[1], skip.items(), True)
-            if skip_match:
+            if cls._match_params(params, skip):
                 return False
         return True
 
     @classmethod
-    def generate(cls, user_config: BenchplotUserConfig, config: PipelineConfig) -> Self:
+    def _match_system_config(cls, params: dict, configs: list[SystemConfig]) -> SystemConfig | None:
+        for sys_conf in configs:
+            if cls._match_params(params, sys_conf.matches):
+                return sys_conf.host_system
+        return None
+
+    @classmethod
+    def generate_v1(cls, user_config: BenchplotUserConfig, config: PipelineConfig) -> Self:
         """
         Generate a new :class:`SessionRunConfig` from a :class:`PipelineConfig`.
-        Manual benchmark parameterization is supported by specifying multiple benchmarks with
-        the same set of parameterize keys and different values.
-        We support 3 types of parameterization:
 
-        1. there is a single benchmark_config and no parametrization
-        2. there is a single benchmark_config with parametrization and template substitution
-        3. there are multiple benchmark_configs with the same set of parametrization keys but
-           disjoint sets of values
+        The benchmark configuration parameterization is resolved and we generate
+        a BenchmarkRunConfig for each allowed parameter combination.
+        System configurations are selected here and associated to each benchmark run.
+
+        If the "target" parameterization level is explicitly present, use its value as is.
+        If the "target" level is not given, it is generated by assigning it
+        the system configuration UUID.
+
+        :param user_config: The user configuration for the local machine setup.
+        :param config: The :class:`PipelineConfig` to use.
+        :return: A new session runfile configuration
+        """
+        session = SessionRunConfig.from_common_conf(config)
+        logger.info("Create new session %s", session.uuid)
+
+        bench_config = config.benchmark_config
+        param_levels = list(bench_config.parameterize.keys())
+        sorted_params = OrderedDict(bench_config.parameterize)
+
+        # Host system names must be unique, warn if this is not the case.
+        # It might be useful to have multiple matchers for the same system, so
+        # don't make this an error.
+        host_system_names = set()
+        # Assign dataset g_uuids for backward-compatibility only
+        host_system_uuids = {}
+        for sys_config in bench_config.system:
+            name = sys_config.host_system.name
+            if name in host_system_names:
+                logger.warning("Host system matcher '%s' has duplicate host system name '%s'", sys_config.matches, name)
+            host_system_names.add(name)
+            host_system_uuids[name] = uuid4()
+
+        # Generate all parameter combinations
+        logger.debug("Generate parameterization for '%s'", bench_config.name)
+        for combination in it.product(*sorted_params.values()):
+            parameters = dict(zip(sorted_params.keys(), combination))
+            if not cls._valid_parameterization(parameters, bench_config.parameterize_options):
+                continue
+
+            run_config = BenchmarkRunConfig.from_common_conf(bench_config)
+            run_config.parameters = parameters.copy()
+            host_system = cls._match_system_config(parameters, bench_config.system)
+            if host_system is None:
+                logger.error("Missing system configuration for parameter combination %s", parameters)
+                raise RuntimeError("Invalid configuration")
+            if "target" not in parameters:
+                # Generate the target parameter, if not specified
+                run_config.parameters["target"] = host_system.name
+
+            run_config.instance = InstanceConfig.copy(host_system)
+            run_config.uuid = uuid4()
+            # Note that g_uuids are deprecated and will go away.
+            run_config.g_uuid = host_system_uuids[host_system.name]
+            session.configurations.append(run_config)
+
+        # Snapshot all repositories we care about, if they are present.
+        # Note that we should support snapshot hooks in the configured tasks.
+        def snap_head(repo_path, key):
+            if repo_path.exists():
+                session.git_sha[key] = Repo(repo_path).head.commit.hexsha
+            else:
+                logger.warning("No %s repository, skip SHA snapshot", key)
+
+        snap_head(user_config.cheribuild_path, "cheribuild")
+        snap_head(user_config.cheribsd_path, "cheribsd")
+        snap_head(user_config.qemu_path, "qemu")
+        snap_head(user_config.llvm_path, "llvm")
+
+        # Now that we are done with generating the configuration, resolve all
+        # templates that do not involve the user configuration
+        return cls._resolve_template(session)
+
+    @classmethod
+    def generate_v0(cls, user_config: BenchplotUserConfig, config: PipelineConfig) -> Self:
+        """
+        Generate a new :class:`SessionRunConfig` from a :class:`PipelineConfig`.
+
+        Old-style configuration format
 
         :param user_config: The user configuration for the local machine setup.
         :param config: The :class:`PipelineConfig` to use.
@@ -1236,7 +1350,7 @@ class SessionRunConfig(CommonSessionConfig):
             logger.debug("Found parameterized benchmark '%s'", run_conf.name)
             for param_combination in it.product(*sorted_params.values()):
                 parameters = dict(zip(sorted_params.keys(), param_combination))
-                if not cls._check_valid_parameterization(parameters, run_conf.parameterize_options):
+                if not cls._valid_parameterization(parameters, run_conf.parameterize_options):
                     continue
 
                 final_run_conf = BenchmarkRunConfig.from_common_conf(run_conf)
@@ -1270,3 +1384,9 @@ class SessionRunConfig(CommonSessionConfig):
         # Now that we are done with generating the configuration, resolve all
         # templates that do not involve the user configuration
         return cls._resolve_template(session)
+
+    @classmethod
+    def generate(cls, user_config: BenchplotUserConfig, config: PipelineConfig) -> Self:
+        if config.version == "1.0":
+            return cls.generate_v1(user_config, config)
+        return cls.generate_v0(user_config, config)

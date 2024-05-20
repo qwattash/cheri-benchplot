@@ -26,7 +26,7 @@ from .util import new_logger
 SESSION_RUN_FILE = "session-run.json"
 benchplot_logger = logging.getLogger("cheri-benchplot")
 
-RESERVED_PARAMETER_NAMES = ["instance", "descriptor"]
+RESERVED_PARAMETER_NAMES = ["descriptor"]
 
 
 class Session:
@@ -110,7 +110,8 @@ class Session:
         #: Session root path, where all the session data will be stored
         self.session_root_path = session_root_path.expanduser().absolute()
         self._ensure_dir_tree()
-        #: Mapping from g_uuid to platform configurations. Note that this should be readonly.
+        #: Mapping from target names to platform configurations.
+        #: Note that this should be readonly.
         self.platform_map = {}
         #: A dataframe that organises the set of benchmarks to run or analyse.
         self.parameterization_matrix = self._resolve_parameterization_matrix()
@@ -145,26 +146,18 @@ class Session:
 
         This is assembled as a dataframe containing the following columns:
          - descriptor: Benchmark descriptor objects
-         - instance: Implicit instance (target) parameterization axis
+         - target: Built-in parameterization axis for the host system configuration
          - <params>: A variable number of columns depending on the benchmark parameterization.
-
-        XXX modify the instance logic so that instances become a real parameter?
 
         :return: The benchmark matrix as a polars dataframe
         """
         # First pass, collect the parameterization axes
-        instances = {}
         parameters = defaultdict(list)
         for dataset_config in self.config.configurations:
             self.logger.debug("Found benchmark run config %s", dataset_config)
-            instances[dataset_config.g_uuid] = dataset_config.instance.name
+            # Note that g_uuids are used for backward-compatibility only
             self.platform_map[dataset_config.g_uuid] = dataset_config.instance
             for k, p in dataset_config.parameters.items():
-                if not re.fullmatch(r"[a-zA-Z0-9_]+", k):
-                    self.logger.exception(
-                        "Invalid parameterization key '%s': "
-                        "keys must be valid python property names", k)
-                    raise RuntimeError("Configuration error")
                 parameters[k].append(p)
 
         all_parameters = set(parameters.keys())
