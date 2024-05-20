@@ -19,6 +19,7 @@ from .benchmark import Benchmark, BenchmarkExecMode, ExecTaskConfig
 from .config import (AnalysisConfig, BenchplotUserConfig, Config, ConfigContext, ExecTargetConfig, InstanceConfig,
                      PipelineConfig, SessionRunConfig, TaskTargetConfig)
 from .instance import InstanceManager
+from .shellgen import ScriptContextBase
 from .task import (ExecutionTask, SessionExecutionTask, TaskRegistry, TaskScheduler)
 from .util import new_logger
 
@@ -374,6 +375,23 @@ class Session:
         exec_config = ExecTaskConfig(mode=BenchmarkExecMode(mode))
         instance_manager = InstanceManager(self)
         self.scheduler.register_resource(instance_manager)
+
+        # Generate debug runner scripts to manually run the benchmarks on different
+        # systems.
+        data_root = self.get_data_root_path()
+
+        for target, section in self.parameterization_matrix.group_by("target"):
+            section = section.select(
+                pl.col("descriptor").map_elements(lambda bench: bench.get_run_script_path().relative_to(data_root),
+                                                  return_dtype=pl.Object).alias("run_script"))
+            ctx = ScriptContextBase(self.logger)
+            ctx.set_template("run-target.sh.jinja")
+            ctx.extend_context(dict(target=target, run_scripts=section["run_script"]))
+            run_target = re.sub(r"[\s/]", "-", target)
+            script_path = self.get_data_root_path() / f"run-target-{run_target}.sh"
+            with open(script_path, "w+") as script_file:
+                ctx.render(script_file)
+            script_path.chmod(0o755)
 
         for descriptor in self.parameterization_matrix["descriptor"]:
             descriptor.schedule_exec_tasks(self.scheduler, exec_config)
