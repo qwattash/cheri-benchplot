@@ -18,7 +18,7 @@
   {% if iperf_config.use_localhost_server %}
     # Start localhost iperf server
     verbose "Start iperf server for iteration {{ current_iteration }}"
-    iperf3 -s --one-off --daemon --pidfile /tmp/iperf_server.pid --interval 60
+    iperf3 -s --one-off --daemon --pidfile /tmp/iperf_server.pid --interval 60 --bind {{ scenario_config.remote_host }}
     sleep 1
   {% endif %}
 {% endblock iteration_setup %}
@@ -61,7 +61,7 @@
   verbose "Run iperf3 iteration {{ current_iteration }} {{ 'hwpmc' if iperf_config.hwpmc }}"
 
   iperf3 -c {{ scenario_config.remote_host }} \
-	{{ limit_flag() | trim }} {{ scenario_config.transfer_limit | int }} \
+	{{ limit_flag() | trim }} {{ scenario_config.transfer_limit }} \
 	-P {{ scenario_config.streams }} \
     --interval 60 \
 	{{ protocol_flag() | trim }} {{ mode_flag() | trim }} {{ cpuaffinity() | trim }} -J \
