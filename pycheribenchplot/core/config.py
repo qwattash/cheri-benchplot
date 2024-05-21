@@ -1108,7 +1108,7 @@ class PipelineConfig(CommonSessionConfig):
     instance_config: PipelineInstanceConfig = dc.field(default_factory=PipelineInstanceConfig)
 
     #: Benchmark configuration, required
-    benchmark_config: Union[List[PipelineBenchmarkConfig] | PipelineBenchmarkConfig] = dc.field(default_factory=list)
+    benchmark_config: Union[PipelineBenchmarkConfig, List[PipelineBenchmarkConfig]] = dc.field(default_factory=list)
 
 
 @dc.dataclass
