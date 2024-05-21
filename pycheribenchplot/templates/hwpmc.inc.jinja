@@ -1,0 +1,63 @@
+{#
+ # Macro helpers to use the hwpmc context as set by the
+ # PMCExec task.
+ #}
+
+{% if hwpmc_config is defined %}
+  {% if hwpmc_config.system_mode %}
+    {% set hwpmc_counter_flag = "-s" %}
+  {% else %}
+    {% set hwpmc_counter_flag = "-p" %}
+  {% endif %}
+
+  {% if hwpmc_config.sampling_mode %}
+    {% set hwpmc_counter_flag = hwpmc_counter_flag | upper %}
+  {% endif %}
+{% endif %}
+
+
+{% macro _pmcstat_counter(name) %}
+  {{ hwpmc_counter_flag }} {{ name }}
+{% endmacro %}
+
+{% macro _pmcstat_counters() %}
+  {# Note that the -n flag must come before the counter #}
+  {% if hwpmc_config.sampling_mode %} -n {{ hwpmc_config.sampling_rate }} {% endif -%}
+  {%- for cnt in hwpmc_counters %}{{ _pmcstat_counter(cnt) | trim }} {% endfor -%}
+{% endmacro %}
+
+{% macro _pmcstat_impl(iteration) %}
+  pmcstat {{ _pmcstat_counters() | trim }} -O "{{ hwpmc_output[iteration] }}{% if hwpmc_config.sampling_mode %}.tmp{% endif %}"
+{% endmacro %}
+
+{% macro _pmcstat(iteration, extra_flags) %}
+  {% if hwpmc_config is defined %}
+    {{ _pmcstat_impl(iteration) | trim }} {{ extra_flags }}
+  {% endif %}
+{% endmacro %}
+
+{#
+ # Return the pmcstat command suitable to invoke pmcstat for an iteration.
+ #}
+{% macro pmcstat(iteration, extra_flags) %}
+{{ _pmcstat(iteration, extra_flags) | trim -}}
+{% endmacro %}
+
+{% macro _pmcstat_post_impl(iteration) %}
+  pmcstat -R "{{ hwpmc_output[iteration] }}.tmp" -G "{{ hwpmc_output[iteration] }}"
+  rm "{{ hwpmc_output[iteration] }}.tmp"
+{% endmacro %}
+
+{% macro _pmcstat_post(iteration) %}
+  {% if hwpmc_config is defined %}
+    {{ _pmcstat_post_impl(iteration) | trim }}
+  {% endif %}
+{% endmacro %}
+
+{#
+ # Return the pmcstat command suitable to post-process pmcstat sampling data.
+ # for an iteration
+ #}
+{% macro pmcstat_postprocess(iteration) %}
+{{ _pmcstat_post(iteration) | trim }}
+{% endmacro %}
