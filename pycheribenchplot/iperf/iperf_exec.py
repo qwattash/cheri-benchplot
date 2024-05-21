@@ -103,9 +103,6 @@ class IPerfConfig(Config):
     use_localhost_server: bool = config_field(
         True, desc="Spawn server on localhost, if False, the scenario must specify a remote_host")
 
-    #: Enable hwpmc measurement
-    hwpmc: bool = False
-
 
 class IngestIPerfStats(PLDataFrameLoadTask):
     """

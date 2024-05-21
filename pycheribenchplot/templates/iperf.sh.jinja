@@ -4,6 +4,8 @@
  #}
 {% extends "runner-script.sh.jinja" %}
 
+{% import "hwpmc.inc.jinja" as hwpmc with context %}
+
 {% block global_setup %}
   {{ super() }}
   {% if iperf_config.iperf_path %}
@@ -60,10 +62,19 @@
 {% block iteration_exec %}
   verbose "Run iperf3 iteration {{ current_iteration }} {{ 'hwpmc' if iperf_config.hwpmc }}"
 
-  iperf3 -c {{ scenario_config.remote_host }} \
+  {{ hwpmc.pmcstat(current_iteration) }} \
+	iperf3 -c {{ scenario_config.remote_host }} \
 	{{ limit_flag() | trim }} {{ scenario_config.transfer_limit }} \
 	-P {{ scenario_config.streams }} \
-    --interval 60 \
+	--interval 60 \
 	{{ protocol_flag() | trim }} {{ mode_flag() | trim }} {{ cpuaffinity() | trim }} -J \
+	-l {{ scenario_config.buffer_size }} \
 	--logfile {{ iperf_output_path[current_iteration] }}
 {% endblock iteration_exec %}
+
+{% block global_teardown %}
+  {{ super() }}
+  {% for i in range(iterations) %}
+    {{ hwpmc.pmcstat_postprocess(i) }}
+  {% endfor %}
+{% endblock global_teardown %}
