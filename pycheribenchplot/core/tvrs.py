@@ -86,14 +86,6 @@ class TVRSParamsContext:
         Ensure that the dataframe has all the required columns, if not
         generate a default column when possible.
         """
-        if "target" not in self.df.columns:
-            # If the `target` is missing, generate one
-            # This uses the `name` field from the instance configuration as
-            # the display name.
-            expr = (pl.col("dataset_gid").map_elements(self.task.g_uuid_to_label, return_dtype=dt.String))
-            self.derived_param("target", expr)
-        else:
-            self.logger.warning("The column `target` is reserved")
         if not set(self.TVRS_PARAMETERS).issubset(self.df.columns):
             self.logger.error("Invalid dataframe, the following columns are required: %s, found: %s",
                               self.TVRS_PARAMETERS, self.df.columns)
@@ -103,13 +95,10 @@ class TVRSParamsContext:
         assert len(all_bench) > 0
         pkeys = list(all_bench[0].parameters.keys())
         for check_param in self.TVRS_PARAMETERS:
-            if check_param == "target":
-                # Skip this, as it we generate it here if missing.
-                continue
             if check_param not in pkeys:
                 self.logger.error("Missing parameter %s, found %s", check_param, pkeys)
                 raise RuntimeError("Configuration error")
-        return ["target"] + pkeys
+        return pkeys
 
     @property
     def r(self) -> ColumnMapping:
@@ -214,9 +203,6 @@ class TVRSParamsContext:
         # Filter baseline selector for dropped axes, check that the selector includes
         # only parameter columns and optionally the dataset_id/gid
         df_baseline_sel = {}
-        if gid_sel := baseline_sel.pop("dataset_gid", None):
-            # Convert this to the standard target axis
-            baseline_sel.setdefault("target", self.task.g_uuid_to_label(gid_sel))
         for k, v in baseline_sel.items():
             if k in self.base_params:
                 if k not in self.params:
@@ -229,21 +215,40 @@ class TVRSParamsContext:
                 self.logger.error("Baseline selector %s does not match any of the "
                                   "parameterization axes %s", k, self.base_params)
                 raise RuntimeError("Unexpected baseline selector")
+
         # Generate the baseline dataframe slice.
         # We compute the mean of the baseline metrics columns to compute the overhead.
         # XXX We should deal with error propagation here...
-        baseline = (self.df.filter(
-            **df_baseline_sel).select(ID_COLUMNS + param_columns + metrics).group_by(param_columns).agg(
+        # yapf: disable
+        baseline = (
+            self.df.filter(**df_baseline_sel)
+            .select(ID_COLUMNS + param_columns + metrics)
+            .group_by(param_columns)
+            .agg(
                 cs.by_name(metrics).mean(),
-                cs.by_name(ID_COLUMNS + param_columns).first()).with_columns(
-                    cs.by_name(metrics).name.suffix("_baseline")).drop(metrics))
+                cs.by_name(ID_COLUMNS + param_columns).first()
+            ).with_columns(
+                cs.by_name(metrics).name.suffix("_baseline")
+            ).drop(metrics)
+        )
+        # yapf: enable
+
         # Determine how to join the baseline slice. This is done using
         # the keys that identify the baseline selector to find the degrees of freedom
         # that the baseline slice has and join on those.
-        complement_sel = [k for k in base_columns if k not in df_baseline_sel]
-        join_df = self.df.join(baseline, on=complement_sel, suffix="__join_right")
-        # Suppress any unwanted columns on the right
-        join_df = join_df.drop(cs.ends_with("__join_right"))
+        join_sel = [p for p in self.TVRS_PARAMETERS if p in self.params and p not in df_baseline_sel]
+        if join_sel:
+            join_df = self.df.join(baseline, on=join_sel, suffix="__join_right")
+            # Suppress any unwanted columns on the right
+            join_df = join_df.drop(cs.ends_with("__join_right"))
+        else:
+            # The selector may be empty if the baseline slice selects a specific
+            # target/variant/runtime/scenario combination.
+            # In this case, baseline is a single row which we replicate for every
+            # parameter combination
+            _, right_df = pl.align_frames(self.df, baseline, on=list(df_baseline_sel.keys()))
+            join_df = right_df.with_columns(cs.by_name(metrics).fill_null(strategy="forward"))
+
         assert join_df.shape[0] == self.df.shape[0], "Unexpected join result"
         # Create the overhead columns and optionally drop the baseline data
         sign = -1 if inverted else 1
