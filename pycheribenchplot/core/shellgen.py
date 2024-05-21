@@ -33,6 +33,12 @@ def path_parent(path: Path) -> Path:
     return path.parent
 
 
+@script_filter
+def path_name(path: Path) -> str:
+    """Helper to find the path name portion within the template"""
+    return path.name
+
+
 class ScriptContextBase:
     """
     Generates a script based on a Jinja2 template and parameters.
