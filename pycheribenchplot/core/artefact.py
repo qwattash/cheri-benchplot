@@ -186,22 +186,15 @@ class RemoteTarget(Target):
     """
     Target with an associated remote file.
     """
-    def get_remote_root_path(self) -> Path:
-        """
-        Build the remote root directory path for the target.
-        This is only supported for exec tasks.
-        """
-        root = self.get_root_path()
-        relative_root = root.relative_to(self._task.session.session_root_path)
-        if self._task.is_exec_task():
-            return self._task.session.config.remote_session_path / relative_root
-        raise RuntimeError("Remote analysis path is not supported")
-
     def iter_remote_paths(self, **kwargs) -> Iterator[Path]:
         """
         Iterate over parameterization key and remote path pairs.
         The target may not have any remote paths, in this case this
         returns and empty iterator.
+
+        This is only supported for exec tasks.
+        If this is a session task, the path is considered relative to the session data root.
+        If this is a dataset task, the path is considered relative to the benchmark data root.
 
         :param **kwargs: Filter keys for the path parameterization.
         :return: A generator of remote paths associated to the target.
@@ -209,12 +202,11 @@ class RemoteTarget(Target):
         param_gen = self._filter_path_parameters(**kwargs)
         params = product(*param_gen.values())
         for param_set in params:
-            root = self.get_remote_root_path()
             param_args = dict(zip(self._path_parameters.keys(), param_set))
             path = Path(self._path_template.format(**param_args))
             if path.is_absolute():
                 path = path.relative_to("/")
-            yield root / path
+            yield path
 
     def remote_paths(self, **kwargs) -> list[Path] | Path:
         return list(self.iter_remote_paths(**kwargs))
