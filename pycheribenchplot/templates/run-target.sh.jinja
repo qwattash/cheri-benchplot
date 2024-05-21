@@ -1,0 +1,10 @@
+#!/bin/sh
+
+echo "Run benchmarks for {{ target }}"
+
+_CURRDIR=`pwd`
+{% for script_path in run_scripts %}
+cd "{{ script_path | path_parent }}"
+./{{ script_path | path_name }}
+cd "${_CURRDIR}"
+{% endfor %}
