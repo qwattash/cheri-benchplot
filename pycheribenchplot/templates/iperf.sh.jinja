@@ -59,6 +59,12 @@
   {% endif %}
 {% endmacro %}
 
+{% macro mss_flag() %}
+  {% if scenario_config.mss %}
+    --set-mss {{ scenario_config.mss }}
+  {% endif %}
+{% endmacro %}
+
 {% block iteration_exec %}
   verbose "Run iperf3 iteration {{ current_iteration }} {{ 'hwpmc' if iperf_config.hwpmc }}"
 
@@ -67,8 +73,11 @@
 	{{ limit_flag() | trim }} {{ scenario_config.transfer_limit }} \
 	-P {{ scenario_config.streams }} \
 	--interval 60 \
-	{{ protocol_flag() | trim }} {{ mode_flag() | trim }} {{ cpuaffinity() | trim }} -J \
-	-l {{ scenario_config.buffer_size }} \
+	{{ protocol_flag() | trim }} \
+	{{ mode_flag() | trim }} \
+	{{ cpuaffinity() | trim }} \
+	-J -l {{ scenario_config.buffer_size }} \
+	{{ mss_flag() | trim }} \
 	--logfile {{ iperf_output_path[current_iteration] }}
 {% endblock iteration_exec %}
 
