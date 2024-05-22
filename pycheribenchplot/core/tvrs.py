@@ -159,7 +159,7 @@ class TVRSParamsContext:
         expr = pl.concat_str([pl.col(p).cast(dt.String) for p in to_combine], separator=sep)
         self.derived_param(name, expr)
 
-    def derived_hue_param(self, default: list[str], sep=" "):
+    def derived_hue_param(self, default: list[str] | None, sep=" "):
         """
         Produce the _hue derived parameter by combining the given set of parameter columns.
 
@@ -170,6 +170,9 @@ class TVRSParamsContext:
         """
         config = self.task.tvrs_config()
         hue_params = config.hue_parameters if config.hue_parameters is not None else default
+        if hue_params is None:
+            self._rename["_hue"] = None
+            return
 
         requested = set(hue_params)
         hue_params = [hp for hp in hue_params if hp in self.base_params]
