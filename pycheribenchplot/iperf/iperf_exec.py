@@ -86,6 +86,7 @@ class IPerfScenario(Config):
         desc="CPU Affinity for send/receive sides",
         validate=Regexp(r"[0-9]+(,[0-9+])?", error="CPU Affinty must be of the form 'N[,M]'")
     )
+    nodelay: bool = config_field(False, desc="Disable Nagle algorithm to send small packets immediately")
     # yapf: enable
 
 
@@ -136,6 +137,9 @@ class IngestIPerfStats(PLDataFrameLoadTask):
         )
         # yapf: enable
         df = snd_df.join(rcv_df, on="stream")
+
+        assert end_info["sum_sent"]["bits_per_second"] == snd_df["snd_bits_per_second"].sum()
+        assert end_info["sum_received"]["bits_per_second"] == rcv_df["rcv_bits_per_second"].sum()
         return df
 
 

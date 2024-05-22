@@ -65,6 +65,12 @@
   {% endif %}
 {% endmacro %}
 
+{% macro nodelay_flag() %}
+  {% if scenario_config.nodelay %}
+    --no-delay
+  {% endif %}
+{% endmacro %}
+
 {% block iteration_exec %}
   verbose "Run iperf3 iteration {{ current_iteration }} {{ 'hwpmc' if iperf_config.hwpmc }}"
 
@@ -78,6 +84,7 @@
 	{{ cpuaffinity() | trim }} \
 	-l {{ scenario_config.buffer_size }} \
 	{{ mss_flag() | trim }} \
+	{{ nodelay_flag() | trim }} \
 	-J --logfile {{ iperf_output_path[current_iteration] }}
 {% endblock iteration_exec %}
 

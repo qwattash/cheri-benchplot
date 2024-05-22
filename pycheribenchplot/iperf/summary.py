@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 import polars as pl
 import polars.selectors as cs
 import seaborn as sns
@@ -7,8 +9,13 @@ from ..core.artefact import ValueTarget
 from ..core.config import Config, config_field
 from ..core.plot import PlotTarget, PlotTask, new_facet
 from ..core.task import dependency, output
-from ..core.tvrs import TVRSParamsMixin
+from ..core.tvrs import TVRSParamsMixin, TVRSTaskConfig
 from .iperf_exec import IPerfExecTask
+
+
+@dataclass
+class IPerfSummaryConfig(TVRSTaskConfig):
+    tile_parameter: str = config_field("scenario", desc="Parameter axis to use for the facet grid")
 
 
 class UnifiedIPerfStats(AnalysisTask):
@@ -48,6 +55,7 @@ class IPerfSummaryPlot(TVRSParamsMixin, PlotTask):
     """
     task_namespace = "iperf"
     task_name = "summary-plot"
+    task_config_class = IPerfSummaryConfig
     public = True
 
     @dependency
@@ -87,11 +95,14 @@ class IPerfSummaryPlot(TVRSParamsMixin, PlotTask):
             _hue="Variant",
             rcv_bits_per_second="Throughput (bits/s)",
         ))
+        ctx.sort()
 
         hue_kwargs = dict()
         if ctx.r._hue:
             hue_kwargs.update(dict(palette=ctx.build_palette_for("_hue"), hue=ctx.r._hue))
-        with new_facet(self.summary_plot.paths(), ctx.df, col=ctx.r.scenario, col_wrap=3) as facet:
+        facet_col = ctx.r[self.config.tile_parameter]
+
+        with new_facet(self.summary_plot.paths(), ctx.df, col=facet_col, col_wrap=3) as facet:
             facet.map_dataframe(sns.boxplot, x=ctx.r.target, y=ctx.r.rcv_bits_per_second, **hue_kwargs)
             facet.add_legend()
 
@@ -99,11 +110,14 @@ class IPerfSummaryPlot(TVRSParamsMixin, PlotTask):
         ctx = self._get_agg_stream_stats()
         ctx.compute_overhead(["rcv_bits_per_second"])
         ctx.relabel(default=dict(_hue="Variant", rcv_bits_per_second_overhead="% Throughput"))
+        ctx.sort()
 
         hue_kwargs = dict()
         if ctx.r._hue:
             hue_kwargs.update(dict(palette=ctx.build_palette_for("_hue"), hue=ctx.r._hue))
-        with new_facet(self.summary_overhead_plot.paths(), ctx.df, col=ctx.r.scenario, col_wrap=3) as facet:
+        facet_col = ctx.r[self.config.tile_parameter]
+
+        with new_facet(self.summary_overhead_plot.paths(), ctx.df, col=facet_col, col_wrap=3) as facet:
             facet.map_dataframe(sns.boxplot, x=ctx.r.target, y=ctx.r.rcv_bits_per_second_overhead, **hue_kwargs)
             facet.add_legend()
 

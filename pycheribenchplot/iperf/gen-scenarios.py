@@ -42,6 +42,7 @@ def main():
     parser.add_argument("--window", nargs="+", type=str, help="Socket buffer size")
     parser.add_argument("--affinity", type=str, help="CPU affinity")
     parser.add_argument("-r", type=str, help="Remote host, default localhost")
+    parser.add_argument("--nodelay", action="store_true", default=False, help="Set iperf nodelay flag")
 
     parser.add_argument("--pretend", action="store_true", default=False, help="Do not generate files")
 
@@ -58,6 +59,8 @@ def main():
         scenario_file_pattern += "_m{mss}"
     if args.buffer_size:
         scenario_file_pattern += "_{buffer_size}"
+    if args.nodelay:
+        scenario_file_pattern += "_nd"
 
     for (limit, window, mss, size) in it.product(args.limit or [DEFAULT], args.window or [DEFAULT], args.mss
                                                  or [DEFAULT], args.buffer_size or [DEFAULT]):
@@ -70,7 +73,8 @@ def main():
                       mss=mss,
                       buffer_size=size,
                       remote_host=args.r,
-                      cpu_affinity=args.affinity)
+                      cpu_affinity=args.affinity,
+                      nodelay=args.nodelay)
         kwargs = {k: v for k, v in kwargs.items() if v is not None}
         scenario = IPerfScenario(**kwargs)
 

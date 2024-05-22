@@ -1,7 +1,7 @@
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import reduce
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import polars as pl
 import polars.datatypes as dt
@@ -9,7 +9,7 @@ import polars.selectors as cs
 import seaborn as sns
 
 from .analysis import AnalysisTask
-from .config import Config
+from .config import Config, config_field
 from .task import ExecutionTask
 
 
@@ -38,7 +38,7 @@ class TVRSExecTask(ExecutionTask):
 @dataclass
 class TVRSTaskConfig(Config):
     #: Weigth for determining the order of labels based on the parameters
-    parameter_weight: Optional[Dict[str, Dict[str, int]]] = None
+    parameter_weight: Optional[Dict[str, Union[Dict[str, int], int]]] = None
     #: Relabel parameter axes
     parameter_names: Optional[Dict[str, str]] = None
     #: Relabel metric columns
@@ -66,6 +66,9 @@ class TVRSParamsContext:
             self._rename = rename
 
         def __getattr__(self, name: str) -> str:
+            return self._rename[name]
+
+        def __getitem__(self, name: str) -> str:
             return self._rename[name]
 
     def __init__(self, task: "TVRSParamsMixin", df: pl.DataFrame):
@@ -275,18 +278,6 @@ class TVRSParamsContext:
         """
         config = self.task.tvrs_config()
 
-        # Compute the parameterization weight for consistent label ordering
-        if config.parameter_weight:
-            df = self.df.with_columns(pl.lit(0).alias("param_weight"))
-            for name, mapping in config.parameter_weight.items():
-                if name in df.columns:
-                    self.logger.debug("Set weight for %s => %s", name, mapping)
-                    df = df.with_columns(
-                        pl.col("param_weight") + pl.col(name).replace(mapping, default=0, return_dtype=dt.Decimal))
-                else:
-                    self.logger.warning("Skipping weight for parameter '%s', does not exist", name)
-            self.df = df
-
         # Parameter renames
         if config.parameter_labels:
             relabeling = []
@@ -325,6 +316,41 @@ class TVRSParamsContext:
         else:
             ncolors = 1
         return sns.color_palette(n_colors=ncolors)
+
+    def sort(self, descending=False):
+        """
+        Sort the dataframe according to the configured param_weight.
+
+        Note that this may occur before or after relabeling.
+        """
+        config = self.task.tvrs_config()
+        if not config.parameter_weight:
+            return
+        df = self.df.with_columns(pl.lit(0).alias("param_weight"))
+        for name, mapping_or_weight in config.parameter_weight.items():
+            col_name = self._rename[name]
+            if col_name not in df.columns:
+                self.logger.warning("Skipping weight for parameter '%s', does not exist", col_name)
+            if type(mapping_or_weight) == int:
+                base_weight = mapping_or_weight
+                sorted_values = sorted(df[col_name].unique())
+                mapping = {v: base_weight + index for index, v in enumerate(sorted_values)}
+            else:
+                mapping = mapping_or_weight
+                # We may have relabeled the parameter axis through the `parameter_labels`
+                # configuration, so we extend the mapping with the corresponding aliases,
+                # if there are any defined in `parameter_labels`.
+                if config.parameter_labels and name in config.parameter_labels:
+                    alias_weights = {}
+                    for old_p, new_p in config.parameter_labels[name].items():
+                        alias_weights[new_p] = mapping.get(old_p, 0)
+                    mapping.update(alias_weights)
+
+            self.logger.debug("Set weight for %s => %s", col_name, mapping)
+            df = df.with_columns(
+                pl.col("param_weight") + pl.col(col_name).replace(mapping, default=0, return_dtype=dt.Decimal))
+
+        self.df = df.sort(by="param_weight", descending=descending)
 
 
 class TVRSParamsMixin:
