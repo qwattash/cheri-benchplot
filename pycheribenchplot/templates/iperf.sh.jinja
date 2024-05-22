@@ -76,9 +76,9 @@
 	{{ protocol_flag() | trim }} \
 	{{ mode_flag() | trim }} \
 	{{ cpuaffinity() | trim }} \
-	-J -l {{ scenario_config.buffer_size }} \
+	-l {{ scenario_config.buffer_size }} \
 	{{ mss_flag() | trim }} \
-	--logfile {{ iperf_output_path[current_iteration] }}
+	-J --logfile {{ iperf_output_path[current_iteration] }}
 {% endblock iteration_exec %}
 
 {% block global_teardown %}
