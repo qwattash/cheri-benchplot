@@ -86,14 +86,15 @@ class IPerfSummaryPlot(TVRSParamsMixin, PlotTask):
             pl.col("^.*_bits_per_second$").sum(),
         ))
         ctx.suppress_const_params(keep=["target", "scenario"])
-        ctx.derived_hue_param(default=["variant", "runtime"])
+        ctx.derived_hue_param(default=None)
         return ctx
 
     def _plot_summary(self):
         ctx = self._get_agg_stream_stats()
+        ctx.df = ctx.df.with_columns(pl.col("rcv_bits_per_second") / (8 * 2**20))
         ctx.relabel(default=dict(
             _hue="Variant",
-            rcv_bits_per_second="Throughput (bits/s)",
+            rcv_bits_per_second="Throughput (MiB/s)",
         ))
         ctx.sort()
 
