@@ -1,0 +1,14 @@
+{
+    "protocol": "tcp",
+    "transfer_mode": "bytes",
+    "transfer_limit": "10G",
+    "remote_host": "10.0.0.1",
+    "mode": "client-send",
+    "streams": 1,
+    "buffer_size": "4K",
+    "mss": null,
+    "window_size": "64K",
+    "warmup": null,
+    "cpu_affinity": "0,2",
+    "nodelay": true
+}
