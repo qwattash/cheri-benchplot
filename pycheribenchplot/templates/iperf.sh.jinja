@@ -20,7 +20,7 @@
   {% if iperf_config.use_localhost_server %}
     # Start localhost iperf server
     verbose "Start iperf server for iteration {{ current_iteration }}"
-    iperf3 -s --one-off --daemon --pidfile /tmp/iperf_server.pid --interval 60 --bind {{ scenario_config.remote_host }}
+    iperf3 -s --one-off --daemon --pidfile /tmp/iperf_server.pid --interval 60 --bind {{ scenario_config.remote_host }} {{ ipversion() | trim }}
     sleep 1
   {% endif %}
 {% endblock iteration_setup %}
@@ -71,6 +71,14 @@
   {% endif %}
 {% endmacro %}
 
+{% macro ipversion() %}
+  {% if scenario_config.use_ipv4 %}
+    -4
+  {% else %}
+    -6
+  {% endif %}
+{% endmacro %}
+
 {% block iteration_exec %}
   verbose "Run iperf3 iteration {{ current_iteration }} {{ 'hwpmc' if iperf_config.hwpmc }}"
 
@@ -85,6 +93,7 @@
 	-l {{ scenario_config.buffer_size }} \
 	{{ mss_flag() | trim }} \
 	{{ nodelay_flag() | trim }} \
+	{{ ipversion() | trim }} \
 	-J --logfile {{ iperf_output_path[current_iteration] }}
 {% endblock iteration_exec %}
 

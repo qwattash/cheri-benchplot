@@ -87,6 +87,7 @@ class IPerfScenario(Config):
         validate=Regexp(r"[0-9]+(,[0-9+])?", error="CPU Affinty must be of the form 'N[,M]'")
     )
     nodelay: bool = config_field(False, desc="Disable Nagle algorithm to send small packets immediately")
+    use_ipv4: bool = config_field(True, desc="Force use of IPv4 vs IPv6")
     # yapf: enable
 
 
