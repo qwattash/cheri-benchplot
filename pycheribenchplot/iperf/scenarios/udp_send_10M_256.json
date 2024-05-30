@@ -1,0 +1,15 @@
+{
+    "protocol": "udp",
+    "transfer_mode": "pkts",
+    "transfer_limit": "10M",
+    "remote_host": "10.0.0.1",
+    "mode": "client-send",
+    "streams": 1,
+    "buffer_size": "256",
+    "mss": null,
+    "window_size": null,
+    "warmup": null,
+    "cpu_affinity": "0,2",
+    "nodelay": false,
+    "use_ipv4": true
+}
