@@ -18,7 +18,10 @@
 
 {% block global_setup %}
   {{ super() }}
+  # Required to set fixed workload instead of using time as duration
   export UNIXBENCH_FIXED_WORKLOAD=1
+  # Required for some unixbench tests to point to the pgms directory
+  export UB_BINDIR="{{ unixbench_config.unixbench_path or '.' }}/pgms"
 {% endblock %}
 
 {% block iteration_exec %}
