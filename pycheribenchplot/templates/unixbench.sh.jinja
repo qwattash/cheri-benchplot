@@ -1,0 +1,36 @@
+{#
+ # Runner script for unixbench benchmarks.
+ # This extends the standard runner-script.sh.jinja template
+ #
+ # Note that we use hyperfine to get a more precise timing than from `time`
+ #}
+{% extends "runner-script.sh.jinja" %}
+
+{% import "hwpmc.inc.jinja" as hwpmc with context %}
+
+{% macro _unixbench_test() %}
+  {{ unixbench_config.unixbench_path or '.' }}/pgms/{{ scenario_config.test_name }}
+{% endmacro %}
+
+{% macro _unixbench_command(iter) %}
+  {{ hwpmc.pmcstat(iter) }} {{ _unixbench_test() | trim }} {{ scenario_config.duration | int }} {{ scenario_config.args | join(' ') }}
+{% endmacro %}
+
+{% block global_setup %}
+  {{ super() }}
+  export UNIXBENCH_FIXED_WORKLOAD=1
+{% endblock %}
+
+{% block iteration_exec %}
+  verbose "Run unixbench {{ scenario_config.test }} iterations {{ current_iteration }}"
+
+  hyperfine --style=none -r 1 --export-json {{ unixbench_out_path[current_iteration] }} \
+	"{{ _unixbench_command(current_iteration) | trim }}"
+{% endblock %}
+
+{% block global_teardown %}
+  {{ super() }}
+  {% for i in range(iterations) %}
+    {{ hwpmc.pmcstat_postprocess(i) }}
+  {% endfor %}
+{% endblock global_teardown %}
