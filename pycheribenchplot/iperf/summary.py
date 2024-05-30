@@ -109,7 +109,7 @@ class IPerfSummaryPlot(TVRSParamsMixin, PlotTask):
 
     def _plot_overhead(self):
         ctx = self._get_agg_stream_stats()
-        ctx.compute_overhead(["rcv_bits_per_second"])
+        ctx = ctx.compute_overhead(["rcv_bits_per_second"])
         ctx.relabel(default=dict(_hue="Variant", rcv_bits_per_second_overhead="% Throughput"))
         ctx.sort()
 

@@ -1,7 +1,8 @@
 from contextlib import contextmanager
+from copy import copy
 from dataclasses import dataclass, field
 from functools import reduce
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Self, Union
 
 import polars as pl
 import polars.datatypes as dt
@@ -83,6 +84,14 @@ class TVRSParamsContext:
         self.extra_params = set(self.base_params).difference(self.TVRS_PARAMETERS)
         self._rename.update({p: p for p in self.base_params})
         self._rename.update({m: m for m in df.columns if m not in self.params})
+
+    def copy_context(self, df: pl.DataFrame) -> Self:
+        cp = copy(self)
+        cp.df = df
+        cp.params = list(self.params)
+        cp._rename = dict(self._rename)
+        cp.extra_params = set(self.extra_params)
+        return cp
 
     def _ensure_parameterization(self):
         """
@@ -194,9 +203,10 @@ class TVRSParamsContext:
         for chunk_id, chunk_df in self.df.groupby(axis):
             mapper(chunk_id, chunk_df)
 
-    def compute_overhead(self, metrics: list[str], inverted: bool = False):
+    def compute_overhead(self, metrics: list[str], inverted: bool = False) -> Self:
         """
-        Generate the overhead vs the common baseline column
+        Generate the overhead vs the common baseline column and returns it as a
+        new parameter context.
         """
         ID_COLUMNS = ["dataset_id"]
         # All real parameter axes that are also active
@@ -270,7 +280,9 @@ class TVRSParamsContext:
         baseline_eq_exprs = map(lambda i: pl.col(i[0]).eq(i[1]), df_baseline_sel.items())
         not_baseline_sel = reduce(lambda x, y: x & y, baseline_eq_exprs).not_()
         overhead_df = (join_df.with_columns(overhead_expr).filter(not_baseline_sel))
-        self.df = overhead_df
+
+        # Create the new context
+        return self.copy_context(overhead_df)
 
     def relabel(self, default: dict[str, str] = None):
         """
