@@ -1,0 +1,106 @@
+{
+    "version": "1.0",
+    "concurrent_instances": 1,
+    "remote_session_path": "/home/freebsd/pipelines/iperf",
+    "benchmark_config": {
+        "name": "iperf",
+        "desc": "iperf3 TCP throughput benchmark",
+        "iterations": 10,
+        "parameterize": {
+            "host": ["hybrid", "benchmark"],
+            "variant": ["base", "sub_object"],
+            "runtime": ["default"],
+            "bufsize": ["64", "256", "1K", "4K", "16K", "64K", "256K", "1M"],
+            "scenario": [
+                "tcp_send_10G_w64K_{bufsize}"
+            ]
+        },
+        "parameterize_options": {
+            "skip": [
+                {"host": "hybrid", "variant": "sub_object"}
+            ]
+        },
+        "system": [{
+            "matches": { "host": "hybrid", "variant": "base" },
+            "host_system": {
+                "name": "hybrid-kernel",
+                "kernel": "GENERIC-NODEBUG",
+                "cheri_target": "riscv64-purecap",
+                "kernelabi": "hybrid"
+            }
+        }, {
+            "matches": { "host": "benchmark", "variant": "sub_object" },
+            "host_system": {
+                "name": "benchmark-kernel",
+                "kernel": "GENERIC-MORELLO-PURECAP-BENCHMARK-NODEBUG",
+                "cheri_target": "morello-benchmark",
+                "kernelabi": "purecap"
+            }
+        }, {
+            "matches": { "host": "benchmark", "variant": "base"},
+            "host_system": {
+                "name": "benchmark-kernel-nosubobj",
+                "kernel": "GENERIC-MORELLO-PURECAP-BENCHMARK-NOSUBOBJECT-NODEBUG",
+                "cheri_target": "morello-benchmark",
+                "kernelabi": "purecap"
+            }
+        }],
+        "command_hooks": {
+            "setup": [{
+                "matches": { "runtime": "default" },
+                "commands": [
+                    "sudo sysctl security.cheri.runtime_revocation_default=0",
+                    "sudo ifconfig lo2 create",
+                    "sudo ifconfig lo2 mtu 1500 up",
+                    "sudo ifconfig lo2 10.0.0.1 netmask 255.255.255.0"
+                ]
+            }]
+        },
+        "generators": [{
+            "handler": "iperf.exec",
+            "task_options": {
+                "scenario_path": "~/cheri/cheri-benchplot/pycheribenchplot/iperf/scenarios",
+                "iperf_path": "/home/freebsd/cheri/iperf/src"
+            }
+        }]
+    },
+    "analysis_config": {
+        "plot": {
+            "plot_output_format": ["pdf", "png"]
+        },
+        "baseline": { "target": "hybrid-kernel", "variant": "base" },
+        "tasks": [{
+            "handler": "iperf.summary-plot",
+            "task_options": {
+                "parameter_weight": {
+                    "bufsize": {
+                        "64": 10,
+                        "256": 20,
+                        "1K": 30,
+                        "4K": 40,
+                        "16K": 50,
+                        "64K": 60,
+                        "256K": 70,
+                        "1M": 80
+                    },
+                    "target": {
+                        "hybrid-kernel": 0,
+                        "benchmark-kernel": 1,
+                        "benchmark-kernel-nosubobj": 2
+                    }
+                },
+                "parameter_labels": {
+                    "target": {
+                        "hybrid-kernel": "Hybrid",
+                        "benchmark-kernel": "Benchmark",
+                        "benchmark-kernel-nosubobj": "Benchmark\nno subobj"
+                    }
+                },
+                "plot_params": {
+                    "xtick.labelsize": 8
+                },
+                "tile_parameter": "bufsize"
+            }
+        }]
+    }
+}

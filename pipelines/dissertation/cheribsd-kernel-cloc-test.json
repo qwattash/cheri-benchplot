@@ -1,0 +1,40 @@
+{
+    "concurrent_instances": 1,
+    "instance_config": {
+        "instances": [{
+            "kernel": "CHERI-PURECAP-QEMU",
+            "baseline": true,
+            "cheri_target": "riscv64-purecap",
+            "kernelabi": "purecap"
+        }, {
+            "kernel": "CHERI-PURECAP-GFE",
+            "baseline": false,
+            "cheri_target": "riscv64-purecap",
+            "kernelabi": "purecap",
+            "platform": "vcu118"
+        }, {
+            "kernel": "GENERIC-MORELLO-PURECAP",
+            "baseline": false,
+            "cheri_target": "morello-purecap",
+            "kernelabi": "purecap"
+        }]
+    },
+    "benchmark_config": [{
+        "name": "cheribsd-cloc-cdb",
+        "desc": "CheriBSD changes analysis with cdb",
+        "iterations": 1,
+        "generators": [{
+            "handler": "cloc.cheribsd-kernel"
+        }]
+    }],
+    "analysis_config": {
+        "plot": {
+            "plot_output_format": ["pdf", "png"]
+        },
+        "tasks": [{
+            "handler": "cloc.plot-cheribsd-by-component"
+        }, {
+            "handler": "cloc.diff-summary-table"
+        }]
+    }
+}
