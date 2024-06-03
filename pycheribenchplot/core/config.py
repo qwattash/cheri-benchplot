@@ -965,6 +965,17 @@ class CommonBenchmarkConfig(Config):
 
 
 @dc.dataclass
+class DerivedParamSpec(Config):
+    """
+    Derived parameter description
+    """
+    #: Dictionary of parameterization key/values that enable this description.
+    matches: Dict[str, ConfigAny]
+    #: Value to assign to the derived parameter
+    value: str
+
+
+@dc.dataclass
 class ParamOptions(Config):
     """
     Configure parameterization behaviour.
@@ -973,6 +984,11 @@ class ParamOptions(Config):
     #: For instance, the entry {"param1": "x"} will skip any combination
     #: where param1 assumes the value "x"
     skip: List[Dict[str, ConfigAny]] = dc.field(default_factory=list)
+
+    #: Derived parameter substitutions that are made available
+    #: during configuration time.
+    #: Note that these will not be propagated to the dataframes.
+    derived: Dict[str, List[DerivedParamSpec]] = dc.field(default_factory=dict)
 
 
 @dc.dataclass
@@ -1009,7 +1025,7 @@ class PipelineBenchmarkConfig(CommonBenchmarkConfig):
     system: List[SystemConfig] = dc.field(default_factory=list)
 
     @validates("parameterize")
-    def validate_paramaterize(self, data, **kwargs):
+    def validate_parameterize(self, data, **kwargs):
         if (type(data) != dict):
             raise ValidationError("Must be a dictionary")
         for pk in data.keys():
@@ -1212,6 +1228,13 @@ class SessionRunConfig(CommonSessionConfig):
         return None
 
     @classmethod
+    def _match_derived_param(cls, params: dict, derived: list[DerivedParamSpec]) -> str | None:
+        for spec in derived:
+            if cls._match_params(params, spec.matches):
+                return spec.value
+        return None
+
+    @classmethod
     def generate_v1(cls, user_config: BenchplotUserConfig, config: PipelineConfig) -> Self:
         """
         Generate a new :class:`SessionRunConfig` from a :class:`PipelineConfig`.
@@ -1257,6 +1280,7 @@ class SessionRunConfig(CommonSessionConfig):
 
             run_config = BenchmarkRunConfig.from_common_conf(bench_config)
             run_config.parameters = parameters.copy()
+            # Resolve system configuration
             host_system = cls._match_system_config(parameters, bench_config.system)
             if host_system is None:
                 logger.error("Missing system configuration for parameter combination %s", parameters)
@@ -1264,6 +1288,15 @@ class SessionRunConfig(CommonSessionConfig):
             if "target" not in parameters:
                 # Generate the target parameter, if not specified
                 run_config.parameters["target"] = host_system.name
+
+            # Resolve custom derived parameters
+            derived_specs = bench_config.parameterize_options.derived if bench_config.parameterize_options else dict()
+            for name, spec in derived_specs.items():
+                if name in parameters:
+                    logger.error("Derived parameter name '%s' conflicts with root parameter", name)
+                    raise RuntimeError("Invalid configuration")
+                if value := cls._match_derived_param(parameters, spec):
+                    run_config.parameters[name] = value
 
             run_config.instance = InstanceConfig.copy(host_system)
             run_config.uuid = uuid4()
