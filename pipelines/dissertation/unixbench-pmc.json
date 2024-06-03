@@ -8,7 +8,7 @@
         "parameterize": {
             "host": ["hybrid", "benchmark"],
             "variant": ["base", "sub_object"],
-            "runtime": ["default"],
+            "runtime": ["pmc/instr", "pmc/L1", "pmc/L2"],
             "scenario": [
                 "syscall_getpid_100M",
                 "syscall_mix_10M",
@@ -19,7 +19,19 @@
         "parameterize_options": {
             "skip": [
                 {"host": "hybrid", "variant": "sub_object"}
-            ]
+            ],
+            "derived": {
+                "hwpmc_set": [{
+                    "matches": { "runtime": "pmc/instr" },
+                    "value": "instr"
+                }, {
+                    "matches": { "runtime": "pmc/L1" },
+                    "value": "l1cache"
+                }, {
+                    "matches": { "runtime": "pmc/L2" },
+                    "value": "l2cache"
+                }]
+            }
         },
         "system": [{
             "matches": { "host": "hybrid", "variant": "base" },
@@ -48,8 +60,9 @@
         }],
         "command_hooks": {
             "setup": [{
-                "matches": { "runtime": "default" },
+                "matches": {},
                 "commands": [
+                    "sudo kldload hwpmc",
                     "sudo sysctl security.cheri.runtime_revocation_default=0"
                 ]
             }]
@@ -78,6 +91,13 @@
                         "duration": 10000000
                     }
                 }
+            }
+        }, {
+            "handler": "pmc.exec",
+            "task_options": {
+                "system_mode": false,
+                "sampling_mode": false,
+                "group": "{hwpmc_set}"
             }
         }]
     },
