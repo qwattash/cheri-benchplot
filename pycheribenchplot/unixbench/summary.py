@@ -58,8 +58,8 @@ class UnixBenchSummaryPlot(TVRSParamsMixin, PlotTask):
         ctx.derived_hue_param(default=["target"])
         ovh_ctx = ctx.compute_overhead(["times"])
 
-        ctx.relabel(default=dict(times="Time (s)"))
-        ovh_ctx.relabel(default=dict(times="% Run-time overhead"))
+        ctx.relabel(default=dict(times="Time (s)", _hue="Target"))
+        ovh_ctx.relabel(default=dict(times="% Run-time overhead", _hue="Target"))
 
         self.logger.info("Generate UnixBench summary plots")
         with self.config_plotting_context():
