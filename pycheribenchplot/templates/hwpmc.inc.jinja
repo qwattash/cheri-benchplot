@@ -26,8 +26,16 @@
   {%- for cnt in hwpmc_counters %}{{ _pmcstat_counter(cnt) | trim }} {% endfor -%}
 {% endmacro %}
 
+{% macro _pmcstat_output(iteration) %}
+  {% if hwpmc_config.sampling_mode %}
+    -O {{ hwpmc_output[iteration] }}.tmp
+  {% else %}
+    -o {{ hwpmc_output[iteration] }}
+  {% endif %}
+{% endmacro %}
+
 {% macro _pmcstat_impl(iteration) %}
-  pmcstat {{ _pmcstat_counters() | trim }} -O "{{ hwpmc_output[iteration] }}{% if hwpmc_config.sampling_mode %}.tmp{% endif %}"
+  pmcstat {{ _pmcstat_counters() | trim }} {{ _pmcstat_output(iteration) | trim }}
 {% endmacro %}
 
 {% macro _pmcstat(iteration, extra_flags) %}
@@ -49,7 +57,7 @@
 {% endmacro %}
 
 {% macro _pmcstat_post(iteration) %}
-  {% if hwpmc_config is defined %}
+  {% if hwpmc_config is defined and hwpmc_config.sampling_mode %}
     {{ _pmcstat_post_impl(iteration) | trim }}
   {% endif %}
 {% endmacro %}
