@@ -42,9 +42,18 @@ class PMCExecConfig(Config):
     sampling_mode: bool = config_field(False, desc="Use sampling vs counting mode")
     sampling_rate: int = config_field(97553, desc="Counter sampling rate, only relevant in sampling mode")
     counters: List[str] = config_field(list, desc="List of PMC counters to use")
-    group: Optional[PMCSet] = config_field(None,
-                                           desc="Pre-defined group of counters, overrides 'counters' option",
-                                           by_value=True)
+    group: Optional[str] = config_field(None, desc="Pre-defined group of counters, overrides 'counters' option")
+
+    @property
+    def counters_list(self):
+        if self.group:
+            try:
+                pmc_set = PMCSet(self.group)
+            except ValueError:
+                raise RuntimeError("Invalid configuration")
+            return PMC_SET_COUNTERS[pmc_set]
+        else:
+            return self.counters
 
 
 class PMCExec(ExecutionTask):
@@ -61,16 +70,11 @@ class PMCExec(ExecutionTask):
 
     @output
     def pmc_data(self):
-        return RemoteBenchmarkIterationTarget(self, "hwpmc", ext="stacks")
+        return RemoteBenchmarkIterationTarget(self, "hwpmc", ext="out")
 
     def run(self):
-        if self.config.group:
-            counters = PMC_SET_COUNTERS[self.config.group]
-        else:
-            counters = self.config.counters
-
         self.script.extend_context({
             "hwpmc_config": self.config,
-            "hwpmc_counters": counters,
+            "hwpmc_counters": self.config.counters_list,
             "hwpmc_output": self.pmc_data.remote_paths()
         })
