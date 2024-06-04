@@ -109,6 +109,18 @@
         "tasks": [{
             "handler": "unixbench.summary",
             "task_options": {}
+        }, {
+            "handler": "pmc.generic-summary",
+            "task_options": {
+                "parameter_labels": {
+                    "target": {
+                        "hybrid-kernel": "Hybrid",
+                        "benchmark-kernel": "Benchmark",
+                        "benchmark-kernel-nosubobj": "Benchmark\nno subobj"
+                    }
+                },
+                "hue_parameters": []
+            }
         }]
     }
 }

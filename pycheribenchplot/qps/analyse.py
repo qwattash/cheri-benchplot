@@ -12,7 +12,7 @@ from ..core.config import Config
 from ..core.plot import PlotTarget, PlotTask, new_facet, new_figure
 from ..core.task import dependency, output
 from ..core.tvrs import TVRSParamsMixin, TVRSTaskConfig
-from ..pmc.ingest import IngestPMCStatCounters
+from ..pmc.pmc_exec import PMCExec
 from .ingest import IngestQPSData
 
 
@@ -433,7 +433,7 @@ class QPSPerfCountersPlot(TVRSParamsMixin, PlotTask):
     @dependency(optional=True)
     def pmc(self):
         for bench in self.session.all_benchmarks():
-            task = bench.find_exec_task(IngestPMCStatCounters)
+            task = bench.find_exec_task(PMCExec)
             yield task.counter_data.get_loader()
 
     @dependency

@@ -8,14 +8,15 @@ from threading import Lock, local
 from typing import List, Optional
 from uuid import UUID
 
-import polars as pl
 import matplotlib as mpl
+import polars as pl
 import seaborn as sns
 
 from .analysis import AnalysisTask, DatasetAnalysisTask
 from .artefact import Target
 from .config import Config
 from .task import Task
+
 
 class RcParamsThreadWrapper:
     """
@@ -63,7 +64,8 @@ def wrap_rc_context(rc=None, fname=None):
             mpl.rcParams.update(rc)
         yield
     finally:
-        mpl.rcParams.update(orig)   # Revert to the original rcs.
+        mpl.rcParams.update(orig)  # Revert to the original rcs.
+
 
 def setup_matplotlib_hooks():
     default_rc = mpl.rcParams
@@ -149,6 +151,11 @@ class PlotTarget(Target):
         kwargs.setdefault("ext", task.analysis_config.plot.plot_output_format)
         super().__init__(task, output_id, **kwargs)
 
+    def iter_paths(self, **kwargs):
+        for path in super().iter_paths(**kwargs):
+            path.parent.mkdir(exist_ok=True)
+            yield path
+
 
 class PlotTaskMixin:
     """
@@ -217,7 +224,7 @@ class PlotTaskMixin:
         kwargs.setdefault("loc", "center")
         owner.legend(legend.legend_handles,
                      map(lambda t: t.get_text(), legend.texts),
-                     bbox_to_anchor=(0.05, 1.02),
+                     bbox_to_anchor=(0.5, 1.02),
                      ncols=4,
                      **kwargs)
 
