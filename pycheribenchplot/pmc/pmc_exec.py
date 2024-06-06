@@ -20,6 +20,7 @@ class PMCSet(Enum):
     L1Cache = "l1cache"
     L2Cache = "l2cache"
     Branch = "branch"
+    TLB = "tlb"
 
 
 PMC_SET_COUNTERS = {
@@ -29,11 +30,17 @@ PMC_SET_COUNTERS = {
         "CPU_CYCLES", "INST_RETIRED", "L1D_CACHE_REFILL", "L1D_CACHE", "L1D_CACHE_WB_VICTIM", "L1I_CACHE",
         "L1I_TLB_REFILL", "L1I_CACHE_REFILL", "L1D_TLB_REFILL"
     ],
-    PMCSet.L2Cache:
-    ["CPU_CYCLES", "INST_RETIRED", "L2D_CACHE_REFILL", "L2D_CACHE", "L2D_CACHE_WB_VICTIM", "BUS_ACCESS"],
+    PMCSet.L2Cache: [
+        "CPU_CYCLES", "INST_RETIRED", "L2D_CACHE_REFILL", "L2D_CACHE", "L2D_CACHE_WB_VICTIM", "BUS_ACCESS",
+        "STALL_FRONTEND", "STALL_BACKEND"
+    ],
     PMCSet.Branch: [
         "CPU_CYCLES", "INST_RETIRED", "BR_MIS_PRED", "BR_PRED", "BR_MIS_PRED_RS", "BR_RETIRED", "BR_MIS_PRED_RETIRED",
         "BR_RETURN_SPEC"
+    ],
+    PMCSet.TLB: [
+        "CPU_CYCLES", "INST_RETIRED", "L1I_TLB_REFILL", "L1D_TLB_REFILL", "L1I_TLB", "L1D_TLB", "L2D_TLB_REFILL",
+        "L2D_TLB", "ITLB_WALK", "DTLB_WALK"
     ]
 }
 
