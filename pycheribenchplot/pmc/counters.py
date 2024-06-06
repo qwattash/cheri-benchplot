@@ -18,11 +18,13 @@ from .pmc_exec import PMCExec, PMCExecConfig
 
 @dataclass
 class PMCPlotConfig(TVRSTaskConfig):
-    show_errorbars: bool = config_field(True, desc="Show error bars in plots")
     pmc_filter: Optional[List[str]] = config_field(None, desc="Show only the given subset of counters")
     lock_y_axis: bool = config_field(False, "Lock Y axis")
     counter_group_name: Optional[str] = config_field(
         None, desc="Parameter to use to identify runs with different sets of counters")
+    tile_column_name: Optional[str] = config_field("scenario", desc="Parameter to use for the facet grid column axis")
+    tile_x_name: str = config_field("target", desc="Parameter to use for the X axis of each subplot")
+    tile_aspect: float = config_field(1.0, desc="Aspect ratio of the facet tiles")
 
     def resolve_counter_group(self, task: PMCExec) -> str:
         if self.counter_group_name:
@@ -126,6 +128,10 @@ class PMCGroupSummary(TVRSParamsMixin, PlotTask):
         "br_pred_miss_rate": {
             "requires": ["br_pred", "br_mis_pred"],
             "column": (pl.col("br_mis_pred") / pl.col("br_pred"))
+        },
+        "insn_spec_rate": {
+            "requires": ["inst_retired", "inst_spec"],
+            "column": (pl.col("inst_retired") / pl.col("inst_spec"))
         }
     }
 
@@ -169,21 +175,20 @@ class PMCGroupSummary(TVRSParamsMixin, PlotTask):
         if self.config.lock_y_axis:
             sharey = "row"
 
+        # Rename customisable parameters for the tile grid and X axis
+        tile_col = ctx.r[self.config.tile_column_name]
+        tile_x = ctx.r[self.config.tile_x_name]
+
         self.logger.info("Generate PMC counters summary for group '%s'", self.pmc_group)
         with new_facet(self.summary_plot.paths(),
                        ctx.df,
                        row=ctx.r.counter,
-                       col=ctx.r.scenario,
+                       col=tile_col,
                        sharex="col",
                        sharey=sharey,
                        margin_titles=True,
-                       aspect=1.1) as facet:
-            facet.map_dataframe(sns.stripplot,
-                                x=ctx.r.target,
-                                y=ctx.r.value,
-                                hue=ctx.r._hue,
-                                dodge=True,
-                                palette=palette)
+                       aspect=self.config.tile_aspect) as facet:
+            facet.map_dataframe(sns.stripplot, x=tile_x, y=ctx.r.value, hue=ctx.r._hue, dodge=True, palette=palette)
             if palette:
                 facet.add_legend()
                 self.adjust_legend_on_top(facet.figure)
@@ -191,12 +196,12 @@ class PMCGroupSummary(TVRSParamsMixin, PlotTask):
         with new_facet(self.summary_box_plot.paths(),
                        ctx.df,
                        row=ctx.r.counter,
-                       col=ctx.r.scenario,
+                       col=tile_col,
                        sharex="col",
                        sharey=sharey,
                        margin_titles=True,
-                       aspect=1.1) as facet:
-            facet.map_dataframe(sns.boxplot, x=ctx.r.target, y=ctx.r.value, hue=ctx.r._hue, dodge=True, palette=palette)
+                       aspect=self.config.tile_aspect) as facet:
+            facet.map_dataframe(sns.boxplot, x=tile_x, y=ctx.r.value, hue=ctx.r._hue, dodge=True, palette=palette)
             if palette:
                 facet.add_legend()
                 self.adjust_legend_on_top(facet.figure)
@@ -210,34 +215,35 @@ class PMCGroupSummary(TVRSParamsMixin, PlotTask):
         if self.config.lock_y_axis:
             sharey = "row"
 
+        # Rename customisable parameters for the tile grid and X axis
+        tile_col = ctx.r[self.config.tile_column_name]
+        tile_x = ctx.r[self.config.tile_x_name]
+
         self.logger.info("Generate PMC delta summary for group '%s'", self.pmc_group)
         with new_facet(self.summary_delta_plot.paths(),
                        ctx.df,
                        row=ctx.r.counter,
-                       col=ctx.r.scenario,
+                       col=tile_col,
                        sharex="col",
                        sharey=sharey,
-                       margin_titles=True) as facet:
-            facet.map_dataframe(sns.barplot,
-                                x=ctx.r.target,
-                                y=ctx.r.value_delta,
-                                hue=ctx.r._hue,
-                                dodge=True,
-                                palette=palette)
+                       margin_titles=True,
+                       aspect=self.config.tile_aspect) as facet:
+            facet.map_dataframe(sns.barplot, x=tile_x, y=ctx.r.value_delta, hue=ctx.r._hue, dodge=True, palette=palette)
             if palette:
                 facet.add_legend()
                 self.adjust_legend_on_top(facet.figure)
 
-        self.logger.info("Generate PMC counters overhead summary")
+        self.logger.info("Generate PMC overhead summary for group '%s'", self.pmc_group)
         with new_facet(self.summary_ovh_plot.paths(),
                        ctx.df,
                        row=ctx.r.counter,
-                       col=ctx.r.scenario,
+                       col=tile_col,
                        sharex="col",
                        sharey=sharey,
-                       margin_titles=True) as facet:
+                       margin_titles=True,
+                       aspect=self.config.tile_aspect) as facet:
             facet.map_dataframe(sns.barplot,
-                                x=ctx.r.target,
+                                x=tile_x,
                                 y=ctx.r.value_overhead,
                                 hue=ctx.r._hue,
                                 dodge=True,
