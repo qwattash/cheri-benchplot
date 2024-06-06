@@ -51,6 +51,8 @@ class TVRSTaskConfig(Config):
     #: Plot appearance configuration for tweaking.
     #: See the seaborn plotting_context documentation.
     plot_params: Dict[str, Any] = field(default_factory=dict)
+    #: Filter the data for the given set of parameters
+    parameter_filter: Optional[Dict[str, Any]] = None
 
 
 class TVRSParamsContext:
@@ -69,13 +71,16 @@ class TVRSParamsContext:
         def __getattr__(self, name: str) -> str:
             return self._rename.get(name, name)
 
-        def __getitem__(self, name: str) -> str:
-            return self._rename[name]
+        def __getitem__(self, name: str | None) -> str | None:
+            return self._rename.get(name, name)
 
     def __init__(self, task: "TVRSParamsMixin", df: pl.DataFrame):
         assert isinstance(task, AnalysisTask), "Task must be an AnalysisTask"
         self.task = task
         self.df = df
+
+        if filter_args := task.tvrs_config().parameter_filter:
+            self.df = self.df.filter(**filter_args)
 
         self.params = []
         self._rename = {}
