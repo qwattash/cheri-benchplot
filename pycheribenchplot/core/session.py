@@ -258,11 +258,12 @@ class Session:
         self.logger.info("Remove session %s (%s)", self.name, self.uuid)
         shutil.rmtree(self.session_root_path)
 
-    def bundle(self, include_raw_data: bool = False):
+    def bundle(self, include_raw_data: bool = False, path: Path | None = None):
         """
         Produce a compressed archive with all the session output.
         """
-        bundle_file = self.session_root_path.with_suffix(".tar.gz")
+        bundle_path = path if path else self.session_root_path.parent
+        bundle_file = bundle_path / self.session_root_path.with_suffix(".tar.gz").name
         self.logger.info("Generate %s bundle", self.session_root_path)
         if bundle_file.exists():
             self.logger.info("Replacing old bundle %s", bundle_file)
@@ -271,6 +272,7 @@ class Session:
             archive_src = self.session_root_path
         else:
             archive_src = self.get_plot_root_path()
+
         result = subprocess.run([
             "tar", "-z", "-c", "-C", self.session_root_path, "-f", bundle_file,
             archive_src.relative_to(self.session_root_path)

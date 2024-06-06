@@ -69,6 +69,11 @@ class SessionSubCommand(SubCommand):
                                 default=False,
                                 action="store_true",
                                 help="Bundle the whole session, not just analysis results")
+        sub_bundle.add_argument("-o",
+                                "--output",
+                                default=None,
+                                type=Path,
+                                help="Output directory, defaults to the directory containing the session")
         self._register_session_arg(sub_bundle)
 
     def handle_create(self, user_config, args):
@@ -119,7 +124,7 @@ class SessionSubCommand(SubCommand):
 
     def handle_bundle(self, user_config, args):
         session = self._get_session(user_config, args)
-        session.bundle(include_raw_data=args.all)
+        session.bundle(include_raw_data=args.all, path=args.output)
 
     def handle(self, user_config, args):
         if args.session_action is None:
