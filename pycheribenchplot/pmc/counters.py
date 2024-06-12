@@ -132,6 +132,10 @@ class PMCGroupSummary(TVRSParamsMixin, PlotTask):
         "insn_spec_rate": {
             "requires": ["inst_retired", "inst_spec"],
             "column": (pl.col("inst_retired") / pl.col("inst_spec"))
+        },
+        "eff_backend_ipc": {
+            "requires": ["inst_retired", "cpu_cycles", "stall_backend"],
+            "column": pl.col("inst_retired") / (pl.col("cpu_cycles") - pl.col("stall_backend"))
         }
     }
 
