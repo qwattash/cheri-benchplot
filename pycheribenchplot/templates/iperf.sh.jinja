@@ -80,10 +80,10 @@
 {% endmacro %}
 
 {% block iteration_exec %}
-  verbose "Run iperf3 iteration {{ current_iteration }} {{ 'hwpmc' if iperf_config.hwpmc }}"
+  verbose "Run iperf3 iteration {{ current_iteration }}"
 
-  {{ hwpmc.pmcstat(current_iteration) }} \
-	iperf3 -c {{ scenario_config.remote_host }} \
+  {{ hwpmc.pmcstat(current_iteration) }} iperf3 \
+	-c {{ scenario_config.remote_host }} \
 	{{ limit_flag() | trim }} {{ scenario_config.transfer_limit }} \
 	-P {{ scenario_config.streams }} \
 	--interval 60 \
