@@ -1,17 +1,29 @@
+import enum
 from contextlib import contextmanager
 from copy import copy
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import reduce
-from typing import Any, Dict, List, Optional, Self, Union
+from typing import Any, Dict, List, Optional, Self, Type, Union
 
 import polars as pl
-import polars.datatypes as dt
 import polars.selectors as cs
 import seaborn as sns
+from marshmallow import ValidationError, validates_schema
 
 from .analysis import AnalysisTask
-from .config import Config, config_field
+from .config import Config, ConfigPath, LazyNestedConfig, config_field
 from .task import ExecutionTask
+
+
+@dataclass
+class TVRSExecConfig(Config):
+    """
+    Base class for TVRS execution task configuration.
+    """
+    scenario_path: Optional[ConfigPath] = config_field(
+        None, desc="Path to the scenarios directory, used to generate execution scripts")
+    scenarios: Dict[str, LazyNestedConfig] = config_field(
+        dict, desc="Inline scenarios. The key must match the name given by the `scenario` parameter")
 
 
 class TVRSExecTask(ExecutionTask):
@@ -28,31 +40,106 @@ class TVRSExecTask(ExecutionTask):
     and instance configuration.
     We need to determine the setup/teardown hooks for the current parameter set.
     """
-    def run(self):
+
+    script_template: str = None
+    scenario_config_class: Type[Config] = None
+
+    def __init__(self, benchmark, script, task_config=None):
+        super().__init__(benchmark, script, task_config=task_config)
+        # Resolve the lazy scenarios configs
+        if self.scenario_config_class:
+            parsed_scenarios = {}
+            for key, scenario_spec in self.config.scenarios.items():
+                parsed_scenarios[key] = self.scenario_config_class.schema().load(scenario_spec)
+            self.config.scenarios = parsed_scenarios
+
         pkeys = set(self.benchmark.parameters.keys())
         for p in ["variant", "runtime", "scenario"]:
             if p not in pkeys:
                 self.logger.error("Invalid parameterization: '%s' is required", p)
                 raise RuntimeError("Invalid configuration")
 
+    @property
+    def scenario(self) -> Config:
+        """
+        Return the scenario for the current benchmark instantiation.
+
+        This attempts to find the scenario key in the inline scenarios and then in
+        the scenario path.
+        """
+        scenario_key = self.benchmark.parameters["scenario"]
+        if scenario_config := self.config.scenarios.get(scenario_key):
+            return scenario_config
+        else:
+            assert self.scenario_config_class is not None, "Subclass must set TVRSExecTask.scenario_config_class"
+            if self.config.scenario_path is None:
+                self.logger.error("Scenario '%s' does not exist", scenario_key)
+                raise RuntimeError("InvalidConfiguration")
+            path = (self.config.scenario_path / scenario_key).with_suffix(".json")
+            if not path.exists() or not path.is_file():
+                self.logger.error("Scenario file '%s' does not exist or is not a regular file", path)
+                raise RuntimeError("Invalid configuration")
+            return self.scenario_config_class.load_json(path)
+
+    def run(self):
+        # Set the script template as specified by subclasses
+        if self.script_template:
+            self.script.set_template(self.script_template)
+
+        self.script.extend_context({"scenario_config": self.scenario})
+
+
+class WeightMode(enum.Enum):
+    SortAscendingAsInt = "ascending_int"
+    SortDescendingAsInt = "descending_int"
+    SortAscendingAsStr = "ascending_str"
+    SortDescendingAsStr = "descending_str"
+    Custom = "custom"
+
+
+@dataclass
+class TVRSParamWeight(Config):
+    """
+    Parameter weighting rule for stable output ordering.
+    """
+    mode: WeightMode = config_field(WeightMode.SortAscendingAsStr, desc="Strategy for assigning weights")
+    base: Optional[int] = config_field(None, desc="Base weight, ignored for 'custom' strategy.")
+    step: Optional[int] = config_field(None, desc="Weight increment, ignored for 'custom' strategy.")
+    weights: Optional[Dict[str, int]] = config_field(None, desc="Custom mapping of parameter values to weights")
+
+    @validates_schema
+    def validate_mode(self, data, **kwargs):
+        if data["mode"] == WeightMode.Custom:
+            if data["weights"] is None:
+                raise ValidationError("TVRSParamWeight.weights must be set when TVRSParamWeight.mode is 'custom'")
+        else:
+            if data["base"] is None:
+                raise ValidationError("TVRSParamWeight.base must be set")
+            if data["step"] is None:
+                raise ValidationError("TVRSParamWeight.step must be set")
+
 
 @dataclass
 class TVRSTaskConfig(Config):
-    #: Weigth for determining the order of labels based on the parameters
-    parameter_weight: Optional[Dict[str, Union[Dict[str, int], int]]] = None
-    #: Relabel parameter axes
-    parameter_names: Optional[Dict[str, str]] = None
-    #: Relabel metric columns
-    metric_names: Optional[Dict[str, str]] = None
-    #: Relabel parameter axes values
-    parameter_labels: Optional[Dict[str, Dict[str, str]]] = None
-    #: Parameterization axes for the combined plot hue, use all remaining by default
-    hue_parameters: Optional[List[str]] = None
-    #: Plot appearance configuration for tweaking.
-    #: See the seaborn plotting_context documentation.
-    plot_params: Dict[str, Any] = field(default_factory=dict)
-    #: Filter the data for the given set of parameters
-    parameter_filter: Optional[Dict[str, Any]] = None
+    """
+    Shared TVRS analysis task configuration.
+
+    This should be inherited by all analysis task configuration that use the TVRSParamsMixin.
+    """
+    parameter_weight: Optional[Dict[str, TVRSParamWeight]] = config_field(
+        None, desc="Weight for determining the order of labels based on the parameters")
+    parameter_names: Optional[Dict[str, str]] = config_field(
+        None, desc="Relabel parameter keys specified in PipelineBenchmarkConfig.parameterize")
+    metric_names: Optional[Dict[str, str]] = config_field(
+        None, desc="Relabel metric columns, available names depend on the benchmark")
+    parameter_labels: Optional[Dict[str, Dict[str, str]]] = config_field(
+        None, desc="Relabel parameter values specified in PipelineBenchmarkConfig.parameterize")
+    hue_parameters: Optional[List[str]] = config_field(None,
+                                                       desc="List of parameter keys to combine and map to the plot hue")
+    plot_params: Dict[str, Any] = config_field(
+        dict, desc="Plot appearance configuration for tweaking, see the seaborn plotting_context documentation")
+    parameter_filter: Optional[Dict[str, Any]] = config_field(None,
+                                                              desc="Filter the data for the given set of parameters")
 
 
 class TVRSParamsContext:
@@ -214,7 +301,7 @@ class TVRSParamsContext:
         argument contains a suppressed (missing) colum, it will be skipped.
         """
         to_combine = [c for c in to_combine if c in self.df.columns]
-        expr = pl.concat_str([pl.col(p).cast(dt.String) for p in to_combine], separator=sep)
+        expr = pl.concat_str([pl.col(p).cast(pl.String) for p in to_combine], separator=sep)
         self.derived_param(name, expr)
 
     def derived_hue_param(self, default: list[str] | None, sep=" "):
@@ -478,17 +565,15 @@ class TVRSParamsContext:
         if not config.parameter_weight:
             return
         df = self.df.with_columns(pl.lit(0).alias("param_weight"))
-        for name, mapping_or_weight in config.parameter_weight.items():
+        for name, weight_spec in config.parameter_weight.items():
             col_name = self._rename[name]
             if col_name not in df.columns:
                 self.logger.warning("Skipping weight for parameter '%s', does not exist", col_name)
-            if type(mapping_or_weight) == int:
-                base_weight = mapping_or_weight
-                sorted_values = sorted(df[col_name].unique())
-                mapping = {v: base_weight + index for index, v in enumerate(sorted_values)}
-            else:
-                mapping = mapping_or_weight
-                # We may have relabeled the parameter axis through the `parameter_labels`
+                continue
+
+            if weight_spec.mode == WeightMode.Custom:
+                mapping = dict(weight_spec.weights)
+                # We may have relabeled the parameter values through the `parameter_labels`
                 # configuration, so we extend the mapping with the corresponding aliases,
                 # if there are any defined in `parameter_labels`.
                 if config.parameter_labels and name in config.parameter_labels:
@@ -496,10 +581,31 @@ class TVRSParamsContext:
                     for old_p, new_p in config.parameter_labels[name].items():
                         alias_weights[new_p] = mapping.get(old_p, 0)
                     mapping.update(alias_weights)
-
+            else:
+                match weight_spec.mode:
+                    case WeightMode.SortDescendingAsInt:
+                        descending = True
+                        cast_to = int
+                        break
+                    case WeightMode.SortAscendingAsInt:
+                        descending = False
+                        cast_to = int
+                        break
+                    case WeightMode.SortDescendingAsStr:
+                        descending = True
+                        cast_to = str
+                        break
+                    case WeightMode.SortAscendingAsStr:
+                        descending = False
+                        cast_to = str
+                    case _:
+                        assert False, "Not reached"
+                sorted_values = sorted(df[col_name].cast(cast_to).unique(), reverse=descending)
+                mapping = {v: weight_spec.base + i * weight_spec.step for i, v in enumerate(sorted_values)}
+            # Update the weight for each row
             self.logger.debug("Set weight for %s => %s", col_name, mapping)
             df = df.with_columns(
-                pl.col("param_weight") + pl.col(col_name).replace(mapping, default=0, return_dtype=dt.Decimal))
+                pl.col("param_weight") + pl.col(col_name).replace(mapping, default=0, return_dtype=pl.Decimal))
 
         self.df = df.sort(by="param_weight", descending=descending)
 
