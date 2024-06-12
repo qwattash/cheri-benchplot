@@ -1,0 +1,118 @@
+{#
+ # Runner script for netperf benchmarks.
+ # This extends the standard runner-script.sh.jinja template
+ #}
+{% extends "runner-script.sh.jinja" %}
+
+{% import "hwpmc.inc.jinja" as hwpmc with context %}
+
+{% block global_setup %}
+  {{ super() }}
+  {% if netperf_config.netperf_path %}
+    # Make sure netperf/netserver is in PATH
+    export PATH="${PATH}:{{ netperf_config.netperf_path }}"
+  {% endif %}
+{% endblock global_setup %}
+
+{% block iteration_setup %}
+  {{ super() }}
+  {% if netperf_config.use_localhost_server %}
+    # Start localhost netperf server
+    verbose "Start netserver for iteration {{ current_iteration }}"
+    netserver -f -L "{{ scenario_config.remote_host }},inet" {{ ipversion() | trim }}
+    sleep 1
+  {% endif %}
+{% endblock iteration_setup %}
+
+{% block iteration_teardown %}
+  {{ super() }}
+  {% if netperf_config.use_localhost_server %}
+    # Stop localhost netperf server
+    verbose "Stop netserver for iteration {{ current_iteration }}"
+    pkill netserver
+    sleep 1
+  {% endif %}
+{% endblock iteration_teardown %}
+
+{% macro limit_flag() %}
+  {% if scenario_config.transfer_mode == NetPerfTransferLimit.BYTES or
+     scenario_config.transfer_mode == NetPerfTransferLimit.PACKETS %}
+    -l "-{{ scenario_config.transfer_limit }}"
+  {% elif scenario_config.transfer_mode == NetPerfTransferLimit.TIME %}
+    -l "{{ scenario_config.transfer_limit }}"
+  {% else %}
+    -l "invalid-scenario-config-transfer-mode"
+  {% endif %}
+{% endmacro %}
+
+{% macro netperf_mode() %}
+  {{ scenario_config.mode.name }}
+{% endmacro %}
+
+{% macro netperf_test_flags() %}
+  {% if scenario_config.protocol == NetPerfProtocol.TCP %}
+    -t "TCP_{{ netperf_mode() | trim}}"
+  {% elif scenario_config.protocol == NetPerfProtocol.UDP %}
+    -t "UDP_{{ netperf_mode() | trim}}"
+  {% elif scenario_config.protocol == NetPerfProtocol.SCTP %}
+    -t "SCTP_{{ netperf_mode() | trim}}"
+  {% else %}
+    -t "invalid-scenario-config-protocol"
+  {% endif %}
+{% endmacro %}
+
+{% macro cpuaffinity() %}
+  {% if scenario_config.cpu_affinity %}
+    -T {{ scenario_config.cpu_affinity }}
+  {% endif %}
+{% endmacro %}
+
+{% macro ipversion() %}
+  {% if scenario_config.use_ipv4 %}
+    -4
+  {% else %}
+    -6
+  {% endif %}
+{% endmacro %}
+
+{% macro buffer_size_flags() %}
+  {% if scenario_config.mode == NetPerfMode.RR %}
+    -r "{{ scenario_config.buffer_size }},{{ scenario_config.buffer_size }}"
+  {% else %}
+    -M {{ scenario_config.buffer_size }} -m {{ scenario_config.buffer_size }}
+  {% endif %}
+{% endmacro %}
+
+{% macro window_size_flags() %}
+  {% if scenario_config.window_size %}
+    -S {{ scenario_config.window_size }} -s {{ scenario_config.window_size }}
+  {% endif %}
+{% endmacro %}
+
+{% macro nodelay_flag() %}
+  {% if scenario_config.nodelay and (scenario_config.protocol == NetPerfProtocol.TCP or
+                                     scenario_config.protocol == NetPerfProtocol.SCTP) %}
+    -D
+  {% endif %}
+{% endmacro %}
+
+{% block iteration_exec %}
+  verbose "Run netperf iteration {{ current_iteration }}"
+
+  {{ hwpmc.pmcstat(current_iteration) }} netperf \
+	-H "{{ scenario_config.remote_host }},inet" \
+	{{ netperf_test_flags() | trim }} \
+	{{ limit_flag() | trim }} \
+	-- \
+	-o "all" {{ nodelay_flag() | trim }} \
+	{{ buffer_size_flags() | trim }} \
+	{{ window_size_flags() | trim }} \
+	> {{ netperf_output_path[current_iteration] }}
+{% endblock iteration_exec %}
+
+{% block global_teardown %}
+  {{ super() }}
+  {% for i in range(iterations) %}
+    {{ hwpmc.pmcstat_postprocess(i) }}
+  {% endfor %}
+{% endblock global_teardown %}
