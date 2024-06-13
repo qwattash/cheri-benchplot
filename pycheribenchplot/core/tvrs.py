@@ -120,7 +120,7 @@ class TVRSParamWeight(Config):
 
 
 @dataclass
-class TVRSTaskConfig(Config):
+class TVRSPlotConfig(Config):
     """
     Shared TVRS analysis task configuration.
 
@@ -282,6 +282,7 @@ class TVRSParamsContext:
                 hide_params.append(p)
         self.df = self.df.drop(hide_params)
         self.params = [p for p in self.params if p not in hide_params]
+        self._rename.update({p: None for p in hide_params})
 
     def derived_param(self, name: str, expr: pl.Expr):
         """
@@ -315,6 +316,7 @@ class TVRSParamsContext:
         """
         config = self.task.tvrs_config()
         hue_params = config.hue_parameters if config.hue_parameters is not None else default
+        hue_params = [self._rename[p] for p in hue_params]
         if hue_params is None or len(hue_params) == 0:
             self._rename["_hue"] = None
             return
@@ -619,9 +621,9 @@ class TVRSParamsMixin:
     scenario: benchmark-specific parameters
     """
     task_namespace = "analysis"
-    task_config_class = TVRSTaskConfig
+    task_config_class = TVRSPlotConfig
 
-    def tvrs_config(self) -> TVRSTaskConfig:
+    def tvrs_config(self) -> TVRSPlotConfig:
         return self.config
 
     def make_param_context(self, df: pl.DataFrame) -> TVRSParamsContext:
@@ -644,7 +646,7 @@ class TVRSParamsMixin:
     def config_plotting_context(self, **defaults):
         """
         Enter plotting context that overrides plot configuration
-        using the plot_params overrides from the TVRSTaskConfig.
+        using the plot_params overrides from the TVRSPlotConfig.
         """
         config = self.tvrs_config()
         defaults.update(config.plot_params)

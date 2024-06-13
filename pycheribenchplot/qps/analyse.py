@@ -11,16 +11,14 @@ from ..core.artefact import Target, ValueTarget
 from ..core.config import Config
 from ..core.plot import PlotTarget, PlotTask, new_facet, new_figure
 from ..core.task import dependency, output
-from ..core.tvrs import TVRSParamsMixin, TVRSTaskConfig
+from ..core.tvrs import TVRSParamsMixin, TVRSPlotConfig
 from ..pmc.pmc_exec import PMCExec
 from .ingest import IngestQPSData
 
 
 @dataclass
-class QPSPlotConfig(Config):
+class QPSPlotConfig(TVRSPlotConfig):
     show_errorbars: bool = True
-    #: Common plot parameterization options
-    parameterize_options: TVRSTaskConfig = field(default_factory=TVRSTaskConfig)
 
 
 class LoadQPSData(AnalysisTask):
@@ -210,9 +208,6 @@ class QPSByMsgSizePlot(TVRSParamsMixin, PlotTask):
     def overhead_tbl(self):
         return Target(self, "tbl", ext="csv")
 
-    def tvrs_config(self):
-        return self.config.parameterize_options
-
     def gen_msgsize_plot(self, ctx, err_conf):
         self.logger.info("Generate QPS vs MsgSize plot")
         with new_figure(self.qps_plot.paths()) as fig:
@@ -333,9 +328,6 @@ class QPSOverheadPlot(TVRSParamsMixin, PlotTask):
             yield (scenario, PlotTarget(self, scenario))
             yield (f"tbl-{scenario}", Target(self, f"tbl-{scenario}"))
 
-    def tvrs_config(self):
-        return self.config.parameterize_options
-
     def plot_one_scenario(self, ctx, scenario, s_df):
         # Honor error bars configuration
         if self.config.show_errorbars:
@@ -447,9 +439,6 @@ class QPSPerfCountersPlot(TVRSParamsMixin, PlotTask):
     @output
     def qps_table(self):
         return PlotTarget(self, "tbl-metrics")
-
-    def tvrs_config(self):
-        return self.config.parameterize_options
 
     def run_plot(self):
         if self.pmc is None:

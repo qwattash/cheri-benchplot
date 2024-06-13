@@ -9,12 +9,12 @@ from ..core.artefact import ValueTarget
 from ..core.config import Config, config_field
 from ..core.plot import PlotTarget, PlotTask, new_facet
 from ..core.task import dependency, output
-from ..core.tvrs import TVRSParamsMixin, TVRSTaskConfig
+from ..core.tvrs import TVRSParamsMixin, TVRSPlotConfig
 from .iperf_exec import IPerfExecTask
 
 
 @dataclass
-class IPerfSummaryConfig(TVRSTaskConfig):
+class IPerfSummaryConfig(TVRSPlotConfig):
     tile_parameter: str = config_field("scenario", desc="Parameter axis to use for the facet grid")
 
 

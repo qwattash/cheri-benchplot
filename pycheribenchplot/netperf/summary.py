@@ -7,11 +7,11 @@ import seaborn as sns
 from ..core.config import config_field
 from ..core.plot import PlotTarget, PlotTask, new_figure
 from ..core.task import dependency
-from ..core.tvrs import TVRSParamsMixin, TVRSTaskConfig
+from ..core.tvrs import TVRSParamsMixin, TVRSPlotConfig
 
 
 @dataclass
-class NetperfPlotConfig(TVRSTaskConfig):
+class NetperfPlotConfig(TVRSPlotConfig):
     tile_parameter: Optional[str] = config_field(None, desc="Parameter to use for the facet column tiles")
 
 
