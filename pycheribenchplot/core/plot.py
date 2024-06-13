@@ -221,10 +221,10 @@ class PlotTaskMixin:
             owner = fig
         else:
             owner = ax
-        kwargs.setdefault("loc", "center")
+        kwargs.setdefault("loc", "lower left")
         owner.legend(legend.legend_handles,
                      map(lambda t: t.get_text(), legend.texts),
-                     bbox_to_anchor=(0.5, 1.02),
+                     bbox_to_anchor=(0., 1.02, 1, 0.2),
                      ncols=4,
                      **kwargs)
 
