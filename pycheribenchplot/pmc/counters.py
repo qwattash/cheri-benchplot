@@ -12,14 +12,15 @@ from ..core.artefact import ValueTarget
 from ..core.config import Config, config_field
 from ..core.plot import DatasetPlotTask, PlotTarget, PlotTask, new_facet
 from ..core.task import dependency, output
-from ..core.tvrs import TVRSParamsMixin, TVRSTaskConfig
+from ..core.tvrs import TVRSParamsMixin, TVRSPlotConfig
 from .pmc_exec import PMCExec, PMCExecConfig
 
 
 @dataclass
-class PMCPlotConfig(TVRSTaskConfig):
+class PMCPlotConfig(TVRSPlotConfig):
     pmc_filter: Optional[List[str]] = config_field(None, desc="Show only the given subset of counters")
-    lock_y_axis: bool = config_field(False, "Lock Y axis")
+    lock_y_axis: bool = config_field(False, desc="Lock Y axis")
+    share_x_axis: bool = config_field(False, desc="Share the X axis among rows")
     counter_group_name: Optional[str] = config_field(
         None, desc="Parameter to use to identify runs with different sets of counters")
     tile_column_name: Optional[str] = config_field("scenario", desc="Parameter to use for the facet grid column axis")
@@ -178,6 +179,7 @@ class PMCGroupSummary(TVRSParamsMixin, PlotTask):
         sharey = False
         if self.config.lock_y_axis:
             sharey = "row"
+        sharex = self.config.share_x_axis
 
         # Rename customisable parameters for the tile grid and X axis
         tile_col = ctx.r[self.config.tile_column_name]
@@ -188,7 +190,7 @@ class PMCGroupSummary(TVRSParamsMixin, PlotTask):
                        ctx.df,
                        row=ctx.r.counter,
                        col=tile_col,
-                       sharex="col",
+                       sharex=sharex,
                        sharey=sharey,
                        margin_titles=True,
                        aspect=self.config.tile_aspect) as facet:
@@ -201,7 +203,7 @@ class PMCGroupSummary(TVRSParamsMixin, PlotTask):
                        ctx.df,
                        row=ctx.r.counter,
                        col=tile_col,
-                       sharex="col",
+                       sharex=sharex,
                        sharey=sharey,
                        margin_titles=True,
                        aspect=self.config.tile_aspect) as facet:
@@ -218,6 +220,7 @@ class PMCGroupSummary(TVRSParamsMixin, PlotTask):
         sharey = False
         if self.config.lock_y_axis:
             sharey = "row"
+        sharex = self.config.share_x_axis
 
         # Rename customisable parameters for the tile grid and X axis
         tile_col = ctx.r[self.config.tile_column_name]
@@ -228,7 +231,7 @@ class PMCGroupSummary(TVRSParamsMixin, PlotTask):
                        ctx.df,
                        row=ctx.r.counter,
                        col=tile_col,
-                       sharex="col",
+                       sharex=sharex,
                        sharey=sharey,
                        margin_titles=True,
                        aspect=self.config.tile_aspect) as facet:
@@ -242,7 +245,7 @@ class PMCGroupSummary(TVRSParamsMixin, PlotTask):
                        ctx.df,
                        row=ctx.r.counter,
                        col=tile_col,
-                       sharex="col",
+                       sharex=sharex,
                        sharey=sharey,
                        margin_titles=True,
                        aspect=self.config.tile_aspect) as facet:
@@ -296,12 +299,12 @@ class PMCGroupSummary(TVRSParamsMixin, PlotTask):
         # Filter the counters based on configuration
         if self.config.pmc_filter:
             ctx.df = ctx.df.filter(pl.col("counter").is_in(self.config.pmc_filter))
-        # Generate hue parameter level
-        ctx.derived_hue_param(default=["variant", "runtime"])
         ovh_ctx = ctx.compute_overhead(["value"], extra_groupby=["counter"])
 
         ctx.relabel()
+        ctx.derived_hue_param(default=["variant", "runtime"])
         self.gen_summary(ctx)
 
         ovh_ctx.relabel()
+        ovh_ctx.derived_hue_param(default=["variant", "runtime"])
         self.gen_delta(ovh_ctx)
