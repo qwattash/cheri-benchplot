@@ -21,6 +21,7 @@ class PMCSet(Enum):
     L2Cache = "l2cache"
     Branch = "branch"
     TLB = "tlb"
+    Stall = "stall"
 
 
 PMC_SET_COUNTERS = {
@@ -41,6 +42,10 @@ PMC_SET_COUNTERS = {
     PMCSet.TLB: [
         "CPU_CYCLES", "INST_RETIRED", "L1I_TLB_REFILL", "L1D_TLB_REFILL", "L1I_TLB", "L1D_TLB", "L2D_TLB_REFILL",
         "L2D_TLB", "ITLB_WALK", "DTLB_WALK"
+    ],
+    PMCSet.Stall: [
+        "CPU_CYCLES", "INST_RETIRED", "STALL", "STALL_FRONTEND", "STALL_BACKEND", "STALL_SLOT", "STALL_SLOT_FRONTEND",
+        "STALL_SLOT_BACKEND", "STALL_BACKEND_MEM"
     ]
 }
 
