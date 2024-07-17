@@ -50,7 +50,10 @@ class TVRSExecTask(ExecutionTask):
         if self.scenario_config_class:
             parsed_scenarios = {}
             for key, scenario_spec in self.config.scenarios.items():
-                parsed_scenarios[key] = self.scenario_config_class.schema().load(scenario_spec)
+                if isinstance(scenario_spec, self.scenario_config_class):
+                    parsed_scenarios[key] = scenario_spec
+                else:
+                    parsed_scenarios[key] = self.scenario_config_class.schema().load(scenario_spec)
             self.config.scenarios = parsed_scenarios
 
         pkeys = set(self.benchmark.parameters.keys())
