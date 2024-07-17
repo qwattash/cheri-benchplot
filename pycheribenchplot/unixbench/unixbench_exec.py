@@ -75,6 +75,7 @@ class UnixBenchExec(TVRSExecTask):
     task_name = "exec"
     task_config_class = UnixBenchConfig
     public = True
+    scenario_config_class = UnixBenchScenario
 
     @output
     def timing(self):
@@ -83,13 +84,7 @@ class UnixBenchExec(TVRSExecTask):
     def run(self):
         super().run()
         self.script.set_template("unixbench.sh.jinja")
-        scenario = self.config.scenarios.get(self.benchmark.parameters["scenario"])
-        if scenario is None:
-            path = self.config.scenario_path / self.benchmark.parameters["scenario"]
-            scenario = UnixBenchScenario.load_json(path.with_suffix(".json"))
-
         self.script.extend_context({
-            "scenario_config": scenario,
             "unixbench_config": self.config,
             "unixbench_out_path": self.timing.remote_paths()
         })
