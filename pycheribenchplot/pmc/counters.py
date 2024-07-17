@@ -6,11 +6,13 @@ import numpy as np
 import polars as pl
 import polars.selectors as cs
 import seaborn as sns
+import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
 
 from ..core.artefact import ValueTarget
 from ..core.config import Config, config_field
 from ..core.plot import DatasetPlotTask, PlotTarget, PlotTask, new_facet
+from ..core.plot_util import extended_barplot
 from ..core.task import dependency, output
 from ..core.tvrs import TVRSParamsMixin, TVRSPlotConfig
 from .pmc_exec import PMCExec, PMCExecConfig
@@ -171,6 +173,10 @@ class PMCGroupSummary(TVRSParamsMixin, PlotTask):
     def summary_ovh_plot(self):
         return PlotTarget(self, "overhead")
 
+    @output
+    def summary_combined(self):
+        return PlotTarget(self, "abs-with-overhead")
+
     def gen_summary(self, ctx):
         """
         Generate the summary stripplot
@@ -259,6 +265,47 @@ class PMCGroupSummary(TVRSParamsMixin, PlotTask):
                 facet.add_legend()
                 self.adjust_legend_on_top(facet.figure)
 
+    def gen_combined(self, ctx):
+        """
+        Generate combined plot with the absolute value, absolue diff and relative
+        overhead for each counter.
+        The data is shown as the mean and standard deviation of the iteration samples.
+        Delta and relative overhead are computed by propagating uncertainty as standard deviation.
+        The hue and tiling are controlled by task configuration options.
+        """
+        palette = ctx.build_palette_for("_hue", allow_empty=False)
+
+        with new_facet(self.summary_combined.paths(),
+                       ctx.df,
+                       col=ctx.r._metric_type,
+                       row=ctx.r.counter,
+                       sharex=self.config.share_x_axis,
+                       sharey=False,
+                       margin_titles=True,
+                       aspect=self.config.tile_aspect) as facet:
+            x_col = ctx.r[self.config.tile_x_name]
+
+            facet.map_dataframe(extended_barplot,
+                                errorbar=("custom", dict(yerr=ctx.r.value_std, color="black")),
+                                x=x_col,
+                                y=ctx.r.value,
+                                hue=ctx.r._hue,
+                                dodge=True,
+                                palette=palette)
+            # Ensure that we have labels on the each of the grid Y axes
+            for ijk, data in facet.facet_data():
+                row, col, hue = ijk
+                # Note that the metric type is supposed to be unique for each column
+                # and data is a pandas dataframe.
+                label = data[ctx.r._metric_type].iloc[0]
+                facet.axes[row, col].set_ylabel(label)
+
+            if palette:
+                facet.add_legend()
+                self.adjust_legend_on_top(facet.figure)
+            facet.tight_layout()
+
+
     def gen_derived_metrics(self, df: pl.DataFrame) -> (pl.DataFrame, list[str]):
         """
         Generate derived metrics for the dataset.
@@ -301,10 +348,19 @@ class PMCGroupSummary(TVRSParamsMixin, PlotTask):
             ctx.df = ctx.df.filter(pl.col("counter").is_in(self.config.pmc_filter))
         ovh_ctx = ctx.compute_overhead(["value"], extra_groupby=["counter"])
 
+        lf_ctx = ctx.compute_lf_overhead("value", extra_groupby=["counter"], overhead_scale=100)
+
         ctx.relabel()
         ctx.derived_hue_param(default=["variant", "runtime"])
+        ctx.sort()
         self.gen_summary(ctx)
 
         ovh_ctx.relabel()
         ovh_ctx.derived_hue_param(default=["variant", "runtime"])
+        ovh_ctx.sort()
         self.gen_delta(ovh_ctx)
+
+        lf_ctx.relabel(default=dict(_metric_type="Measurement"))
+        lf_ctx.derived_hue_param(default=["variant", "runtime"])
+        lf_ctx.sort()
+        self.gen_combined(lf_ctx)
