@@ -344,6 +344,91 @@ class TVRSParamsContext:
         for chunk_id, chunk_df in self.df.groupby(axis):
             mapper(chunk_id, chunk_df)
 
+    def compute_lf_overhead(self, metric: str, inverted: bool = False, extra_groupby: list[str]|None = None, overhead_scale=1) -> Self:
+        """
+        Generate overhead vs the common baseline for long-form data. The result
+        is returned as a new parameter context.
+
+        The new dataframe will have an additional derived parameter axis named
+        _metric_type, which assumes the values of '<metric>', '<metric>_delta' and
+        '<metric>_overhead'.
+        The <metric> column change its meaning depending on the value of _metric_type.
+        Note that in the resulting context, the baseline data is not suppressed.
+        """
+        ID_COLUMNS = ["dataset_id"]
+        # All real parameter axes that are also active
+        base_columns = [self._rename[c] for c in self.base_params if c in self.params]
+        # All active parameter axes, including derived ones
+        param_columns = [self._rename[c] for c in self.params]
+        # Get the selector for the baseline dataframe slice
+        df_baseline_sel, join_sel = self._get_baseline_selector()
+
+        if extra_groupby:
+            param_columns += extra_groupby
+            join_sel += extra_groupby
+
+        metrics = [metric]
+        # Generate mean and std values for each group
+        stats = self.df.group_by(param_columns).agg(
+            cs.by_name(metrics).mean(),
+            cs.by_name(metrics).std().name.suffix("_std"),
+            cs.by_name(ID_COLUMNS + param_columns).first()
+        )
+        # Find the baseline dataframe slice
+        bs = stats.filter(**df_baseline_sel).with_columns(
+            cs.by_name(metrics).name.suffix("_baseline"),
+            cs.ends_with("_std").name.suffix("_baseline")
+        )
+        # Now we align the stats and bs frames to compute delta and overhead
+        if join_sel:
+            join_bs = bs.select(cs.ends_with("_baseline") | cs.by_name(join_sel))
+            join_df = stats.join(join_bs, on=join_sel)
+        else:
+            # The selector may be empty if the baseline slice selects a specific
+            # target/variant/runtime/scenario combination.
+            # In this case, baseline is a single row which we replicate for every
+            # parameter combination
+            _, right_df = pl.align_frames(self.df, baseline, on=list(df_baseline_sel.keys()))
+            join_df = right_df.with_columns(cs.by_name(metrics).fill_null(strategy="forward"))
+        assert join_df.shape[0] == stats.shape[0], "Unexpected join result"
+
+        m_std = f"{metric}_std"
+        bs_val = f"{metric}_baseline"
+        bs_std = f"{metric}_std_baseline"
+        delta = join_df.with_columns(
+            pl.lit(metric + "_delta").alias("_metric_type"),
+            pl.col(metric) - pl.col(bs_val),
+            (pl.col(m_std).pow(2) + pl.col(bs_std).pow(2)).sqrt()
+        ).with_columns(
+            # Mask the baseline slice with NaN
+            pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(metric)).alias(metric),
+            pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(m_std)).alias(m_std)
+        )
+
+        rel_err_sum = (pl.col(m_std) / pl.col(metric)).pow(2) + (pl.col(bs_std) / pl.col(bs_val)).pow(2)
+        ovh = delta.with_columns(
+            pl.lit(metric + "_overhead").alias("_metric_type"),
+            (pl.col(metric) / pl.col(bs_val)).mul(overhead_scale),
+            ((pl.col(m_std) / pl.col(metric)).pow(2) + (pl.col(bs_std) / pl.col(bs_val)).pow(2)).alias("_tmp_sum_of_err_squared"),
+        ).with_columns(
+            (pl.col(metric).abs() * pl.col("_tmp_sum_of_err_squared").sqrt()).alias(m_std)
+        ).with_columns(
+            # Mask the baseline slice with NaN
+            pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(metric)).alias(metric),
+            pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(m_std)).alias(m_std)
+        )
+        stats = stats.with_columns(
+            pl.lit(metric).alias("_metric_type")
+        )
+
+        # Combine the stats, delta and ovh frame to have long-form data representation
+        lf_stats = pl.concat([
+            stats,
+            delta.select(cs.all().exclude("^.*_baseline$")),
+            ovh.select(cs.all().exclude("^.*_baseline$").exclude("^_tmp.*$"))
+        ], how="vertical", rechunk=True)
+        return self.copy_context(lf_stats)
+
     def compute_overhead(self,
                          metrics: list[str],
                          inverted: bool = False,
@@ -373,10 +458,9 @@ class TVRSParamsContext:
             .select(ID_COLUMNS + param_columns + metrics)
             .group_by(param_columns)
             .agg(
-                cs.by_name(metrics).mean(),
+                cs.by_name(metrics).mean().name.suffix("_baseline"),
+                cs.by_name(metrics).std().name.suffix("_std_baseline"),
                 cs.by_name(ID_COLUMNS + param_columns).first()
-            ).with_columns(
-                cs.by_name(metrics).name.suffix("_baseline")
             ).drop(metrics)
         )
         # yapf: enable
@@ -423,93 +507,6 @@ class TVRSParamsContext:
         # Create the new context
         return self.copy_context(stat_df)
 
-    def compute_overhead_mean(self,
-                              metrics: list[str],
-                              inverted: bool = False,
-                              extra_groupby: list[str] | None = None) -> Self:
-        """
-        Generate the overhead vs the common baseline column and returns it as a
-        new parameter context.
-
-        This takes into account error propagation. The dataframe is grouped along the
-        parameterization (with the extra groupby list) to compute the mean/median.
-        The delta between the the mean of the baseline and each group is computed, with
-        the delta standard deviation.
-        Finally the percent overhead is generated as (delta) / baseline, along with
-        the overhead standard deviation.
-
-        If `inverted` is set, the delta value is negated.
-
-        The new context will contain a dataframe with the same parameters.
-        For each `metrics` column, the following columns are generated:
-        - <metric>_mean_delta
-        - <metric>_std_delta
-        - <metric>_mean_overhead
-        - <metric>_std_overhead
-        """
-        ID_COLUMNS = ["dataset_id"]
-        # All real parameter axes that are also active
-        base_columns = [self._rename[c] for c in self.base_params if c in self.params]
-        # All active parameter axes, including derived ones
-        param_columns = [self._rename[c] for c in self.params]
-        if extra_groupby:
-            param_columns += extra_groupby
-
-        # Get the selector for the baseline dataframe slice
-        df_baseline_sel = self._get_baseline_selector()
-
-        # Generate the baseline dataframe slice.
-        # We compute the mean of the baseline metrics columns to compute the overhead.
-        # XXX We should deal with error propagation here...
-        # yapf: disable
-        baseline = (
-            self.df.filter(**df_baseline_sel)
-            .select(ID_COLUMNS + param_columns + metrics)
-            .group_by(param_columns)
-            .agg(
-                cs.by_name(metrics).mean(),
-                cs.by_name(ID_COLUMNS + param_columns).first()
-            ).with_columns(
-                cs.by_name(metrics).name.suffix("_baseline")
-            ).drop(metrics)
-        )
-        # yapf: enable
-
-        # Determine how to join the baseline slice. This is done using
-        # the keys that identify the baseline selector to find the degrees of freedom
-        # that the baseline slice has and join on those.
-        join_sel = [p for p in self.TVRS_PARAMETERS if p in self.params and p not in df_baseline_sel]
-        if join_sel:
-            join_df = self.df.join(baseline, on=join_sel, suffix="__join_right")
-            # Suppress any unwanted columns on the right
-            join_df = join_df.drop(cs.ends_with("__join_right"))
-        else:
-            # The selector may be empty if the baseline slice selects a specific
-            # target/variant/runtime/scenario combination.
-            # In this case, baseline is a single row which we replicate for every
-            # parameter combination
-            _, right_df = pl.align_frames(self.df, baseline, on=list(df_baseline_sel.keys()))
-            join_df = right_df.with_columns(cs.by_name(metrics).fill_null(strategy="forward"))
-
-        assert join_df.shape[0] == self.df.shape[0], "Unexpected join result"
-        # Create the overhead columns and optionally drop the baseline data
-        sign = -1 if inverted else 1
-        overhead_expr = []
-        for m in metrics:
-            b_m = f"{m}_baseline"
-            o_m = f"{m}_overhead"
-            ovh = (pl.col(m) - pl.col(b_m)) * sign * 100 / pl.col(b_m)
-            overhead_expr.append(ovh.alias(o_m))
-            # Record the overhead columns in the column rename map
-            self._rename[o_m] = o_m
-        # Prepare to filter out the baseline
-        baseline_eq_exprs = map(lambda i: pl.col(i[0]).eq(i[1]), df_baseline_sel.items())
-        not_baseline_sel = reduce(lambda x, y: x & y, baseline_eq_exprs).not_()
-        overhead_df = (join_df.with_columns(overhead_expr).filter(not_baseline_sel))
-
-        # Create the new context
-        return self.copy_context(overhead_df)
-
     def relabel(self, default: dict[str, str] = None):
         """
         Transform the dataframe to adjust displayed properties.
@@ -524,7 +521,7 @@ class TVRSParamsContext:
             relabeling = []
             for name, mapping in config.parameter_labels.items():
                 if name not in self.df.columns:
-                    self.logger.warning("Skipping re-labeling of parameter '%s', does not exist", name)
+                    self.logger.info("Skipping re-labeling of parameter '%s', does not exist", name)
                     continue
                 relabeling.append(pl.col(name).replace(mapping))
             self.df = self.df.with_columns(*relabeling)
@@ -571,9 +568,9 @@ class TVRSParamsContext:
             return
         df = self.df.with_columns(pl.lit(0).alias("param_weight"))
         for name, weight_spec in config.parameter_weight.items():
-            col_name = self._rename[name]
+            col_name = self._rename.get(name, name)
             if col_name not in df.columns:
-                self.logger.warning("Skipping weight for parameter '%s', does not exist", col_name)
+                self.logger.info("Skipping weight for parameter '%s', does not exist", col_name)
                 continue
 
             if weight_spec.mode == WeightMode.Custom:
