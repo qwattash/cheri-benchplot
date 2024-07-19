@@ -2,14 +2,14 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import List, Optional
 
+import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
 import polars.selectors as cs
 import seaborn as sns
-import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
 
-from ..core.artefact import ValueTarget
+from ..core.artefact import Target, ValueTarget
 from ..core.config import Config, config_field
 from ..core.plot import DatasetPlotTask, PlotTarget, PlotTask, new_facet
 from ..core.plot_util import extended_barplot
@@ -139,6 +139,14 @@ class PMCGroupSummary(TVRSParamsMixin, PlotTask):
         "eff_backend_ipc": {
             "requires": ["inst_retired", "cpu_cycles", "stall_backend"],
             "column": pl.col("inst_retired") / (pl.col("cpu_cycles") - pl.col("stall_backend"))
+        },
+        "l1i_hit_rate": {
+            "requires": ["l1i_cache", "l1i_cache_refill"],
+            "column": (pl.col("l1i_cache") - pl.col("l1i_cache_refill")) / pl.col("l1i_cache")
+        },
+        "l1d_hit_rate": {
+            "requires": ["l1d_cache", "l1d_cache_refill"],
+            "column": (pl.col("l1d_cache") - pl.col("l1d_cache_refill")) / pl.col("l1d_cache")
         }
     }
 
@@ -176,6 +184,10 @@ class PMCGroupSummary(TVRSParamsMixin, PlotTask):
     @output
     def summary_combined(self):
         return PlotTarget(self, "abs-with-overhead")
+
+    @output
+    def summary_tbl(self):
+        return Target(self, "tbl", ext="csv")
 
     def gen_summary(self, ctx):
         """
@@ -305,7 +317,6 @@ class PMCGroupSummary(TVRSParamsMixin, PlotTask):
                 self.adjust_legend_on_top(facet.figure)
             facet.tight_layout()
 
-
     def gen_derived_metrics(self, df: pl.DataFrame) -> (pl.DataFrame, list[str]):
         """
         Generate derived metrics for the dataset.
@@ -364,3 +375,9 @@ class PMCGroupSummary(TVRSParamsMixin, PlotTask):
         lf_ctx.derived_hue_param(default=["variant", "runtime"])
         lf_ctx.sort()
         self.gen_combined(lf_ctx)
+
+        # Pivot back for readability
+        tbl_data = lf_ctx.df.pivot(columns=lf_ctx.r._metric_type,
+                                   index=[*lf_ctx.base_params, lf_ctx.r.counter],
+                                   values=lf_ctx.r.value)
+        tbl_data.write_csv(self.summary_tbl.single_path())
