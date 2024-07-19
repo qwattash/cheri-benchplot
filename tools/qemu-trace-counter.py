@@ -9,6 +9,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import polars as pl
+import polars.selectors as cs
 
 INSN_LINE = re.compile(r"^\[0:[0-9]+\]\s+([0-9abcdefx]+):\s+([0-9abcdefx]+)\s+([a-z0-9]+)")
 SECTION_LINE = re.compile(r"^// SECTION\[([ 0-9a-zA-Z_-]+)\]")
@@ -16,32 +17,54 @@ ENDSECTION_LINE = re.compile(r"^// ENDSECTION")
 
 addr2line = shutil.which("llvm-addr2line")
 
-def collect_sections(trace_file):
-    sections = {}
-    active = []
-    insn = 0
-    for line in trace_file:
-        if INSN_LINE.match(line):
-            insn += 1
-        elif m := SECTION_LINE.match(line):
-            name = m.group(1)
-            active.append((name, insn))
-        elif ENDSECTION_LINE.match(line):
-            name, start = active.pop()
-            sections[name] = insn - start
+class ICount:
+    def __init__(self):
+        self.icount = {
+            "all": 0,
+            "ld": 0,
+            "st": 0,
+            "cheri": 0
+        }
 
-    sections["sections total"] = sum([n for n in sections.values()])
-    sections["total"] = insn
+    def __add__(self, other):
+        r = ICount()
+        r += other
+        return r
 
-    return sections
+    def __sub__(self, other):
+        r = ICount()
+        for cat, count in self.icount.items():
+            r.icount[cat] = count - other.icount[cat]
+        return r
+
+    def __iadd__(self, other):
+        for cat, count in self.icount.items():
+            self.icount[cat] += other.icount[cat]
+        return self
+
+    def increment(self, opcode, mnemonic):
+        self.icount["all"] += 1
+
+        if mnemonic.startswith("ldr") or mnemonic == "ldp":
+            self.icount["ld"] += 1
+        elif mnemonic.startswith("str") or mnemonic == "stp":
+            self.icount["st"] += 1
+        elif mnemonic.startswith("scbnds"):
+            self.icount["cheri"] += 1
+
+    def clone(self):
+        r = ICount()
+        r.icount = dict(self.icount)
+        return r
+
 
 def collect_functions(trace_file, cumulative=False):
-    fn_icount = defaultdict(lambda: 0)
-    fn_icount["_top_"] = 0
+    fn_icount = defaultdict(ICount)
+    fn_icount["_top_"] = ICount()
     calls = {}
     stack = []
-    global_icount = 0
-    icount = 0
+    global_icount = ICount()
+    icount = ICount()
     has_call = False
     has_ret = False
 
@@ -49,31 +72,45 @@ def collect_functions(trace_file, cumulative=False):
         if m := INSN_LINE.match(line):
             pc = m.group(1)
             if has_call:
-                stack.append((pc, global_icount))
+                stack.append((pc, global_icount.clone()))
                 has_call = False
-                fn_icount[pc] = 0
+                fn_icount[pc] = ICount()
             elif has_ret:
                 pc, start = stack.pop()
                 calls[pc] = global_icount - start
                 has_ret = False
                 fn_icount[pc] += icount
-                icount = 0
-            global_icount += 1
-            icount += 1
+                icount = ICount()
+
             opcode = m.group(2)
             mnemonic = m.group(3)
+            global_icount.increment(opcode, mnemonic)
+            icount.increment(opcode, mnemonic)
+
             if mnemonic == "blr" or mnemonic == "bl" or mnemonic == "svc":
                 has_call = True
                 curr_frame = "_top_" if len(stack) == 0 else stack[-1][0]
                 fn_icount[curr_frame] += icount
-                icount = 0
+                icount = ICount()
             elif mnemonic == "ret" or mnemonic == "eret" or opcode == "d69f03e0":
                 has_ret = True
+
     calls["_top_"] = global_icount
     fn_icount["_top_"] += icount
-    cum_icount_df = pl.from_records([list(calls.keys()), list(calls.values())], schema=["fn", "cum_icount"])
-    fn_icount_df = pl.from_records([list(fn_icount.keys()), list(fn_icount.values())], schema=["fn", "icount"])
-    return cum_icount_df.join(fn_icount_df, on="fn")
+    cumul_icount_df = (
+        pl.from_records(
+            [list(calls.keys()), [i.icount for i in calls.values()]],
+            schema=["fn", "cumul_icount"])
+        .unnest("cumul_icount")
+        .select(pl.col("fn"), cs.all().exclude("fn").name.prefix("cumul_"))
+    )
+    fn_icount_df = (
+        pl.from_records(
+            [list(fn_icount.keys()), [i.icount for i in fn_icount.values()]],
+            schema=["fn", "icount"])
+        .unnest("icount")
+    )
+    return cumul_icount_df.join(fn_icount_df, on="fn")
 
 
 def resolve_symbol(obj_set: list[Path], addr: str) -> str:
@@ -110,10 +147,6 @@ def main():
     obj_set = []
     if args.obj:
         obj_set.append((0, args.obj))
-
-    # with open(args.trace_file, "r") as fd:
-    #     sections = collect_sections(fd)
-    #     print(json.dumps(sections, indent=4))
 
     with open(args.trace_file, "r") as fd:
         hist_df = collect_functions(fd, args.cumulative)
