@@ -3,10 +3,10 @@ import subprocess
 from collections import defaultdict
 
 from ..core.analysis import DatasetAnalysisTask
-from ..core.artefact import ValueTarget
+from ..core.artefact import BenchmarkIterationTarget, ValueTarget
 from ..core.plot import DatasetPlotTask, PlotTarget
 from ..core.task import dependency, output
-from .ingest import IngestPMCStatStacks
+from .pmc_exec import PMCExec, PMCExecConfig
 
 
 class PMCStacksFlameGraph(DatasetPlotTask):
@@ -20,39 +20,55 @@ class PMCStacksFlameGraph(DatasetPlotTask):
     task_name = "flamegraph"
     public = True
 
+    def __init__(self, benchmark, analysis_config, task_config):
+        super().__init__(benchmark, analysis_config, task_config)
+        self.flamegraph_tool = self.session.user_config.flamegraph_path / "flamegraph.pl"
+        self.stackcollapse_tool = self.session.user_config.flamegraph_path / "stackcollapse-pmc.pl"
+        if not self.flamegraph_tool.exists():
+            self.logger.warning("Tool flamegraph.pl not found, try setting user config flamegraph_path")
+            self.flamegraph_tool = None
+        if not self.stackcollapse_tool.exists():
+            self.logger.warning("Tool stackcollapse-pmc.pl not found, try setting user config flamegraph_path")
+            self.stackcollapse_tool = None
+
     @output
     def flamegraph(self):
         return PlotTarget(self, "stacks", ext="svg")
 
     @output
-    def flamegraph_ref(self):
-        return PlotTarget(self, "ref-stacks", ext="svg")
+    def stackcollapse_data(self):
+        return BenchmarkIterationTarget(self, "collapsed-stacks", ext="txt")
 
     def run(self):
-        flamegraph_tool = self.session.user_config.flamegraph_path / "flamegraph.pl"
-        if not flamegraph_tool.exists():
-            self.logger.warning(
-                "Tool flamegraph.pl not found, try setting user config flamegraph_path -- Skipping plot")
+        if not self.flamegraph_tool or not self.stackcollapse_tool:
+            self.logger.warning("Skipping plot")
             return
 
-        task = self.benchmark.find_exec_task(IngestPMCStatStacks)
+        task = self.benchmark.find_exec_task(PMCExec)
+        if not task.config.sampling_mode:
+            self.logger.error("Task requires sampling mode counters")
+            raise RuntimeError("Configuration error")
 
-        # Load the stacks data
+        # Collapse the stacks data
+        for path, out_path in zip(task.pmc_data.iter_paths(), self.stackcollapse_data.iter_paths()):
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(out_path, "w") as out_fd:
+                self.logger.debug("Run %s %s", self.stackcollapse_tool, path)
+                subprocess.run([self.stackcollapse_tool, path], stdout=out_fd)
+
+        # Merge collapsed stack samples
         merged_data = defaultdict(lambda: 0)
-        for path in task.data.iter_paths():
+        for path in self.stackcollapse_data.iter_paths():
             with open(path, "r") as fd:
-                in_data = json.load(fd)
-            for key, value in in_data["stacks"].items():
-                merged_data[key] += value
+                for line in fd:
+                    stack, count = line.split(" ")
+                    merged_data[stack] += int(count)
 
+        self.logger.debug("Emit flamegraph %s", self.flamegraph.single_path())
         with open(self.flamegraph.single_path(), "w+") as plot_file:
-            with subprocess.Popen([flamegraph_tool], stdin=subprocess.PIPE, stdout=plot_file) as proc:
-                for key, vale in merged_data.items():
+            with subprocess.Popen([self.flamegraph_tool], stdin=subprocess.PIPE, stdout=plot_file) as proc:
+                for key, value in merged_data.items():
                     proc.stdin.write(f"{key} {value}\n".encode("ascii"))
                 proc.stdin.close()
                 proc.wait()
                 assert proc.returncode == 0
-
-        with open(self.flamegraph_ref.single_path(), "w+") as plot_file:
-            subprocess.run([flamegraph_tool, task.collapsed_stacks.paths()[0]],
-                           stdout=plot_file)
