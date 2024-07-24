@@ -2,20 +2,20 @@
 
 import argparse as ap
 import json
+import re
 import shutil
 import subprocess
-import re
 from collections import defaultdict
 from pathlib import Path
 
 import polars as pl
 import polars.selectors as cs
 
-INSN_LINE = re.compile(r"^\[0:[0-9]+\]\s+([0-9abcdefx]+):\s+([0-9abcdefx]+)\s+([a-z0-9]+)")
-SECTION_LINE = re.compile(r"^// SECTION\[([ 0-9a-zA-Z_-]+)\]")
-ENDSECTION_LINE = re.compile(r"^// ENDSECTION")
+INSN_LINE = re.compile(r"^\[0:[0-9]+\]\s+([0-9abcdefx]+):\s+([0-9abcdefx]+)\s+([a-z0-9]+)\s+(.*)")
+CAP_OPERAND = re.compile(r"^c[zr0-9]+,")
 
 addr2line = shutil.which("llvm-addr2line")
+
 
 class ICount:
     def __init__(self):
@@ -23,7 +23,11 @@ class ICount:
             "all": 0,
             "ld": 0,
             "st": 0,
-            "cheri": 0
+            "ld_pair": 0,
+            "st_pair": 0,
+            "cheri": 0,
+            "cheri_ld_pair": 0,
+            "cheri_st_pair": 0,
         }
 
     def __add__(self, other):
@@ -42,13 +46,23 @@ class ICount:
             self.icount[cat] += other.icount[cat]
         return self
 
-    def increment(self, opcode, mnemonic):
+    def increment(self, opcode, mnemonic, operands):
         self.icount["all"] += 1
 
         if mnemonic.startswith("ldr") or mnemonic == "ldp":
-            self.icount["ld"] += 1
+            if mnemonic == "ldp":
+                self.icount["ld_pair"] += 1
+                if CAP_OPERAND.match(operands):
+                    self.icount["cheri_ld_pair"] += 1
+            else:
+                self.icount["ld"] += 1
         elif mnemonic.startswith("str") or mnemonic == "stp":
-            self.icount["st"] += 1
+            if mnemonic == "stp":
+                self.icount["st_pair"] += 1
+                if CAP_OPERAND.match(operands):
+                    self.icount["cheri_st_pair"] += 1
+            else:
+                self.icount["st"] += 1
         elif mnemonic.startswith("scbnds"):
             self.icount["cheri"] += 1
 
@@ -84,8 +98,9 @@ def collect_functions(trace_file, cumulative=False):
 
             opcode = m.group(2)
             mnemonic = m.group(3)
-            global_icount.increment(opcode, mnemonic)
-            icount.increment(opcode, mnemonic)
+            operands = m.group(4)
+            global_icount.increment(opcode, mnemonic, operands)
+            icount.increment(opcode, mnemonic, operands)
 
             if mnemonic == "blr" or mnemonic == "bl" or mnemonic == "svc":
                 has_call = True
@@ -97,19 +112,12 @@ def collect_functions(trace_file, cumulative=False):
 
     calls["_top_"] = global_icount
     fn_icount["_top_"] += icount
-    cumul_icount_df = (
-        pl.from_records(
-            [list(calls.keys()), [i.icount for i in calls.values()]],
-            schema=["fn", "cumul_icount"])
-        .unnest("cumul_icount")
-        .select(pl.col("fn"), cs.all().exclude("fn").name.prefix("cumul_"))
-    )
-    fn_icount_df = (
-        pl.from_records(
-            [list(fn_icount.keys()), [i.icount for i in fn_icount.values()]],
-            schema=["fn", "icount"])
-        .unnest("icount")
-    )
+    cumul_icount_df = (pl.from_records([list(calls.keys()), [i.icount for i in calls.values()]],
+                                       schema=["fn", "cumul_icount"]).unnest("cumul_icount").select(
+                                           pl.col("fn"),
+                                           cs.all().exclude("fn").name.prefix("cumul_")))
+    fn_icount_df = (pl.from_records([list(fn_icount.keys()), [i.icount for i in fn_icount.values()]],
+                                    schema=["fn", "icount"]).unnest("icount"))
     return cumul_icount_df.join(fn_icount_df, on="fn")
 
 
@@ -122,8 +130,8 @@ def resolve_symbol(obj_set: list[Path], addr: str) -> str:
     for base, obj_path in obj_set:
         if base is not None:
             addr = addr - base
-        result = subprocess.run(["llvm-addr2line", "-f", "--obj", obj_path.expanduser(), f"{addr:x}"],
-                                capture_output=True, check=True)
+        result = subprocess.run(
+            ["llvm-addr2line", "-f", "--obj", obj_path.expanduser(), f"{addr:x}"], capture_output=True, check=True)
         out = result.stdout.decode("UTF-8").splitlines()
         fn = out[0]
         print("Lookup symbol", obj_path.expanduser(), f"{addr:x}", "->", fn)
@@ -132,11 +140,41 @@ def resolve_symbol(obj_set: list[Path], addr: str) -> str:
         return fn
 
 
+def symbolize_trace(trace_file, obj_set, out_file):
+    base = obj_set[0][0]
+    obj = obj_set[0][1]
+    addr2line = subprocess.Popen(["llvm-addr2line", "-f", "--obj", obj.expanduser()],
+                                 stdin=subprocess.PIPE,
+                                 stdout=subprocess.PIPE)
+
+    def resolve_location(addr):
+        addr = int(addr, 16)
+        if base is not None:
+            addr = addr - base
+
+        addr2line.stdin.write(f"{addr:x}\n".encode("UTF-8"))
+        addr2line.stdin.flush()
+        fn = addr2line.stdout.readline().decode("UTF-8").strip()
+        location = addr2line.stdout.readline().decode("UTF-8").strip()
+        return f"{location}//{fn}"
+
+    for line in trace_file:
+        if m := INSN_LINE.match(line):
+            pc = m.group(1)
+            location = resolve_location(pc)
+            out_file.write(f"{location} {line}\n")
+
+    addr2line.stdin.close()
+    addr2line.wait()
+
+
 def main():
     parser = ap.ArgumentParser("QEMU instruction trace tool")
     parser.add_argument("trace_file", type=Path, help="Trace file to inspect")
     parser.add_argument("--obj", type=Path, help="Path to an object file for function annotation")
-    parser.add_argument("--cumulative", default=False, action="store_true",
+    parser.add_argument("--cumulative",
+                        default=False,
+                        action="store_true",
                         help="Cumulative instruction count for function calls")
     parser.add_argument("--output", type=Path, default=Path.cwd() / "output.csv", help="Output file name")
 
@@ -152,10 +190,14 @@ def main():
         hist_df = collect_functions(fd, args.cumulative)
 
         sym_df = hist_df.with_columns(
-            pl.col("fn").map_elements(lambda addr: resolve_symbol(obj_set, addr), return_dtype=pl.String)
-        )
+            pl.col("fn").map_elements(lambda addr: resolve_symbol(obj_set, addr), return_dtype=pl.String))
         sym_df.write_csv(args.output)
         print(sym_df)
+
+    with open(args.trace_file, "r") as fd:
+        with open(args.trace_file.with_suffix(".sym"), "w+") as out:
+            symbolize_trace(fd, obj_set, out)
+
 
 if __name__ == "__main__":
     main()
