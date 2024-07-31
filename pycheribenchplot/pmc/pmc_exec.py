@@ -17,6 +17,7 @@ class PMCSet(Enum):
     Pre-defined sets of counters
     """
     Instr = "instr"
+    CheriInstr = "cheri-instr"
     L1Cache = "l1cache"
     L2Cache = "l2cache"
     L3Cache = "l3cache"
@@ -27,8 +28,12 @@ class PMCSet(Enum):
 
 PMC_SET_COUNTERS = {
     PMCSet.Instr: [
-        "CPU_CYCLES", "INST_RETIRED", "INST_SPEC", "EXECUTIVE_ENTRY", "EXECUTIVE_EXIT", "INST_SPEC_RESTRICTED",
+        "CPU_CYCLES", "INST_RETIRED", "INST_SPEC", "LD_SPEC", "ST_SPEC", "EXC_SVC", "EXC_IRQ", "EXC_TRAP_IRQ",
         "STALL_FRONTEND", "STALL_BACKEND"
+    ],
+    PMCSet.CheriInstr: [
+        "CPU_CYCLES", "INST_RETIRED", "INST_SPEC", "EXECUTIVE_ENTRY", "EXECUTIVE_EXIT", "INST_SPEC_RESTRICTED",
+        "CAP_LD_SPEC", "CAP_ST_SPEC", "BR_MIS_PRED", "BR_MIS_PRED_RS"
     ],
     PMCSet.L1Cache: [
         "CPU_CYCLES", "INST_RETIRED", "L1D_CACHE_REFILL", "L1D_CACHE", "L1D_CACHE_WB_VICTIM", "L1I_CACHE",
