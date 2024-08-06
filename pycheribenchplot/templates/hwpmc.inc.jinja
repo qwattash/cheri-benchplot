@@ -28,9 +28,9 @@
 
 {% macro _pmcstat_output(iteration) %}
   {% if hwpmc_config.sampling_mode %}
-    -O {{ hwpmc_output[iteration] }}.tmp
+    -O {{ hwpmc_gen_output(iteration) }}.tmp
   {% else %}
-    -o {{ hwpmc_output[iteration] }}
+    -o {{ hwpmc_gen_output(iteration) }}
   {% endif %}
 {% endmacro %}
 
@@ -52,8 +52,8 @@
 {% endmacro %}
 
 {% macro _pmcstat_post_impl(iteration) %}
-  pmcstat -R "{{ hwpmc_output[iteration] }}.tmp" -G "{{ hwpmc_output[iteration] }}"
-  rm "{{ hwpmc_output[iteration] }}.tmp"
+  pmcstat -R "{{ hwpmc_gen_output(iteration) }}.tmp" -G "{{ hwpmc_gen_output(iteration) }}"
+  rm "{{ hwpmc_gen_output(iteration) }}.tmp"
 {% endmacro %}
 
 {% macro _pmcstat_post(iteration) %}

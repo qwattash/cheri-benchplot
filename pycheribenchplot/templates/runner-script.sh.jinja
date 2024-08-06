@@ -23,7 +23,7 @@ echo "Parameters:"
 {% for pkey, pval in parameters.items() %}
 echo -e "\t{{ pkey }}='{{ pval }}'"
 {% endfor %}
-#
+
 {% macro gen_hook(phase, hook) %}
   verbose "{{ phase }} hook '{{ hook.name }}'"
   {% if hook.template -%}
@@ -35,7 +35,7 @@ echo -e "\t{{ pkey }}='{{ pval }}'"
     {% endfor %}
   {% endif %}
 {% endmacro %}
-#
+
 {% macro gen_iter_hook(phase, iteration, hook) %}
   verbose "{{ phase }} iteration {{ iteration }} hook '{{ hook.name }}'"
   {% if hook.template -%}
@@ -56,7 +56,8 @@ echo -e "\t{{ pkey }}='{{ pval }}'"
 
 #### Run loop
 {% block iteration_loop %}
-  {% for current_iteration in range(iterations) %}
+  for ITERATION in $(seq 0 {{ iterations - 1 }}); do
+    {% set current_iteration = "${ITERATION}" -%}
     {% block iteration_setup scoped %}
       {% for hook in iter_setup_hooks %}
         {{ gen_iter_hook("Setup", current_iteration, hook) }}
@@ -71,7 +72,7 @@ echo -e "\t{{ pkey }}='{{ pval }}'"
         {{ gen_iter_hook("Teardown", current_iteration, hook) }}
       {% endfor %}
     {% endblock iteration_teardown %}
-  {% endfor %}
+  done
 {% endblock iteration_loop %}
 
 #### Global teardown

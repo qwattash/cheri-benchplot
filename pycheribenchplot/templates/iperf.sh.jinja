@@ -94,7 +94,7 @@
 	{{ mss_flag() | trim }} \
 	{{ nodelay_flag() | trim }} \
 	{{ ipversion() | trim }} \
-	-J --logfile {{ iperf_output_path[current_iteration] }}
+	-J --logfile {{ iperf_gen_output_path(current_iteration) }}
 {% endblock iteration_exec %}
 
 {% block global_teardown %}

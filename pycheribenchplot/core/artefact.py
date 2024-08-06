@@ -233,7 +233,27 @@ class RemoteBenchmarkIterationTarget(BenchmarkIterationTarget, RemoteTarget):
     """
     Same as the :class:`BenchmarkIterationTarget` but has associated remote files.
     """
-    pass
+    def shell_path_builder(self, **kwargs) -> "Callable[str, str]":
+        """
+        Return a function that the script template can call with the current iteration
+        bash variable to produce the output path.
+        """
+        param_gen = self._filter_path_parameters(**kwargs)
+
+        def _gen_path(iteration_variable):
+            param_gen["iteration"] = [iteration_variable]
+            params = [*product(*param_gen.values())]
+            # For this to make sense we should only have a single combination here
+            if len(params) > 1:
+                self.logger.warning("Suspect script template output path: the bash template "
+                                    "should only vary along the 'iteration' axis. "
+                                    "Found combinations %s, arbitrarily taking the first.", params)
+            param_args = dict(zip(self._path_parameters.keys(), params[0]))
+            path_template = Path(self._path_template.format(**param_args))
+            if path_template.is_absolute():
+                path_template = path_template.relative_to("/")
+            return path_template
+        return _gen_path
 
 
 class ValueTarget(Target):

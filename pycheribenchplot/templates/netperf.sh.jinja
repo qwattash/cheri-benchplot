@@ -107,7 +107,7 @@
 	-o "all" {{ nodelay_flag() | trim }} \
 	{{ buffer_size_flags() | trim }} \
 	{{ window_size_flags() | trim }} \
-	> {{ netperf_output_path[current_iteration] }}
+	> {{ netperf_gen_output_path(current_iteration) }}
 {% endblock iteration_exec %}
 
 {% block global_teardown %}

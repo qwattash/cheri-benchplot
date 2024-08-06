@@ -147,5 +147,5 @@ class PMCExec(ExecutionTask):
         self.script.extend_context({
             "hwpmc_config": self.config,
             "hwpmc_counters": self.config.counters_list,
-            "hwpmc_output": self.pmc_data.remote_paths()
+            "hwpmc_gen_output": self.pmc_data.shell_path_builder()
         })

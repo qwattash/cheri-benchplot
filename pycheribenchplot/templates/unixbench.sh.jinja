@@ -27,7 +27,7 @@
 {% block iteration_exec %}
   verbose "Run unixbench {{ scenario_config.test }} iterations {{ current_iteration }}"
 
-  hyperfine --style=none -r 1 --export-json {{ unixbench_out_path[current_iteration] }} \
+  hyperfine --style=none -r 1 --export-json {{ unixbench_gen_output_path(current_iteration) }} \
 	"{{ _unixbench_command(current_iteration) | trim }}"
 {% endblock %}
 

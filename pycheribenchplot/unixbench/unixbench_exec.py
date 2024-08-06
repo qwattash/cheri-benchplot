@@ -86,5 +86,5 @@ class UnixBenchExec(TVRSExecTask):
         self.script.set_template("unixbench.sh.jinja")
         self.script.extend_context({
             "unixbench_config": self.config,
-            "unixbench_out_path": self.timing.remote_paths()
+            "unixbench_gen_output_path": self.timing.shell_path_builder()
         })

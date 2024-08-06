@@ -174,7 +174,7 @@ class IPerfExecTask(TVRSExecTask):
         self.script.extend_context({
             "scenario_config": scenario_config,
             "iperf_config": self.config,
-            "iperf_output_path": self.stats.remote_paths(),
+            "iperf_gen_output_path": self.stats.shell_path_builder()
         })
         self.script.register_global("IPerfProtocol", IPerfProtocol)
         self.script.register_global("IPerfMode", IPerfMode)
