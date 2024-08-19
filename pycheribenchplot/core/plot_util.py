@@ -60,7 +60,19 @@ def extended_barplot(data, **kwargs):
     # Need to use maps for color and offsets because polars groupby does
     # not preserver group order by default.
     for hue_val, chunk in hue_chunks:
-        chunk_yerr = chunk[yerr] if yerr else None
+        # Normalize, iterating the groupby returns tuples
+        if type(hue_val) == tuple:
+            hue_val = hue_val[0]
+
+        if yerr and type(yerr) == str:
+            chunk_yerr = chunk[yerr] if yerr else None
+        elif yerr:
+            ymin, ymax = yerr
+            err_lo = chunk[y] - chunk[ymin]
+            err_hi = chunk[ymax] - chunk[y]
+            chunk_yerr = np.asarray([err_lo.to_numpy(), err_hi.to_numpy()])
+        else:
+            chunk_yerr = None
         offset = dodge_map.get(hue_val, 0)
         ax.errorbar(chunk["_xcoord"] + offset, chunk[y], yerr=chunk_yerr,
                     ecolor=err_color, **errorbar_kwargs)
