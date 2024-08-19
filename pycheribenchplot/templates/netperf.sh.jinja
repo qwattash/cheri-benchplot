@@ -101,7 +101,7 @@
 
   {{ hwpmc.pmcstat(current_iteration) }} netperf \
 	-H "{{ scenario_config.remote_host }},inet" \
-	{{ netperf_test_flags() | trim }} \
+	{{ netperf_test_flags() | trim }} {{ cpuaffinity() | trim }} \
 	{{ limit_flag() | trim }} \
 	-- \
 	-o "all" {{ nodelay_flag() | trim }} \
