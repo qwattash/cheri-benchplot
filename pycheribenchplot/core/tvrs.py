@@ -344,7 +344,90 @@ class TVRSParamsContext:
         for chunk_id, chunk_df in self.df.groupby(axis):
             mapper(chunk_id, chunk_df)
 
-    def compute_lf_overhead(self, metric: str, inverted: bool = False, extra_groupby: list[str]|None = None, overhead_scale=1) -> Self:
+    def _compute_lf_overhead_median(self,
+                                    metric: str,
+                                    inverted: bool = False,
+                                    extra_groupby: list[str] | None = None,
+                                    overhead_scale=1) -> Self:
+        ID_COLUMNS = ["dataset_id"]
+        # All real parameter axes that are also active
+        base_columns = [self._rename[c] for c in self.base_params if c in self.params]
+        # All active parameter axes, including derived ones
+        param_columns = [self._rename[c] for c in self.params]
+        # Get the selector for the baseline dataframe slice
+        df_baseline_sel, join_sel = self._get_baseline_selector()
+
+        if extra_groupby:
+            param_columns += extra_groupby
+            join_sel += extra_groupby
+
+        metrics = [metric]
+        bs_val = f"{metric}_baseline"
+        m_q25 = f"{metric}_q25"
+        m_q75 = f"{metric}_q75"
+        # Generate mean and std values for each group
+        agg_selectors = [
+            cs.by_name(metrics).median(),
+            cs.by_name(metrics).quantile(0.25, "linear").name.suffix("_q25"),
+            cs.by_name(metrics).quantile(0.75, "linear").name.suffix("_q75")
+        ]
+        agg_rename = cs.ends_with("_q25", "_q75").name.suffix("_baseline")
+        stats = self.df.group_by(param_columns).agg(cs.by_name(ID_COLUMNS).first(), *agg_selectors)
+        # Find the baseline dataframe slice
+        bs = stats.filter(**df_baseline_sel).with_columns(cs.by_name(metrics).name.suffix("_baseline"), agg_rename)
+
+        # Now we align the input and baseline median frames to compute delta and overhead
+        if join_sel:
+            join_bs = bs.select(cs.ends_with("_baseline") | cs.by_name(join_sel))
+            join_df = self.df.join(join_bs, on=join_sel)
+        else:
+            # The selector may be empty if the baseline slice selects a specific
+            # target/variant/runtime/scenario combination.
+            # In this case, baseline is a single row which we replicate for every
+            # parameter combination
+            _, right_df = pl.align_frames(self.df, baseline, on=list(df_baseline_sel.keys()))
+            join_df = right_df.with_columns(cs.by_name(metrics).fill_null(strategy="forward"))
+        assert join_df.shape[0] == self.df.shape[0], "Unexpected join result"
+
+        # Use nonparametric bootstrapping to estimate difference of medians
+        # We do this by repeating the bootstrap method for each metric we have.
+        # XXX TODO scipy.stat.bootstrap()
+        delta = (
+            join_df.with_columns(pl.col(metric) - pl.col(bs_val), ).group_by(param_columns).agg(
+                cs.by_name(ID_COLUMNS).first(), *agg_selectors).with_columns(
+                    pl.lit(metric + "_delta").alias("_metric_type"),
+                    # Mask the baseline slice with NaN
+                    pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(metric)).alias(metric),
+                    pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(m_q25)).alias(m_q25),
+                    pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(m_q75)).alias(m_q75)))
+
+        # XXX Use bootstrapping here as well
+        ovh = (
+            join_df.with_columns(
+                (pl.col(metric) / pl.col(bs_val) - pl.lit(1)).mul(overhead_scale), ).group_by(param_columns).agg(
+                    cs.by_name(ID_COLUMNS).first(), *agg_selectors).with_columns(
+                        pl.lit(metric + "_overhead").alias("_metric_type"),
+                        # Mask the baseline slice with NaN
+                        pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(metric)).alias(metric),
+                        pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(m_q25)).alias(m_q25),
+                        pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(m_q75)).alias(m_q75)))
+
+        # Combine the stats, delta and ovh frames to have long-form data layout
+        stats = stats.with_columns(pl.lit(metric).alias("_metric_type"))
+        lf_stats = pl.concat(
+            [stats,
+             delta.select(cs.all().exclude("^.*_baseline$")),
+             ovh.select(cs.all().exclude("^.*_baseline$"))],
+            how="vertical",
+            rechunk=True)
+        return self.copy_context(lf_stats)
+
+    def compute_lf_overhead(self,
+                            metric: str,
+                            inverted: bool = False,
+                            extra_groupby: list[str] | None = None,
+                            overhead_scale=1,
+                            how="mean") -> Self:
         """
         Generate overhead vs the common baseline for long-form data. The result
         is returned as a new parameter context.
@@ -354,7 +437,24 @@ class TVRSParamsContext:
         '<metric>_overhead'.
         The <metric> column change its meaning depending on the value of _metric_type.
         Note that in the resulting context, the baseline data is not suppressed.
+
+        If how = "mean", data is aggregated using mean and standard deviation.
+        The standard deviation is propagated for the delta and percent overhead as
+        the _std columns.
+        This makes assumptions about statistical independence of the measurements and
+        normality of the distribution.
+
+        If how = "median", data is aggregated using median and quartile range. The IQR is
+        computed for the delta and percent overhead as _q25 and _q75 columns.
+        Note that the relative measures are normalised with respect to the median,
+        the quartiles will indicate spread but do not account the uncertainty on the
+        baseline measure.
         """
+        assert how == "mean" or how == "median"
+
+        if how == "median":
+            return self._compute_lf_overhead_median(metric, inverted, extra_groupby, overhead_scale)
+
         ID_COLUMNS = ["dataset_id"]
         # All real parameter axes that are also active
         base_columns = [self._rename[c] for c in self.base_params if c in self.params]
@@ -369,16 +469,20 @@ class TVRSParamsContext:
 
         metrics = [metric]
         # Generate mean and std values for each group
-        stats = self.df.group_by(param_columns).agg(
-            cs.by_name(metrics).mean(),
-            cs.by_name(metrics).std().name.suffix("_std"),
-            cs.by_name(ID_COLUMNS + param_columns).first()
-        )
+        if how == "mean":
+            agg_selectors = [cs.by_name(metrics).mean(), cs.by_name(metrics).std().name.suffix("_std")]
+            agg_rename = cs.ends_with("_std").name.suffix("_baseline")
+        else:
+            agg_selectors = [
+                cs.by_name(metrics).median(),
+                cs.by_name(metrics).quantile(0.25, "linear").name.suffix("_q25"),
+                cs.by_name(metrics).quantile(0.75, "linear").name.suffix("_q75")
+            ]
+            agg_rename = cs.ends_with("_q25", "_q75").name.suffix("_baseline")
+        stats = self.df.group_by(param_columns).agg(cs.by_name(ID_COLUMNS + param_columns).first(), *agg_selectors)
         # Find the baseline dataframe slice
-        bs = stats.filter(**df_baseline_sel).with_columns(
-            cs.by_name(metrics).name.suffix("_baseline"),
-            cs.ends_with("_std").name.suffix("_baseline")
-        )
+        bs = stats.filter(**df_baseline_sel).with_columns(cs.by_name(metrics).name.suffix("_baseline"), agg_rename)
+
         # Now we align the stats and bs frames to compute delta and overhead
         if join_sel:
             join_bs = bs.select(cs.ends_with("_baseline") | cs.by_name(join_sel))
@@ -392,41 +496,69 @@ class TVRSParamsContext:
             join_df = right_df.with_columns(cs.by_name(metrics).fill_null(strategy="forward"))
         assert join_df.shape[0] == stats.shape[0], "Unexpected join result"
 
-        m_std = f"{metric}_std"
+        # Compute the absolute DELTA for each metric
         bs_val = f"{metric}_baseline"
-        bs_std = f"{metric}_std_baseline"
-        delta = join_df.with_columns(
-            pl.lit(metric + "_delta").alias("_metric_type"),
-            pl.col(metric) - pl.col(bs_val),
-            (pl.col(m_std).pow(2) + pl.col(bs_std).pow(2)).sqrt()
-        ).with_columns(
-            # Mask the baseline slice with NaN
-            pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(metric)).alias(metric),
-            pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(m_std)).alias(m_std)
-        )
+        if how == "mean":
+            m_std = f"{metric}_std"
+            bs_std = f"{metric}_std_baseline"
+            delta = join_df.with_columns(
+                pl.lit(metric + "_delta").alias("_metric_type"),
+                pl.col(metric) - pl.col(bs_val), (pl.col(m_std).pow(2) + pl.col(bs_std).pow(2)).sqrt()).with_columns(
+                    # Mask the baseline slice with NaN
+                    pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(metric)).alias(metric),
+                    pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(m_std)).alias(m_std))
+        else:
+            # Use nonparametric bootstrapping to estimate difference of medians
+            # We do this by repeating the bootstrap method for each metric we have.
+            # XXX TODO scipy.stat.bootstrap()
+            m_q25 = f"{metric}_q25"
+            m_q75 = f"{metric}_q75"
+            delta = join_df.with_columns(
+                pl.lit(metric + "_delta").alias("_metric_type"),
+                pl.col(metric) - pl.col(bs_val), (pl.col(m_25) - pl.col(bs_val)).alias(m_q25),
+                (pl.col(m_75) - pl.col(bs_val)).alias(m_q75)
+                # XXX check what needs to be inverted
+            ).with_columns(
+                # Mask the baseline slice with NaN
+                pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(metric)).alias(metric),
+                pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(m_q25)).alias(m_q25),
+                pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(m_q75)).alias(m_q75))
 
-        rel_err_sum = (pl.col(m_std) / pl.col(metric)).pow(2) + (pl.col(bs_std) / pl.col(bs_val)).pow(2)
-        ovh = delta.with_columns(
-            pl.lit(metric + "_overhead").alias("_metric_type"),
-            (pl.col(metric) / pl.col(bs_val)).mul(overhead_scale),
-            ((pl.col(m_std) / pl.col(metric)).pow(2) + (pl.col(bs_std) / pl.col(bs_val)).pow(2)).alias("_tmp_sum_of_err_squared"),
-        ).with_columns(
-            (pl.col(metric).abs() * pl.col("_tmp_sum_of_err_squared").sqrt()).alias(m_std)
-        ).with_columns(
-            # Mask the baseline slice with NaN
-            pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(metric)).alias(metric),
-            pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(m_std)).alias(m_std)
-        )
-        stats = stats.with_columns(
-            pl.lit(metric).alias("_metric_type")
-        )
+        # Compute the % Overhead for each metric
+        if how == "mean":
+            rel_err_sum = (pl.col(m_std) / pl.col(metric)).pow(2) + (pl.col(bs_std) / pl.col(bs_val)).pow(2)
+            ovh = delta.with_columns(
+                pl.lit(metric + "_overhead").alias("_metric_type"),
+                (pl.col(metric) / pl.col(bs_val)).mul(overhead_scale),
+                ((pl.col(m_std) / pl.col(metric)).pow(2) +
+                 (pl.col(bs_std) / pl.col(bs_val)).pow(2)).alias("_tmp_sum_of_err_squared"),
+            ).with_columns((pl.col(metric).abs() * pl.col("_tmp_sum_of_err_squared").sqrt()).alias(m_std)).with_columns(
+                # Mask the baseline slice with NaN
+                pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(metric)).alias(metric),
+                pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(m_std)).alias(m_std))
+        else:
+            # XXX Use bootstrapping here as well
+            ovh = join_df.with_columns(
+                pl.lit(metric + "_overhead").alias("_metric_type"),
+                (pl.col(metric) / pl.col(bs_val) - pl.lit(1)).mul(overhead_scale),
+                (pl.col(m_q25) / pl.col(bs_val) - pl.lit(1)).mul(overhead_scale),
+                (pl.col(m_q75) / pl.col(bs_val) - pl.lit(1)).mul(overhead_scale)
+                # XXX check what needs to be inverted
+            ).with_columns(
+                # Mask the baseline slice with NaN
+                pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(metric)).alias(metric),
+                pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(m_q25)).alias(m_q25),
+                pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(m_q75)).alias(m_q75))
 
         # Combine the stats, delta and ovh frame to have long-form data representation
+        stats = stats.with_columns(pl.lit(metric).alias("_metric_type"))
         lf_stats = pl.concat([
             stats,
             delta.select(cs.all().exclude("^.*_baseline$")),
             ovh.select(cs.all().exclude("^.*_baseline$").exclude("^_tmp.*$"))
-        ], how="vertical", rechunk=True)
+        ],
+                             how="vertical",
+                             rechunk=True)
         return self.copy_context(lf_stats)
 
     def compute_overhead(self,
@@ -460,8 +592,8 @@ class TVRSParamsContext:
             .agg(
                 cs.by_name(metrics).mean().name.suffix("_baseline"),
                 cs.by_name(metrics).std().name.suffix("_std_baseline"),
-                cs.by_name(ID_COLUMNS + param_columns).first()
-            ).drop(metrics)
+                cs.by_name(ID_COLUMNS).first()
+            )
         )
         # yapf: enable
 
@@ -565,8 +697,9 @@ class TVRSParamsContext:
         """
         config = self.task.tvrs_config()
         if not config.parameter_weight:
+            self.logger.info("Skipping sort(), not configured")
             return
-        df = self.df.with_columns(pl.lit(0).alias("param_weight"))
+        df = self.df.with_columns(pl.lit(0.0).alias("param_weight"))
         for name, weight_spec in config.parameter_weight.items():
             col_name = self._rename.get(name, name)
             if col_name not in df.columns:
@@ -588,15 +721,12 @@ class TVRSParamsContext:
                     case WeightMode.SortDescendingAsInt:
                         descending = True
                         cast_to = int
-                        break
                     case WeightMode.SortAscendingAsInt:
                         descending = False
                         cast_to = int
-                        break
                     case WeightMode.SortDescendingAsStr:
                         descending = True
                         cast_to = str
-                        break
                     case WeightMode.SortAscendingAsStr:
                         descending = False
                         cast_to = str
