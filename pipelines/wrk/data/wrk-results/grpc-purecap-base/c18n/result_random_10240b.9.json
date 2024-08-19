@@ -1,0 +1,1 @@
+{"summary": {"duration": 60090432,"requests": 1059415,"bytes": 11119619840},"errors": {"connect": 0,"read": 0,"write": 0,"status": 0,"timeout": 0},"latency": {"min": 417,"max": 72634,"mean": 2439,"std": 977,"percentile50": 2661,"percentile90": 3022,"percentile95": 3128,"percentile99": 3252,"percentile999": 4887}}

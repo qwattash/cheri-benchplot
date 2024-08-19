@@ -1,0 +1,36 @@
+{
+    "instance_config": {
+        "instances": [{
+            "kernel": "GENERIC-MORELLO-PURECAP",
+            "baseline": true,
+            "cheri_target": "morello-purecap",
+            "kernelabi": "purecap"
+        }]
+    },
+    "benchmark_config": [{
+        "name": "{workload}-c18n-{variant}-ktrace",
+        "desc": "{workload} domain transitions with c18n {variant}",
+        "parameterize": {
+            "workload": ["nginx"],
+            "variant": ["compart"]
+        },
+        "generators": [{
+            "handler": "c18n.ktrace-import",
+            "task_options": {
+                "kdump": "./data/{workload}-{variant}.txt.xz"
+            }
+        }]
+    }],
+    "analysis_config": {
+        "tasks": [{
+            "handler": "c18n.plot-compartment-graph",
+            "task_options": {
+                "edge_thickness_limits": [1.25, 3],
+                "weight_edge_thickness": true,
+                "weight_edge_color": true
+            }
+        }, {
+            "handler": "c18n.plot-top-transitions"
+        }]
+    }
+}

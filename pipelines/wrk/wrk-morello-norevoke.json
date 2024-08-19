@@ -1,0 +1,63 @@
+{
+    "instance_config": {
+        "instances": [{
+            "name": "Hybrid ABI",
+            "kernel": "GENERIC-MORELLO-PURECAP-NODEBUG",
+            "baseline": true,
+            "cheri_target": "morello-hybrid",
+            "kernelabi": "purecap"
+        }, {
+            "name": "Purecap ABI",
+            "kernel": "GENERIC-MORELLO-PURECAP-NODEBUG",
+            "baseline": false,
+            "cheri_target": "morello-purecap",
+            "kernelabi": "purecap"
+        }, {
+            "name": "Benchmark ABI",
+            "kernel": "GENERIC-MORELLO-PURECAP-NODEBUG",
+            "baseline": false,
+            "cheri_target": "morello-benchmark",
+            "kernelabi": "purecap"
+        }]
+    },
+    "benchmark_config": [{
+        "name": "wrk-nginx-eval",
+        "desc": "Evaluation of the nginx servier with the wrk benchmark on Morello",
+        "iterations": 10,
+        "parameterize": {
+            "variant": ["base", "subobj"],
+            "runtime": ["base", "c18n"],
+            "scenario": [
+                "random_0b",
+                "random_512b",
+                "random_1024b",
+                "random_10240b",
+                "random_102400b"
+            ]
+        },
+        "parameterize_options": {
+            "skip": [
+                {"instance": "Hybrid ABI", "runtime": "c18n"},
+                {"instance": "Hybrid ABI", "variant": "subobj"}
+            ]
+        },
+        "generators": [{
+            "handler": "wrk.ingest",
+            "task_options": {
+                "path": "./data/wrk-results",
+                "jail_prefix": "grpc-"
+            }
+        }]
+    }],
+    "analysis_config": {
+        "plot": {
+            "plot_output_format": ["pdf", "jpg"]
+        },
+        "baseline": {"instance": "Hybrid ABI", "variant": "base", "runtime": "base"},
+        "tasks": [{
+            "handler": "wrk.rps-plot"
+        }, {
+            "handler": "wrk.rps-by-msgsize-plot"
+        }]
+    }
+}

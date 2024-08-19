@@ -1,0 +1,82 @@
+{
+    "instance_config": {
+        "instances": [{
+            "name": "Purecap ABI",
+            "kernel": "GENERIC-MORELLO-PURECAP-NODEBUG",
+            "cheri_target": "morello-purecap",
+            "kernelabi": "purecap"
+        }]
+    },
+    "benchmark_config": [{
+        "name": "QPS target={instance.userabi} variant={variant} rt={runtime} scenario={scenario}",
+        "desc": "Evaluation of the gRPC async insecure streaming QPS benchmark on Morello",
+        "iterations": 10,
+        "parameterize": {
+            "variant": ["base"],
+            "runtime": ["c18n", "c18n_policy"],
+            "TLS": [
+                "insecure",
+                "secure"
+            ],
+            "scenario": [
+                "qps_async_streaming_{TLS}_8b_30s"
+            ]
+        },
+        "generators": [{
+            "handler": "qps.ingest",
+            "task_options": {
+                "path": "./data/results-20240323"
+            }
+        }, {
+            "handler": "pmc.ingest-counters",
+            "task_options": {
+                "path": "./data/results-20240323",
+                "counter_file_pattern": "grpc-{instance.userabi}-{variant}/{runtime}/{scenario}.{iteration}.pmc.txt"
+            }
+        }]
+    }],
+    "analysis_config": {
+        "plot": {
+            "plot_output_format": ["pdf", "jpg", "svg"]
+        },
+        "baseline": {"instance": "Purecap ABI", "variant": "base", "runtime": "c18n"},
+        "tasks": [{
+            "handler": "qps.qps-plot"
+        }, {
+            "handler": "qps.qps-by-msgsize-plot"
+        }, {
+            "handler": "qps.pmc-metrics",
+            "task_options": {
+                "parameterize_options": {
+                    "parameter_labels": {
+                        "scenario": {
+                            "qps_async_streaming_insecure_8b_30s": "Insecure",
+                            "qps_async_streaming_secure_8b_30s": "SSL"
+                        },
+                        "runtime": {
+                            "c18n": "Default c18n policy",
+                            "c18n_policy": "Custom c18n policy"
+                        }
+                    }
+                },
+                "metrics_filter": ["ex_entry_per_msg"]
+            }
+        }, {
+            "handler": "pmc.generic-summary",
+            "task_options": {
+                "hue_parameters": ["runtime"],
+                "parameter_labels": {
+                    "scenario": {
+                        "qps_async_streaming_insecure_8b_30s": "Insecure",
+                        "qps_async_streaming_secure_8b_30s": "SSL"
+                    },
+                    "runtime": {
+                        "c18n": "Default c18n policy",
+                        "c18n_policy": "Custom c18n policy"
+                    }
+                },
+                "lock_y_axis": true
+            }
+        }]
+    }
+}

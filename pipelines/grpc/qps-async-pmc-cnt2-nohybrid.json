@@ -1,0 +1,79 @@
+{
+    "instance_config": {
+        "instances": [{
+            "name": "Purecap ABI",
+            "kernel": "GENERIC-MORELLO-PURECAP-NODEBUG",
+            "cheri_target": "morello-purecap",
+            "kernelabi": "purecap"
+        }]
+    },
+    "benchmark_config": [{
+        "name": "QPS target={instance.userabi} variant={variant} rt={runtime} scenario={scenario}",
+        "desc": "Evaluation of the gRPC async insecure streaming QPS benchmark on Morello",
+        "iterations": 5,
+        "parameterize": {
+            "variant": ["base"],
+            "runtime": ["base", "c18n", "c18n_policy"],
+            "scenario": [
+                "qps_async_streaming_insecure_262144b_500K",
+                "qps_async_streaming_insecure_32768b_500K",
+                "qps_async_streaming_insecure_4096b_500K",
+                "qps_async_streaming_insecure_512b_500K",
+                "qps_async_streaming_insecure_64b_500K",
+                "qps_async_streaming_insecure_8b_500K",
+                "qps_async_streaming_insecure_1b_500K"
+            ]
+        },
+        "generators": [{
+            "handler": "qps.ingest",
+            "task_options": {
+                "path": "./data/async-500k-pmc-spec-results"
+            }
+        }, {
+            "handler": "pmc.ingest-counters",
+            "task_options": {
+                "path": "./data/async-500k-pmc-spec-results",
+                "counter_file_pattern": "grpc-{instance.userabi}-{variant}/{runtime}/{scenario}.{iteration}.pmc.txt"
+            }
+        }]
+    }],
+    "analysis_config": {
+        "plot": {
+            "plot_output_format": ["pdf", "jpg", "svg"]
+        },
+        "baseline": {"instance": "Purecap ABI", "variant": "base", "runtime": "base"},
+        "tasks": [{
+            "handler": "qps.qps-by-msgsize-plot"
+        }, {
+            "handler": "pmc.generic-summary",
+            "task_options": {
+                "parameter_labels": {
+                    "scenario": {
+                        "qps_async_streaming_insecure_262144b_500K": "async-256K",
+                        "qps_async_streaming_insecure_32768b_500K": "async-32K",
+                        "qps_async_streaming_insecure_4096b_500K": "async-4K",
+                        "qps_async_streaming_insecure_512b_500K": "async-512B",
+                        "qps_async_streaming_insecure_64b_500K": "async-64B",
+                        "qps_async_streaming_insecure_8b_500K": "async-8B",
+                        "qps_async_streaming_insecure_1b_500K": "async-1B"
+                    }
+                }
+            }
+        }, {
+            "handler": "qps.pmc-metrics",
+            "task_options": {
+                "parameter_labels": {
+                    "scenario": {
+                        "qps_async_streaming_insecure_262144b_500K": "async-256K",
+                        "qps_async_streaming_insecure_32768b_500K": "async-32K",
+                        "qps_async_streaming_insecure_4096b_500K": "async-4K",
+                        "qps_async_streaming_insecure_512b_500K": "async-512B",
+                        "qps_async_streaming_insecure_64b_500K": "async-64B",
+                        "qps_async_streaming_insecure_8b_500K": "async-8B",
+                        "qps_async_streaming_insecure_1b_500K": "async-1B"
+                    }
+                }
+            }
+        }]
+    }
+}

@@ -1,0 +1,67 @@
+{
+    "instance_config": {
+        "instances": [{
+            "name": "Hybrid ABI",
+            "kernel": "GENERIC-MORELLO-PURECAP-NODEBUG",
+            "cheri_target": "morello-hybrid",
+            "kernelabi": "purecap"
+        }, {
+            "name": "Purecap ABI",
+            "kernel": "GENERIC-MORELLO-PURECAP-NODEBUG",
+            "cheri_target": "morello-purecap",
+            "kernelabi": "purecap"
+        }, {
+            "name": "Benchmark ABI",
+            "kernel": "GENERIC-MORELLO-PURECAP-NODEBUG",
+            "cheri_target": "morello-benchmark",
+            "kernelabi": "purecap"
+        }]
+    },
+    "benchmark_config": [{
+        "name": "QPS target={instance.userabi} variant={variant} rt={runtime} scenario={scenario}",
+        "desc": "Evaluation of the gRPC async insecure streaming QPS benchmark on Morello",
+        "iterations": 1,
+        "parameterize": {
+            "variant": ["base"],
+            "runtime": ["base", "c18n", "c18n_policy"],
+            "scenario": [
+                "protobuf_async_streaming_qps_unconstrained_insecure_262144b_msglimit",
+                "protobuf_async_streaming_qps_unconstrained_insecure_32768b_msglimit",
+                "protobuf_async_streaming_qps_unconstrained_insecure_4096b_msglimit",
+                "protobuf_async_streaming_qps_unconstrained_insecure_512b_msglimit",
+                "protobuf_async_streaming_qps_unconstrained_insecure_64b_msglimit",
+                "protobuf_async_streaming_qps_unconstrained_insecure_8b_msglimit",
+                "protobuf_async_streaming_qps_unconstrained_insecure_1b_msglimit"
+            ]
+        },
+        "parameterize_options": {
+            "skip": [
+                {"instance": "Hybrid ABI", "runtime": "c18n"},
+                {"instance": "Hybrid ABI", "runtime": "c18n_policy"}
+            ]
+        },
+        "generators": [{
+            "handler": "qps.ingest",
+            "task_options": {
+                "path": "./data/fixed_200k_stacks"
+            }
+        }, {
+            "handler": "pmc.ingest-stacks",
+            "task_options": {
+                "path": "./data/fixed_200k_stacks",
+                "stack_file_pattern": "grpc-{instance.userabi}-{variant}/{runtime}/{scenario}.{iteration}.pmc.stacks"
+            }
+        }]
+    }],
+    "analysis_config": {
+        "plot": {
+            "plot_output_format": ["pdf", "jpg"]
+        },
+        "baseline": {"instance": "Hybrid ABI", "variant": "base", "runtime": "base"},
+        "tasks": [{
+            "handler": "qps.qps-by-msgsize-plot"
+        }, {
+            "handler": "pmc.flamegraph"
+        }]
+    }
+}

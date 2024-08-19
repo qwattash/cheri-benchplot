@@ -1,0 +1,55 @@
+{
+    "instance_config": {
+        "instances": [{
+            "name": "Hybrid ABI",
+            "kernel": "GENERIC-MORELLO-PURECAP-NODEBUG",
+            "baseline": true,
+            "cheri_target": "morello-hybrid",
+            "kernelabi": "purecap"
+        }, {
+            "name": "Purecap ABI",
+            "kernel": "GENERIC-MORELLO-PURECAP-NODEBUG",
+            "baseline": false,
+            "cheri_target": "morello-purecap",
+            "kernelabi": "purecap"
+        }, {
+            "name": "Benchmark ABI",
+            "kernel": "GENERIC-MORELLO-PURECAP-NODEBUG",
+            "baseline": false,
+            "cheri_target": "morello-benchmark",
+            "kernelabi": "purecap"
+        }]
+    },
+    "benchmark_config": [{
+        "name": "grpc-qps-eval",
+        "desc": "Evaluation of the gRPC QPS benchmark on Morello",
+        "iterations": 2,
+        "parameterize": {
+            "variant": ["base"],
+            "runtime": ["base", "c18n", "revoke"],
+            "scenario": [
+                "protobuf_async_streaming_ping_pong_insecure",
+                "protobuf_async_streaming_ping_pong_secure"
+            ]
+        },
+        "parameterize_options": {
+            "skip": [
+                {"instance": "Hybrid ABI", "runtime": "c18n"},
+                {"instance": "Hybrid ABI", "runtime": "revoke"}
+            ]
+        },
+        "generators": [{
+            "handler": "qps.ingest",
+            "task_options": {
+                "path": "./data/results-ping-pong"
+            }
+        }]
+    }],
+    "analysis_config": {
+        "tasks": [{
+            "handler": "qps.qps-plot"
+        }, {
+            "handler": "qps.latency-plot"
+        }]
+    }
+}

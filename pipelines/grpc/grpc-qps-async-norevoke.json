@@ -1,0 +1,51 @@
+{
+    "instance_config": {
+        "instances": [{
+            "name": "Benchmark ABI",
+            "kernel": "GENERIC-MORELLO-PURECAP-NODEBUG",
+            "baseline": false,
+            "cheri_target": "morello-benchmark",
+            "kernelabi": "purecap"
+        }]
+    },
+    "benchmark_config": [{
+        "name": "grpc-qps-async-eval",
+        "desc": "Evaluation of the gRPC async insecure streaming QPS benchmark on Morello",
+        "iterations": 10,
+        "parameterize": {
+            "variant": ["base"],
+            "runtime": ["base", "c18n", "c18n_policy"],
+            "scenario": [
+                "protobuf_async_streaming_qps_unconstrained_insecure_262144b",
+                "protobuf_async_streaming_qps_unconstrained_insecure_32768b",
+                "protobuf_async_streaming_qps_unconstrained_insecure_4096b",
+                "protobuf_async_streaming_qps_unconstrained_insecure_512b",
+                "protobuf_async_streaming_qps_unconstrained_insecure_64b",
+                "protobuf_async_streaming_qps_unconstrained_insecure_8b",
+                "protobuf_async_streaming_qps_unconstrained_insecure_1b"
+            ]
+        },
+        "generators": [{
+            "handler": "qps.ingest",
+            "task_options": {
+                "path": "./data/results-async"
+            }
+        }]
+    }],
+    "analysis_config": {
+        "plot": {
+            "plot_output_format": ["pdf", "jpg"]
+        },
+        "baseline": {"instance": "Benchmark ABI", "variant": "base", "runtime": "base"},
+        "tasks": [{
+            "handler": "qps.qps-plot"
+        }, {
+            "handler": "qps.latency-plot"
+        }, {
+            "handler": "qps.qps-by-msgsize-plot",
+            "task_options": {
+                "show_errorbars": false
+            }
+        }]
+    }
+}

@@ -1,0 +1,59 @@
+{
+    "instance_config": {
+        "instances": [{
+            "name": "Benchmark ABI",
+            "kernel": "GENERIC-MORELLO-PURECAP-NODEBUG",
+            "cheri_target": "morello-benchmark",
+            "kernelabi": "purecap"
+        }]
+    },
+    "benchmark_config": [{
+        "name": "WRK target={instance.userabi} variant={variant} rt={runtime} scenario={scenario}",
+        "desc": "Evaluation of the nginx servier with the wrk benchmark on Morello",
+        "iterations": 10,
+        "parameterize": {
+            "variant": ["base"],
+            "runtime": ["base", "c18n", "c18n_ipc"],
+            "scenario": [
+                "random_1024b"
+            ]
+        },
+        "generators": [{
+            "handler": "wrk.ingest",
+            "task_options": {
+                "path": "./data/results-20240315",
+                "jail_prefix": "grpc-"
+            }
+        }]
+    }],
+    "analysis_config": {
+        "plot": {
+            "plot_output_format": ["pdf", "jpg", "svg"]
+        },
+        "baseline": {"instance": "Benchmark ABI", "variant": "base", "runtime": "base"},
+        "tasks": [{
+            "handler": "wrk.rps-plot"
+        }, {
+            "handler": "wrk.rps-by-msgsize-plot"
+        }, {
+            "handler": "wrk.rps-overhead-plot",
+            "task_options": {
+                "show_errorbars": true,
+                "parameter_weight": {
+                    "target": {"Hybrid ABI": 0, "Benchmark ABI": 1000},
+                    "runtime": {"base": 0, "c18n": 10, "c18n_policy": 20, "c18n_ipc": 30}
+                },
+                "parameter_labels": {
+                    "target": {"Benchmark ABI": "Spatial memory safety"},
+                    "runtime": {
+                        "base": "no c18n",
+                        "c18n": "default c18n policy",
+                        "c18n_policy": "custom c18n policy",
+                        "c18n_ipc": "lowerbound IPC overhead"
+                    }
+                },
+                "baseline_label": "memory safety w/o c18n"
+            }
+        }]
+    }
+}

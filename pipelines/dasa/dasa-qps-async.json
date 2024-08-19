@@ -1,0 +1,81 @@
+{
+    "instance_config": {
+        "instances": [{
+            "name": "Hybrid ABI",
+            "kernel": "GENERIC-MORELLO-PURECAP-NODEBUG",
+            "cheri_target": "morello-hybrid",
+            "kernelabi": "purecap"
+        }, {
+            "name": "Benchmark ABI",
+            "kernel": "GENERIC-MORELLO-PURECAP-NODEBUG",
+            "cheri_target": "morello-benchmark",
+            "kernelabi": "purecap"
+        }]
+    },
+    "benchmark_config": [{
+        "name": "QPS target={instance.userabi} variant={variant} rt={runtime} scenario={scenario}",
+        "desc": "Evaluation of the gRPC async insecure streaming QPS benchmark on Morello",
+        "iterations": 10,
+        "parameterize": {
+            "variant": ["base"],
+            "runtime": ["base", "c18n", "c18n_policy", "c18n_ipc"],
+            "TLS": [
+                "insecure",
+                "secure"
+            ],
+            "scenario": [
+                "qps_async_streaming_{TLS}_64b_30s",
+                "qps_async_streaming_{TLS}_8b_30s"
+            ]
+        },
+        "parameterize_options": {
+            "skip": [
+                {"instance": "Hybrid ABI", "runtime": "c18n"},
+                {"instance": "Hybrid ABI", "runtime": "c18n_policy"},
+                {"instance": "Hybrid ABI", "runtime": "c18n_ipc"}
+            ]
+        },
+        "generators": [{
+            "handler": "qps.ingest",
+            "task_options": {
+                "path": "./data/results-20240315"
+            }
+        }]
+    }],
+    "analysis_config": {
+        "plot": {
+            "plot_output_format": ["pdf", "jpg", "svg"]
+        },
+        "baseline": {"instance": "Hybrid ABI", "variant": "base", "runtime": "base"},
+        "tasks": [{
+            "handler": "qps.qps-plot"
+        }, {
+            "handler": "qps.latency-plot"
+        }, {
+            "handler": "qps.qps-by-msgsize-plot"
+        }, {
+            "handler": "qps.qps-overhead-plot",
+            "task_options": {
+                "show_errorbars": true,
+                "facet_column": "TLS",
+                "baseline_label": "no memory safety",
+                "parameterize_options": {
+                    "parameter_weight": {
+                        "target": {"Hybrid ABI": 0, "Benchmark ABI": 1000},
+                        "runtime": {"base": 0, "c18n": 10, "c18n_policy": 20, "c18n_ipc": 30}
+                    },
+                    "parameter_labels": {
+                        "target": {"Benchmark ABI": "Spatial memory safety"},
+                        "runtime": {
+                            "base": "no c18n",
+                            "c18n": "default c18n policy",
+                            "c18n_policy": "custom c18n policy",
+                            "c18n_ipc": "lowerbound IPC overhead"
+                        },
+                        "TLS": { "secure": "enabled", "insecure": "disabled" }
+                    }
+                }
+            }
+        }]
+    }
+}

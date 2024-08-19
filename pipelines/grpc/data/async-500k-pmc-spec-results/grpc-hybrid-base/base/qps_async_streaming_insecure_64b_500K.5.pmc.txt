@@ -1,0 +1,4 @@
+# p/CPU_CYCLES p/INST_RETIRED p/INST_SPEC p/BR_MIS_PRED_RS p/EXECUTIVE_ENTRY p/EXECUTIVE_EXIT p/INST_SPEC_RESTRICTED 
+   15532126430     9538681397 12578173972            47105                 1           358587                 299376 
+   21177491625    12461298459 16926323024            57340                 0           460498                 375878 
+    6386634004     3767667995  5179701326            15665                 0           134935                 102786 

@@ -1,0 +1,5 @@
+target,scenario,flavor/protection,metric,variant,runtime,TLS,iteration,value
+Purecap ABI,SSL,c18n_policy,ex_entry_per_msg,,,,4.5,1194.8110588739394
+Purecap ABI,Insecure,c18n,ex_entry_per_msg,,,,4.5,906.7533613219875
+Purecap ABI,Insecure,c18n_policy,ex_entry_per_msg,,,,4.5,686.6718078559667
+Purecap ABI,SSL,c18n,ex_entry_per_msg,,,,4.5,1566.642383968409
