@@ -382,7 +382,7 @@ class Session:
         # Generate debug runner scripts to manually run the benchmarks on different
         # systems.
         data_root = self.get_data_root_path()
-        for target, section in self.parameterization_matrix.group_by("target"):
+        for (target,), section in self.parameterization_matrix.group_by("target"):
             section = section.select(
                 pl.col("descriptor").map_elements(lambda bench: bench.get_run_script_path().relative_to(data_root),
                                                   return_dtype=pl.Object).alias("run_script"))
