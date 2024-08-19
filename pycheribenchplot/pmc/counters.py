@@ -21,6 +21,7 @@ from .pmc_exec import PMCExec, PMCExecConfig
 @dataclass
 class PMCPlotConfig(TVRSPlotConfig):
     pmc_filter: Optional[List[str]] = config_field(None, desc="Show only the given subset of counters")
+    cpu_filter: Optional[List[int]] = config_field(None, desc="Filter system-mode counters by CPU index")
     lock_y_axis: bool = config_field(False, desc="Lock Y axis")
     share_x_axis: bool = config_field(False, desc="Share the X axis among rows")
     counter_group_name: Optional[str] = config_field(
@@ -253,7 +254,13 @@ class PMCGroupSummary(TVRSParamsMixin, PlotTask):
                        sharey=sharey,
                        margin_titles=True,
                        aspect=self.config.tile_aspect) as facet:
-            facet.map_dataframe(sns.barplot, x=tile_x, y=ctx.r.value_delta, hue=ctx.r._hue, dodge=True, palette=palette)
+            facet.map_dataframe(sns.barplot,
+                                x=tile_x,
+                                y=ctx.r.value_delta,
+                                hue=ctx.r._hue,
+                                dodge=True,
+                                palette=palette,
+                                capsize=0.3)
             if palette:
                 facet.add_legend()
                 self.adjust_legend_on_top(facet.figure)
@@ -272,7 +279,8 @@ class PMCGroupSummary(TVRSParamsMixin, PlotTask):
                                 y=ctx.r.value_overhead,
                                 hue=ctx.r._hue,
                                 dodge=True,
-                                palette=palette)
+                                palette=palette,
+                                capsize=0.3)
             if palette:
                 facet.add_legend()
                 self.adjust_legend_on_top(facet.figure)
@@ -298,7 +306,10 @@ class PMCGroupSummary(TVRSParamsMixin, PlotTask):
             x_col = ctx.r[self.config.tile_x_name]
 
             facet.map_dataframe(extended_barplot,
-                                errorbar=("custom", dict(yerr=ctx.r.value_std, color="black")),
+                                errorbar=("custom", {
+                                    "yerr": [ctx.r.value_q25, ctx.r.value_q75],
+                                    "color": "black"
+                                }),
                                 x=x_col,
                                 y=ctx.r.value,
                                 hue=ctx.r._hue,
@@ -353,13 +364,25 @@ class PMCGroupSummary(TVRSParamsMixin, PlotTask):
         metric_cols = [*metrics, *derived_metrics]
 
         ctx = self.make_param_context(df)
-        ctx.melt(extra_id_vars=["iteration"], value_vars=metric_cols, variable_name="counter", value_name="value")
+        extra_index_cols = ["iteration"]
+        if "_cpu" in df.columns:
+            extra_index_cols = [*extra_index_cols, "_cpu"]
+        ctx.melt(extra_id_vars=extra_index_cols, value_vars=metric_cols, variable_name="counter", value_name="value")
         # Filter the counters based on configuration
         if self.config.pmc_filter:
             ctx.df = ctx.df.filter(pl.col("counter").is_in(self.config.pmc_filter))
+        if self.config.cpu_filter:
+            ctx.df = ctx.df.filter(pl.col("_cpu").is_in(self.config.cpu_filter))
+
+        if "_cpu" in df.columns:
+            # Sum metrics from different CPUs
+            ctx.df = ctx.df.group_by([*ctx.params, "counter",
+                                      "iteration"]).agg(cs.numeric().sum(),
+                                                        cs.string().first()).select(cs.all().exclude("_cpu"))
+
         ovh_ctx = ctx.compute_overhead(["value"], extra_groupby=["counter"])
 
-        lf_ctx = ctx.compute_lf_overhead("value", extra_groupby=["counter"], overhead_scale=100)
+        lf_ctx = ctx.compute_lf_overhead("value", extra_groupby=["counter"], overhead_scale=100, how="median")
 
         ctx.relabel()
         ctx.derived_hue_param(default=["variant", "runtime"])

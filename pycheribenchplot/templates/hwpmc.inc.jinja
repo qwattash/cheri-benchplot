@@ -13,6 +13,8 @@
   {% if hwpmc_config.sampling_mode %}
     {% set hwpmc_counter_flag = hwpmc_counter_flag | upper %}
   {% endif %}
+
+  {% set hwpmc_descendants_flag = "-d" if hwpmc_config.follow_fork else "" %}
 {% endif %}
 
 
@@ -35,7 +37,7 @@
 {% endmacro %}
 
 {% macro _pmcstat_impl(iteration) %}
-  pmcstat {{ _pmcstat_counters() | trim }} {{ _pmcstat_output(iteration) | trim }}
+  pmcstat {{ hwpmc_descendants_flag }} {{ _pmcstat_counters() | trim }} {{ _pmcstat_output(iteration) | trim }}
 {% endmacro %}
 
 {% macro _pmcstat(iteration, extra_flags) %}

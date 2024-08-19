@@ -72,6 +72,7 @@ class PMCExecConfig(Config):
     sampling_rate: int = config_field(97553, desc="Counter sampling rate, only relevant in sampling mode")
     counters: List[str] = config_field(list, desc="List of PMC counters to use")
     group: Optional[str] = config_field(None, desc="Pre-defined group of counters, overrides 'counters' option")
+    follow_fork: bool = config_field(False, desc="Trace children on fork")
 
     @property
     def counters_list(self):
@@ -104,6 +105,7 @@ class IngestPMCCounters(PLDataFrameLoadTask):
             raise RuntimeError("Invalid configuration")
         self.counter_group = config.group or "/".join(config.counters)
         self.counter_names = [c.lower() for c in config.counters_list]
+        self.system_mode = config.system_mode
 
     def _load_one(self, path: Path) -> pl.DataFrame:
         self.logger.debug("Ingest %s", path)
@@ -114,13 +116,21 @@ class IngestPMCCounters(PLDataFrameLoadTask):
             if not header.startswith("#"):
                 self.logger.error("Invalid PMC file header")
                 raise RuntimeError("PMC file parsing error")
-            matches = re.findall(r"[ps]/(?P<col>[a-zA-Z0-9_-]+)", header)
+            matches = re.findall(r"[ps]/(?P<col>[a-zA-Z0-9_/-]+)", header)
             cols = [c.lower() for c in matches]
         df = pl.from_pandas(pd.read_csv(path, sep=r"\s+", header=0, names=cols, index_col=False))
         # Assume we have all numeric columns and the counters are incremental
         df = df.sum()
         # Default counter group to identify multiple pmcstat configurations
         df = df.with_columns(pl.lit(self.counter_group).alias("_counter_group"))
+        # If these are system-mode counters we have to distinguish between CPUs
+        if self.system_mode:
+            # The columns are in the format <N>/<counter> where <N> is the CPU index
+            tmp_df = df.unpivot(index=["_counter_group"], variable_name="_counter", value_name="_value")
+            tmp_df = tmp_df.with_columns(
+                pl.col("_counter").str.split(by="/").list.first().cast(pl.Int32).alias("_cpu"),
+                pl.col("_counter").str.split(by="/").list.last().alias("_counter"))
+            df = tmp_df.pivot(on="_counter", index=["_counter_group", "_cpu"], values="_value")
         return df
 
 
