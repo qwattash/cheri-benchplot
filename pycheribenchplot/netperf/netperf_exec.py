@@ -27,6 +27,15 @@ class NetPerfMode(Enum):
 suffix_value = {"K": 2**10, "M": 2**20, "G": 2**30}
 
 
+class NetperfLoader(PLDataFrameLoadTask):
+    task_namespace = "netperf"
+    task_name = "loader"
+
+    def _load_one(self, path):
+        # The first row is the test header output, skip it for the columns
+        return self._load_one_csv(path, skip_rows=1)
+
+
 @dataclass
 class NetperfScenario(Config):
     """
@@ -93,7 +102,7 @@ class NetperfExecTask(TVRSExecTask):
 
     @output
     def results(self):
-        return RemoteBenchmarkIterationTarget(self, "stats", ext="csv")
+        return RemoteBenchmarkIterationTarget(self, "stats", ext="csv", loader=NetperfLoader)
 
     def run(self):
         super().run()
