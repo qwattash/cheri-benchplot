@@ -1012,7 +1012,7 @@ class PipelineBenchmarkConfig(CommonBenchmarkConfig):
     #: Parameterized benchmark generator instructions. This should map
     #: (param_name => [values]).
     #: Note that there must be a 'target' parameter axis, otherwise it is implied
-    #: and generated from the instance_config
+    #: and generated from system configurations.
     parameterize: Dict[str, List[ConfigAny]] = dc.field(default_factory=dict)
 
     #: Parameterization options
@@ -1021,7 +1021,6 @@ class PipelineBenchmarkConfig(CommonBenchmarkConfig):
     #: System configuration.
     #: Note that matching is done in-order, therefore the last entry may have
     #: `"matches": {}` to catch-all.
-    #: XXX replaces instance_config
     system: List[SystemConfig] = dc.field(default_factory=list)
 
     @validates("parameterize")
@@ -1119,9 +1118,6 @@ class PipelineConfig(CommonSessionConfig):
     """
     #: Configuration format version
     version: str = "0.0",
-
-    #: Instances configuration, required
-    instance_config: PipelineInstanceConfig = dc.field(default_factory=PipelineInstanceConfig)
 
     #: Benchmark configuration, required
     benchmark_config: Union[PipelineBenchmarkConfig, List[PipelineBenchmarkConfig]] = dc.field(default_factory=list)
@@ -1322,104 +1318,8 @@ class SessionRunConfig(CommonSessionConfig):
         return cls._resolve_template(session)
 
     @classmethod
-    def generate_v0(cls, user_config: BenchplotUserConfig, config: PipelineConfig) -> Self:
-        """
-        Generate a new :class:`SessionRunConfig` from a :class:`PipelineConfig`.
-
-        Old-style configuration format
-
-        :param user_config: The user configuration for the local machine setup.
-        :param config: The :class:`PipelineConfig` to use.
-        :return: A new session runfile configuration
-        """
-        session = SessionRunConfig.from_common_conf(config)
-        logger.info("Create new session %s", session.uuid)
-
-        # Collect and validate extra parameterization keys
-        param_keys = None
-        for conf in config.benchmark_config:
-            if len(conf.parameterize) == 0 and param_keys is not None:
-                logger.error("Missing benchmark parameterization?")
-                raise ValueError("Invalid configuration")
-            keys = set(conf.parameterize.keys())
-            if param_keys and param_keys != keys:
-                logger.error("Mismatching parameterization keys %s != %s", param_keys, keys)
-                raise ValueError("Invalid configuration")
-            elif param_keys is None:
-                param_keys = keys
-
-        # Collect the reserved instance parameterization axis
-        if param_keys and "instance" in param_keys:
-            logger.error("The 'instance' parameterization key is reserved")
-            raise ValueError("Invalid configuration")
-        instance_configs_by_name = {}
-        # If there is no instance, use the local instance
-        if not config.instance_config.instances:
-            config.instance_config.instances.append(
-                InstanceConfig(kernel="unknown",
-                               name="local",
-                               platform=InstancePlatform.LOCAL,
-                               cheri_target=InstanceCheriBSD.LOCAL_NATIVE,
-                               kernelabi=InstanceKernelABI.NOCHERI,
-                               cheribuild_kernel=False))
-        for conf in config.instance_config.instances:
-            if conf.name in instance_configs_by_name:
-                logger.error("Duplicated instance names, instance config names must be unique: %s", conf.name)
-                raise ValueError("Invalid configuration")
-            instance_configs_by_name[conf.name] = conf
-
-        # Map instances to platform IDs
-        # XXX should drop these and just use instance names
-        platform_uuids = {conf.name: uuid4() for conf in config.instance_config.instances}
-        assert len(platform_uuids) == len(instance_configs_by_name)
-        common_platform_options = config.instance_config.platform_options
-
-        # Now create all the full configurations by combining instance and benchmark
-        # configurations
-        for run_conf in config.benchmark_config:
-            sorted_params = OrderedDict(run_conf.parameterize)
-            sorted_params["instance"] = list(instance_configs_by_name.keys())
-
-            logger.debug("Found parameterized benchmark '%s'", run_conf.name)
-            for param_combination in it.product(*sorted_params.values()):
-                parameters = dict(zip(sorted_params.keys(), param_combination))
-                if not cls._valid_parameterization(parameters, run_conf.parameterize_options):
-                    continue
-
-                final_run_conf = BenchmarkRunConfig.from_common_conf(run_conf)
-                final_run_conf.parameters = dict(parameters)
-                # The parameters entry should not contain the instance key, it is only
-                # a synthetic key we use here (for now)
-                del final_run_conf.parameters["instance"]
-                # Resolve merged platform options
-                inst_conf = instance_configs_by_name[parameters["instance"]]
-                final_inst_conf = InstanceConfig.copy(inst_conf)
-                final_inst_conf.platform_options.replace_common(common_platform_options)
-                # Assign UUIDs
-                final_run_conf.uuid = uuid4()
-                final_run_conf.g_uuid = platform_uuids[parameters["instance"]]
-                final_run_conf.instance = final_inst_conf
-                session.configurations.append(final_run_conf)
-
-        # Snapshot all repositories we care about, if they are present.
-        # Note that we should support snapshot hooks in the configured tasks.
-        def snap_head(repo_path, key):
-            if repo_path.exists():
-                session.git_sha[key] = Repo(repo_path).head.commit.hexsha
-            else:
-                logger.warning("No %s repository, skip SHA snapshot", key)
-
-        snap_head(user_config.cheribuild_path, "cheribuild")
-        snap_head(user_config.cheribsd_path, "cheribsd")
-        snap_head(user_config.qemu_path, "qemu")
-        snap_head(user_config.llvm_path, "llvm")
-
-        # Now that we are done with generating the configuration, resolve all
-        # templates that do not involve the user configuration
-        return cls._resolve_template(session)
-
-    @classmethod
     def generate(cls, user_config: BenchplotUserConfig, config: PipelineConfig) -> Self:
         if config.version == "1.0":
             return cls.generate_v1(user_config, config)
-        return cls.generate_v0(user_config, config)
+        logger.error("Invalid configuration version %s", config.version)
+        raise RuntimeError("Invalid configuration version")
