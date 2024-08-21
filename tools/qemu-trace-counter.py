@@ -21,13 +21,21 @@ class ICount:
     def __init__(self):
         self.icount = {
             "all": 0,
+            "cheri": 0,
+            # all single-operand load/store
             "ld": 0,
             "st": 0,
+            # all pair load/store
             "ld_pair": 0,
             "st_pair": 0,
-            "cheri": 0,
+            # pair load/store with capability registers
             "cheri_ld_pair": 0,
             "cheri_st_pair": 0,
+            # pair load/store with integer registers
+            "int_ld_pair": 0,
+            "int_st_pair": 0,
+            # adrp instructions, should correlate to # of GOT accesses
+            "adrp": 0,
         }
 
     def __add__(self, other):
@@ -54,6 +62,8 @@ class ICount:
                 self.icount["ld_pair"] += 1
                 if CAP_OPERAND.match(operands):
                     self.icount["cheri_ld_pair"] += 1
+                else:
+                    self.icount["int_ld_pair"] += 1
             else:
                 self.icount["ld"] += 1
         elif mnemonic.startswith("str") or mnemonic == "stp":
@@ -61,10 +71,14 @@ class ICount:
                 self.icount["st_pair"] += 1
                 if CAP_OPERAND.match(operands):
                     self.icount["cheri_st_pair"] += 1
+                else:
+                    self.icount["int_st_pair"] += 1
             else:
                 self.icount["st"] += 1
         elif mnemonic.startswith("scbnds"):
             self.icount["cheri"] += 1
+        elif mnemonic == "adrp":
+            self.icount["adrp"] += 1
 
     def clone(self):
         r = ICount()
