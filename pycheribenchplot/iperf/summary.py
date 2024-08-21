@@ -16,6 +16,7 @@ from .iperf_exec import IPerfExecTask
 @dataclass
 class IPerfSummaryConfig(TVRSPlotConfig):
     tile_parameter: str = config_field("scenario", desc="Parameter axis to use for the facet grid")
+    tile_aspect: float = config_field(1.0, desc="Tile aspect ratio")
 
 
 class UnifiedIPerfStats(AnalysisTask):

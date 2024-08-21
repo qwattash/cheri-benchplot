@@ -34,8 +34,7 @@ class LogColorFormatter(logging.Formatter):
         return msg
 
 
-def setup_logging(verbose: bool = False, logfile: Path = None,
-                  debug: bool = False):
+def setup_logging(verbose: bool = False, logfile: Path = None, debug: bool = False):
     log_fmt = "[%(levelname)s] %(name)s: %(message)s"
     date_fmt = None
     default_level = logging.INFO
@@ -120,6 +119,26 @@ def gzopen(path: Path, mode: str) -> typing.IO:
         openfn = open
     with openfn(path, mode) as fileio:
         yield fileio
+
+
+def bytes2int(value: str | int) -> int:
+    """
+    Coerce bytes value with an optional K/M/G/T suffix to the corresponding
+    integer value.
+
+    Upper-case suffixes indicate power of 2 values, lower-case suffixes indicate
+    power of 10 values.
+    """
+    SUFFIXES = {"K": 2**10, "M": 2**20, "G": 2**30, "T": 2**40, "k": 10**3, "m": 10**6, "g": 10**9, "t": 10**12}
+    try:
+        return int(value)
+    except ValueError:
+        suffix = value[-1]
+        value = int(value[0:-1])
+        scale = SUFFIXES.get(suffix)
+        if scale is None:
+            raise ValueError(f"Invalid suffix '{suffix}'")
+        return value * scale
 
 
 class SubprocessHelper:

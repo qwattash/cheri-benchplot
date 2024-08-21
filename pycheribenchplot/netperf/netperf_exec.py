@@ -106,7 +106,6 @@ class NetperfExecTask(TVRSExecTask):
 
     def run(self):
         super().run()
-
         self.script.extend_context({
             "netperf_config": self.config,
             "netperf_gen_output_path": self.results.shell_path_builder()

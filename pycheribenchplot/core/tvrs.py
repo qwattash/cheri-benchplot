@@ -13,6 +13,7 @@ from marshmallow import ValidationError, validates_schema
 from .analysis import AnalysisTask
 from .config import Config, ConfigPath, LazyNestedConfig, config_field
 from .task import ExecutionTask
+from .util import bytes2int
 
 
 @dataclass
@@ -95,9 +96,25 @@ class TVRSExecTask(ExecutionTask):
 class WeightMode(enum.Enum):
     SortAscendingAsInt = "ascending_int"
     SortDescendingAsInt = "descending_int"
+    SortAscendingAsBytes = "ascending_bytes"
+    SortDescendingAsBytes = "descending_bytes"
     SortAscendingAsStr = "ascending_str"
     SortDescendingAsStr = "descending_str"
     Custom = "custom"
+
+    def is_descending(self):
+        if (self == WeightMode.SortDescendingAsInt or self == WeightMode.SortDescendingAsBytes
+                or self == WeightMode.SortDescendingAsStr):
+            return True
+        return False
+
+    def dtype(self):
+        if self == WeightMode.SortAscendingAsStr or self == WeightMode.SortDescendingAsStr:
+            return str
+        if self == WeightMode.SortAscendingAsInt or self == WeightMode.SortDescendingAsInt:
+            return int
+        # Bytes
+        return bytes2int
 
 
 @dataclass
@@ -717,22 +734,10 @@ class TVRSParamsContext:
                         alias_weights[new_p] = mapping.get(old_p, 0)
                     mapping.update(alias_weights)
             else:
-                match weight_spec.mode:
-                    case WeightMode.SortDescendingAsInt:
-                        descending = True
-                        cast_to = int
-                    case WeightMode.SortAscendingAsInt:
-                        descending = False
-                        cast_to = int
-                    case WeightMode.SortDescendingAsStr:
-                        descending = True
-                        cast_to = str
-                    case WeightMode.SortAscendingAsStr:
-                        descending = False
-                        cast_to = str
-                    case _:
-                        assert False, "Not reached"
-                sorted_values = sorted(df[col_name].cast(cast_to).unique(), reverse=descending)
+                descending = weight_spec.mode.is_descending()
+                coerce_dtype = weight_spec.mode.dtype()
+                unique_values = df[col_name].map_elements(coerce_dtype).unique()
+                sorted_values = sorted(unique_values, reverse=descending)
                 mapping = {v: weight_spec.base + i * weight_spec.step for i, v in enumerate(sorted_values)}
             # Update the weight for each row
             self.logger.debug("Set weight for %s => %s", col_name, mapping)

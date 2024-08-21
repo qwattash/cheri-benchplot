@@ -9,9 +9,9 @@ import polars.selectors as cs
 from marshmallow.validate import Regexp
 
 from ..core.artefact import PLDataFrameLoadTask, RemoteBenchmarkIterationTarget
-from ..core.config import Config, ConfigPath, config_field, validate_dir_exists
+from ..core.config import Config, ConfigPath, config_field
 from ..core.task import output
-from ..core.tvrs import TVRSExecTask
+from ..core.tvrs import TVRSExecConfig, TVRSExecTask
 
 
 class IPerfMode(Enum):
@@ -92,14 +92,10 @@ class IPerfScenario(Config):
 
 
 @dataclass
-class IPerfConfig(Config):
+class IPerfConfig(TVRSExecConfig):
     """
     IPerf benchmark configuration.
     """
-    scenario_path: ConfigPath = config_field(
-        Path("scenarios"),
-        desc="Scenarios directory where to find the scenarios named by the configuration",
-        validate=validate_dir_exists)
     iperf_path: Optional[ConfigPath] = config_field(
         None, desc="Path of iperf executable in the remote host, appended to PATH")
     use_localhost_server: bool = config_field(
@@ -152,27 +148,21 @@ class IPerfExecTask(TVRSExecTask):
     This is done to reduce the amount of state that carries over from one iteration to
     the other. This is particularly relevent when temporal safety is used.
     """
-    public = True
     task_namespace = "iperf"
     task_name = "exec"
     task_config_class = IPerfConfig
+    scenario_config_class = IPerfScenario
+    script_template = "iperf.sh.jinja"
+    public = True
 
     @output
     def stats(self):
         """IPerf json output"""
         return RemoteBenchmarkIterationTarget(self, "stats", ext="json", loader=IngestIPerfStats)
 
-    def hwpmc(self):
-        """The remote profiling output target"""
-        return RemoteBenchmarkIterationTarget(self, "hwpmc", ext="json")
-
     def run(self):
         super().run()
-        self.script.set_template("iperf.sh.jinja")
-        scenario = self.config.scenario_path / self.benchmark.parameters["scenario"]
-        scenario_config = IPerfScenario.load_json(scenario.with_suffix(".json"))
         self.script.extend_context({
-            "scenario_config": scenario_config,
             "iperf_config": self.config,
             "iperf_gen_output_path": self.stats.shell_path_builder()
         })
