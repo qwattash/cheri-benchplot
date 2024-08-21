@@ -15,7 +15,7 @@ from marshmallow.exceptions import ValidationError
 from typing_extensions import Self
 
 from .analysis import AnalysisTask, DatasetAnalysisTaskGroup
-from .benchmark import Benchmark, BenchmarkExecMode, ExecTaskConfig
+from .benchmark import Benchmark, ExecTaskConfig
 from .config import (AnalysisConfig, BenchplotUserConfig, Config, ConfigContext, ExecTargetConfig, InstanceConfig,
                      PipelineConfig, SessionRunConfig, TaskTargetConfig)
 from .instance import InstanceManager
@@ -366,6 +366,42 @@ class Session:
             shutil.rmtree(plot_root)
         self._ensure_dir_tree()
 
+    def generate(self, clean: bool = False):
+        """
+        Run the session execution generators.
+
+        This will run the tasks configured as "generators" in the configuration to
+        produce shell scripts in the session directories.
+        """
+        if clean:
+            self.clean_all()
+
+        # Generate top-level runner scripts to run benchmark groups on different systems
+        # These are generated according to :attr:`PipelineBenchmarkConfig.system`
+        # specification.
+        data_root = self.get_data_root_path()
+        for (target, ), section in self.parameterization_matrix.group_by("target"):
+            section = section.select(
+                pl.col("descriptor").map_elements(lambda bench: bench.get_run_script_path().relative_to(data_root),
+                                                  return_dtype=pl.Object).alias("run_script"))
+            ctx = ScriptContextBase(self.logger)
+            ctx.set_template("run-target.sh.jinja")
+            ctx.extend_context(dict(target=target, run_scripts=section["run_script"]))
+            run_target = re.sub(r"[\s/]", "-", target)
+            script_path = self.get_data_root_path() / f"run-target-{run_target}.sh"
+            with open(script_path, "w+") as script_file:
+                ctx.render(script_file)
+            script_path.chmod(0o755)
+
+        # Schedule generators according to the collected descriptors
+        for descriptor in self.parameterization_matrix["descriptor"]:
+            descriptor.schedule_exec_tasks(self.scheduler, ExecTaskConfig())
+
+        self.logger.info("Session %s generate execution plan", self.name)
+        self.scheduler.run()
+        self.logger.info("Session %s execution plan ready", self.name)
+        self.scheduler.report_failures(self.logger)
+
     def run(self, mode: str = "full"):
         """
         Run the session benchmark execution task stack
@@ -382,7 +418,7 @@ class Session:
         # Generate debug runner scripts to manually run the benchmarks on different
         # systems.
         data_root = self.get_data_root_path()
-        for (target,), section in self.parameterization_matrix.group_by("target"):
+        for (target, ), section in self.parameterization_matrix.group_by("target"):
             section = section.select(
                 pl.col("descriptor").map_elements(lambda bench: bench.get_run_script_path().relative_to(data_root),
                                                   return_dtype=pl.Object).alias("run_script"))

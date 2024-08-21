@@ -1035,3 +1035,15 @@ class TaskScheduler:
                 self.logger.debug("Shutting down resource manager %s", name)
                 rman.sched_shutdown()
             self._rman.clear()
+
+    def report_failures(self, logger):
+        """
+        Report task failures to the given logger
+        """
+        for failed in self.failed_tasks:
+            task_details = []
+            if failed.is_dataset_task():
+                iconf = failed.benchmark.config.instance
+                task_details.append(f"on {iconf.platform}-{iconf.cheri_target}-{iconf.kernel}")
+                task_details.append(f"params: {failed.benchmark.parameters}")
+            logger.error("Task %s.%s failed %s", failed.task_namespace, failed.task_name, " ".join(task_details))

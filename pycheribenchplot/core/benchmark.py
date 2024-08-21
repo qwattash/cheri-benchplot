@@ -8,7 +8,7 @@ from typing import Type
 import pandas as pd
 
 from .artefact import RemoteTarget
-from .config import AnalysisConfig, CommandHookConfig, Config, ExecTargetConfig
+from .config import (AnalysisConfig, CommandHookConfig, Config, ExecTargetConfig, config_field)
 from .dwarf import DWARFManager
 from .elf import AddressSpaceManager
 from .error import TaskNotFound
@@ -20,21 +20,12 @@ from .util import new_logger, timing
 AnyExecTask = ExecutionTask | SessionExecutionTask
 
 
-class BenchmarkExecMode(Enum):
-    """
-    Run mode determines the type of run strategy to use.
-    This is currently used for partial or pretend runs.
-    """
-    FULL = "full"
-    SHELLGEN = "shellgen"
-
-
 @dataclass
 class ExecTaskConfig(Config):
     """
     Configuration object for :class:`BenchmarkExecTask`
     """
-    mode: BenchmarkExecMode = BenchmarkExecMode.FULL
+    pass
 
 
 class BenchmarkExecTask(Task):
@@ -118,11 +109,10 @@ class BenchmarkExecTask(Task):
         return f"{self.task_namespace}-{self.task_name}-{self.benchmark.uuid}"
 
     def resources(self):
-        assert self._need_instance is not None, "need_instance must have been set, did not scan dependencies?"
-        if self._need_instance and self.config.mode != BenchmarkExecMode.SHELLGEN:
-            self.instance_req = InstanceManager.request(self.benchmark.g_uuid,
-                                                        instance_config=self.benchmark.config.instance)
-            yield self.instance_req
+        """
+        Request resources for this task prior to running.
+        """
+        yield from ()
 
     def dependencies(self):
         # Note that dependencies are guaranteed to be scanned on schedule resolution,
@@ -134,12 +124,7 @@ class BenchmarkExecTask(Task):
 
     def run(self):
         """
-        Run the benchmark and extract the results.
-        This involves the steps:
-        1. Emit the remote run script from the benchmark state
-        2. Ask the instance manager for an instance that we can run on
-        3. Connect to the instance, upload the run script and run it to completion.
-        4. Extract results
+        Generate the per-benchmark execution scripts.
         """
         assert self._need_instance is not None, "need_instance must have been set, did not scan dependencies?"
 
@@ -154,23 +139,6 @@ class BenchmarkExecTask(Task):
         with open(script_path, "w+") as script_file:
             self.script.render(script_file)
         script_path.chmod(0o755)
-        if self.config.mode == BenchmarkExecMode.SHELLGEN:
-            # Just stop after shell script generation
-            return
-
-        instance = self.instance_req.get()
-        self.logger.debug("Import script file host: %s => guest: %s", script_path, remote_script_path)
-        instance.import_file(script_path, remote_script_path)
-        self.logger.info("Execute benchmark script")
-        with timing("Benchmark script completed", logger=self.logger):
-            instance.run_cmd("sh", [remote_script_path])
-
-        # Extract all output files
-        self.logger.info("Extract output files")
-        for dep in self.resolved_dependencies:
-            self._extract_files(instance, dep)
-
-        self.logger.info("Run %s completed", self.benchmark)
 
 
 class Benchmark:

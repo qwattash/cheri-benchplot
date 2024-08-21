@@ -37,13 +37,11 @@ class SessionSubCommand(SubCommand):
                                 help="Force re-create the session if it already exists. Use with caution.")
         sub_create.add_argument("-u", "--update", action="store_true", help="Only update the embedded analysis config")
 
-        sub_run = session_subparsers.add_parser("run",
-                                                help="Run the session datagen tasks, this must be done "
-                                                "before data can be analysed.")
+        sub_gen = session_subparsers.add_parser("generate", help="Generate run scripts")
+        self._register_session_arg(sub_gen)
+
+        sub_run = session_subparsers.add_parser("run", help="Run the benchmark session")
         self._register_session_arg(sub_run)
-        sub_run.add_argument("--shellgen-only",
-                             action="store_true",
-                             help="Only perform shell script generation and stop before running anything.")
 
         sub_clean = session_subparsers.add_parser("clean", help="Clean session data and plots.")
         self._register_session_arg(sub_clean)
@@ -93,6 +91,13 @@ class SessionSubCommand(SubCommand):
         else:
             self.logger.error("Session %s already exists", args.target)
             raise FileExistsError(f"Session {args.target} already exists")
+
+    def handle_generate(self, user_config, args):
+        """
+        Hook to handle script generation subcommand.
+        """
+        session = self._get_session(user_config, args)
+        session.generate()
 
     def handle_run(self, user_config, args):
         """
