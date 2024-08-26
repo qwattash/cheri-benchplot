@@ -402,49 +402,32 @@ class Session:
         self.logger.info("Session %s execution plan ready", self.name)
         self.scheduler.report_failures(self.logger)
 
-    def run(self, mode: str = "full"):
+    def run(self, driver_config: "DriverConfig", clean: bool = True):
         """
-        Run the session benchmark execution task stack
+        Run the session on host machines.
 
-        :param mode: Alternate run mode for partial or pretend runs.
+        This uses different executor strategies depending on the host where we
+        are going to run.
         """
         # Cleanup previous run, to avoid any confusion
-        self.clean_all()
+        if clean:
+            self.clean_all()
 
-        exec_config = ExecTaskConfig(mode=BenchmarkExecMode(mode))
         instance_manager = InstanceManager(self)
         self.scheduler.register_resource(instance_manager)
 
-        # Generate debug runner scripts to manually run the benchmarks on different
-        # systems.
-        data_root = self.get_data_root_path()
-        for (target, ), section in self.parameterization_matrix.group_by("target"):
-            section = section.select(
-                pl.col("descriptor").map_elements(lambda bench: bench.get_run_script_path().relative_to(data_root),
-                                                  return_dtype=pl.Object).alias("run_script"))
-            ctx = ScriptContextBase(self.logger)
-            ctx.set_template("run-target.sh.jinja")
-            ctx.extend_context(dict(target=target, run_scripts=section["run_script"]))
-            run_target = re.sub(r"[\s/]", "-", target)
-            script_path = self.get_data_root_path() / f"run-target-{run_target}.sh"
-            with open(script_path, "w+") as script_file:
-                ctx.render(script_file)
-            script_path.chmod(0o755)
+        # Resolve the session driver strategy
+        driver_class = TaskRegistry.resolve_task(driver_config.handler, kind=SessionDriver)
 
-        for descriptor in self.parameterization_matrix["descriptor"]:
-            descriptor.schedule_exec_tasks(self.scheduler, exec_config)
+        # Package the session to transfer to the remote hosts
+        session_root = self.session_root_path
 
-        self.logger.info("Session %s start run", self.name)
+        # Schedule the session driver task
+        self.scheduler.add_task(driver)
+        self.logger.info("Session %s begin execution", self.name)
         self.scheduler.run()
-        self.logger.info("Session %s run finished", self.name)
-        # Dump failed tasks info
-        for failed in self.scheduler.failed_tasks:
-            task_details = []
-            if failed.is_dataset_task():
-                iconf = failed.benchmark.config.instance
-                task_details.append(f"on {iconf.platform}-{iconf.cheri_target}-{iconf.kernel}")
-                task_details.append(f"params: {failed.benchmark.parameters}")
-            self.logger.error("Task %s.%s failed %s", failed.task_namespace, failed.task_name, " ".join(task_details))
+        self.logger.info("Session %s execution completed", self.name)
+        self.scheduler.report_failures(self.logger)
 
     def analyse(self, analysis_config: AnalysisConfig | None):
         """
@@ -486,6 +469,7 @@ class Session:
         self.logger.info("Session %s start analysis", self.name)
         self.scheduler.run()
         self.logger.info("Session %s analysis finished", self.name)
+        self.scheduler.report_failures(self.logger)
 
     def find_exec_task(self, task_class: Type[SessionExecutionTask]) -> SessionExecutionTask:
         """

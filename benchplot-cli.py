@@ -104,7 +104,7 @@ class SessionSubCommand(SubCommand):
         Hook to handle the run subcommand.
         """
         session = self._get_session(user_config, args)
-        session.run("shellgen" if args.shellgen_only else "full")
+        session.run()
 
     def handle_clean(self, user_config, args):
         # XXX add safety net question?
