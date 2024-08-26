@@ -36,8 +36,12 @@
   {% endif %}
 {% endmacro %}
 
+{% macro _pmcstat_command() %}
+  {%- if hwpmc_config.system_mode -%} sudo {%- endif -%} pmcstat
+{% endmacro %}
+
 {% macro _pmcstat_impl(iteration) %}
-  pmcstat {{ hwpmc_descendants_flag }} {{ _pmcstat_counters() | trim }} {{ _pmcstat_output(iteration) | trim }}
+  {{ _pmcstat_command() }} {{ hwpmc_descendants_flag }} {{ _pmcstat_counters() | trim }} {{ _pmcstat_output(iteration) | trim }}
 {% endmacro %}
 
 {% macro _pmcstat(iteration, extra_flags) %}
