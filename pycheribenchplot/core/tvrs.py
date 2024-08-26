@@ -1,4 +1,5 @@
 import enum
+import inspect
 from contextlib import contextmanager
 from copy import copy
 from dataclasses import dataclass
@@ -378,20 +379,19 @@ class TVRSParamsContext:
             param_columns += extra_groupby
             join_sel += extra_groupby
 
-        metrics = [metric]
         bs_val = f"{metric}_baseline"
         m_q25 = f"{metric}_q25"
         m_q75 = f"{metric}_q75"
         # Generate mean and std values for each group
         agg_selectors = [
-            cs.by_name(metrics).median(),
-            cs.by_name(metrics).quantile(0.25, "linear").name.suffix("_q25"),
-            cs.by_name(metrics).quantile(0.75, "linear").name.suffix("_q75")
+            cs.by_name(metric).median(),
+            cs.by_name(metric).quantile(0.25, "linear").name.suffix("_q25"),
+            cs.by_name(metric).quantile(0.75, "linear").name.suffix("_q75")
         ]
         agg_rename = cs.ends_with("_q25", "_q75").name.suffix("_baseline")
         stats = self.df.group_by(param_columns).agg(cs.by_name(ID_COLUMNS).first(), *agg_selectors)
         # Find the baseline dataframe slice
-        bs = stats.filter(**df_baseline_sel).with_columns(cs.by_name(metrics).name.suffix("_baseline"), agg_rename)
+        bs = stats.filter(**df_baseline_sel).with_columns(cs.by_name(metric).name.suffix("_baseline"), agg_rename)
 
         # Now we align the input and baseline median frames to compute delta and overhead
         if join_sel:
@@ -403,7 +403,7 @@ class TVRSParamsContext:
             # In this case, baseline is a single row which we replicate for every
             # parameter combination
             _, right_df = pl.align_frames(self.df, baseline, on=list(df_baseline_sel.keys()))
-            join_df = right_df.with_columns(cs.by_name(metrics).fill_null(strategy="forward"))
+            join_df = right_df.with_columns(cs.by_name(metric).fill_null(strategy="forward"))
         assert join_df.shape[0] == self.df.shape[0], "Unexpected join result"
 
         # Use nonparametric bootstrapping to estimate difference of medians
@@ -486,16 +486,8 @@ class TVRSParamsContext:
 
         metrics = [metric]
         # Generate mean and std values for each group
-        if how == "mean":
-            agg_selectors = [cs.by_name(metrics).mean(), cs.by_name(metrics).std().name.suffix("_std")]
-            agg_rename = cs.ends_with("_std").name.suffix("_baseline")
-        else:
-            agg_selectors = [
-                cs.by_name(metrics).median(),
-                cs.by_name(metrics).quantile(0.25, "linear").name.suffix("_q25"),
-                cs.by_name(metrics).quantile(0.75, "linear").name.suffix("_q75")
-            ]
-            agg_rename = cs.ends_with("_q25", "_q75").name.suffix("_baseline")
+        agg_selectors = [cs.by_name(metric).mean(), cs.by_name(metric).std().name.suffix("_std")]
+        agg_rename = cs.ends_with("_std").name.suffix("_baseline")
         stats = self.df.group_by(param_columns).agg(cs.by_name(ID_COLUMNS + param_columns).first(), *agg_selectors)
         # Find the baseline dataframe slice
         bs = stats.filter(**df_baseline_sel).with_columns(cs.by_name(metrics).name.suffix("_baseline"), agg_rename)
@@ -515,57 +507,26 @@ class TVRSParamsContext:
 
         # Compute the absolute DELTA for each metric
         bs_val = f"{metric}_baseline"
-        if how == "mean":
-            m_std = f"{metric}_std"
-            bs_std = f"{metric}_std_baseline"
-            delta = join_df.with_columns(
-                pl.lit(metric + "_delta").alias("_metric_type"),
-                pl.col(metric) - pl.col(bs_val), (pl.col(m_std).pow(2) + pl.col(bs_std).pow(2)).sqrt()).with_columns(
-                    # Mask the baseline slice with NaN
-                    pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(metric)).alias(metric),
-                    pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(m_std)).alias(m_std))
-        else:
-            # Use nonparametric bootstrapping to estimate difference of medians
-            # We do this by repeating the bootstrap method for each metric we have.
-            # XXX TODO scipy.stat.bootstrap()
-            m_q25 = f"{metric}_q25"
-            m_q75 = f"{metric}_q75"
-            delta = join_df.with_columns(
-                pl.lit(metric + "_delta").alias("_metric_type"),
-                pl.col(metric) - pl.col(bs_val), (pl.col(m_25) - pl.col(bs_val)).alias(m_q25),
-                (pl.col(m_75) - pl.col(bs_val)).alias(m_q75)
-                # XXX check what needs to be inverted
-            ).with_columns(
-                # Mask the baseline slice with NaN
-                pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(metric)).alias(metric),
-                pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(m_q25)).alias(m_q25),
-                pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(m_q75)).alias(m_q75))
-
-        # Compute the % Overhead for each metric
-        if how == "mean":
-            rel_err_sum = (pl.col(m_std) / pl.col(metric)).pow(2) + (pl.col(bs_std) / pl.col(bs_val)).pow(2)
-            ovh = delta.with_columns(
-                pl.lit(metric + "_overhead").alias("_metric_type"),
-                (pl.col(metric) / pl.col(bs_val)).mul(overhead_scale),
-                ((pl.col(m_std) / pl.col(metric)).pow(2) +
-                 (pl.col(bs_std) / pl.col(bs_val)).pow(2)).alias("_tmp_sum_of_err_squared"),
-            ).with_columns((pl.col(metric).abs() * pl.col("_tmp_sum_of_err_squared").sqrt()).alias(m_std)).with_columns(
+        m_std = f"{metric}_std"
+        bs_std = f"{metric}_std_baseline"
+        delta = join_df.with_columns(
+            pl.lit(metric + "_delta").alias("_metric_type"),
+            pl.col(metric) - pl.col(bs_val), (pl.col(m_std).pow(2) + pl.col(bs_std).pow(2)).sqrt()).with_columns(
                 # Mask the baseline slice with NaN
                 pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(metric)).alias(metric),
                 pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(m_std)).alias(m_std))
-        else:
-            # XXX Use bootstrapping here as well
-            ovh = join_df.with_columns(
-                pl.lit(metric + "_overhead").alias("_metric_type"),
-                (pl.col(metric) / pl.col(bs_val) - pl.lit(1)).mul(overhead_scale),
-                (pl.col(m_q25) / pl.col(bs_val) - pl.lit(1)).mul(overhead_scale),
-                (pl.col(m_q75) / pl.col(bs_val) - pl.lit(1)).mul(overhead_scale)
-                # XXX check what needs to be inverted
-            ).with_columns(
-                # Mask the baseline slice with NaN
-                pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(metric)).alias(metric),
-                pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(m_q25)).alias(m_q25),
-                pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(m_q75)).alias(m_q75))
+
+        # Compute the % Overhead for each metric
+        rel_err_sum = (pl.col(m_std) / pl.col(metric)).pow(2) + (pl.col(bs_std) / pl.col(bs_val)).pow(2)
+        ovh = delta.with_columns(
+            pl.lit(metric + "_overhead").alias("_metric_type"),
+            (pl.col(metric) / pl.col(bs_val)).mul(overhead_scale),
+            ((pl.col(m_std) / pl.col(metric)).pow(2) +
+             (pl.col(bs_std) / pl.col(bs_val)).pow(2)).alias("_tmp_sum_of_err_squared"),
+        ).with_columns((pl.col(metric).abs() * pl.col("_tmp_sum_of_err_squared").sqrt()).alias(m_std)).with_columns(
+            # Mask the baseline slice with NaN
+            pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(metric)).alias(metric),
+            pl.when(**df_baseline_sel).then(float("nan")).otherwise(pl.col(m_std)).alias(m_std))
 
         # Combine the stats, delta and ovh frame to have long-form data representation
         stats = stats.with_columns(pl.lit(metric).alias("_metric_type"))
@@ -662,8 +623,13 @@ class TVRSParamsContext:
 
         This applies the plot configuration to rename parameter levels, axes and
         filters.
+        Columns that have their values mapped through parameter_labels are cloned
+        and retain the original value through generated _r_<column>.
         """
         config = self.task.tvrs_config()
+
+        # Generate default mappings for the _r_<col> renames
+        self._rename.update({f"_r_{col}": col for col in self.df.columns})
 
         # Parameter renames
         if config.parameter_labels:
@@ -672,6 +638,8 @@ class TVRSParamsContext:
                 if name not in self.df.columns:
                     self.logger.info("Skipping re-labeling of parameter '%s', does not exist", name)
                     continue
+                self._rename[f"_r_{name}"] = f"_r_{name}"
+                relabeling.append(pl.col(name).alias(f"_r_{name}"))
                 relabeling.append(pl.col(name).replace(mapping))
             self.df = self.df.with_columns(*relabeling)
 
@@ -736,7 +704,10 @@ class TVRSParamsContext:
             else:
                 descending = weight_spec.mode.is_descending()
                 coerce_dtype = weight_spec.mode.dtype()
-                unique_values = df[col_name].map_elements(coerce_dtype).unique()
+                if inspect.isfunction(coerce_dtype):
+                    unique_values = df[col_name].map_elements(coerce_dtype).unique()
+                else:
+                    unique_values = df[col_name].cast(coerce_dtype).unique()
                 sorted_values = sorted(unique_values, reverse=descending)
                 mapping = {v: weight_spec.base + i * weight_spec.step for i, v in enumerate(sorted_values)}
             # Update the weight for each row
