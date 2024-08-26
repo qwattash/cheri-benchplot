@@ -22,6 +22,7 @@ from .pmc_exec import PMCExec, PMCExecConfig
 class PMCPlotConfig(TVRSPlotConfig):
     pmc_filter: Optional[List[str]] = config_field(None, desc="Show only the given subset of counters")
     cpu_filter: Optional[List[int]] = config_field(None, desc="Filter system-mode counters by CPU index")
+    agg_method: str = config_field("median", desc="Use mean/std or median/iqr")
     lock_y_axis: bool = config_field(False, desc="Lock Y axis")
     share_x_axis: bool = config_field(False, desc="Share the X axis among rows")
     counter_group_name: Optional[str] = config_field(
@@ -171,10 +172,6 @@ class PMCGroupSummary(TVRSParamsMixin, PlotTask):
         return PlotTarget(self, "summary")
 
     @output
-    def summary_box_plot(self):
-        return PlotTarget(self, "summary-box")
-
-    @output
     def summary_delta_plot(self):
         return PlotTarget(self, "delta")
 
@@ -218,19 +215,6 @@ class PMCGroupSummary(TVRSParamsMixin, PlotTask):
                 facet.add_legend()
                 self.adjust_legend_on_top(facet.figure)
 
-        with new_facet(self.summary_box_plot.paths(),
-                       ctx.df,
-                       row=ctx.r.counter,
-                       col=tile_col,
-                       sharex=sharex,
-                       sharey=sharey,
-                       margin_titles=True,
-                       aspect=self.config.tile_aspect) as facet:
-            facet.map_dataframe(sns.boxplot, x=tile_x, y=ctx.r.value, hue=ctx.r._hue, dodge=True, palette=palette)
-            if palette:
-                facet.add_legend()
-                self.adjust_legend_on_top(facet.figure)
-
     def gen_delta(self, ctx):
         """
         Generate delta plots
@@ -245,42 +229,67 @@ class PMCGroupSummary(TVRSParamsMixin, PlotTask):
         tile_col = ctx.r[self.config.tile_column_name]
         tile_x = ctx.r[self.config.tile_x_name]
 
+        if self.config.agg_method == "median":
+            errorbar = ("custom", {"yerr": [ctx.r.value_q25, ctx.r.value_q75], "color": "black"})
+        else:
+            errorbar = ctx.r.value_std
+
+        delta_df = ctx.df.filter(pl.col(ctx.r._r__metric_type) == "value_delta")
+
         self.logger.info("Generate PMC delta summary for group '%s'", self.pmc_group)
         with new_facet(self.summary_delta_plot.paths(),
-                       ctx.df,
+                       delta_df,
                        row=ctx.r.counter,
                        col=tile_col,
                        sharex=sharex,
                        sharey=sharey,
                        margin_titles=True,
                        aspect=self.config.tile_aspect) as facet:
-            facet.map_dataframe(sns.barplot,
+            facet.map_dataframe(extended_barplot,
                                 x=tile_x,
-                                y=ctx.r.value_delta,
+                                y=ctx.r.value,
                                 hue=ctx.r._hue,
+                                errorbar=errorbar,
                                 dodge=True,
                                 palette=palette,
                                 capsize=0.3)
+            # Ensure that we have labels on the each of the grid Y axes
+            for ijk, data in facet.facet_data():
+                row, col, hue = ijk
+                # Note that the metric type is supposed to be unique for each column
+                # and data is a pandas dataframe.
+                label = data[ctx.r._metric_type].iloc[0]
+                facet.axes[row, col].set_ylabel(label)
             if palette:
                 facet.add_legend()
                 self.adjust_legend_on_top(facet.figure)
 
+        overhead_df = ctx.df.filter(pl.col(ctx.r._r__metric_type) == "value_overhead")
+
         self.logger.info("Generate PMC overhead summary for group '%s'", self.pmc_group)
         with new_facet(self.summary_ovh_plot.paths(),
-                       ctx.df,
+                       overhead_df,
                        row=ctx.r.counter,
                        col=tile_col,
                        sharex=sharex,
                        sharey=sharey,
                        margin_titles=True,
                        aspect=self.config.tile_aspect) as facet:
-            facet.map_dataframe(sns.barplot,
+            facet.map_dataframe(extended_barplot,
                                 x=tile_x,
-                                y=ctx.r.value_overhead,
+                                y=ctx.r.value,
                                 hue=ctx.r._hue,
+                                errorbar=errorbar,
                                 dodge=True,
                                 palette=palette,
                                 capsize=0.3)
+            # Ensure that we have labels on the each of the grid Y axes
+            for ijk, data in facet.facet_data():
+                row, col, hue = ijk
+                # Note that the metric type is supposed to be unique for each column
+                # and data is a pandas dataframe.
+                label = data[ctx.r._metric_type].iloc[0]
+                facet.axes[row, col].set_ylabel(label)
             if palette:
                 facet.add_legend()
                 self.adjust_legend_on_top(facet.figure)
@@ -376,31 +385,28 @@ class PMCGroupSummary(TVRSParamsMixin, PlotTask):
 
         if "_cpu" in df.columns:
             # Sum metrics from different CPUs
-            ctx.df = ctx.df.group_by([*ctx.params, "counter",
-                                      "iteration"]).agg(cs.numeric().sum(),
-                                                        cs.string().first()).select(cs.all().exclude("_cpu"))
+            grouped = ctx.df.group_by([*ctx.params, "counter", "iteration"])
+            sum_df = grouped.agg(cs.numeric().sum(), cs.string().first())
+            ctx.df = sum_df.select(cs.all().exclude("_cpu"))
 
-        ovh_ctx = ctx.compute_overhead(["value"], extra_groupby=["counter"])
-
-        lf_ctx = ctx.compute_lf_overhead("value", extra_groupby=["counter"], overhead_scale=100, how="median")
+        ovh_ctx = ctx.compute_lf_overhead("value",
+                                          extra_groupby=["counter"],
+                                          overhead_scale=100,
+                                          how=self.config.agg_method)
 
         ctx.relabel()
         ctx.derived_hue_param(default=["variant", "runtime"])
         ctx.sort()
         self.gen_summary(ctx)
 
-        ovh_ctx.relabel()
+        ovh_ctx.relabel(default={"_metric_type": "Measurement"})
         ovh_ctx.derived_hue_param(default=["variant", "runtime"])
         ovh_ctx.sort()
         self.gen_delta(ovh_ctx)
-
-        lf_ctx.relabel(default=dict(_metric_type="Measurement"))
-        lf_ctx.derived_hue_param(default=["variant", "runtime"])
-        lf_ctx.sort()
-        self.gen_combined(lf_ctx)
+        self.gen_combined(ovh_ctx)
 
         # Pivot back for readability
-        tbl_data = lf_ctx.df.pivot(columns=lf_ctx.r._metric_type,
-                                   index=[*lf_ctx.base_params, lf_ctx.r.counter],
-                                   values=lf_ctx.r.value)
+        tbl_data = ovh_ctx.df.pivot(columns=ovh_ctx.r._metric_type,
+                                    index=[*ovh_ctx.base_params, ovh_ctx.r.counter],
+                                    values=ovh_ctx.r.value)
         tbl_data.write_csv(self.summary_tbl.single_path())
