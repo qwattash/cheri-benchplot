@@ -46,7 +46,7 @@
 
 {% macro protocol_flag() %}
   {% if scenario_config.protocol == IPerfProtocol.UDP %}
-    --udp
+    --udp -b 0
   {% elif scenario_config.protocol == IPerfProtocol.SCTP %}
     --sctp
   {% endif %}
