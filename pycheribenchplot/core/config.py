@@ -846,8 +846,6 @@ class PlotConfig(Config):
     """
     #: Parallel plotting (hacky and unstable)
     parallel: bool = False
-    #: Generate multiple split plots instead of combining
-    split_subplots: bool = False
     #: Output formats
     plot_output_format: List[str] = dc.field(default_factory=lambda: ["pdf"])
 
