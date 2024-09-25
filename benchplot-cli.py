@@ -35,7 +35,6 @@ class SessionSubCommand(SubCommand):
                                 "--force",
                                 action="store_true",
                                 help="Force re-create the session if it already exists. Use with caution.")
-        sub_create.add_argument("-u", "--update", action="store_true", help="Only update the embedded analysis config")
 
         sub_gen = session_subparsers.add_parser("generate", help="Generate run scripts")
         self._register_session_arg(sub_gen)
@@ -53,6 +52,9 @@ class SessionSubCommand(SubCommand):
                                  type=Path,
                                  default=None,
                                  help="Analysis configuration file.")
+        sub_analyse.add_argument("--set-default",
+                                 action="store_true",
+                                 help="Set the current analysis configuration as the default analysis configuration")
         sub_analyse.add_argument("-t",
                                  "--task",
                                  type=str,
@@ -86,8 +88,6 @@ class SessionSubCommand(SubCommand):
         elif args.force:
             session.delete()
             session = Session.make_new(user_config, config, args.target)
-        elif args.update:
-            session.update_config(config)
         else:
             self.logger.error("Session %s already exists", args.target)
             raise FileExistsError(f"Session {args.target} already exists")
@@ -125,7 +125,7 @@ class SessionSubCommand(SubCommand):
             analysis_config = AnalysisConfig()
             for task in args.task:
                 analysis_config.tasks.append(TaskTargetConfig(handler=task))
-        session.analyse(analysis_config)
+        session.analyse(analysis_config, set_default=args.set_default)
 
     def handle_bundle(self, user_config, args):
         session = self._get_session(user_config, args)

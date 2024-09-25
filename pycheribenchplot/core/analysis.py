@@ -7,7 +7,7 @@ from warnings import warn
 import numpy as np
 import pandas as pd
 import polars as pl
-from pandera import Field
+import polars.selectors as cs
 
 from .artefact import BenchmarkIterationTarget, DataFrameTarget
 from .benchmark import Benchmark
@@ -31,8 +31,171 @@ class AnalysisTask(SessionTask):
 
     def __init__(self, session: "Session", analysis_config: AnalysisConfig, task_config: Config | None = None):
         super().__init__(session, task_config=task_config)
-        #: Analysis configuration for this invocation
+        # Analysis configuration for this invocation
         self.analysis_config = analysis_config
+
+        # Collect parameterization axes from the benchmark matrix
+        all_bench = self.session.all_benchmarks()
+        assert len(all_bench) > 0
+        self._param_columns = list(all_bench[0].parameters.keys())
+
+    def _do_mean_overhead(self, df, metric, extra_groupby, inverted, overhead_scale):
+        """
+        Compute the overhead assuming normal distribution of the "metric" data in the
+        dataframe.
+
+        The parameter axes from the benchmark configuration are used to group the
+        dataframe to compute the statistic metrics.
+        Note that this returns data in long-form, see :meth:`AnalysisTask.compute_overhead`.
+        """
+        if len(df.select(cs.ends_with("_std", "_baseline"))):
+            self.logger.error("Can not compute mean overhead, conflicting columns with suffix '_std' or '_baseline'")
+            raise RuntimeError("Invalid column names")
+
+        baseline_sel = self.baseline_selector()
+        param_columns = self.param_columns
+        join_columns = list(set(self.param_columns) - set(baseline_sel.keys()))
+        if extra_groupby:
+            param_columns += extra_groupby
+            join_columns += extra_groupby
+
+        # Generate mean and std values for each group
+        agg_selectors = [cs.by_name(metric).mean(), cs.by_name(metric).std().name.suffix("_std")]
+        agg_rename = cs.ends_with("_std").name.suffix("_baseline")
+        stats = df.group_by(param_columns).agg(*agg_selectors)
+        # Find the baseline dataframe slice
+        bs = stats.filter(**baseline_sel).with_columns(cs.by_name(metric).name.suffix("_baseline"), agg_rename)
+
+        # Now we align the stats and bs frames to compute delta and overhead
+        if join_columns:
+            join_bs = bs.select(cs.ends_with("_baseline") | cs.by_name(join_columns))
+            join_df = stats.join(join_bs, on=join_columns)
+        else:
+            # The selector may be empty if the baseline slice selects a specific
+            # target/variant/runtime/scenario combination.
+            # In this case, baseline is a single row which we replicate for every
+            # parameter combination
+            join_columns = list(baseline_sel.keys())
+            _, right_df = pl.align_frames(stats, bs, on=join_columns)
+            aligned_bs = right_df.select(cs.by_name(param_columns)
+                                         | cs.ends_with("_baseline")).fill_null(strategy="forward")
+            join_df = stats.join(aligned_bs, on=join_columns)
+        assert join_df.shape[0] == stats.shape[0], "Unexpected join result"
+
+        # Compute the absolute DELTA for each metric
+        bs_val = f"{metric}_baseline"
+        m_std = f"{metric}_std"
+        bs_std = f"{metric}_std_baseline"
+        delta = join_df.with_columns(
+            pl.lit(metric + "_delta").alias("_metric_type"),
+            pl.col(metric) - pl.col(bs_val), (pl.col(m_std).pow(2) + pl.col(bs_std).pow(2)).sqrt()).with_columns(
+                # Mask the baseline slice with NaN
+                pl.when(**baseline_sel).then(float("nan")).otherwise(pl.col(metric)).alias(metric),
+                pl.when(**baseline_sel).then(float("nan")).otherwise(pl.col(m_std)).alias(m_std))
+
+        # Compute the % Overhead for each metric
+        rel_err_sum = (pl.col(m_std) / pl.col(metric)).pow(2) + (pl.col(bs_std) / pl.col(bs_val)).pow(2)
+        ovh = delta.with_columns(
+            pl.lit(metric + "_overhead").alias("_metric_type"),
+            (pl.col(metric) / pl.col(bs_val)).mul(overhead_scale),
+            ((pl.col(m_std) / pl.col(metric)).pow(2) +
+             (pl.col(bs_std) / pl.col(bs_val)).pow(2)).alias("_tmp_sum_of_err_squared"),
+        ).with_columns((pl.col(metric).abs() * pl.col("_tmp_sum_of_err_squared").sqrt()).alias(m_std)).with_columns(
+            # Mask the baseline slice with NaN
+            pl.when(**baseline_sel).then(float("nan")).otherwise(pl.col(metric)).alias(metric),
+            pl.when(**baseline_sel).then(float("nan")).otherwise(pl.col(m_std)).alias(m_std))
+
+        # Combine the stats, delta and ovh frame to have long-form data representation
+        stats = stats.with_columns(pl.lit(metric).alias("_metric_type"))
+        lf_stats = pl.concat([
+            stats,
+            delta.select(cs.all().exclude("^.*_baseline$")),
+            ovh.select(cs.all().exclude("^.*_baseline$").exclude("^_tmp.*$"))
+        ],
+                             how="vertical",
+                             rechunk=True)
+        return lf_stats
+
+    def _do_median_overhead(self, df, metric, extra_groupby, inverted, overhead_scale):
+        """
+        Compute the overhead using the median and quartile range to estimate uncertainty.
+
+        The parameter axes from the benchmark configuration are used to group the
+        dataframe to compute the statistic metrics.
+        Note that this returns data in long-form, see :meth:`AnalysisTask.compute_overhead`.
+        """
+        baseline_sel = self.baseline_selector()
+        param_columns = self.param_columns
+        join_columns = list(set(self.param_columns) - set(baseline_sel.keys()))
+        if extra_groupby:
+            param_columns += extra_groupby
+            join_columns += extra_groupby
+
+        bs_val = f"{metric}_baseline"
+        m_q25 = f"{metric}_q25"
+        m_q75 = f"{metric}_q75"
+        # Generate mean and std values for each group
+        agg_selectors = [
+            cs.by_name(metric).median(),
+            cs.by_name(metric).quantile(0.25, "linear").name.suffix("_q25"),
+            cs.by_name(metric).quantile(0.75, "linear").name.suffix("_q75")
+        ]
+        agg_rename = cs.ends_with("_q25", "_q75").name.suffix("_baseline")
+        stats = df.group_by(param_columns).agg(*agg_selectors)
+        # Find the baseline dataframe slice
+        bs = stats.filter(**baseline_sel).with_columns(cs.by_name(metric).name.suffix("_baseline"), agg_rename)
+
+        # Now we align the input and baseline median frames to compute delta and overhead
+        if join_columns:
+            join_bs = bs.select(cs.ends_with("_baseline") | cs.by_name(join_columns))
+            join_df = df.join(join_bs, on=join_columns)
+        else:
+            # The selector may be empty if the baseline slice selects a specific
+            # target/variant/runtime/scenario combination.
+            # In this case, baseline is a single row which we replicate for every
+            # parameter combination
+            _, right_df = pl.align_frames(df, bs, on=list(baseline_sel.keys()))
+            join_df = right_df.with_columns(cs.by_name(metric).fill_null(strategy="forward"))
+        assert join_df.shape[0] == df.shape[0], "Unexpected join result"
+
+        # Use nonparametric bootstrapping to estimate difference of medians
+        # We do this by repeating the bootstrap method for each metric we have.
+        # XXX TODO scipy.stat.bootstrap()
+        delta = join_df.with_columns(
+            pl.col(metric) - pl.col(bs_val), ).group_by(param_columns).agg(*agg_selectors).with_columns(
+                pl.lit(metric + "_delta").alias("_metric_type"),
+                # Mask the baseline slice with NaN
+                pl.when(**baseline_sel).then(float("nan")).otherwise(pl.col(metric)).alias(metric),
+                pl.when(**baseline_sel).then(float("nan")).otherwise(pl.col(m_q25)).alias(m_q25),
+                pl.when(**baseline_sel).then(float("nan")).otherwise(pl.col(m_q75)).alias(m_q75))
+
+        # XXX Use bootstrapping here as well
+        ovh = join_df.with_columns(
+            (pl.col(metric) / pl.col(bs_val) -
+             pl.lit(1)).mul(overhead_scale), ).group_by(param_columns).agg(*agg_selectors).with_columns(
+                 pl.lit(metric + "_overhead").alias("_metric_type"),
+                 # Mask the baseline slice with NaN
+                 pl.when(**baseline_sel).then(float("nan")).otherwise(pl.col(metric)).alias(metric),
+                 pl.when(**baseline_sel).then(float("nan")).otherwise(pl.col(m_q25)).alias(m_q25),
+                 pl.when(**baseline_sel).then(float("nan")).otherwise(pl.col(m_q75)).alias(m_q75))
+
+        # Combine the stats, delta and ovh frames to have long-form data layout
+        stats = stats.with_columns(pl.lit(metric).alias("_metric_type"))
+        lf_stats = pl.concat(
+            [stats,
+             delta.select(cs.all().exclude("^.*_baseline$")),
+             ovh.select(cs.all().exclude("^.*_baseline$"))],
+            how="vertical",
+            rechunk=True)
+        return lf_stats
+
+    @property
+    def param_columns(self) -> list[str]:
+        """
+        Return the set of parameter names that are expected to be found in
+        a dataframe containing data for this session.
+        """
+        return list(self._param_columns)
 
     def get_instance_config(self, g_uuid: str) -> InstanceConfig:
         """
@@ -43,6 +206,8 @@ class AnalysisTask(SessionTask):
     def g_uuid_to_label(self, g_uuid: str) -> str:
         """
         Helper that maps group UUIDs to a human-readable label that describes the instance
+
+        Deprecated, use the `target` parameter.
         """
         instance_config = self.get_instance_config(g_uuid)
         return instance_config.name
@@ -93,6 +258,43 @@ class AnalysisTask(SessionTask):
             self.logger.error("Invalid baseline specifier %s", baseline_sel)
             raise ValueError("Invalid configuration")
         return baseline
+
+    def compute_overhead(self,
+                         df: pl.DataFrame,
+                         metric: str,
+                         inverted: bool = False,
+                         extra_groupby: list[str] | None = None,
+                         overhead_scale=1,
+                         how="mean") -> pl.DataFrame:
+        """
+        Generate overhead vs the common baseline for long-form data. The result
+        is returned as a new dataframe.
+
+        The new dataframe will have an additional column named _metric_type,
+        which assumes the values of '<metric>', '<metric>_delta' and '<metric>_overhead'.
+        The <metric> column change its meaning depending on the value of _metric_type.
+        Note that in the resulting frame, the baseline data is not filtered-out.
+
+        If how = "mean", data is aggregated using mean and standard deviation.
+        The standard deviation is propagated for the delta and percent overhead as
+        the _std columns.
+        This makes assumptions about statistical independence of the measurements and
+        normality of the distribution.
+
+        If how = "median", data is aggregated using median and quartile range. The IQR is
+        computed for the delta and percent overhead as _q25 and _q75 columns.
+        Note that the relative measures are normalised with respect to the median,
+        the quartiles will indicate spread but do not account the uncertainty on the
+        baseline measure.
+
+        Note that this does not preserve row or column ordering.
+        """
+        assert how == "mean" or how == "median"
+
+        if how == "median":
+            return self._do_median_overhead(df, metric, extra_groupby, inverted, overhead_scale)
+        else:
+            return self._do_mean_overhead(df, metric, extra_groupby, inverted, overhead_scale)
 
 
 class DatasetAnalysisTask(AnalysisTask):
@@ -433,68 +635,4 @@ class StatsByParamGroupTask(ParamGroupAnalysisTask):
 
     def outputs(self):
         yield "merged_df", DataFrameTarget(self, self.load_task.model)
-        yield "df", DataFrameTarget(self, self.model)
-
-
-def StatsField(name, **kwargs):
-    """
-    DEPRECATED
-    Pandera model field that matches a column with the expected column multi-index pattern
-    from the :class:`StatsByParamGroupTask`.
-    Note: this is a function in pandera, we have to keep it this way.
-    """
-    col = (name, "mean|median|std|q25|q75", "sample|delta|norm_delta")
-    return Field(alias=col, regex=True, **kwargs)
-
-
-class StatsForAllParamSetsTask(AnalysisTask):
-    """
-    DEPRECATED
-    Generate statistics for each set of parameters in the benchmark matrix.
-    Merge the statistics in the output dataframe.
-    """
-    #: The task class to produce the statistics dataframe
-    stats_task: Type[StatsByParamGroupTask] = None
-    #: Data model for the output dataframe
-    model: Type[DataModel] = None
-
-    def __init__(self, session, analysis_config, **kwargs):
-        #: The merged dataframe with all unaggregated data.
-        self._merged_df = None
-        #: The output dataframe, after the task is completed.
-        self._df = None
-
-        # Borg state initialization occurs here
-        super().__init__(session, analysis_config, **kwargs)
-
-    def _output_df(self) -> pd.DataFrame:
-        """
-        Produce the output dataframe
-        """
-        schema = self.model.to_schema(self.session)
-        return schema.validate(self._df)
-
-    def dependencies(self):
-        # If the index is not parameterized, just schedule one stats_task
-        if not self.session.parameter_keys:
-            yield self.stats_task(self.session, self.analysis_config, {})
-        else:
-            param_sets = self.session.parameterization_matrix.with_columns(
-                pl.concat_list(self.session.parameter_keys).alias("param_sets")).select("param_sets")
-            for entry in param_sets:
-                params = dict(zip(self.session.parameter_keys, entry))
-                yield self.stats_task(self.session, self.analysis_config, params)
-
-    def run(self):
-        unaggregated_frames = []
-        stats_frames = []
-        for stats_task in self.resolved_dependencies:
-            unaggregated_frames.append(stats_task.output_map["merged_df"].get())
-            stats_frames.append(stats_task.output_map["df"].get())
-        merged_df = pd.concat(unaggregated_frames)
-        self.output_map["merged_df"].assign(merged_df)
-        self.output_map["df"].assign(stats_frames)
-
-    def outputs(self):
-        yield "merged_df", DataFrameTarget(self, self.stats_task.load_task.model)
         yield "df", DataFrameTarget(self, self.model)

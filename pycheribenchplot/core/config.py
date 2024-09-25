@@ -271,13 +271,15 @@ class ConfigContext:
         return value
 
 
-def config_field(default: any, desc: str = None, **metadata) -> dc.Field:
+def config_field(default: any, desc: str = None, field_kwargs: dict = None, **metadata) -> dc.Field:
     """
     Helper to define configuration fields defaults
 
     Use dataclasses.MISSING as default for required fields.
     """
     kwargs = dict(metadata=metadata)
+    if field_kwargs is not None:
+        kwargs.update(field_kwargs)
     if callable(default):
         kwargs["default_factory"] = default
     else:
@@ -474,6 +476,10 @@ class Config:
                 changes[f.name] = replaced
         config_logger.debug("Finish scanning %s field templates", self.__class__.__name__)
         return dc.replace(source, **changes)
+
+    @property
+    def logger(self):
+        return config_logger
 
     def bind(self, context: ConfigContext) -> Self:
         """

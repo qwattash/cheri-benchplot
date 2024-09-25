@@ -117,29 +117,6 @@ def new_facet(dest: Path | list[Path], *args, savefig_kws: dict | None = None, *
     mpl.pyplot.close(facet.figure)
 
 
-@dataclass
-class PlotTargetConfig(Config):
-    """
-    Configuration keys for a single plot target.
-    """
-    title: Optional[str] = None
-    x_label: Optional[str] = None
-    y_label: Optional[str] = None
-
-
-@dataclass
-class PlotTaskConfig(Config):
-    """
-    Base class for plot task configurations.
-
-    Note that it is not mandatory to use this base as the value of
-    PlotTask.task_config_class.
-    When the PlotTask configuration is a subclass of PlotTaskConfig,
-    it is possible to customize plot outputs by key/value parameters.
-    """
-    target_config: List[PlotTargetConfig] = field(default_factory=list)
-
-
 class PlotTarget(Target):
     """
     Target pointing to a plot path.

@@ -222,18 +222,6 @@ class Session:
         """
         return [col for col in self.parameterization_matrix.columns if col not in RESERVED_PARAMETER_NAMES]
 
-    def update_config(self, config):
-        """
-        Update the current configuration, given a new configuration.
-
-        This currently only updates the analysis configuration, since modifiying
-        anything else is more complicated than simply re-creating from scratch.
-        """
-        self.logger.info("Update analysis configuration for session %s", self.name)
-        self.config.analysis_config = config.analysis_config
-        with open(self.session_root_path / SESSION_RUN_FILE, "w") as runfile:
-            runfile.write(self.config.emit_json())
-
     def get_public_tasks(self) -> list[Type[AnalysisTask]]:
         """
         Return the public tasks available for this session.
@@ -429,7 +417,7 @@ class Session:
         self.logger.info("Session %s execution completed", self.name)
         self.scheduler.report_failures(self.logger)
 
-    def analyse(self, analysis_config: AnalysisConfig | None):
+    def analyse(self, analysis_config: AnalysisConfig | None, set_default: bool = False):
         """
         Run the session analysis tasks requested.
         The analysis pipeline is slighly different from the execution pipeline.
@@ -440,8 +428,17 @@ class Session:
 
         :param analysis_config: The analysis configuration
         """
+        if set_default:
+            self.logger.info("Update analysis configuration for session %s", self.name)
+            self.config.analysis_config = analysis_config
+            with open(self.session_root_path / SESSION_RUN_FILE, "w") as runfile:
+                runfile.write(self.config.emit_json())
+            if analysis_config is None:
+                # We are removing the default config, nothing else to do
+                return
+
         if analysis_config is None:
-            # Load analysis configuration from the session
+            # Load default analysis configuration from the session
             analysis_config = self.config.analysis_config
 
         for task_spec in analysis_config.tasks:

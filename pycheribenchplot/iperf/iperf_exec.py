@@ -119,24 +119,16 @@ class IngestIPerfStats(PLDataFrameLoadTask):
         """
         data = json.load(open(path, "r"))
         end_info = data["end"]
-        df = pl.DataFrame(end_info["streams"])
-        df = df.with_row_index("stream")
-        # yapf: disable
-        snd_df = (
-            df.select("stream", "sender")
-            .unnest("sender")
-            .select("stream", cs.all().exclude("stream").name.prefix("snd_"))
-        )
-        rcv_df = (
-            df.select("stream", "receiver")
-            .unnest("receiver")
-            .select("stream", cs.all().exclude("stream").name.prefix("rcv_"))
-        )
-        # yapf: enable
-        df = snd_df.join(rcv_df, on="stream")
 
-        assert end_info["sum_sent"]["bits_per_second"] == snd_df["snd_bits_per_second"].sum()
-        assert end_info["sum_received"]["bits_per_second"] == rcv_df["rcv_bits_per_second"].sum()
+        snd = pl.DataFrame(end_info["sum_sent"]).with_columns(cs.numeric().exclude("packets").cast(pl.Float64))
+        rcv = pl.DataFrame(end_info["sum_received"]).with_columns(cs.numeric().exclude("packets").cast(pl.Float64))
+        df = pl.concat([snd, rcv], how="vertical", rechunk=True)
+
+        test_info = data["start"]["test_start"]
+        df = df.with_columns(
+            pl.lit(data["start"]["sndbuf_actual"]).alias("sndbuf_bytes"),
+            pl.lit(data["start"]["rcvbuf_actual"]).alias("rcvbuf_bytes"),
+            pl.lit(test_info["blksize"]).alias("block_size_bytes"))
         return df
 
 

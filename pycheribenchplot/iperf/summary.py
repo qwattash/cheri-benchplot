@@ -7,16 +7,25 @@ import seaborn as sns
 from ..core.analysis import AnalysisTask
 from ..core.artefact import ValueTarget
 from ..core.config import Config, config_field
-from ..core.plot import PlotTarget, PlotTask, new_facet
+from ..core.plot import PlotTarget, PlotTask
+from ..core.plot_grid import DisplayGrid, DisplayGridConfig
+from ..core.plot_util import boxplot
 from ..core.task import dependency, output
 from ..core.tvrs import TVRSParamsMixin, TVRSPlotConfig
 from .iperf_exec import IPerfExecTask
 
 
 @dataclass
-class IPerfSummaryConfig(TVRSPlotConfig):
+class _IPerfSummaryConfig(TVRSPlotConfig):
     tile_parameter: str = config_field("scenario", desc="Parameter axis to use for the facet grid")
     tile_aspect: float = config_field(1.0, desc="Tile aspect ratio")
+
+
+@dataclass
+class IPerfSummaryConfig(DisplayGridConfig):
+    def __post_init__(self):
+        super().__post_init__()
+        # Set IPerf plot defaults and fixed values
 
 
 class UnifiedIPerfStats(AnalysisTask):
@@ -71,60 +80,74 @@ class IPerfSummaryPlot(TVRSParamsMixin, PlotTask):
     def summary_overhead_plot(self):
         return PlotTarget(self, "summary-overhead")
 
-    def _get_agg_stream_stats(self):
+    def _get_data(self):
         """
-        Produce a parameterization context with aggregated data from all iperf streams.
+        Get the dataframe with derived columns.
+
+        Add a new column 'side' that encodes the 'sender' column as a string
+        instead of a boolean.
         """
         df = self.iperf_data.df.get()
-        ctx = self.make_param_context(df.clone())
-        # First, we aggregate along the parameterization + iterations to
-        # combine per-stream information
-        ctx.df = (ctx.df.group_by(["target", "variant", "runtime", "scenario", "iteration"]).agg(
-            pl.col("dataset_id").first(),
-            cs.by_name(ctx.extra_params).first(),
-            pl.col("^.*_bytes$").sum(),
-            pl.col("^.*_seconds$").max(),
-            pl.col("^.*_bits_per_second$").sum(),
-        ))
-        ctx.suppress_const_params(keep=["target", "scenario"])
-        ctx.derived_hue_param(default=None)
-        return ctx
+        df = df.with_columns(
+            pl.when(pl.col("sender") == True).then(pl.lit("sender")).otherwise(pl.lit("receiver")).alias("side"))
+        return df
 
     def _plot_summary(self):
-        ctx = self._get_agg_stream_stats()
-        ctx.df = ctx.df.with_columns(pl.col("rcv_bits_per_second") / (8 * 2**20))
-        ctx.relabel(default=dict(
-            _hue="Variant",
-            rcv_bits_per_second="Throughput (MiB/s)",
-        ))
-        ctx.sort()
+        df = self._get_data()
+        df = df.with_columns((pl.col("bits_per_second") / 2**23).alias("MiB_per_second"))
 
-        hue_kwargs = dict()
-        if ctx.r._hue:
-            hue_kwargs.update(dict(palette=ctx.build_palette_for("_hue"), hue=ctx.r._hue))
-        facet_col = ctx.r[self.config.tile_parameter]
+        grid_config = self.config.set_display_defaults(param_names={
+            self.config.hue: "Variant",
+            "MiB_per_second": "Throughput (MiB/s)"
+        })
+        with DisplayGrid(self.summary_plot, df, grid_config) as grid:
 
-        with new_facet(self.summary_plot.paths(), ctx.df, col=facet_col, col_wrap=3) as facet:
-            facet.map_dataframe(sns.boxplot, x=ctx.r.target, y=ctx.r.rcv_bits_per_second, **hue_kwargs)
-            facet.add_legend()
+            def _doplot(tile, chunk):
+                sns.stripplot(chunk,
+                              x=tile.d.block_size_bytes,
+                              y=tile.d.MiB_per_second,
+                              hue=tile.d[self.config.hue],
+                              palette=tile.palette,
+                              ax=tile.ax,
+                              legend=False,
+                              dodge=True)
+
+            grid.map(_doplot)
+            grid.add_legend()
+
+        # ctx = self._get_agg_stream_stats()
+        # ctx.df = ctx.df.with_columns(pl.col("rcv_bits_per_second") / (8 * 2**20))
+        # ctx.relabel(default=dict(
+        #     _hue="Variant",
+        #     rcv_bits_per_second="Throughput (MiB/s)",
+        # ))
+        # ctx.sort()
+
+        # hue_kwargs = dict()
+        # if ctx.r._hue:
+        #     hue_kwargs.update(dict(palette=ctx.build_palette_for("_hue"), hue=ctx.r._hue))
+        # facet_col = ctx.r[self.config.tile_parameter]
+
+        # with new_facet(self.summary_plot.paths(), ctx.df, col=facet_col, col_wrap=3) as facet:
+        #     facet.map_dataframe(sns.boxplot, x=ctx.r.target, y=ctx.r.rcv_bits_per_second, **hue_kwargs)
+        #     facet.add_legend()
 
     def _plot_overhead(self):
-        ctx = self._get_agg_stream_stats()
-        ctx = ctx.compute_overhead(["rcv_bits_per_second"])
-        ctx.relabel(default=dict(_hue="Variant", rcv_bits_per_second_overhead="% Throughput"))
-        ctx.sort()
+        pass
+        # ctx = self._get_agg_stream_stats()
+        # ctx = ctx.compute_overhead(["rcv_bits_per_second"])
+        # ctx.relabel(default=dict(_hue="Variant", rcv_bits_per_second_overhead="% Throughput"))
+        # ctx.sort()
 
-        hue_kwargs = dict()
-        if ctx.r._hue:
-            hue_kwargs.update(dict(palette=ctx.build_palette_for("_hue"), hue=ctx.r._hue))
-        facet_col = ctx.r[self.config.tile_parameter]
+        # hue_kwargs = dict()
+        # if ctx.r._hue:
+        #     hue_kwargs.update(dict(palette=ctx.build_palette_for("_hue"), hue=ctx.r._hue))
+        # facet_col = ctx.r[self.config.tile_parameter]
 
-        with new_facet(self.summary_overhead_plot.paths(), ctx.df, col=facet_col, col_wrap=3) as facet:
-            facet.map_dataframe(sns.boxplot, x=ctx.r.target, y=ctx.r.rcv_bits_per_second_overhead, **hue_kwargs)
-            facet.add_legend()
+        # with new_facet(self.summary_overhead_plot.paths(), ctx.df, col=facet_col, col_wrap=3) as facet:
+        #     facet.map_dataframe(sns.boxplot, x=ctx.r.target, y=ctx.r.rcv_bits_per_second_overhead, **hue_kwargs)
+        #     facet.add_legend()
 
     def run_plot(self):
-        with self.config_plotting_context():
-            self._plot_summary()
-        with self.config_plotting_context():
-            self._plot_overhead()
+        self._plot_summary()
+        self._plot_overhead()
