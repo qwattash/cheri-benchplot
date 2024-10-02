@@ -7,9 +7,8 @@ import seaborn as sns
 from ..core.analysis import AnalysisTask
 from ..core.artefact import ValueTarget
 from ..core.config import config_field
-from ..core.plot import PlotTarget, PlotTask, new_facet
-from ..core.plot_grid import DisplayGrid, DisplayGridConfig
-from ..core.plot_util import grid_pointplot
+from ..core.plot import PlotTarget, PlotTask
+from ..core.plot_util import DisplayGrid, DisplayGridConfig, grid_pointplot
 from ..core.task import dependency, output
 from ..core.tvrs import TVRSParamsMixin, TVRSPlotConfig
 from .unixbench_exec import UnixBenchExec
