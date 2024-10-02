@@ -8,15 +8,25 @@ from ..core.analysis import AnalysisTask
 from ..core.artefact import ValueTarget
 from ..core.config import config_field
 from ..core.plot import PlotTarget, PlotTask, new_facet
+from ..core.plot_grid import DisplayGrid, DisplayGridConfig
+from ..core.plot_util import grid_pointplot
 from ..core.task import dependency, output
 from ..core.tvrs import TVRSParamsMixin, TVRSPlotConfig
 from .unixbench_exec import UnixBenchExec
 
 
 @dataclass
-class UnixBenchSummaryConfig(TVRSPlotConfig):
+class _UnixBenchSummaryConfig(TVRSPlotConfig):
     tile_column_name: Optional[str] = config_field("runtime", desc="Parameter to use for column tiling, may be null")
     tile_row_name: Optional[str] = config_field("variant", desc="Parameter to use for row tiling, may be null")
+
+
+@dataclass
+class UnixBenchSummaryConfig(DisplayGridConfig):
+    def __post_init__(self):
+        super().__post_init__()
+        # Set defaults for display grid parameters
+        self.setdefault(tile_row="runtime", hue="target")
 
 
 class UnixBenchLoad(AnalysisTask):
@@ -62,50 +72,28 @@ class UnixBenchSummaryPlot(TVRSParamsMixin, PlotTask):
     def overhead(self):
         return PlotTarget(self, "summary-overhead")
 
-    def gen_summary(self, ctx):
-        facet_col = ctx.r[self.config.tile_column_name]
-        facet_row = ctx.r[self.config.tile_row_name]
-        palette = None
-        if ctx.r._hue:
-            palette = ctx.build_palette_for("_hue")
-
-        with new_facet(self.summary.paths(), ctx.df, col=facet_col, row=facet_row, margin_titles=True) as facet:
-            facet.map_dataframe(sns.boxplot, x=ctx.r.scenario, y=ctx.r.times, hue=ctx.r._hue, gap=.1, palette=palette)
-            facet.add_legend()
-            self.adjust_legend_on_top(facet.figure)
-
-    def gen_overhead(self, ctx):
-        facet_col = ctx.r[self.config.tile_column_name]
-        facet_row = ctx.r[self.config.tile_row_name]
-        palette = None
-        if ctx.r._hue:
-            palette = ctx.build_palette_for("_hue")
-
-        with new_facet(self.overhead.paths(), ctx.df, col=facet_col, row=facet_row, margin_titles=True) as facet:
-            facet.map_dataframe(sns.boxplot,
-                                x=ctx.r.scenario,
-                                y=ctx.r.times_overhead,
-                                hue=ctx.r._hue,
-                                gap=.1,
-                                palette=palette)
-            facet.add_legend()
-            self.adjust_legend_on_top(facet.figure)
-
     def run_plot(self):
         df = self.data.df.get()
-        ctx = self.make_param_context(df)
-        ctx.suppress_const_params(keep=["target", "scenario"])
-        ovh_ctx = ctx.compute_overhead(["times"])
-        ctx.relabel(default=dict(times="Time (s)"))
-        ovh_ctx.relabel(default=dict(times_overhead="% Run-time overhead"))
 
-        # Hue parameter is subject to relabeling, so do this last
-        ctx.derived_hue_param(default=["target"])
-        ctx.relabel(default=dict(_hue="Target"))
-        ovh_ctx.derived_hue_param(default=["target"])
-        ovh_ctx.relabel(default=dict(_hue="Target"))
+        # Transition to the new stats infrastructure
+        stats = self.compute_overhead(df, "times", how="median")
 
-        self.logger.info("Generate UnixBench summary plots")
-        with self.config_plotting_context():
-            self.gen_summary(ctx)
-            self.gen_overhead(ovh_ctx)
+        grid_config = self.config.set_display_defaults(param_names={
+            self.config.hue: self.config.hue.upper(),
+            "times": "Time (s)"
+        })
+
+        median_df = stats.filter(_metric_type="absolute")
+        with DisplayGrid(self.summary, median_df, grid_config) as grid:
+            grid.map(grid_pointplot, x="scenario", y="times", err=["times_low", "times_high"])
+            grid.add_legend()
+
+        grid_config = self.config.set_display_defaults(param_names={
+            self.config.hue: self.config.hue.upper(),
+            "times": "% Time Overhead"
+        })
+
+        ovh_df = stats.filter(_metric_type="overhead")
+        with DisplayGrid(self.overhead, ovh_df, grid_config) as grid:
+            grid.map(grid_pointplot, x="scenario", y="times", err=["times_low", "times_high"])
+            grid.add_legend()

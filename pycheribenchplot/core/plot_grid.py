@@ -39,6 +39,11 @@ class PlotGridConfig(Config):
     legend_columns: int = config_field(
         4, desc="Number of columns in the legend, this affects the necessary vspace and tile_aspect")
 
+    def setdefault(self, **kwargs):
+        for key, value in kwargs.items():
+            if hasattr(self, key) and getattr(self, key) is None:
+                setattr(self, key, value)
+
 
 class WeightMode(enum.Enum):
     SortAscendingAsInt = "ascending_int"
@@ -55,19 +60,13 @@ class WeightMode(enum.Enum):
             return True
         return False
 
-    def weight_dtype(self):
-        if self == WeightMode.SortAscendingAsStr or self == WeightMode.SortDescendingAsStr:
-            return str
-        else:
-            return int
-
     def weight_transform(self):
         if self == WeightMode.SortAscendingAsStr or self == WeightMode.SortDescendingAsStr:
-            return str
+            return lambda series: series.cast(pl.String)
         if self == WeightMode.SortAscendingAsInt or self == WeightMode.SortDescendingAsInt:
-            return int
+            return lambda series: series.cast(pl.Int64)
         if self == WeightMode.SortAscendingAsBytes or self == WeightMode.SortDescendingAsBytes:
-            return bytes2int
+            return lambda series: series.map_elements(bytes2int, return_dtype=pl.Int64)
         return None
 
 
@@ -148,24 +147,39 @@ class ColumnNameMapping:
         return self._rename.get(name, name)
 
 
-@dataclass
 class PlotTile:
-    ax: Axes
-    hue: str | None
-    row_index: int
-    col_index: int
-    row: any
-    col: any
+    def __init__(self, ax: Axes, hue: str | None, palette: list | None, coords: tuple[int, int], loc: tuple[any, any]):
+        self.ax = ax
+        self.hue = hue
+        # Note that the palette colors are in the sort order of the hue column
+        self.palette = palette
+        self.coords = coords
+        self.loc = loc
+
+    @property
+    def row_index(self):
+        return self.coords[0]
+
+    @property
+    def col_index(self):
+        return self.coords[1]
+
+    @property
+    def row(self):
+        return self.loc[0]
+
+    @property
+    def col(self):
+        return self.loc[1]
 
 
-@dataclass
 class DisplayTile(PlotTile):
-    #: Note that the palette colors are in the sort order of the hue column
-    palette: list[any]
-    #: Mapping from the standard column name to the raw data column name
-    raw_map: Optional[ColumnNameMapping]
-    #: Mapping from the standard column name to the display column name
-    display_map: Optional[ColumnNameMapping]
+    def __init__(self, ax, hue, palette, coords, loc, raw_map: ColumnNameMapping, display_map: ColumnNameMapping):
+        super().__init__(ax, hue, palette, coords, loc)
+        # Mapping from the standard column name to the raw data column name
+        self.raw_map = raw_map
+        # Mapping from the standard column name to the display column name
+        self.display_map = display_map
 
     @property
     def d(self):
@@ -275,7 +289,7 @@ class PlotGrid(AbstractContextManager):
             self._margin_titles.append(text)
 
     def _make_tile(self, ax, ri, ci, row, col):
-        return PlotTile(ax=ax, hue=self._config.hue, row_index=ri, col_index=ci, row=row, col=col)
+        return PlotTile(ax=ax, hue=self._config.hue, palette=self._color_palette, coords=(ri, ci), loc=(row, col))
 
     @property
     def tile_row_param(self):
@@ -293,11 +307,12 @@ class PlotGrid(AbstractContextManager):
     def logger(self):
         return self._target.task.logger
 
-    def map(self, tile_plotter: Callable[[PlotTile, pl.DataFrame], None], **kwargs):
+    def map(self, tile_plotter: Callable[[PlotTile, pl.DataFrame], None], *args, **kwargs):
         for i, (ax_stride, (row_param, row_chunk)) in enumerate(zip(self._grid, self._grid_rows(self._df))):
             for j, (ax, (col_param, chunk)) in enumerate(zip(ax_stride, self._grid_cols(row_chunk))):
                 tile = self._make_tile(ax, i, j, row_param, col_param)
-                tile_plotter(tile, chunk, **kwargs)
+                self.logger.debug("PlotGrid: tile callback (%s, %s) %s", row_param, col_param, chunk)
+                tile_plotter(tile, chunk, *args, **kwargs)
 
     def add_legend(self, **kwargs):
         if not self._config.hue:
@@ -412,8 +427,7 @@ class DisplayGrid(PlotGrid):
                 descending = weight_spec.mode.is_descending()
                 unique_values = df[name].unique()
                 if transform := weight_spec.mode.weight_transform():
-                    weight_dtype = weight_spec.mode.weight_dtype()
-                    unique_values = unique_values.map_elements(transform, return_dtype=weight_dtype)
+                    unique_values = transform(unique_values)
                 sorted_values = sorted(unique_values, reverse=descending)
                 mapping = {v: weight_spec.base + i * weight_spec.step for i, v in enumerate(sorted_values)}
             # Update the weight for each row
@@ -433,11 +447,9 @@ class DisplayGrid(PlotGrid):
     def _make_tile(self, ax, ri, ci, row, col):
         tile = DisplayTile(ax=ax,
                            hue=self._config.hue,
-                           row_index=ri,
-                           col_index=ci,
-                           row=row,
-                           col=col,
                            palette=self._color_palette,
+                           coords=(ri, ci),
+                           loc=(row, col),
                            raw_map=ColumnNameMapping(self._raw_map),
                            display_map=ColumnNameMapping(self._display_map))
         return tile

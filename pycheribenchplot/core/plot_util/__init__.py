@@ -1,2 +1,2 @@
 from .barplot import extended_barplot
-from .boxplot import boxplot
+from .pointplot import grid_pointplot

@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import polars as pl
 import polars.selectors as cs
+import scipy.stats as scs
 
 from .artefact import BenchmarkIterationTarget, DataFrameTarget
 from .benchmark import Benchmark
@@ -39,7 +40,7 @@ class AnalysisTask(SessionTask):
         assert len(all_bench) > 0
         self._param_columns = list(all_bench[0].parameters.keys())
 
-    def _do_mean_overhead(self, df, metric, extra_groupby, inverted, overhead_scale):
+    def _do_mean_overhead(self, df, metric, extra_groupby, overhead_scale):
         """
         Compute the overhead assuming normal distribution of the "metric" data in the
         dataframe.
@@ -116,78 +117,83 @@ class AnalysisTask(SessionTask):
                              rechunk=True)
         return lf_stats
 
-    def _do_median_overhead(self, df, metric, extra_groupby, inverted, overhead_scale):
+    def _do_median_bootstrap(self, df, metric, extra_groupby, overhead_scale):
         """
-        Compute the overhead using the median and quartile range to estimate uncertainty.
+        Compute the median overhead.
+
+        Note that the median confidence intervals are computed using a multi-sample
+        bootstrapping approach.
+        https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.bootstrap.html
+        This should help to obtain a better confidence interval in the presence of an
+        unknown distribution. The confidence level of the interval is configurable,
+        defaulting to 0.95.
 
         The parameter axes from the benchmark configuration are used to group the
         dataframe to compute the statistic metrics.
-        Note that this returns data in long-form, see :meth:`AnalysisTask.compute_overhead`.
+        Data is returned in long-form, see :meth:`AnalysisTask.compute_overhead`.
         """
         baseline_sel = self.baseline_selector()
         param_columns = self.param_columns
-        join_columns = list(set(self.param_columns) - set(baseline_sel.keys()))
         if extra_groupby:
             param_columns += extra_groupby
-            join_columns += extra_groupby
+        join_columns = [*param_columns, "iteration"]
 
-        bs_val = f"{metric}_baseline"
-        m_q25 = f"{metric}_q25"
-        m_q75 = f"{metric}_q75"
-        # Generate mean and std values for each group
-        agg_selectors = [
-            cs.by_name(metric).median(),
-            cs.by_name(metric).quantile(0.25, "linear").name.suffix("_q25"),
-            cs.by_name(metric).quantile(0.75, "linear").name.suffix("_q75")
-        ]
-        agg_rename = cs.ends_with("_q25", "_q75").name.suffix("_baseline")
-        stats = df.group_by(param_columns).agg(*agg_selectors)
-        # Find the baseline dataframe slice
-        bs = stats.filter(**baseline_sel).with_columns(cs.by_name(metric).name.suffix("_baseline"), agg_rename)
+        assert not [c for c in df.columns if c.endswith("_right")], "Columns may not have suffix '_right'"
 
-        # Now we align the input and baseline median frames to compute delta and overhead
-        if join_columns:
-            join_bs = bs.select(cs.ends_with("_baseline") | cs.by_name(join_columns))
-            join_df = df.join(join_bs, on=join_columns)
-        else:
-            # The selector may be empty if the baseline slice selects a specific
-            # target/variant/runtime/scenario combination.
-            # In this case, baseline is a single row which we replicate for every
-            # parameter combination
-            _, right_df = pl.align_frames(df, bs, on=list(baseline_sel.keys()))
-            join_df = right_df.with_columns(cs.by_name(metric).fill_null(strategy="forward"))
-        assert join_df.shape[0] == df.shape[0], "Unexpected join result"
+        # The baseline selector must specify a constraint on param_columns.
+        # If the constraint does not fix every parameterization axis, we have a number of degrees of
+        # freedom on the baseline.
+        # Therefore, the baseline chunk must be further aligned with the dataframe in order to correctly
+        # associate baseline values to each group.
+        # In order to compute the degrees of freedom of the baseline, we filter-out all derived parameter
+        # columns that do not vary within the baseline chunk.
+        metric_b = f"{metric}_baseline"
+        baseline = df.filter(**baseline_sel).with_columns(pl.col(metric).alias(metric_b)).select(
+            metric_b, *join_columns)
+        dof = list(
+            baseline.select(cs.by_name(join_columns).n_unique()).transpose(
+                include_header=True, header_name="column",
+                column_names=["n_values"]).filter(pl.col("n_values") > 1)["column"])
+        jdf = df.join(baseline, on=dof).select(~cs.ends_with("_right"))
+        # Note that we expect the shape of the dataframe not to change
+        assert jdf.shape[0] == df.shape[0], "Unexpected baseline join result"
+        df = jdf
 
-        # Use nonparametric bootstrapping to estimate difference of medians
-        # We do this by repeating the bootstrap method for each metric we have.
-        # XXX TODO scipy.stat.bootstrap()
-        delta = join_df.with_columns(
-            pl.col(metric) - pl.col(bs_val), ).group_by(param_columns).agg(*agg_selectors).with_columns(
-                pl.lit(metric + "_delta").alias("_metric_type"),
-                # Mask the baseline slice with NaN
-                pl.when(**baseline_sel).then(float("nan")).otherwise(pl.col(metric)).alias(metric),
-                pl.when(**baseline_sel).then(float("nan")).otherwise(pl.col(m_q25)).alias(m_q25),
-                pl.when(**baseline_sel).then(float("nan")).otherwise(pl.col(m_q75)).alias(m_q75))
+        def _bootstrap(chunk: "DataFrame", selectors, statistic_fn):
+            data = tuple(chunk[s] for s in selectors)
+            boot = scs.bootstrap(data, statistic_fn, vectorized=True, method="basic")
+            stat_chunk = chunk.select(
+                cs.by_name(param_columns).first(),
+                pl.lit(statistic_fn(*data, axis=0)).alias(metric),
+                pl.lit(boot.confidence_interval.low).alias(f"{metric}_low"),
+                pl.lit(boot.confidence_interval.high).alias(f"{metric}_high"))
+            return stat_chunk
 
-        # XXX Use bootstrapping here as well
-        ovh = join_df.with_columns(
-            (pl.col(metric) / pl.col(bs_val) -
-             pl.lit(1)).mul(overhead_scale), ).group_by(param_columns).agg(*agg_selectors).with_columns(
-                 pl.lit(metric + "_overhead").alias("_metric_type"),
-                 # Mask the baseline slice with NaN
-                 pl.when(**baseline_sel).then(float("nan")).otherwise(pl.col(metric)).alias(metric),
-                 pl.when(**baseline_sel).then(float("nan")).otherwise(pl.col(m_q25)).alias(m_q25),
-                 pl.when(**baseline_sel).then(float("nan")).otherwise(pl.col(m_q75)).alias(m_q75))
+        def _median_diff(left, right, axis=-1):
+            return np.median(left, axis=axis) - np.median(right, axis=axis)
 
-        # Combine the stats, delta and ovh frames to have long-form data layout
-        stats = stats.with_columns(pl.lit(metric).alias("_metric_type"))
-        lf_stats = pl.concat(
-            [stats,
-             delta.select(cs.all().exclude("^.*_baseline$")),
-             ovh.select(cs.all().exclude("^.*_baseline$"))],
-            how="vertical",
-            rechunk=True)
-        return lf_stats
+        def _median_overhead(left, right, axis=-1):
+            return (np.median(left, axis=axis) / np.median(right, axis=axis) - 1) * overhead_scale
+
+        grouped = df.group_by(*param_columns)
+        # First, bootstrap the metric median
+        # Note the "*" unpacking, this works around a limitation of map_groups that doesn't
+        # like a list argument.
+        stat = grouped.map_groups(lambda chunk: _bootstrap(chunk, [metric], np.median))
+        stat = stat.with_columns(pl.lit("absolute").alias("_metric_type"))
+
+        # Bootstrap delta median from the baseline and each other group.
+        # Note that we force the baseline to baseline delta to 0.
+        delta_stat = grouped.map_groups(lambda chunk: _bootstrap(chunk, [metric, metric_b], _median_diff))
+        delta_stat = delta_stat.with_columns(pl.lit("delta").alias("_metric_type"))
+
+        # Bootstrap the median overhead from the baseline and each other group.
+        # Note that we force the baseline to baseline overhead to 0.
+        ovh_stat = grouped.map_groups(lambda chunk: _bootstrap(chunk, [metric, metric_b], _median_overhead))
+        ovh_stat = ovh_stat.with_columns(pl.lit("overhead").alias("_metric_type"))
+
+        out_df = pl.concat([stat, delta_stat, ovh_stat], how="vertical", rechunk=True)
+        return out_df
 
     @property
     def param_columns(self) -> list[str]:
@@ -290,11 +296,13 @@ class AnalysisTask(SessionTask):
         Note that this does not preserve row or column ordering.
         """
         assert how == "mean" or how == "median"
+        if inverted:
+            overhead_scale *= -1
 
         if how == "median":
-            return self._do_median_overhead(df, metric, extra_groupby, inverted, overhead_scale)
+            return self._do_median_bootstrap(df, metric, extra_groupby, overhead_scale)
         else:
-            return self._do_mean_overhead(df, metric, extra_groupby, inverted, overhead_scale)
+            return self._do_mean_overhead(df, metric, extra_groupby, overhead_scale)
 
 
 class DatasetAnalysisTask(AnalysisTask):
