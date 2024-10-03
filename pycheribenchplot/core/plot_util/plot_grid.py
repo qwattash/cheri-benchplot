@@ -13,9 +13,9 @@ from matplotlib.axes import Axes
 from matplotlib.gridspec import GridSpec
 from matplotlib.patches import Patch
 
-from .artefact import Target
-from .config import Config, config_field
-from .util import bytes2int
+from ..artefact import Target
+from ..config import Config, config_field
+from ..util import bytes2int
 
 
 def default(value, default):
@@ -33,7 +33,11 @@ class PlotGridConfig(Config):
     tile_sharey: Optional[str] = config_field(None, desc="Override Y axis sharing")
     plot_params: Dict[str, Any] = config_field(
         dict, desc="Plot appearance configuration for tweaking, see matplotlib rc_context documentation")
-    hue: Optional[str] = config_field(None, desc="Override parameter for hue")
+    hue: Optional[str] = config_field(
+        None,
+        desc=
+        "Override parameter for hue. When no hue is given, the color is controlled by  the plot_param axes.prop_cycle (See matplotlib rcParams)."
+    )
     tile_aspect: float = config_field(1.0, desc="Aspect ratio of each tile")
     legend_vspace: float = config_field(0.2, desc="Fraction of the vertical space reserved to legend and suptitle")
     legend_columns: int = config_field(
