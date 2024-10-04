@@ -123,13 +123,28 @@ class DisplayGridConfig(PlotGridConfig):
         desc="Filter the data for the given set of parameters. Specify constraints as key=value pairs, " +
         "multiple constraints on the same key are not supported.")
 
-    def set_display_defaults(self, param_names: dict | None = None) -> Self:
+    def set_display_defaults(self,
+                             param_names: dict | None = None,
+                             param_values: dict[str, dict[str, any]] | None = None) -> Self:
         """
         Set default renames
         """
         config = replace(self)
         if param_names:
             config.param_names = dict(param_names, **default(config.param_names, {}))
+        if param_values:
+            config.param_values = dict(param_values, **default(config.param_values, {}))
+        return config
+
+    def set_fixed(self, **kwargs) -> Self:
+        """
+        Force a parameter to a fixed value.
+        If the user specified an override, generate a warning.
+        """
+        for key, value in kwargs.items():
+            if getattr(self, key) is not None:
+                self.logger.warning("Configuration %s is disabled in this task, forced to %s", value)
+        config = replace(self, **kwargs)
         return config
 
 
@@ -258,7 +273,7 @@ class PlotGrid(AbstractContextManager):
         if self._config.tile_row is None:
             yield (None, df)
         else:
-            for (name, ), chunk in df.group_by(self.tile_row_param):
+            for (name, ), chunk in df.group_by(self.tile_row_param, maintain_order=True):
                 yield (name, chunk)
 
     def _grid_cols(self, df=None) -> Iterable[tuple[any, pl.DataFrame]]:
@@ -266,14 +281,14 @@ class PlotGrid(AbstractContextManager):
         if self._config.tile_col is None:
             yield (None, df)
         else:
-            for (name, ), chunk in df.group_by(self.tile_col_param):
+            for (name, ), chunk in df.group_by(self.tile_col_param, maintain_order=True):
                 yield (name, chunk)
 
     def _gen_color_palette(self):
         if self._config.hue is None:
             self._color_palette = None
         else:
-            ncolors = self._df.select(pl.n_unique(self._config.hue).alias("count"))
+            ncolors = self._df.select(pl.n_unique(self.hue_param).alias("count"))
             self._color_palette = sns.color_palette(n_colors=ncolors["count"][0])
 
     def _set_titles(self, tile, chunk):
@@ -282,9 +297,9 @@ class PlotGrid(AbstractContextManager):
         """
         nrows, ncols = self._grid_shape()
         if tile.row_index == 0 and self._config.tile_col:
-            tile.ax.set_title(f"{self._config.tile_col}={tile.col}")
+            tile.ax.set_title(f"{self.tile_col_param} = {tile.col}")
         if tile.col_index == ncols - 1 and self._config.tile_row:
-            text = tile.ax.annotate(f"{self._config.tile_row}={tile.row}",
+            text = tile.ax.annotate(f"{self.tile_row_param} = {tile.row}",
                                     xy=(1.02, .5),
                                     xycoords="axes fraction",
                                     rotation=270,
@@ -329,7 +344,7 @@ class PlotGrid(AbstractContextManager):
         self._figure.subplots_adjust(top=reserved_y_fraction)
         self._figure.legend(patches,
                             labels,
-                            bbox_to_anchor=(0., reserved_y_fraction, 1., 0.2),
+                            bbox_to_anchor=(0., reserved_y_fraction, 1., self._config.legend_vspace),
                             ncols=self._config.legend_columns,
                             loc="center",
                             **kwargs)
@@ -353,8 +368,8 @@ class DisplayGrid(PlotGrid):
     def __enter__(self):
         self._filter()
         self._sort()
-        super().__enter__()
         self._gen_display_columns()
+        super().__enter__()
         return self
 
     def _filter(self):

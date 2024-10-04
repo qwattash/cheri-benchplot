@@ -75,7 +75,6 @@ def grid_barplot(tile, chunk, x, y, err: tuple[str, str] | None = None, orient="
             err_low = (hue_group[metric] - hue_group[lower]).abs()
             err_high = (hue_group[upper] - hue_group[metric]).abs()
             error_kwargs.update({f"{orthogonal_orient}err": (err_low, err_high), "capsize": 4})
-        print(hue_group)
         coord = hue_group["__gen_coord"] + hue_group[f"__gen_offset"]
         bar_plot(coord, hue_group[metric], hue_group["__gen_width"], color=color, **error_kwargs)
 

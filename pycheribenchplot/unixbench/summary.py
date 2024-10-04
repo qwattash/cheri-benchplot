@@ -15,12 +15,6 @@ from .unixbench_exec import UnixBenchExec
 
 
 @dataclass
-class _UnixBenchSummaryConfig(TVRSPlotConfig):
-    tile_column_name: Optional[str] = config_field("runtime", desc="Parameter to use for column tiling, may be null")
-    tile_row_name: Optional[str] = config_field("variant", desc="Parameter to use for row tiling, may be null")
-
-
-@dataclass
 class UnixBenchSummaryConfig(DisplayGridConfig):
     def __post_init__(self):
         super().__post_init__()
@@ -78,7 +72,7 @@ class UnixBenchSummaryPlot(TVRSParamsMixin, PlotTask):
         stats = self.compute_overhead(df, "times", how="median")
 
         grid_config = self.config.set_display_defaults(param_names={
-            self.config.hue: self.config.hue.upper(),
+            self.config.hue: self.config.hue.capitalize(),
             "times": "Time (s)"
         })
 
@@ -88,7 +82,7 @@ class UnixBenchSummaryPlot(TVRSParamsMixin, PlotTask):
             grid.add_legend()
 
         grid_config = self.config.set_display_defaults(param_names={
-            self.config.hue: self.config.hue.upper(),
+            self.config.hue: self.config.hue.capitalize(),
             "times": "% Time Overhead"
         })
 

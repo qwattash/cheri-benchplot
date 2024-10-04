@@ -159,21 +159,29 @@ class AnalysisTask(SessionTask):
         assert jdf.shape[0] == df.shape[0], "Unexpected baseline join result"
         df = jdf
 
+        ci_low_col = f"{metric}_low"
+        ci_high_col = f"{metric}_high"
+
         def _bootstrap(chunk: "DataFrame", selectors, statistic_fn):
             data = tuple(chunk[s] for s in selectors)
             boot = scs.bootstrap(data, statistic_fn, vectorized=True, method="basic")
             stat_chunk = chunk.select(
                 cs.by_name(param_columns).first(),
                 pl.lit(statistic_fn(*data, axis=0)).alias(metric),
-                pl.lit(boot.confidence_interval.low).alias(f"{metric}_low"),
-                pl.lit(boot.confidence_interval.high).alias(f"{metric}_high"))
+                pl.lit(boot.confidence_interval.low).alias(ci_low_col),
+                pl.lit(boot.confidence_interval.high).alias(ci_high_col))
             return stat_chunk
 
         def _median_diff(left, right, axis=-1):
             return np.median(left, axis=axis) - np.median(right, axis=axis)
 
         def _median_overhead(left, right, axis=-1):
-            return (np.median(left, axis=axis) / np.median(right, axis=axis) - 1) * overhead_scale
+            # Note that we may have division by zero due to the right median being zero sometimes.
+            # We don't care about it, but we need to propagate NaN in these cases.
+            right_median = np.median(right, axis=axis)
+            ratio = np.where(right_median != 0,
+                             np.divide(np.median(left, axis=axis), right_median, where=(right_median != 0)), np.nan)
+            return (ratio - 1) * overhead_scale
 
         grouped = df.group_by(*param_columns)
         # First, bootstrap the metric median
@@ -191,6 +199,12 @@ class AnalysisTask(SessionTask):
         # Note that we force the baseline to baseline overhead to 0.
         ovh_stat = grouped.map_groups(lambda chunk: _bootstrap(chunk, [metric, metric_b], _median_overhead))
         ovh_stat = ovh_stat.with_columns(pl.lit("overhead").alias("_metric_type"))
+        # Note: force the baseline-to-baseline overhead to NaN
+        # ovh_stat = ovh_stat.with_columns(
+        #     pl.when(**baseline_sel).then(np.nan).otherwise(pl.col(metric)).alias(metric),
+        #     pl.when(**baseline_sel).then(np.nan).otherwise(pl.col(ci_low_col)).alias(ci_low_col),
+        #     pl.when(**baseline_sel).then(np.nan).otherwise(pl.col(ci_high_col)).alias(ci_high_col)
+        # )
 
         out_df = pl.concat([stat, delta_stat, ovh_stat], how="vertical", rechunk=True)
         return out_df
@@ -271,7 +285,7 @@ class AnalysisTask(SessionTask):
                          inverted: bool = False,
                          extra_groupby: list[str] | None = None,
                          overhead_scale=1,
-                         how="mean") -> pl.DataFrame:
+                         how="median") -> pl.DataFrame:
         """
         Generate overhead vs the common baseline for long-form data. The result
         is returned as a new dataframe.

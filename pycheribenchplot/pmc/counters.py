@@ -12,24 +12,23 @@ from matplotlib.ticker import FuncFormatter
 from ..core.artefact import Target, ValueTarget
 from ..core.config import Config, config_field
 from ..core.plot import DatasetPlotTask, PlotTarget, PlotTask, new_facet
-from ..core.plot_util import extended_barplot
+from ..core.plot_util import DisplayGrid, DisplayGridConfig, grid_barplot
 from ..core.task import dependency, output
 from ..core.tvrs import TVRSParamsMixin, TVRSPlotConfig
 from .pmc_exec import PMCExec, PMCExecConfig
 
 
 @dataclass
-class PMCPlotConfig(TVRSPlotConfig):
+class PMCPlotConfig(DisplayGridConfig):
     pmc_filter: Optional[List[str]] = config_field(None, desc="Show only the given subset of counters")
     cpu_filter: Optional[List[int]] = config_field(None, desc="Filter system-mode counters by CPU index")
-    agg_method: str = config_field("median", desc="Use mean/std or median/iqr")
-    lock_y_axis: bool = config_field(False, desc="Lock Y axis")
-    share_x_axis: bool = config_field(False, desc="Share the X axis among rows")
     counter_group_name: Optional[str] = config_field(
         None, desc="Parameter to use to identify runs with different sets of counters")
-    tile_column_name: Optional[str] = config_field("scenario", desc="Parameter to use for the facet grid column axis")
-    tile_x_name: str = config_field("target", desc="Parameter to use for the X axis of each subplot")
-    tile_aspect: float = config_field(1.0, desc="Aspect ratio of the facet tiles")
+    tile_xaxis: str = config_field("target", desc="Parameter to use for the X axis of each tile")
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.setdefault(tile_column="scenario")
 
     def resolve_counter_group(self, task: PMCExec) -> str:
         if self.counter_group_name:
@@ -60,9 +59,22 @@ class PMCStatDistribution(TVRSParamsMixin, DatasetPlotTask):
         exec_config = exec_task.config
 
         df = self.counters.df.get()
-        ctx = self.make_param_context(df)
-        ctx.melt(value_vars=[c.lower() for c in exec_config.counters_list], variable_name="counter", value_name="value")
-        ctx.relabel()
+        df = df.unpivot(on=[c.lower() for c in exec_config.counters_list], variable_name="counter", value_name="value")
+        hist = df.group_by("counter").agg(pl.col("value").hist(bin_count=10, include_breakpoint=True))
+        hist = hist.with_columns(
+            pl.col("value").list.eval(pl.element().struct.field("breakpoint")).alias("hist_breakpoint"),
+            pl.col("value").list.eval(pl.element().struct.field("count")).alias("hist_count"))
+
+        grid_config = DisplayGridConfig(param_names={
+            "hist_breakpoint": "Counter value",
+            "hist_count": "Frequency"
+        },
+                                        tile_sharex=False,
+                                        tile_sharey=False,
+                                        tile_row="counter",
+                                        tile_col="target")
+        self.logger.info("Generate PMC distribution for %s: %s", self.benchmark.config.name,
+                         ", ".join([f"{k}={v}" for k, v in self.benchmark.parameters.items()]))
 
         def format_tick(x, pos=None):
             sign = np.sign(x)
@@ -73,13 +85,15 @@ class PMCStatDistribution(TVRSParamsMixin, DatasetPlotTask):
             xnew = sign * value / 10**xmag
             return f"${xnew:.02f}^{{{xmag}}}$"
 
-        self.logger.info("Generate PMC distribution for %s: %s", self.benchmark.config.name,
-                         ", ".join([f"{k}={v}" for k, v in self.benchmark.parameters.items()]))
-        with new_facet(self.distribution_plot.paths(), ctx.df, col="counter", col_wrap=4, sharex=False) as facet:
-            facet.map_dataframe(sns.histplot, "value")
-            facet.add_legend()
-            for ax in facet.axes.flat:
-                ax.xaxis.set_major_formatter(FuncFormatter(format_tick))
+        with DisplayGrid(self.distribution_plot, df, grid_config) as grid:
+
+            def simple_barplot(tile, chunk):
+                tile.ax.bar(chunk[tile.d.hist_breakpoint], chunk[tile.d.hist_count])
+                tile.ax.set_xlabel(tile.d.hist_breakpoint)
+                tile.ax.set_ylabel(tile.d.hist_count)
+                tile.ax.xaxis.set_major_formatter(FuncFormatter(format_tick))
+
+            grid.map(simple_barplot)
 
 
 class PMCStatSummary(PlotTask):
@@ -187,156 +201,6 @@ class PMCGroupSummary(TVRSParamsMixin, PlotTask):
     def summary_tbl(self):
         return Target(self, "tbl", ext="csv")
 
-    def gen_summary(self, ctx):
-        """
-        Generate the summary stripplot
-        """
-        palette = ctx.build_palette_for("_hue", allow_empty=False)
-        sharey = False
-        if self.config.lock_y_axis:
-            sharey = "row"
-        sharex = self.config.share_x_axis
-
-        # Rename customisable parameters for the tile grid and X axis
-        tile_col = ctx.r[self.config.tile_column_name]
-        tile_x = ctx.r[self.config.tile_x_name]
-
-        self.logger.info("Generate PMC counters summary for group '%s'", self.pmc_group)
-        with new_facet(self.summary_plot.paths(),
-                       ctx.df,
-                       row=ctx.r.counter,
-                       col=tile_col,
-                       sharex=sharex,
-                       sharey=sharey,
-                       margin_titles=True,
-                       aspect=self.config.tile_aspect) as facet:
-            facet.map_dataframe(sns.stripplot, x=tile_x, y=ctx.r.value, hue=ctx.r._hue, dodge=True, palette=palette)
-            if palette:
-                facet.add_legend()
-                self.adjust_legend_on_top(facet.figure)
-
-    def gen_delta(self, ctx):
-        """
-        Generate delta plots
-        """
-        palette = ctx.build_palette_for("_hue", allow_empty=False)
-        sharey = False
-        if self.config.lock_y_axis:
-            sharey = "row"
-        sharex = self.config.share_x_axis
-
-        # Rename customisable parameters for the tile grid and X axis
-        tile_col = ctx.r[self.config.tile_column_name]
-        tile_x = ctx.r[self.config.tile_x_name]
-
-        if self.config.agg_method == "median":
-            errorbar = ("custom", {"yerr": [ctx.r.value_q25, ctx.r.value_q75], "color": "black"})
-        else:
-            errorbar = ctx.r.value_std
-
-        delta_df = ctx.df.filter(pl.col(ctx.r._r__metric_type) == "value_delta")
-
-        self.logger.info("Generate PMC delta summary for group '%s'", self.pmc_group)
-        with new_facet(self.summary_delta_plot.paths(),
-                       delta_df,
-                       row=ctx.r.counter,
-                       col=tile_col,
-                       sharex=sharex,
-                       sharey=sharey,
-                       margin_titles=True,
-                       aspect=self.config.tile_aspect) as facet:
-            facet.map_dataframe(extended_barplot,
-                                x=tile_x,
-                                y=ctx.r.value,
-                                hue=ctx.r._hue,
-                                errorbar=errorbar,
-                                dodge=True,
-                                palette=palette,
-                                capsize=0.3)
-            # Ensure that we have labels on the each of the grid Y axes
-            for ijk, data in facet.facet_data():
-                row, col, hue = ijk
-                # Note that the metric type is supposed to be unique for each column
-                # and data is a pandas dataframe.
-                label = data[ctx.r._metric_type].iloc[0]
-                facet.axes[row, col].set_ylabel(label)
-            if palette:
-                facet.add_legend()
-                self.adjust_legend_on_top(facet.figure)
-
-        overhead_df = ctx.df.filter(pl.col(ctx.r._r__metric_type) == "value_overhead")
-
-        self.logger.info("Generate PMC overhead summary for group '%s'", self.pmc_group)
-        with new_facet(self.summary_ovh_plot.paths(),
-                       overhead_df,
-                       row=ctx.r.counter,
-                       col=tile_col,
-                       sharex=sharex,
-                       sharey=sharey,
-                       margin_titles=True,
-                       aspect=self.config.tile_aspect) as facet:
-            facet.map_dataframe(extended_barplot,
-                                x=tile_x,
-                                y=ctx.r.value,
-                                hue=ctx.r._hue,
-                                errorbar=errorbar,
-                                dodge=True,
-                                palette=palette,
-                                capsize=0.3)
-            # Ensure that we have labels on the each of the grid Y axes
-            for ijk, data in facet.facet_data():
-                row, col, hue = ijk
-                # Note that the metric type is supposed to be unique for each column
-                # and data is a pandas dataframe.
-                label = data[ctx.r._metric_type].iloc[0]
-                facet.axes[row, col].set_ylabel(label)
-            if palette:
-                facet.add_legend()
-                self.adjust_legend_on_top(facet.figure)
-
-    def gen_combined(self, ctx):
-        """
-        Generate combined plot with the absolute value, absolue diff and relative
-        overhead for each counter.
-        The data is shown as the mean and standard deviation of the iteration samples.
-        Delta and relative overhead are computed by propagating uncertainty as standard deviation.
-        The hue and tiling are controlled by task configuration options.
-        """
-        palette = ctx.build_palette_for("_hue", allow_empty=False)
-
-        with new_facet(self.summary_combined.paths(),
-                       ctx.df,
-                       col=ctx.r._metric_type,
-                       row=ctx.r.counter,
-                       sharex=self.config.share_x_axis,
-                       sharey=False,
-                       margin_titles=True,
-                       aspect=self.config.tile_aspect) as facet:
-            x_col = ctx.r[self.config.tile_x_name]
-
-            facet.map_dataframe(extended_barplot,
-                                errorbar=("custom", {
-                                    "yerr": [ctx.r.value_q25, ctx.r.value_q75],
-                                    "color": "black"
-                                }),
-                                x=x_col,
-                                y=ctx.r.value,
-                                hue=ctx.r._hue,
-                                dodge=True,
-                                palette=palette)
-            # Ensure that we have labels on the each of the grid Y axes
-            for ijk, data in facet.facet_data():
-                row, col, hue = ijk
-                # Note that the metric type is supposed to be unique for each column
-                # and data is a pandas dataframe.
-                label = data[ctx.r._metric_type].iloc[0]
-                facet.axes[row, col].set_ylabel(label)
-
-            if palette:
-                facet.add_legend()
-                self.adjust_legend_on_top(facet.figure)
-            facet.tight_layout()
-
     def gen_derived_metrics(self, df: pl.DataFrame) -> (pl.DataFrame, list[str]):
         """
         Generate derived metrics for the dataset.
@@ -372,41 +236,86 @@ class PMCGroupSummary(TVRSParamsMixin, PlotTask):
         df, derived_metrics = self.gen_derived_metrics(df)
         metric_cols = [*metrics, *derived_metrics]
 
-        ctx = self.make_param_context(df)
-        extra_index_cols = ["iteration"]
+        self.logger.info("Handle counters group: %s", self.pmc_group)
+
+        index_cols = [*self.param_columns, "iteration"]
         if "_cpu" in df.columns:
-            extra_index_cols = [*extra_index_cols, "_cpu"]
-        ctx.melt(extra_id_vars=extra_index_cols, value_vars=metric_cols, variable_name="counter", value_name="value")
+            index_cols = [*index_cols, "_cpu"]
+        df = df.unpivot(index=index_cols, on=metric_cols, variable_name="counter", value_name="value")
+
         # Filter the counters based on configuration
         if self.config.pmc_filter:
-            ctx.df = ctx.df.filter(pl.col("counter").is_in(self.config.pmc_filter))
-        if self.config.cpu_filter:
-            ctx.df = ctx.df.filter(pl.col("_cpu").is_in(self.config.cpu_filter))
+            self.logger.info("Filter by PMC: %s", self.config.pmc_filter)
+            df = df.filter(pl.col("counter").is_in(self.config.pmc_filter))
+        if self.config.cpu_filter and "_cpu" in df.columns:
+            self.logger.info("Filter by CPU index: %s", self.config.cpu_filter)
+            df = df.filter(pl.col("_cpu").is_in(self.config.cpu_filter))
 
         if "_cpu" in df.columns:
-            # Sum metrics from different CPUs
-            grouped = ctx.df.group_by([*ctx.params, "counter", "iteration"])
-            sum_df = grouped.agg(cs.numeric().sum(), cs.string().first())
-            ctx.df = sum_df.select(cs.all().exclude("_cpu"))
+            # Sum metrics from different CPUs, if the cpu filter is in effect,
+            # we will only account for a subset of the CPUs.
+            self.logger.info("Combine per-CPU counters")
+            grouped = ctx.df.group_by([*self.param_columns, "counter", "iteration"])
+            df = grouped.agg(pl.col("value").sum(), cs.string().first()).select(cs.exclude("_cpu"))
 
-        ovh_ctx = ctx.compute_lf_overhead("value",
-                                          extra_groupby=["counter"],
-                                          overhead_scale=100,
-                                          how=self.config.agg_method)
+        self.logger.info("Bootstrap overhead confidence intervals")
+        stats = self.compute_overhead(df, "value", extra_groupby=["counter"], how="median", overhead_scale=100)
 
-        ctx.relabel()
-        ctx.derived_hue_param(default=["variant", "runtime"])
-        ctx.sort()
-        self.gen_summary(ctx)
+        self.logger.info("Plot absolute data summary")
+        median_df = stats.filter(_metric_type="absolute")
+        grid_config = self.config.set_display_defaults(param_names={
+            self.config.hue: self.config.hue.capitalize(),
+            "value": "Counter value"
+        }).set_fixed(tile_row="counter", tile_col=None)
+        with DisplayGrid(self.summary_plot, median_df, grid_config) as grid:
+            grid.map(grid_barplot, x=self.config.tile_xaxis, y="value", err=["value_low", "value_high"])
+            grid.add_legend()
 
-        ovh_ctx.relabel(default={"_metric_type": "Measurement"})
-        ovh_ctx.derived_hue_param(default=["variant", "runtime"])
-        ovh_ctx.sort()
-        self.gen_delta(ovh_ctx)
-        self.gen_combined(ovh_ctx)
+        self.logger.info("Plot delta summary")
+        delta_df = stats.filter(_metric_type="delta")
+        grid_config = self.config.set_display_defaults(param_names={
+            self.config.hue: self.config.hue.capitalize(),
+            "value": "∆ Counter value"
+        }).set_fixed(tile_row="counter", tile_col=None)
+        with DisplayGrid(self.summary_delta_plot, delta_df, grid_config) as grid:
+            grid.map(grid_barplot, x=self.config.tile_xaxis, y="value", err=["value_low", "value_high"])
+            grid.add_legend()
+
+        self.logger.info("Plot overhead summary")
+        overhead_df = stats.filter(_metric_type="overhead")
+        grid_config = self.config.set_display_defaults(param_names={
+            self.config.hue: self.config.hue.capitalize(),
+            "value": "% Overhead"
+        }).set_fixed(tile_row="counter", tile_col=None)
+        with DisplayGrid(self.summary_ovh_plot, overhead_df, grid_config) as grid:
+            grid.map(grid_barplot, x=self.config.tile_xaxis, y="value", err=["value_low", "value_high"])
+            grid.add_legend()
+
+        self.logger.info("Plot combined summary")
+        grid_config = self.config.set_display_defaults(param_names={
+            self.config.hue: self.config.hue.capitalize(),
+            "_metric_type": "Measurement"
+        },
+                                                       param_values={
+                                                           "_metric_type": {
+                                                               "absolute": "Counter value",
+                                                               "delta": "∆ Counter value",
+                                                               "overhead": "% Overhead"
+                                                           }
+                                                       }).set_fixed(tile_sharey=False,
+                                                                    tile_sharex=False,
+                                                                    tile_row="counter",
+                                                                    tile_col="_metric_type")
+        with DisplayGrid(self.summary_combined, stats, grid_config) as grid:
+            grid.map(grid_barplot, x=self.config.tile_xaxis, y="value", err=["value_low", "value_high"])
+
+            def _adjust_ylabel(tile, chunk):
+                tile.ax.set_ylabel(chunk[tile.d._metric_type][0])
+
+            grid.map(_adjust_ylabel)
+            grid.add_legend()
 
         # Pivot back for readability
-        tbl_data = ovh_ctx.df.pivot(columns=ovh_ctx.r._metric_type,
-                                    index=[*ovh_ctx.base_params, ovh_ctx.r.counter],
-                                    values=ovh_ctx.r.value)
+        self.logger.info("Generate tabular data")
+        tbl_data = stats.pivot(columns="_metric_type", index=[*self._param_columns, "counter"], values="value")
         tbl_data.write_csv(self.summary_tbl.single_path())

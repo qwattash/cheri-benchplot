@@ -8,24 +8,17 @@ from ..core.analysis import AnalysisTask
 from ..core.artefact import ValueTarget
 from ..core.config import Config, config_field
 from ..core.plot import PlotTarget, PlotTask
-from ..core.plot_grid import DisplayGrid, DisplayGridConfig
-from ..core.plot_util import boxplot
+from ..core.plot_util import DisplayGrid, DisplayGridConfig, boxplot
 from ..core.task import dependency, output
 from ..core.tvrs import TVRSParamsMixin, TVRSPlotConfig
 from .iperf_exec import IPerfExecTask
 
 
 @dataclass
-class _IPerfSummaryConfig(TVRSPlotConfig):
-    tile_parameter: str = config_field("scenario", desc="Parameter axis to use for the facet grid")
-    tile_aspect: float = config_field(1.0, desc="Tile aspect ratio")
-
-
-@dataclass
 class IPerfSummaryConfig(DisplayGridConfig):
     def __post_init__(self):
         super().__post_init__()
-        # Set IPerf plot defaults and fixed values
+        self.setdefault(tile_col="scenario", hue="variant")
 
 
 class UnifiedIPerfStats(AnalysisTask):
