@@ -8,9 +8,10 @@ import seaborn as sns
 from ..core.analysis import AnalysisTask
 from ..core.artefact import ValueTarget
 from ..core.config import config_field
-from ..core.plot import PlotTarget, PlotTask, new_facet
+from ..core.plot import PlotTarget, PlotTask
+from ..core.plot_util import DisplayGrid, DisplayGridConfig, grid_barplot
 from ..core.task import dependency, output
-from ..core.tvrs import TVRSParamsMixin, TVRSPlotConfig
+from ..core.tvrs import TVRSParamsMixin
 from .netperf_exec import NetperfExecTask
 
 
@@ -37,11 +38,9 @@ class NetperfStatsUnion(AnalysisTask):
 
 
 @dataclass
-class NetperfPlotConfig(TVRSPlotConfig):
-    tile_parameter: Optional[str] = config_field(None, desc="Parameter to use for the facet column tiles")
+class NetperfPlotConfig(DisplayGridConfig):
     netperf_metrics: List[str] = config_field(lambda: ["throughput", "mean latency microseconds"],
                                               desc="Netperf metrics to plot")
-    tile_aspect: float = config_field(1.0, desc="Aspect ratio of grid tiles")
 
 
 class NetperfSummaryPlot(TVRSParamsMixin, PlotTask):
@@ -70,23 +69,30 @@ class NetperfSummaryPlot(TVRSParamsMixin, PlotTask):
         # Make all metrics lowercase
         df = df.select(cs.all().name.to_lowercase())
 
-        ctx = self.make_param_context(df)
-        ctx.melt(extra_id_vars=["iteration"],
-                 value_vars=self.config.netperf_metrics,
-                 variable_name="_metric",
-                 value_name="value")
-        ctx.derived_hue_param(default=["variant", "runtime"])
-        ctx.relabel(default={"_metric": "Metric"})
-        ctx.sort()
+        # Make the dataframe long-form
+        index_cols = [*self.param_columns, "iteration"]
+        df = df.unpivot(index=index_cols, on=self.config.netperf_metrics, variable_name="metric", value_name="value")
 
-        palette = ctx.build_palette_for("_hue", allow_empty=False)
-        with new_facet(self.summary.paths(),
-                       ctx.df,
-                       row=ctx.r._metric,
-                       margin_titles=True,
-                       aspect=self.config.tile_aspect,
-                       sharey="row",
-                       sharex=True) as facet:
-            facet.map_dataframe(sns.boxplot, x=ctx.r.target, y=ctx.r.value, hue=ctx.r._hue, palette=palette)
-            facet.add_legend()
-            self.adjust_legend_on_top(facet.figure)
+        # Compute overhead
+        self.logger.info("Bootstrap netperf overhead confidence intervals")
+        stats = self.compute_overhead(df, "value", extra_groupby=["metric"], how="median", overhead_scale=100)
+
+        self.logger.info("Plot absolute netperf metrics")
+        median_df = stats.filter(_metric_type="absolute")
+        grid_config = self.config.set_display_defaults(param_names={
+            self.config.hue: self.config.hue.capitalize(),
+            "value": "Value"
+        }).set_fixed(tile_row="metric")
+        with DisplayGrid(self.summary, median_df, grid_config) as grid:
+            grid.map(grid_barplot, x="scenario", y="value", err=["value_low", "value_high"])
+            grid.add_legend()
+
+        self.logger.info("Plot overhead netperf metrics")
+        overhead_df = stats.filter(_metric_type="overhead")
+        grid_config = self.config.set_display_defaults(param_names={
+            self.config.hue: self.config.hue.capitalize(),
+            "value": "% Overhead"
+        }).set_fixed(tile_row="metric")
+        with DisplayGrid(self.overhead, overhead_df, grid_config) as grid:
+            grid.map(grid_barplot, x="scenario", y="value", err=["value_low", "value_high"])
+            grid.add_legend()
