@@ -48,6 +48,17 @@ class PlotGridConfig(Config):
             if hasattr(self, key) and getattr(self, key) is None:
                 setattr(self, key, value)
 
+    def set_fixed(self, **kwargs) -> Self:
+        """
+        Force a parameter to a fixed value.
+        If the user specified an override, generate a warning.
+        """
+        for key, value in kwargs.items():
+            if getattr(self, key) is not None:
+                self.logger.warning("Configuration %s is disabled in this task, forced to %s", value)
+        config = replace(self, **kwargs)
+        return config
+
 
 class WeightMode(enum.Enum):
     SortAscendingAsInt = "ascending_int"
@@ -134,17 +145,6 @@ class DisplayGridConfig(PlotGridConfig):
             config.param_names = dict(param_names, **default(config.param_names, {}))
         if param_values:
             config.param_values = dict(param_values, **default(config.param_values, {}))
-        return config
-
-    def set_fixed(self, **kwargs) -> Self:
-        """
-        Force a parameter to a fixed value.
-        If the user specified an override, generate a warning.
-        """
-        for key, value in kwargs.items():
-            if getattr(self, key) is not None:
-                self.logger.warning("Configuration %s is disabled in this task, forced to %s", value)
-        config = replace(self, **kwargs)
         return config
 
 
