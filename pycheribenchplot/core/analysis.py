@@ -115,6 +115,10 @@ class AnalysisTask(SessionTask):
         ],
                              how="vertical",
                              rechunk=True)
+
+        # Mark baseline rows with _baseline=True to aid filtering
+        lf_stats = lf_stats.with_columns(pl.when(**baseline_sel).then(True).otherwise(False).alias("_is_baseline"))
+
         return lf_stats
 
     def _do_median_bootstrap(self, df, metric, extra_groupby, overhead_scale):

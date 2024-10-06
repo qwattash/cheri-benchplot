@@ -255,7 +255,7 @@ class PMCGroupSummary(TVRSParamsMixin, PlotTask):
             # Sum metrics from different CPUs, if the cpu filter is in effect,
             # we will only account for a subset of the CPUs.
             self.logger.info("Combine per-CPU counters")
-            grouped = ctx.df.group_by([*self.param_columns, "counter", "iteration"])
+            grouped = df.group_by([*self.param_columns, "counter", "iteration"])
             df = grouped.agg(pl.col("value").sum(), cs.string().first()).select(cs.exclude("_cpu"))
 
         self.logger.info("Bootstrap overhead confidence intervals")
@@ -282,7 +282,8 @@ class PMCGroupSummary(TVRSParamsMixin, PlotTask):
             grid.add_legend()
 
         self.logger.info("Plot overhead summary")
-        overhead_df = stats.filter(_metric_type="overhead")
+        # Note: filter out the baseline data, as it doesn't make sense to have it here
+        overhead_df = stats.filter(_metric_type="overhead", _is_baseline=False)
         grid_config = self.config.set_display_defaults(param_names={
             self.config.hue: self.config.hue.capitalize(),
             "value": "% Overhead"
