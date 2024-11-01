@@ -6,8 +6,8 @@ matplotlib.use("pdf")
 # import pycheribenchplot.core.procstat
 # import pycheribenchplot.drcachesim.analysis
 # import pycheribenchplot.drcachesim.plot
-from . import (c18n, cloc, generic, iperf, kernel_advisories, kernel_history, kernel_static, netperf, pmc, qps,
-               subobject, unixbench, wrk)
+from . import (c18n, cloc, generic, iperf, kernel_advisories, kernel_build, kernel_history, kernel_static, netperf, pmc,
+               qps, subobject, unixbench, wrk)
 
 # import pycheribenchplot.netstat.dataset
 # import pycheribenchplot.qemu.cheribsd_counters

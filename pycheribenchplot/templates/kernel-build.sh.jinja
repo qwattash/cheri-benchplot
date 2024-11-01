@@ -1,0 +1,44 @@
+{#
+ # Runner script for unixbench benchmarks.
+ # This extends the standard runner-script.sh.jinja template
+ #
+ # Note that we use hyperfine to get a more precise timing than from `time`
+ #}
+{% extends "runner-script.sh.jinja" %}
+
+{% import "timing.inc.jinja" as timing with context %}
+{% import "hwpmc.inc.jinja" as hwpmc with context %}
+
+{% macro _kernel_build_command(iter) %}
+  {{ hwpmc.pmcstat(iter) }} make -s -C {{ scenario_config.kernel_src_path }} -j {{ scenario_config.make_jobs }} {{ scenario_config.make_target.target_string }} KERNCONF={{ scenario_config.kernel_config}} {{ scenario_config.args | join(' ') }}
+{% endmacro %}
+
+{% block global_setup %}
+  {{ super() }}
+  if [ ! -d "{{ kernel_build_config.objdir_prefix }}" ]; then
+      mkdir -p "{{ kernel_build_config.objdir_prefix }}"
+  fi
+
+  echo "Build kernel toolchain dependencies (pre-benchmark)"
+  export MAKEOBJDIRPREFIX="{{ kernel_build_config.objdir_prefix }}"
+  make -s -C {{ scenario_config.kernel_src_path }} -j 4 kernel-toolchain KERNCONF={{ scenario_config.kernel_config }} 2>&1 > /dev/null
+{% endblock %}
+
+{% block iteration_exec %}
+  {% call() timing.timeit(current_iteration) -%}
+    {{ _kernel_build_command(current_iteration) | trim }}
+  {%- endcall %}
+
+  # Technically, this is iteration teardown
+  find /home/freebsd/build -name '{{ scenario_config.kernel_config }}' -exec rm -r {} \;
+{% endblock %}
+
+{% block global_teardown %}
+  {{ super() }}
+  {% for i in range(iterations) %}
+    {{ hwpmc.pmcstat_postprocess(i) }}
+  {% endfor %}
+
+  # Wipe the build directory
+  rm -r "{{ kernel_build_config.objdir_prefix }}/*"
+{% endblock global_teardown %}
