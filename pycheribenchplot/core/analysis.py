@@ -168,12 +168,19 @@ class AnalysisTask(SessionTask):
 
         def _bootstrap(chunk: "DataFrame", selectors, statistic_fn):
             data = tuple(chunk[s] for s in selectors)
-            boot = scs.bootstrap(data, statistic_fn, vectorized=True, method="basic")
+            if len(data[0]) > 1:
+                boot = scs.bootstrap(data, statistic_fn, vectorized=True, method="basic")
+                ci_low, ci_high = boot.confidence_interval.low, boot.confidence_interval.high
+            else:
+                self.logger.debug("Can not bootstrap confidence interval with < 2 samples")
+                ci_low = statistic_fn(*data, axis=0)
+                ci_high = statistic_fn(*data, axis=0)
+
             stat_chunk = chunk.select(
                 cs.by_name(param_columns).first(),
                 pl.lit(statistic_fn(*data, axis=0)).alias(metric),
-                pl.lit(boot.confidence_interval.low).alias(ci_low_col),
-                pl.lit(boot.confidence_interval.high).alias(ci_high_col))
+                pl.lit(ci_low).alias(ci_low_col),
+                pl.lit(ci_high).alias(ci_high_col))
             return stat_chunk
 
         def _median_diff(left, right, axis=-1):
