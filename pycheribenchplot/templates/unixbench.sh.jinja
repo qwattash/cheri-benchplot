@@ -6,6 +6,7 @@
  #}
 {% extends "runner-script.sh.jinja" %}
 
+{% import "timing.inc.jinja" as timing with context %}
 {% import "hwpmc.inc.jinja" as hwpmc with context %}
 
 {% macro _unixbench_test() %}
@@ -25,10 +26,11 @@
 {% endblock %}
 
 {% block iteration_exec %}
-  verbose "Run unixbench {{ scenario_config.test }} iterations {{ current_iteration }}"
+  echo "Run unixbench {{ scenario_config.test }} iterations {{ current_iteration }}"
 
-  hyperfine --style=none -r 1 --export-json {{ unixbench_gen_output_path(current_iteration) }} \
-	"{{ _unixbench_command(current_iteration) | trim }}"
+  {% call() timing.timeit(current_iteration) -%}
+    {{ _unixbench_command(current_iteration) | trim }}
+  {%- endcall %}
 {% endblock %}
 
 {% block global_teardown %}

@@ -69,7 +69,7 @@ class UnixBenchSummaryPlot(TVRSParamsMixin, PlotTask):
         df = self.data.df.get()
 
         # Transition to the new stats infrastructure
-        stats = self.compute_overhead(df, "times", how="median")
+        stats = self.compute_overhead(df, "times", how="median", overhead_scale=100)
 
         grid_config = self.config.set_display_defaults(param_names={
             self.config.hue: self.config.hue.capitalize(),
