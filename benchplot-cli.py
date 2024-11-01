@@ -65,10 +65,6 @@ class SessionSubCommand(SubCommand):
 
         sub_bundle = session_subparsers.add_parser("bundle",
                                                    help="Create a session archive with all the generated content.")
-        sub_bundle.add_argument("--all",
-                                default=False,
-                                action="store_true",
-                                help="Bundle the whole session, not just analysis results")
         sub_bundle.add_argument("-o",
                                 "--output",
                                 default=None,
@@ -129,7 +125,7 @@ class SessionSubCommand(SubCommand):
 
     def handle_bundle(self, user_config, args):
         session = self._get_session(user_config, args)
-        session.bundle(include_raw_data=args.all, path=args.output)
+        session.bundle(path=args.output)
 
     def handle(self, user_config, args):
         if args.session_action is None:

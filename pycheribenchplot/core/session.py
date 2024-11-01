@@ -246,7 +246,7 @@ class Session:
         self.logger.info("Remove session %s (%s)", self.name, self.uuid)
         shutil.rmtree(self.session_root_path)
 
-    def bundle(self, include_raw_data: bool = False, path: Path | None = None):
+    def bundle(self, path: Path | None = None, include_raw_data: bool = True):
         """
         Produce a compressed archive with all the session output.
         """
@@ -261,10 +261,8 @@ class Session:
         else:
             archive_src = self.get_plot_root_path()
 
-        result = subprocess.run([
-            "tar", "-z", "-c", "-C", self.session_root_path, "-f", bundle_file,
-            archive_src.relative_to(self.session_root_path)
-        ])
+        result = subprocess.run(
+            ["tar", "-z", "-c", "-C", self.session_root_path.parent, "-f", bundle_file, self.session_root_path.name])
         if result.returncode:
             self.logger.error("Failed to produce bundle")
         self.logger.info("Archive created at %s", bundle_file)
