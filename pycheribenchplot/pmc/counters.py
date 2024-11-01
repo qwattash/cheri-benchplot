@@ -293,20 +293,24 @@ class PMCGroupSummary(TVRSParamsMixin, PlotTask):
             grid.add_legend()
 
         self.logger.info("Plot combined summary")
-        grid_config = self.config.set_display_defaults(param_names={
-            self.config.hue: self.config.hue.capitalize(),
-            "_metric_type": "Measurement"
-        },
-                                                       param_values={
-                                                           "_metric_type": {
-                                                               "absolute": "Counter value",
-                                                               "delta": "∆ Counter value",
-                                                               "overhead": "% Overhead"
-                                                           }
-                                                       }).set_fixed(tile_sharey=False,
-                                                                    tile_sharex=False,
-                                                                    tile_row="counter",
-                                                                    tile_col="_metric_type")
+        defaults = {
+            "param_names": {
+                self.config.hue: self.config.hue.capitalize(),
+                "_metric_type": "Measurement"
+            },
+            "param_values": {{
+                "_metric_type": {
+                    "absolute": "Counter value",
+                    "delta": "∆ Counter value",
+                    "overhead": "% Overhead"
+                }
+            }}
+        }
+        grid_config = self.config.set_display_defaults(**defaults)
+        grid_config = grid_config.set_fixed(tile_sharey=False,
+                                            tile_sharex=False,
+                                            tile_row="counter",
+                                            tile_col="_metric_type")
         with DisplayGrid(self.summary_combined, stats, grid_config) as grid:
             grid.map(grid_barplot, x=self.config.tile_xaxis, y="value", err=["value_low", "value_high"])
 
