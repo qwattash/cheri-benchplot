@@ -369,7 +369,11 @@ class Session:
                                                   return_dtype=pl.Object).alias("run_script"))
             ctx = ScriptContextBase(self.logger)
             ctx.set_template("run-target.sh.jinja")
-            ctx.extend_context(dict(target=target, run_scripts=section["run_script"]))
+            ctx.extend_context({
+                "target": target,
+                "run_scripts": section["run_script"],
+                "bundle_results": self.config.bundle_results
+            })
             run_target = re.sub(r"[\s/]", "-", target)
             script_path = self.get_data_root_path() / f"run-target-{run_target}.sh"
             with open(script_path, "w+") as script_file:

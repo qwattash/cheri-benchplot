@@ -8,3 +8,10 @@ cd "{{ script_path | path_parent }}"
 ./{{ script_path | path_name }}
 cd "${_CURRDIR}"
 {% endfor %}
+
+{% if bundle_results %}
+# Archive the output files and dump them to stdout base64 encoded
+echo "%%TARBALL_START%%"
+tar zc {% for script_path in run_scripts %} {{ script_path | path_parent}} {% endfor %} | base64
+echo "%%TARBALL_END%%"
+{% endif %}

@@ -1097,6 +1097,10 @@ class CommonSessionConfig(Config):
     #: Default analysis task configuration
     analysis_config: AnalysisConfig = dc.field(default_factory=AnalysisConfig)
 
+    #: Tar and base64-encode the benchmark results to stdout.
+    #: This is useful if the benchmark host does not support a filesystem output.
+    bundle_results: bool = False
+
     def __post_init__(self):
         super().__post_init__()
         self.ssh_key = self.ssh_key.resolve()
