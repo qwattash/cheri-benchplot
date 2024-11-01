@@ -1,0 +1,20 @@
+
+{% if verbose %}
+  {% set hyperfine_style = "basic" %}
+{% else %}
+  {% set hyperfine_style = "none" %}
+{% endif %}
+
+{# XXX
+ # Note that quoting as in the case of hyperfine is not robust, we should escape " marks
+ # in the caller() block to avoid breaking things.
+ #}
+{% macro timeit(iteration) %}
+  {% if timing_config.timing_mode == TimingTool.TIME %}
+    { time -p {{ caller() }} 2>&1 > /dev/null ; } 2> {{ timing_gen_output_path(iteration) }}
+  {% elif timing_config.timing_mode == TimingTool.HYPERFINE %}
+    hyperfine --style={{ hyperfine_style }} -r 1 --export-json {{ timing_gen_output_path(iteration) }} "{{ caller() | trim }}"
+  {% else %}
+    {{ caller() }}
+  {% endif %}
+{% endmacro %}
