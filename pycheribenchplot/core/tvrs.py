@@ -42,7 +42,6 @@ class TVRSExecTask(ExecutionTask):
     and instance configuration.
     We need to determine the setup/teardown hooks for the current parameter set.
     """
-
     script_template: str = None
     scenario_config_class: Type[Config] = None
 
@@ -87,6 +86,7 @@ class TVRSExecTask(ExecutionTask):
             return self.scenario_config_class.load_json(path)
 
     def run(self):
+        super().run()
         # Set the script template as specified by subclasses
         if self.script_template:
             self.script.set_template(self.script_template)
