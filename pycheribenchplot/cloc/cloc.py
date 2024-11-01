@@ -166,7 +166,7 @@ class ReportLoCGeneric(PlotTask):
 
         This should group the data with the following columns:
         repo: unique name of the repository, suitable for user output
-        how: {added, removed, modified}        
+        how: {added, removed, modified}
         code: number of lines changed
         code_baseline: number of lines in the baseline
         code_pct: percent ratio of code / code_baseline
