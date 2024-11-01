@@ -383,7 +383,7 @@ class Task(Borg, metaclass=TaskRegistry):
         yield from registered.items()
 
     def run(self):
-        raise NotImplementedError("Task.run() must be overridden")
+        pass
 
 
 class dependency:
