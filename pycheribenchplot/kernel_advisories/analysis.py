@@ -211,7 +211,7 @@ class CheriBSDAdvisoriesCDF(PlotTask):
     On the X axis, we have CHERI features, on the Y axis the % of mitigated vulnerabilities
     """
     public = True
-    task_namespace = "kernel-vuln"
+    task_namespace = "kernel-advisories"
     task_name = "feature-mitigation-cdf"
 
     @dependency
