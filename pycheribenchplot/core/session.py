@@ -116,9 +116,6 @@ class Session:
         self.platform_map = {}
         #: A dataframe that organises the set of benchmarks to run or analyse.
         self.parameterization_matrix = self._resolve_parameterization_matrix()
-        #: Benchmark baseline instance group UUID.
-        #: XXX Deprecated, will be removed
-        self.baseline_g_uuid = None
 
         # Before using the workers configuration, check if we are overriding it
         if self.user_config.concurrent_workers:
