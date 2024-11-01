@@ -29,8 +29,8 @@ class PlotGridConfig(Config):
     title: Optional[str] = config_field(None, desc="Override figure title")
     tile_row: Optional[str] = config_field(None, desc="Override parameter for grid rows")
     tile_col: Optional[str] = config_field(None, desc="Override parameter for grid cols")
-    tile_sharex: Optional[str] = config_field(None, desc="Override X axis sharing")
-    tile_sharey: Optional[str] = config_field(None, desc="Override Y axis sharing")
+    tile_sharex: Optional[str | bool] = config_field(None, desc="Override X axis sharing")
+    tile_sharey: Optional[str | bool] = config_field(None, desc="Override Y axis sharing")
     plot_params: Dict[str, Any] = config_field(
         dict, desc="Plot appearance configuration for tweaking, see matplotlib rc_context documentation")
     hue: Optional[str] = config_field(
@@ -43,10 +43,13 @@ class PlotGridConfig(Config):
     legend_columns: int = config_field(
         4, desc="Number of columns in the legend, this affects the necessary vspace and tile_aspect")
 
-    def setdefault(self, **kwargs):
+    def set_default(self, **kwargs):
         for key, value in kwargs.items():
             if hasattr(self, key) and getattr(self, key) is None:
                 setattr(self, key, value)
+
+    def setdefault(self, **kwargs):
+        self.set_default(**kwargs)
 
     def set_fixed(self, **kwargs) -> Self:
         """
