@@ -7,7 +7,7 @@ import polars as pl
 from ..core.artefact import PLDataFrameLoadTask, RemoteBenchmarkIterationTarget
 from ..core.config import Config, config_field
 from ..core.plot import PlotTarget, PlotTask
-from ..core.plot_util import DisplayGrid, DisplayGridConfig, grid_pointplot
+from ..core.plot_util import (DisplayGrid, DisplayGridConfig, grid_barplot, grid_pointplot)
 from ..core.task import ExecutionTask, dependency, output
 
 
@@ -148,7 +148,7 @@ class TimingPlotTask(PlotTask):
             "times": default_display_name
         })
         with DisplayGrid(target, view_df, grid_config) as grid:
-            grid.map(grid_pointplot, x=self.config.tile_xaxis, y="times", err=["times_low", "times_high"])
+            grid.map(grid_barplot, x=self.config.tile_xaxis, y="times", err=["times_low", "times_high"])
             grid.add_legend()
 
     def run_plot(self):
@@ -161,7 +161,9 @@ class TimingPlotTask(PlotTask):
         self._do_plot(self.absolute_time, stats.filter(_metric_type="absolute"), "Time (s)")
 
         self.logger.info("Plot relative time measurements")
-        self._do_plot(self.relative_time, stats.filter(_metric_type="delta"), "∆ Time (s)")
+        delta_stats = stats.filter((pl.col("_metric_type") == "delta") & ~pl.col("_is_baseline"))
+        self._do_plot(self.relative_time, delta_stats, "∆ Time (s)")
 
         self.logger.info("Plot time overhead measurements")
-        self._do_plot(self.time_overhead, stats.filter(_metric_type="overhead"), "% Overhead")
+        ovh_stats = stats.filter((pl.col("_metric_type") == "overhead") & ~pl.col("_is_baseline"))
+        self._do_plot(self.time_overhead, ovh_stats, "% Overhead")
