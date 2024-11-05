@@ -12,19 +12,6 @@ set -e
   {% endif %}
 {% endmacro %}
 
-# $1 = output string
-if [ -n "$CHERI_BENCHPLOT_VERBOSE" ]; then
-	function verbose()
-	{
-		echo "$1"
-	}
-else
-	function verbose()
-	{
-		return 0
-	}
-fi
-
 echo "Run benchmark configuration ID={{ dataset_id }} with {{ iterations }} iterations."
 echo "Instance '{{ instance.name }}' ID={{ dataset_gid }}."
 echo "Parameters:"
@@ -88,7 +75,7 @@ echo -e "\t{{ pkey }}='{{ pval }}'"
 #### Global teardown
 {% block global_teardown %}
   echo "Global benchmark teardown"
-  {% for hook in teardown_hooks %}
+  {% for hook in teardown_hooks -%}
     {{ gen_hook("Teardown", hook) }}
-  {% endfor %}
+  {%- endfor %}
 {% endblock %}
