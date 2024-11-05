@@ -259,6 +259,9 @@ class PlotGrid(AbstractContextManager):
     def __exit__(self, exc_type, exc_value, traceback):
         if self._rc_context:
             self._rc_context.__exit__(exc_type, exc_value, traceback)
+        # XXX provide a way to adjust these
+        # self._figure.tight_layout()
+        # self._figure.subplots_adjust(bottom=0.15)
         for path in self._target.paths():
             self._figure.savefig(path)
         plt.close(self._figure)

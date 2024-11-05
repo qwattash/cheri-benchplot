@@ -58,6 +58,7 @@ def grid_barplot(tile, chunk, x, y, err: tuple[str, str] | None = None, orient="
         hue = "__gen_hue"
         palette = plt.rcParams["axes.prop_cycle"].by_key()["color"][:1]
 
+    # XXX provide a way to propagate this to plot configuration
     cgen = CoordGenerator(tile.ax, orient=orient)
     cgen_config = CoordGenConfig(shift_by=hue)
     view = cgen.compute_coordinates(chunk, independent_var=catcol, dependent_vars=[metric], config=cgen_config)
