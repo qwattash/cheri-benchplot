@@ -210,14 +210,11 @@ class AnalysisTask(SessionTask):
         # Note that we force the baseline to baseline overhead to 0.
         ovh_stat = grouped.map_groups(lambda chunk: _bootstrap(chunk, [metric, metric_b], _median_overhead))
         ovh_stat = ovh_stat.with_columns(pl.lit("overhead").alias("_metric_type"))
-        # Note: force the baseline-to-baseline overhead to NaN
-        # ovh_stat = ovh_stat.with_columns(
-        #     pl.when(**baseline_sel).then(np.nan).otherwise(pl.col(metric)).alias(metric),
-        #     pl.when(**baseline_sel).then(np.nan).otherwise(pl.col(ci_low_col)).alias(ci_low_col),
-        #     pl.when(**baseline_sel).then(np.nan).otherwise(pl.col(ci_high_col)).alias(ci_high_col)
-        # )
 
         out_df = pl.concat([stat, delta_stat, ovh_stat], how="vertical", rechunk=True)
+        # Mark rows that belong to the baseline group for easy filtering
+        out_df = out_df.with_columns(pl.when(**baseline_sel).then(True).otherwise(False).alias("_is_baseline"))
+
         return out_df
 
     @property
