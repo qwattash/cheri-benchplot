@@ -1,0 +1,42 @@
+{#
+ # Runner script for scraping DWARF information.
+ # This extends the standard runner-script.sh.jinja template.
+ #
+ # Note that this is not expected to run on a bechmark host.
+ #}
+{% extends "runner-script.sh.jinja" %}
+
+{% macro _scraper() -%}
+  {{ dws_config.dwarf_scraper | default("dwarf_scraper", true) }}
+{%- endmacro %}
+
+{% macro _prefix() %}
+  {% if scenario_config.strip_src_prefix -%}
+    --prefix {{ scenario_config.strip_src_prefix }}
+  {%- endif %}
+{% endmacro %}
+
+{% macro _verbose() %}
+  {% if dws_config.config -%}
+    --verbose
+  {%- endif %}
+{% endmacro %}
+
+{% block global_setup %}
+  {{ super() }}
+
+  if [ ! -f "$(which '{{ _scraper() | trim }}')" ]; then
+      echo "Could not find dwarf scraper: '{{ _scraper() | trim}}'"
+      exit 1
+  fi
+{% endblock %}
+
+{% block iteration_loop %}
+  echo "Extract DWARF information to {{ dws_database }}"
+  mkdir -p {{ dws_database | path_parent }}
+  {% for src in scenario_config.dwarf_data_sources %}
+    find {{ src.path }} | grep "{{ src.matcher }}" >> /tmp/dwarf-scraper-src.txt
+  {% endfor %}
+  {{ _scraper() }} {{ _verbose() }} {{ _prefix() }} --input-file /tmp/dwarf-scraper-src.txt \
+    --scrapers struct-layout --database {{ dws_database }}
+{% endblock %}
