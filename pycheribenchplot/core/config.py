@@ -12,7 +12,7 @@ from enum import Enum, auto
 from io import StringIO
 from pathlib import Path
 from textwrap import indent, wrap
-from typing import Dict, List, Optional, Set, Type, Union
+from typing import Any, Dict, List, Optional, Set, Type, Union
 from uuid import UUID, uuid4
 
 import marshmallow.fields as mfields
@@ -182,8 +182,8 @@ class UUIDField(mfields.Field):
 ConfigTaskSpec = NewType("ConfigTaskSpec", str, field=TaskSpecField)
 ConfigExecTaskSpec = NewType("ConfigExecTaskSpec", str, field=ExecTaskSpecField)
 ConfigPath = NewType("ConfigPath", Path, field=PathField)
-ConfigAny = NewType("ConfigAny", any, field=mfields.Raw)
-LazyNestedConfig = NewType("LazyNestedConfig", dict[str, any], field=LazyNestedConfigField)
+ConfigAny = NewType("ConfigAny", Any, field=mfields.Raw)
+LazyNestedConfig = NewType("LazyNestedConfig", dict[str, Any], field=LazyNestedConfigField)
 UUIDStr = NewType("UUIDStr", str, field=UUIDField)
 
 
@@ -203,7 +203,7 @@ class ConfigContext:
     def __init__(self):
         self._template_params = {}
         self._namespaces = {}
-        self._nresolved = 0
+        self._resolved = 0
 
     @property
     def resolved_count(self) -> int:
@@ -213,7 +213,7 @@ class ConfigContext:
         This can be used to detect when we are done with recursive
         resolution.
         """
-        return self._nresolved
+        return self._resolved
 
     def add_values(self, **kwargs):
         """
@@ -223,7 +223,7 @@ class ConfigContext:
         """
         self._template_params.update(kwargs)
 
-    def add_namespace(self, config: "Config", name: str | None = None):
+    def add_namespace(self, config: "Config", name: str = "__global__"):
         """
         Add a source configuration object that is used to look up referenced keys.
 
@@ -242,36 +242,41 @@ class ConfigContext:
         :param key: The key to lookup.
         :return: The template substitution or None
         """
-        try:
-            value = self._template_params[key]
-            self._nresolved += 1
-            config_logger.debug("Resolved template key %s to %s", key, value)
-            return value
-        except KeyError:
-            pass
+        if "." in key:
+            # Lookup by namespace
+            parts = key.split(".")
+            value = self._namespaces[parts[0]]
+            for name in parts[1:]:
+                try:
+                    value = getattr(value, name)
+                except AttributeError:
+                    config_logger.debug("Unresolved template '%s'", key)
+                    value = None
+                    break
+            if isinstance(value, Config):
+                config_logger.warning("Template key '%s' is not a leaf value")
+                resolved = None
+            else:
+                resolved = value
+        else:
+            # Lookup global namespace if available
+            if globalns := self._namespaces.get("__global__"):
+                if hasattr(globalns, key):
+                    resolved = getattr(globalns, key)
+                else:
+                    resolved = self._template_params.get(key)
+            else:
+                resolved = self._template_params.get(key)
 
-        parts = key.split(".")
-        try:
-            ns = self._namespaces[parts[0]]
-        except KeyError:
-            try:
-                ns = self._namespaces[None]
-            except KeyError:
-                return None
-        for name in parts[1:]:
-            try:
-                ns = getattr(ns, name)
-            except AttributeError:
-                return None
-        if isinstance(ns, Config):
-            return None
-        self._nresolved += 1
-        value = str(ns)
-        config_logger.debug("Resolved template key %s to %s", key, value)
-        return value
+        if resolved is None:
+            config_logger.debug("Unresolved template '%s'", key)
+        else:
+            config_logger.debug("Resolved template '%s' => '%s'", key, resolved)
+            self._resolved += 1
+        return resolved
 
 
-def config_field(default: any, desc: str = None, field_kwargs: dict = None, **metadata) -> dc.Field:
+def config_field(default: Any, desc: str = None, field_kwargs: dict = None, **metadata) -> dc.Field:
     """
     Helper to define configuration fields defaults
 
@@ -320,6 +325,7 @@ class Config:
     def load_json(cls, jsonpath):
         with open(jsonpath, "r") as jsonfile:
             data = json.load(jsonfile)
+        logger.debug("Parse configuration from %s", jsonpath)
         return cls.schema().load(data)
 
     @classmethod
@@ -352,7 +358,7 @@ class Config:
     def __post_init__(self):
         return
 
-    def _bind_value(self, context: ConfigContext, dtype: Type, value: any) -> any:
+    def _bind_value(self, context: ConfigContext, dtype: Type, value: Any, loc: str) -> Any:
         """
         Resolve all template keys in this configuration value and produce the substituted value.
 
@@ -364,7 +370,7 @@ class Config:
         """
         if value is None:
             return None
-        if dtype == ConfigAny or dtype == any:
+        if dtype == ConfigAny or dtype == Any:
             dtype = type(value)
 
         if dc.is_dataclass(dtype) and issubclass(dtype, Config):
@@ -394,34 +400,45 @@ class Config:
         chunks.append(template[last_match:])
         return dtype("".join(chunks))
 
-    def _bind_field(self, context: ConfigContext, dtype: Type, value: any, metadata: dict | None = None) -> any:
+    def _bind_field(self,
+                    context: ConfigContext,
+                    dtype: Type,
+                    value: Any,
+                    loc: str,
+                    metadata: dict | None = None) -> Any:
         """
         Run the template substitution on a config field.
         If the field is a collection or a nested Config, we recursively bind
         each value.
         """
+        config_logger.debug("(%s) <%s> -> coerce to %s", loc, self.__class__.__name__, dtype)
         if dc.is_dataclass(dtype) and issubclass(dtype, Config):
             # If it is a nested dataclass, just forward it
             config_logger.debug("Bind recurse into nested config %s", dtype.__name__)
-            return value.bind(context)
+            return value.bind(context, loc=loc)
         elif dtype == LazyNestedConfig:
             # If it is a lazy_nested_config field, treat this either as a dataclass or a dict
             if dc.is_dataclass(value):
                 config_logger.debug("Bind lazy config as %s", type(value).__name__)
-                return value.bind(context)
+                return value.bind(context, loc=loc)
             else:
                 config_logger.debug("Bind lazy config as dict %s", value)
-                return self._bind_generic(context, dict, value)
+                return self._bind_generic(context, dict, value, loc)
         elif is_generic_type(dtype) or is_union_type(dtype):
             # Recurse through the type
             config_logger.debug("Bind recurse into generic %s: %s", dtype, value)
-            return self._bind_generic(context, dtype, value)
+            return self._bind_generic(context, dtype, value, loc)
+        elif dtype == Any and (isinstance(value, dict) or isinstance(value, list)):
+            # We don't have a strict type for the dict/list coercion, but we need
+            # to recurse nontheless to bind template values within.
+            config_logger.debug("Bind recurse into untyped generic %s: %s", type(value), value)
+            return self._bind_generic(context, dtype, value, loc)
         else:
             # Handle as a single value
-            config_logger.debug("Bind single value %s to %s", value, dtype)
-            return self._bind_value(context, dtype, value)
+            config_logger.debug("Bind value '%s' to %s", value, dtype)
+            return self._bind_value(context, dtype, value, loc)
 
-    def _bind_generic(self, context: ConfigContext, dtype: Type, value: any) -> any:
+    def _bind_generic(self, context: ConfigContext, dtype: Type, value: Any, loc: str) -> Any:
         """
         Recursively bind values in generic container types.
         """
@@ -429,7 +446,7 @@ class Config:
         if is_union_type(dtype):
             args = get_args(dtype)
             if value is not None:
-                return self._bind_field(context, type(value), value)
+                return self._bind_field(context, type(value), value, loc)
             # Check if None is allowed
             for t in args:
                 if t == type(None):
@@ -439,20 +456,25 @@ class Config:
             return None
         elif type(value) == list:
             if origin is List or origin is list:
-                inner_type_fn = lambda v: get_args(dtype)[0]
+                inner_type = get_args(dtype)[0]
+                config_logger.debug("Bind recurse into list[%s]", inner_type)
             else:
-                inner_type_fn = lambda v: type(v)
-            return [self._bind_field(context, inner_type_fn(v), v) for v in value]
+                inner_type = Any
+                config_logger.debug("Bind recurse into list: can not determine item dtype")
+            return [self._bind_field(context, inner_type, v, f"{loc}[{i}]") for i, v in enumerate(value)]
         elif type(value) == dict:
             if origin is Dict or origin is dict:
-                inner_type_fn = lambda v: get_args(dtype)[1]
+                key_type, inner_type = get_args(dtype)
+                config_logger.debug("Bind recurse into dict[%s, %s]", key_type, inner_type)
             else:
-                inner_type_fn = lambda v: type(v)
-            return {key: self._bind_field(context, inner_type_fn(v), v) for key, v in value.items()}
+                config_logger.debug("Bind recurse into dict: can not determine key, value dtypes")
+                key_type = str
+                inner_type = Any
+            return {key: self._bind_field(context, inner_type, v, f"{loc}[{key}]") for key, v in value.items()}
         else:
-            return self._bind_value(context, dtype, value)
+            return self._bind_value(context, dtype, value, loc)
 
-    def _bind_config(self, source: Self, context: ConfigContext) -> Self:
+    def _bind_config(self, source: Self, context: ConfigContext, loc: str) -> Self:
         """
         Run a template substitution pass with the given substitution context.
         This will resolve template strings as "{foo}" for template key/value
@@ -461,27 +483,28 @@ class Config:
         template parameters unchanged for later passes.
         """
         changes = {}
-        config_logger.debug("Begin scanning %s field templates", self.__class__.__name__)
+        config_logger.debug("(%s) -> Bind Config %s", loc, self.__class__.__name__)
         for f in dc.fields(self):
             if not f.init:
                 continue
             try:
                 metadata = f.metadata.get("metadata", {})
-                config_logger.debug("Scan config field %s.%s: %s", self.__class__.__name__, f.name, f.type)
-                replaced = self._bind_field(context, f.type, getattr(source, f.name), metadata)
+                field_loc = f"{loc}.{f.name}"
+                replaced = self._bind_field(context, f.type, getattr(source, f.name), field_loc, metadata)
+                config_logger.debug("(%s) <= %s", field_loc, replaced)
             except Exception as ex:
                 raise ConfigurationError(f"Failed to bind {f.name} with value "
                                          f"{getattr(source, f.name)}: {ex}")
             if replaced:
                 changes[f.name] = replaced
-        config_logger.debug("Finish scanning %s field templates", self.__class__.__name__)
+        config_logger.debug("(%s) -> Done binding %s", loc, self.__class__.__name__)
         return dc.replace(source, **changes)
 
     @property
     def logger(self):
         return config_logger
 
-    def bind(self, context: ConfigContext) -> Self:
+    def bind(self, context: ConfigContext, loc: str = "*") -> Self:
         """
         Substitute all templates until there is nothing else that we can substitute.
 
@@ -491,8 +514,8 @@ class Config:
         bound = self
         max_steps = 10
         last_matched = context.resolved_count
-        for _ in range(max_steps):
-            bound = self._bind_config(bound, context)
+        for step in range(max_steps):
+            bound = self._bind_config(bound, context, loc)
             if context.resolved_count == last_matched:
                 break
             last_matched = context.resolved_count
@@ -667,7 +690,7 @@ class ProfileConfig(Config):
 class InstancePlatform(Enum):
     QEMU = "qemu"
     VCU118 = "vcu118"
-    LOCAL = "local"
+    NATIVE = "native"
 
     def __str__(self):
         return self.value
@@ -677,7 +700,7 @@ class InstancePlatform(Enum):
 
 
 class InstanceCheriBSD(Enum):
-    LOCAL_NATIVE = "native"
+    NATIVE = "native"
     RISCV64_PURECAP = "riscv64-purecap"
     RISCV64_HYBRID = "riscv64-hybrid"
     MORELLO_PURECAP = "morello-purecap"
@@ -759,6 +782,22 @@ class InstanceConfig(Config):
     parameters: Dict[str, ConfigAny] = dc.field(default_factory=dict)
     #: Internal fields, should not appear in the config file and are missing by default
     platform_options: PlatformOptions = dc.field(default_factory=PlatformOptions)
+
+    @classmethod
+    def native(cls):
+        """
+        Native instance configuration, which is used to indicate that we do not
+        care where the analysis runs.
+        E.g. this is used for static analysis and cross builds.
+        """
+        conf = cls(name="native",
+                   kernel="unknown",
+                   platform=InstancePlatform.NATIVE,
+                   cheri_target=InstanceCheriBSD.NATIVE,
+                   kernelabi=InstanceKernelABI.NOCHERI,
+                   userabi=InstanceUserABI.NOCHERI,
+                   cheribuild_kernel=False)
+        return conf
 
     @property
     def user_pointer_size(self):
@@ -1062,6 +1101,11 @@ class BenchmarkRunConfig(CommonBenchmarkConfig):
         else:
             return f"unallocated {self.name} ({self.uuid}) " + common_info
 
+    def __post_init__(self):
+        super().__post_init__()
+        params = [f"{k}={v}" for k, v in self.parameters.items()]
+        config_logger.debug("Resolved BenchmarkRunConfig for %s", ", ".join(params))
+
 
 @dc.dataclass
 class CommonSessionConfig(Config):
@@ -1197,7 +1241,7 @@ class SessionRunConfig(CommonSessionConfig):
         return new_config
 
     @classmethod
-    def _match_params(cls, params: dict[str, any], matcher: dict[str, str]) -> bool:
+    def _match_params(cls, params: dict[str, Any], matcher: dict[str, str]) -> bool:
         """
         Check whether a given set of parameters satisfies a matcher dictionary.
 
@@ -1285,13 +1329,20 @@ class SessionRunConfig(CommonSessionConfig):
             run_config = BenchmarkRunConfig.from_common_conf(bench_config)
             run_config.parameters = parameters.copy()
             # Resolve system configuration
-            host_system = cls._match_system_config(parameters, bench_config.system)
-            if host_system is None:
-                logger.error("Missing system configuration for parameter combination %s", parameters)
-                raise RuntimeError("Invalid configuration")
-            if "target" not in parameters:
-                # Generate the target parameter, if not specified
-                run_config.parameters["target"] = host_system.name
+            if bench_config.system:
+                host_system = cls._match_system_config(parameters, bench_config.system)
+                if host_system is None:
+                    logger.error("Missing system configuration for parameter combination %s", parameters)
+                    raise RuntimeError("Invalid configuration")
+                if "target" not in parameters:
+                    # Generate the target parameter, if not specified
+                    run_config.parameters["target"] = host_system.name
+            else:
+                host_system = InstanceConfig.native()
+                # Require the target parameter as it can not be generated
+                if "target" not in parameters:
+                    logger.error("Missing 'target' parameter in parameterization %s", parameters)
+                    raise RuntimeError("Invalid configuration")
 
             # Resolve custom derived parameters
             derived_specs = bench_config.parameterize_options.derived if bench_config.parameterize_options else dict()
@@ -1302,10 +1353,8 @@ class SessionRunConfig(CommonSessionConfig):
                 if value := cls._match_derived_param(parameters, spec):
                     run_config.parameters[name] = value
 
-            run_config.instance = InstanceConfig.copy(host_system)
             run_config.uuid = uuid4()
-            # Note that g_uuids are deprecated and will go away.
-            run_config.g_uuid = host_system_uuids[host_system.name]
+            run_config.instance = InstanceConfig.copy(host_system)
             session.configurations.append(run_config)
 
         # Snapshot all repositories we care about, if they are present.
