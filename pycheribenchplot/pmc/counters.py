@@ -298,13 +298,13 @@ class PMCGroupSummary(TVRSParamsMixin, PlotTask):
                 self.config.hue: self.config.hue.capitalize(),
                 "_metric_type": "Measurement"
             },
-            "param_values": {{
+            "param_values": {
                 "_metric_type": {
                     "absolute": "Counter value",
                     "delta": "∆ Counter value",
                     "overhead": "% Overhead"
                 }
-            }}
+            }
         }
         grid_config = self.config.set_display_defaults(**defaults)
         grid_config = grid_config.set_fixed(tile_sharey=False,
