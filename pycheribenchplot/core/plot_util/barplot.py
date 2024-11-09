@@ -6,7 +6,13 @@ import seaborn as sns
 from .coords import CoordGenConfig, CoordGenerator
 
 
-def grid_barplot(tile, chunk, x, y, err: tuple[str, str] | None = None, orient="x"):
+def grid_barplot(tile,
+                 chunk,
+                 x,
+                 y,
+                 err: tuple[str, str] | None = None,
+                 orient="x",
+                 coordgen_kwargs: dict | None = None):
     """
     Produce a grouped bar plot on the given plot grid tile.
     # XXX add stacked version
@@ -23,6 +29,9 @@ def grid_barplot(tile, chunk, x, y, err: tuple[str, str] | None = None, orient="
     :param orient: Orientation of the plot, the `orient` axis is used as the categorical axis and
     the other axis must be numeric.
     """
+    if coordgen_kwargs is None:
+        coordgen_kwargs = {}
+
     # Attempt column renaming
     if hasattr(tile, "d"):
         x = tile.d[x]
@@ -60,7 +69,7 @@ def grid_barplot(tile, chunk, x, y, err: tuple[str, str] | None = None, orient="
 
     # XXX provide a way to propagate this to plot configuration
     cgen = CoordGenerator(tile.ax, orient=orient)
-    cgen_config = CoordGenConfig(shift_by=hue)
+    cgen_config = CoordGenConfig(shift_by=hue, **coordgen_kwargs)
     view = cgen.compute_coordinates(chunk, independent_var=catcol, dependent_vars=[metric], config=cgen_config)
 
     # Assign categorical axis ticks and labels
