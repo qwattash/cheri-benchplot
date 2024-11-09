@@ -40,6 +40,7 @@ class PlotGridConfig(Config):
     )
     tile_aspect: float = config_field(1.0, desc="Aspect ratio of each tile")
     legend_vspace: float = config_field(0.2, desc="Fraction of the vertical space reserved to legend and suptitle")
+    legend_hide: bool = config_field(False, desc="Disable the legend")
     legend_columns: int = config_field(
         4, desc="Number of columns in the legend, this affects the necessary vspace and tile_aspect")
 
@@ -342,12 +343,15 @@ class PlotGrid(AbstractContextManager):
     def add_legend(self, **kwargs):
         if not self._config.hue:
             return
+        self._figure.tight_layout()
+        if self._config.legend_hide:
+            return
         labels = self._df[self.hue_param].unique(maintain_order=True)
         patches = [Patch(color=color) for color in self._color_palette]
         reserved_y_fraction = 1 - self._config.legend_vspace
 
         # Make space between the title and the subplot axes
-        self._figure.subplots_adjust(top=reserved_y_fraction)
+        self._figure.subplots_adjust(top=reserved_y_fraction, bottom=self._config.legend_vspace)
         self._figure.legend(patches,
                             labels,
                             bbox_to_anchor=(0., reserved_y_fraction, 1., self._config.legend_vspace),
