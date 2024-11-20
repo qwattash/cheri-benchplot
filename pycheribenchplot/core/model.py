@@ -11,7 +11,7 @@ import pandera as pa
 import pandera.strategies as st
 import typing_inspect
 import wrapt
-from pandera import (Check, Column, DataFrameSchema, DataType, Field, SchemaModel)
+from pandera import (Check, Column, DataFrameModel, DataFrameSchema, DataType, Field)
 from pandera.dtypes import immutable
 from pandera.engines import numpy_engine, pandas_engine
 from pandera.errors import SchemaError
@@ -51,7 +51,7 @@ def is_valid_uuid(pandas_obj, *args) -> pd.Series:
     return pandas_obj.map(apply_or(lambda v: type(v) == uuid.UUID or uuid.UUID(v), False))
 
 
-class BaseDataModel(SchemaModel):
+class BaseDataModel(DataFrameModel):
     """
     Empty base data model for all schemas.
     This does not assume the presence of any of the dynamic ID fields but provides the
@@ -153,7 +153,7 @@ class DerivedSchemaBuilder:
     """
     Proxy schema generator.
 
-    This only supports the to_schema() function from the SchemaModel interface.
+    This only supports the to_schema() function from the DataFrameModel interface.
     The resulting schema is modified according to a transformation function.
     """
     def __init__(self, id_: str, base_model: Type[BaseDataModel | Self], transform: SchemaTransform):
