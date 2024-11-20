@@ -2,7 +2,7 @@ from collections import namedtuple
 from enum import Enum
 
 import pandas as pd
-from pandera import Field, SchemaModel, check, dataframe_check
+from pandera import Field, check, dataframe_check
 from pandera.typing import Index, Series
 
 from ..core.dwarf import DWARFStructLayoutModel
