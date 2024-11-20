@@ -2,11 +2,10 @@
 
 echo "Run benchmarks for {{ target }}"
 
-_CURRDIR=`pwd`
+_CURRDIR="$(dirname $(realpath "${0}"))"
 {% for script_path in run_scripts %}
-cd "{{ script_path | path_parent }}"
+cd "${_CURRDIR}/{{ script_path | path_parent }}"
 ./{{ script_path | path_name }}
-cd "${_CURRDIR}"
 {% endfor %}
 
 {% if bundle_results %}
