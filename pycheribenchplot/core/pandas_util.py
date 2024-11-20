@@ -69,7 +69,7 @@ def generalized_xs(df: pd.DataFrame,
     entries as ``match``
     :param complement: Return the complement of the matching rows, default False.
     :param droplevels: Whether to remove the match levels from the result, default False.
-    :param \**kwargs: level=<match-value> pairs, behave as ``match`` and ``levels``
+    :param **kwargs: level=<match-value> pairs, behave as ``match`` and ``levels``
     """
     if match is None:
         match = []
