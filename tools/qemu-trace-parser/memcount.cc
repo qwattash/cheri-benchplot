@@ -17,7 +17,7 @@ namespace cheri {
 
 MemcountTraceParser::MemcountTraceParser(ParserOptions options,
                                          fs::path mem_regions)
-    : TraceParser(options) {
+    : TraceParser(options), regions_file_(mem_regions) {
   LOG(info) << "Read memory regions from" << mem_regions;
 
   std::ifstream region_file(mem_regions);
@@ -103,6 +103,10 @@ void MemcountTraceParser::recordMemAccess(
 void MemcountTraceParser::report() {
   LOG(info) << "Memory access count report";
   LOG(info) << "Decoded " << state_->decoded << " entries";
+  std::ofstream csv(
+      regions_file_.replace_filename(regions_file_.filename().concat(".csv")));
+  csv << "Total,Region,Range,#Read,#Write,#Fetch,Read (KiB),Write (KiB),Fetch "
+         "(KiB)\n";
   for (auto &ri : regions_) {
     LOG(info) << "Region " << ri.name << " [" << boost::format("%#x") % ri.start
               << ", " << boost::format("%#x") % ri.end << "]";
@@ -112,7 +116,14 @@ void MemcountTraceParser::report() {
     LOG(info) << "Bytes touched: R=" << ri.stats->read_bytes / 1024 << " KiB"
               << " W=" << ri.stats->write_bytes / 1024 << " KiB"
               << " X=" << ri.stats->fetch_bytes / 1024 << " KiB";
+    csv << state_->decoded << "," << ri.name << ","
+        << "[" << boost::format("%#x") % ri.start << ":"
+        << boost::format("%#x") % ri.end << "]," << ri.stats->read_count << ","
+        << ri.stats->write_count << "," << ri.stats->fetch_count << ","
+        << ri.stats->read_bytes << "," << ri.stats->write_bytes << ","
+        << ri.stats->fetch_bytes << "\n";
   }
+  csv.close();
 }
 
 } /* namespace cheri */

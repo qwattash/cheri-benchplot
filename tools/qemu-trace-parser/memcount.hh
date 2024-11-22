@@ -45,6 +45,7 @@ private:
   void recordMemAccess(std::optional<const QEMULogEntryMem *> &opt,
                        const RegionInfo &ri);
 
+  std::filesystem::path regions_file_;
   std::vector<RegionInfo> regions_;
 };
 
