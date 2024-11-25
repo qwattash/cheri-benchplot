@@ -87,6 +87,24 @@ class PathField(mfields.Field):
             raise ValidationError(f"Invalid path {value}") from ex
 
 
+class RemotePathField(mfields.Field):
+    """
+    Simple wrapper for pathlib.Path fields
+    """
+    def _serialize(self, value, attr, obj, **kwargs):
+        if value is None:
+            return ""
+        return str(value)
+
+    def _deserialize(self, value, attr, data, **kwargs):
+        if value == "":
+            return None
+        try:
+            return Path(value)
+        except TypeError as ex:
+            raise ValidationError(f"Invalid path {value}") from ex
+
+
 #: Helper to validate that a PathField points to an existing regular file
 
 validate_file_exists = And(Predicate("exists", error="File does not exist"),
@@ -182,6 +200,7 @@ class UUIDField(mfields.Field):
 ConfigTaskSpec = NewType("ConfigTaskSpec", str, field=TaskSpecField)
 ConfigExecTaskSpec = NewType("ConfigExecTaskSpec", str, field=ExecTaskSpecField)
 ConfigPath = NewType("ConfigPath", Path, field=PathField)
+ConfigRemotePath = NewType("ConfigRemotePath", Path, field=RemotePathField)
 ConfigAny = NewType("ConfigAny", Any, field=mfields.Raw)
 LazyNestedConfig = NewType("LazyNestedConfig", dict[str, Any], field=LazyNestedConfigField)
 UUIDStr = NewType("UUIDStr", str, field=UUIDField)

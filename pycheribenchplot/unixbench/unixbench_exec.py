@@ -5,7 +5,7 @@ from typing import Dict, List, Optional
 import polars as pl
 
 from ..core.artefact import PLDataFrameLoadTask, RemoteBenchmarkIterationTarget
-from ..core.config import Config, ConfigPath, config_field
+from ..core.config import Config, ConfigPath, ConfigRemotePath, config_field
 from ..core.task import output
 from ..core.tvrs import TVRSExecTask
 from ..generic.timing import TimingConfig, TimingExecTask
@@ -22,7 +22,7 @@ class UnixBenchScenario(Config):
 class UnixBenchConfig(TimingConfig):
     scenario_path: Optional[ConfigPath] = config_field(Path("pycheribenchplot/unixbench/scenarios"),
                                                        desc="Path to unixbench scenarios")
-    unixbench_path: Optional[ConfigPath] = config_field(None, desc="Path of unixbench in the remote host")
+    unixbench_path: Optional[ConfigRemotePath] = config_field(None, desc="Path of unixbench in the remote host")
     scenarios: Dict[str, UnixBenchScenario] = config_field(
         dict, desc="Inline scenarios. The key must match the name given by the `scenario` parameter")
 
