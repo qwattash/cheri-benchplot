@@ -7,26 +7,24 @@ from ..config import Config, config_field
 
 
 @dataclass
-class CoordGenConfig(Config):
-    shift_by: str | None = config_field(None, desc="Column used to compute the shift offset along the axis")
-    stack_by: str | None = config_field(None,
-                                        desc="Column used to compute the stack offset along the complementary axis")
+class CoordGenTunables(Config):
+    """
+    Exposed coord generation tunables to analysis configuration.
+    """
     gap_ratio: float = config_field(
         0.9,
-        desc=
-        "The fraction (0, 1) of the available space between two seed coordinates to use for drawing elements. E.g. if gap_ratio = 0.6, 40% of the space is considered gap-space between groups."
-    )
+        desc="The fraction (0, 1) of the available space between two seed coordinates to use for drawing elements. "
+        "E.g. if gap_ratio = 0.6, 40% of the space is considered gap-space between groups.")
     pad_ratio: float = config_field(
         1.0,
-        desc=
-        "The fraction (0, 1) of the available space between two offset coordinates to use for drawing elements. E.g. if pad_ratio = 0.6, 40% of the space is considered pad-space between two elements at the same seed coordinate."
+        desc="The fraction (0, 1) of the available space between two offset coordinates to use for drawing elements. "
+        "E.g. if pad_ratio = 0.6, 40% of the space is considered pad-space between two elements at the same seed coordinate."
     )
     align: str = config_field(
         "center",
-        desc=
-        "Where to align the coordinate groups relative to the seed coordinates. Allowed values are 'center' and 'left'. When align=center the seed coordinate is aligned to the center of the group. When align=left the seed coordinate is aligned to the left of the group."
-    )
-    order: str = config_field("sequential", desc="TODO")
+        desc="Where to align the coordinate groups relative to the seed coordinates. "
+        "Allowed values are 'center' and 'left'. When align=center the seed coordinate is aligned to the center of the group. "
+        "When align=left the seed coordinate is aligned to the left of the group.")
 
     def check_gap(self):
         pass
@@ -36,6 +34,14 @@ class CoordGenConfig(Config):
 
     def check_align(self):
         pass
+
+
+@dataclass
+class CoordGenConfig(CoordGenTunables):
+    shift_by: str | None = config_field(None, desc="Column used to compute the shift offset along the axis")
+    stack_by: str | None = config_field(None,
+                                        desc="Column used to compute the stack offset along the complementary axis")
+    order: str = config_field("sequential", desc="TODO")
 
     def check_order(self):
         pass
@@ -72,8 +78,9 @@ class CoordGenerator:
         Note that this function maintains ordering of the values according to the input dataframe.
 
         The dataframe is modified so that there are new computed columns, prefixed by `prefix`, as follows:
-        - coord: the computed independent variable coordinate
-        - shift_<dependent_var>: the computed offset corresponding to the given dependent variable
+        - <prefix>_coord: the computed independent variable coordinate
+        - <prefix>_offset_<dependent_var>: the computed shift offset corresponding to the given dependent variable
+        - <prefix>_stack_<dependent_var>: the computed stack offset corresponding to the given dependent variable
 
         Note: this assumes that the input dataframe is aligned on the
         group_keys and stack_keys levels, and that it is sorted to the desired ordering.
@@ -83,7 +90,10 @@ class CoordGenerator:
         # Axis corresponding to the selected orientation in numpy
         orient_axis = 0 if self.orient == "x" else 1
 
-        seed_coord_groups = []
+        # Add a row index to maintain stable sorting of the output
+        # This allows us to re-sort the dataframe freely
+        df = df.with_row_index(f"{prefix}_index")
+
         # Note that we require the dataframe to be aligned on shift_by and stack_by columns.
         # This means that every shift_by and stack_by group must have the same number of elements.
         tmp_col = f"{prefix}_tmp"
@@ -92,15 +102,13 @@ class CoordGenerator:
             if not check[tmp_col].all():
                 raise ValueError("The input dataframe is not aligned at the shift_by level")
             ngroups = len(check)
-            seed_coord_groups.append(config.shift_by)
         else:
             ngroups = 1
         if config.stack_by:
             check = df.group_by(config.stack_by).len(name=tmp_col).select(pl.col(tmp_col) == pl.col(tmp_col).max())
             if not check[tmp_col].all():
-                raise ValueError("The input dataframe is not aligned at the group_by level")
+                raise ValueError("The input dataframe is not aligned at the stack_by level")
             nstacks = len(check)
-            seed_coord_groups.append(config.stack_by)
         else:
             nstacks = 1
         nmetrics = len(dependent_vars)
@@ -108,15 +116,17 @@ class CoordGenerator:
             raise ValueError("At least one dependent_var column must be given")
 
         # Generate seed coordinates for the independent_var
+        # Obtain a seed coordinate for every categorical value of the independent var.
+        # Then, merge it back to the dataframe by joining.
         seed_col = f"{prefix}_coord"
         coord_step = 1.0
-        seed_coord = pl.col(independent_var).cum_count()
-        if seed_coord_groups:
-            seed_coord = seed_coord.over(seed_coord_groups)
-        workdf = df.with_columns(seed_coord.alias(seed_col).sub(1) * coord_step)
+        seed_group = df.group_by(independent_var, maintain_order=True).count().with_columns(pl.lit(1).alias(seed_col))
+        seed_coord = seed_group.with_columns(pl.col(seed_col).cum_sum().sub(1).mul(coord_step))
+        workdf = df.join(seed_coord, on=independent_var)
 
         # Determine the shift offset of every shift_by group and metric.
         assert len(dependent_vars) == 1, "XXX need to lift this limitation"
+        dvar = dependent_vars[0]
         offset_col = f"{prefix}_offset"
         if config.shift_by:
             base_offsets = workdf.select(pl.col(config.shift_by).unique(
@@ -124,6 +134,19 @@ class CoordGenerator:
             workdf = workdf.join(base_offsets, on=config.shift_by)
         else:
             workdf = workdf.with_columns(pl.lit(0).alias(offset_col))
+
+        # Determine the stack offset of every stack_by group and metric
+        stack_col = f"{prefix}_stack"
+        if config.stack_by:
+            # NOTE: this relies on input ordering, if the stack column is not sorted
+            # the resulting shifts will be messed up.
+            # Compute a stack index for each group of (independent var + shift_by).
+            over = [independent_var]
+            if config.shift_by:
+                over = [*over, config.shift_by]
+            workdf = workdf.with_columns(pl.col(dvar).shift(1).fill_null(0).cum_sum().over(over).alias(stack_col))
+        else:
+            workdf = workdf.with_columns(pl.lit(0).alias(stack_col))
 
         # if config.order == "sequential":
         # ???
@@ -139,5 +162,7 @@ class CoordGenerator:
 
         # Set artist width available according to padding
         workdf = workdf.with_columns(pl.lit(width * config.pad_ratio).alias(f"{prefix}_width"))
+        # re-establish sort order
+        workdf = workdf.sort(f"{prefix}_index")
 
         return workdf

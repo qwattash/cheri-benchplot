@@ -6,16 +6,16 @@ import seaborn as sns
 from .coords import CoordGenConfig, CoordGenerator
 
 
-def grid_barplot(tile,
-                 chunk,
-                 x,
-                 y,
+def grid_barplot(tile: "PlotTile",
+                 chunk: pl.DataFrame,
+                 x: str,
+                 y: str,
                  err: tuple[str, str] | None = None,
-                 orient="x",
+                 orient: str = "x",
+                 stack: bool = False,
                  coordgen_kwargs: dict | None = None):
     """
     Produce a grouped bar plot on the given plot grid tile.
-    # XXX add stacked version
     # XXX add stacked and shifted version
     # XXX add twin-axis versions
 
@@ -69,7 +69,12 @@ def grid_barplot(tile,
 
     # XXX provide a way to propagate this to plot configuration
     cgen = CoordGenerator(tile.ax, orient=orient)
-    cgen_config = CoordGenConfig(shift_by=hue, **coordgen_kwargs)
+    # XXX handle stacked + shifted
+    if stack:
+        cgen_config = CoordGenConfig(stack_by=hue, **coordgen_kwargs)
+    else:
+        cgen_config = CoordGenConfig(shift_by=hue, **coordgen_kwargs)
+
     view = cgen.compute_coordinates(chunk, independent_var=catcol, dependent_vars=[metric], config=cgen_config)
 
     # Assign categorical axis ticks and labels
@@ -86,7 +91,12 @@ def grid_barplot(tile,
             err_high = (hue_group[upper] - hue_group[metric]).abs()
             error_kwargs.update({f"{orthogonal_orient}err": (err_low, err_high), "capsize": 4})
         coord = hue_group["__gen_coord"] + hue_group[f"__gen_offset"]
-        bar_plot(coord, hue_group[metric], hue_group["__gen_width"], color=color, **error_kwargs)
+        bar_plot(coord,
+                 hue_group[metric],
+                 hue_group["__gen_width"],
+                 hue_group["__gen_stack"],
+                 color=color,
+                 **error_kwargs)
 
 
 def extended_barplot(data, **kwargs):
@@ -94,6 +104,7 @@ def extended_barplot(data, **kwargs):
     Bar plot with a similar interface to the seaborn barplot function, with support for custom
     pre-computed error bars.
     """
+    assert False, "Deprecated, remove"
     df = pl.from_pandas(data) if not isinstance(data, pl.DataFrame) else data
     errorbar = kwargs.pop("errorbar", None)
     errorbar_kwargs = None

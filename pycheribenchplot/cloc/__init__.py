@@ -1,1 +1,1 @@
-from . import cheribsd, cloc, cloc_generic
+from . import cloc, cloc_exec

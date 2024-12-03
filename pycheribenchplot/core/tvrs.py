@@ -63,7 +63,6 @@ class TVRSExecTask(ExecutionTask):
                 self.logger.error("Invalid parameterization: '%s' is required", p)
                 raise RuntimeError("Invalid configuration")
 
-    @property
     def scenario(self) -> Config:
         """
         Return the scenario for the current benchmark instantiation.
@@ -91,7 +90,7 @@ class TVRSExecTask(ExecutionTask):
         if self.script_template:
             self.script.set_template(self.script_template)
 
-        self.script.extend_context({"scenario_config": self.scenario})
+        self.script.extend_context({"scenario_config": self.scenario()})
 
 
 class WeightMode(enum.Enum):
@@ -165,6 +164,8 @@ class TVRSPlotConfig(Config):
 
 class TVRSParamsContext:
     """
+    DEPRECATED: this has been integrated in AnalysisTask and PlotGrid.
+
     Helper that manages a dataframe and the data parameterization axes.
 
     In particular, this allows to remap parameterization axis

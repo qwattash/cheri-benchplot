@@ -82,7 +82,7 @@ class PathField(mfields.Field):
         if value == "":
             return None
         try:
-            return Path(value).expanduser().resolve()
+            return Path(value).expanduser()
         except TypeError as ex:
             raise ValidationError(f"Invalid path {value}") from ex
 

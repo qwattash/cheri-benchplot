@@ -26,23 +26,28 @@ def default(value, default):
 
 @dataclass
 class PlotGridConfig(Config):
-    title: Optional[str] = config_field(None, desc="Override figure title")
-    tile_row: Optional[str] = config_field(None, desc="Override parameter for grid rows")
-    tile_col: Optional[str] = config_field(None, desc="Override parameter for grid cols")
-    tile_sharex: Optional[str | bool] = config_field(None, desc="Override X axis sharing")
-    tile_sharey: Optional[str | bool] = config_field(None, desc="Override Y axis sharing")
+    title: Optional[str] = config_field(None, desc="Override figure title.")
+    tile_row: Optional[str] = config_field(None, desc="Override parameter for grid rows.")
+    tile_col: Optional[str] = config_field(None, desc="Override parameter for grid cols.")
+    tile_row_as_ylabel: bool | None = config_field(
+        None, desc="Use value of the tile_row parameter as the Y axis label for the row.")
+    tile_col_as_xlabel: bool | None = config_field(
+        None, desc="Use value of the tile_col parameter as the X axis label for the colum.")
+    tile_sharex: Optional[str | bool] = config_field(None, desc="Override X axis sharing.")
+    tile_sharey: Optional[str | bool] = config_field(None, desc="Override Y axis sharing.")
     plot_params: Dict[str, Any] = config_field(
         dict, desc="Plot appearance configuration for tweaking, see matplotlib rc_context documentation")
     hue: Optional[str] = config_field(
         None,
-        desc=
-        "Override parameter for hue. When no hue is given, the color is controlled by  the plot_param axes.prop_cycle (See matplotlib rcParams)."
-    )
-    tile_aspect: float = config_field(1.0, desc="Aspect ratio of each tile")
-    legend_vspace: float = config_field(0.2, desc="Fraction of the vertical space reserved to legend and suptitle")
-    legend_hide: bool = config_field(False, desc="Disable the legend")
+        desc="Override parameter for hue. When no hue is given, the color is controlled by the "
+        "plot_param axes.prop_cycle (See matplotlib rcParams).")
+    hue_colors: Optional[dict[str, str]] = config_field(
+        None, desc="Optional map that forces a specific color for each value of the 'hue' configuration.")
+    tile_aspect: float = config_field(1.0, desc="Aspect ratio of each tile.")
+    legend_vspace: float = config_field(0.2, desc="Fraction of the vertical space reserved to legend and suptitle.")
+    legend_hide: bool = config_field(False, desc="Disable the legend.")
     legend_columns: int = config_field(
-        4, desc="Number of columns in the legend, this affects the necessary vspace and tile_aspect")
+        4, desc="Number of columns in the legend, this affects the necessary vspace and tile_aspect.")
 
     def set_default(self, **kwargs):
         for key, value in kwargs.items():
@@ -59,7 +64,7 @@ class PlotGridConfig(Config):
         """
         for key, value in kwargs.items():
             if getattr(self, key) is not None:
-                self.logger.warning("Configuration %s is disabled in this task, forced to %s", value)
+                self.logger.warning("Configuration %s is disabled in this task, forced to %s", key, value)
         config = replace(self, **kwargs)
         return config
 
@@ -252,12 +257,12 @@ class PlotGrid(AbstractContextManager):
 
         if self._config.title:
             self._figure.suptitle(self._config.title)
-        self.map(self._set_titles)
         self._gen_color_palette()
         self._rc_context = plt.rc_context(rc=self._config.plot_params).__enter__()
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
+        self.map(self._set_titles)
         if self._rc_context:
             self._rc_context.__exit__(exc_type, exc_value, traceback)
         # XXX provide a way to adjust these
@@ -295,24 +300,41 @@ class PlotGrid(AbstractContextManager):
         if self._config.hue is None:
             self._color_palette = None
         else:
-            ncolors = self._df.select(pl.n_unique(self.hue_param).alias("count"))
-            self._color_palette = sns.color_palette(n_colors=ncolors["count"][0])
+            hue_count = self._df.select(pl.n_unique(self.hue_param).alias("count"))
+            ncolors = hue_count["count"][0]
+            if self._config.hue_colors is not None:
+                if len(self._config.hue_colors) != ncolors:
+                    self.logger.error(
+                        "Invalid number of colors in configuration: expected %d, found %d for hue level %s", ncolors,
+                        len(self._config.hue_colors), self._config.hue)
+                    raise ValueError("Configuration error")
+                hues = self._df[self.hue_param].unique(maintain_order=True)
+                self._color_palette = [self._config.hue_colors[h] for h in hues]
+            else:
+                self._color_palette = sns.color_palette(n_colors=ncolors)
 
     def _set_titles(self, tile, chunk):
         """
         Set row and column labels
         """
         nrows, ncols = self._grid_shape()
-        if tile.row_index == 0 and self._config.tile_col:
-            tile.ax.set_title(f"{self.tile_col_param} = {tile.col}")
-        if tile.col_index == ncols - 1 and self._config.tile_row:
-            text = tile.ax.annotate(f"{self.tile_row_param} = {tile.row}",
-                                    xy=(1.02, .5),
-                                    xycoords="axes fraction",
-                                    rotation=270,
-                                    ha="left",
-                                    va="center")
-            self._margin_titles.append(text)
+        if self._config.tile_col_as_xlabel:
+            tile.ax.set_xlabel(tile.col, loc="center")
+        else:
+            if tile.row_index == 0 and self._config.tile_col:
+                tile.ax.set_title(f"{self.tile_col_param} = {tile.col}")
+
+        if self._config.tile_row_as_ylabel:
+            tile.ax.set_ylabel(tile.row, loc="center")
+        else:
+            if tile.col_index == ncols - 1 and self._config.tile_row:
+                text = tile.ax.annotate(f"{self.tile_row_param} = {tile.row}",
+                                        xy=(1.02, .5),
+                                        xycoords="axes fraction",
+                                        rotation=270,
+                                        ha="left",
+                                        va="center")
+                self._margin_titles.append(text)
 
     def _make_tile(self, ax, ri, ci, row, col):
         return PlotTile(ax=ax, hue=self._config.hue, palette=self._color_palette, coords=(ri, ci), loc=(row, col))
