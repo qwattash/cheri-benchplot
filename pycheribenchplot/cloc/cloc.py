@@ -1,4 +1,5 @@
 import os
+import re
 from dataclasses import dataclass
 from functools import cached_property
 
@@ -81,6 +82,14 @@ class ClocByComponent(PlotTask):
         return Target(self, "audit-cdb-extra", ext="csv")
 
     @output
+    def diff_audit(self):
+        """
+        Output csv file containing the changed files sorted by # of changes
+        This is useful to audit differences.
+        """
+        return Target(self, "audit-diff", ext="csv")
+
+    @output
     def cloc_plot(self):
         return PlotTarget(self)
 
@@ -105,6 +114,18 @@ class ClocByComponent(PlotTask):
 
         return df.join(self.compilation_db, on="file")
 
+    def _filter_by_file(self, df: pl.DataFrame, scenario: str, fc: FilterConfig) -> pl.DataFrame:
+        # Accept filters will allow only matching paths to be considered
+        if fc.accept:
+            accept_fn = lambda path: any([re.match(p, path) is not None for p in fc.accept])
+            is_accept = pl.col("file").map_elements(accept_fn, return_dtype=pl.Boolean)
+            df = df.filter((pl.col("scenario") != scenario) | ((pl.col("scenario") == scenario) & is_accept))
+        if fc.reject:
+            reject_fn = lambda path: any([re.match(p, path) is not None for p in fc.reject])
+            is_reject = pl.col("file").map_elements(reject_fn, return_dtype=pl.Boolean)
+            df = df.filter((pl.col("scenario") != scenario) | ((pl.col("scenario") == scenario) & ~is_reject))
+        return df
+
     def _patch_cdb_file_paths(self, df) -> pl.DataFrame:
         """
         When the compilation DB measures the build files, diff extracted from
@@ -115,102 +136,31 @@ class ClocByComponent(PlotTask):
             return df
 
         for key, prefix in self.config.cdb_prefix.items():
-            df = df.with_columns(
-                pl.when(pl.col("scenario") == key).then(pl.concat_str([pl.lit(prefix + "/"),
-                                                                       pl.col("file")
-                                                                       ])).otherwise(pl.col("file")).alias("file"))
+            patch = pl.concat_str([pl.lit(prefix + "/"), pl.col("file")])
+            df = df.with_columns(pl.when(pl.col("scenario") == key).then(patch).otherwise(pl.col("file")).alias("file"))
         df = df.with_columns(pl.col("file").map_elements(lambda p: os.path.normpath(p), return_dtype=str))
         return df
 
     def _assign_component(self, df) -> pl.DataFrame:
         """
         Assign the component name to each file.
+
+        If components are configured, these will override completely the default
+        assignment of scenarios to components.
+        This will automatically define a catch-all component named 'other' that collects
+        anything that does not match.
         """
-        for name, matcher in self.config.components.items():
-            df = df.with_columns((pl.when(pl.col("file").str.find(matcher)).then(pl.lit("name")).otherwise(
-                pl.col("component")).alias("component")))
+        if not self.config.components:
+            return df.with_columns(pl.col("scenario").alias("component"))
+
+        df = df.with_columns(pl.lit("other").alias("component"))
+        for name, pattern in self.config.components.items():
+            cname = pl.lit(name)
+            default = pl.col("component")
+            is_matching = pl.col("file").map_elements(lambda path: re.match(pattern, path) is not None,
+                                                      return_dtype=pl.Boolean)
+            df = df.with_columns(pl.when(is_matching).then(cname).otherwise(default).alias("component"))
         return df
-
-    def _build_display_data(self, df, base_df) -> pl.DataFrame:
-        """
-        Collect the data into a single dataframe.
-
-        This should group the data with the following columns:
-        repo: unique name of the repository, suitable for user output
-        how: {added, removed, modified}
-        code: number of lines changed
-        code_baseline: number of lines in the baseline
-        code_pct: percent ratio of code / code_baseline
-        """
-        # Only take rows describing a change
-        df = generalized_xs(df, how="same", complement=True)
-
-        # Aggregate counts by repo
-        base_counts_df = base_df["code"].groupby(["repo"]).sum()
-        agg_df = df.groupby(["repo", "how"]).sum().join(base_counts_df, on="repo", rsuffix="_baseline")
-        agg_df["code_pct"] = 100 * agg_df["code"] / agg_df["code_baseline"]
-        return agg_df
-
-    def _plot_absolute_sloc_diff(self, ax: "Axes", df: pl.DataFrame, colors: list):
-        show_df = df.reset_index().pivot(index="repo", columns="how", values="code")
-        show_df.reset_index().plot(x="repo",
-                                   y=["added", "modified", "removed"],
-                                   stacked=True,
-                                   kind="barh",
-                                   ax=ax,
-                                   color=colors,
-                                   legend=False)
-        # Generate text annotations for the Absolute SLoC
-        if self.config.show_text_annotations:
-            totals = show_df.sum(axis=1)
-            for y, value in zip(ax.get_yticks(), totals):
-                magnitude = np.log10(value)
-                if magnitude > 6:
-                    txt_value = f"{np.round(value / 10**6, 2):.2f}M"
-                elif magnitude > 3:
-                    txt_value = f"{np.round(value / 10**3, 2):.2f}K"
-                else:
-                    txt_value = f"{value:d}"
-                ax.text(value, y, txt_value, fontsize="xx-small", va="center")
-        ax.tick_params(axis="y", labelsize="x-small")
-        ax.set_xlabel("# of lines")
-
-    def _plot_percent_sloc_diff(self, ax: "Axes", df: pl.DataFrame, colors: list):
-        # Percent SLoC on the right
-        show_df = df.reset_index().pivot(index="repo", columns="how", values="code_pct")
-        show_df.reset_index().plot(x="repo",
-                                   y=["added", "modified", "removed"],
-                                   stacked=True,
-                                   kind="barh",
-                                   ax=ax,
-                                   color=colors,
-                                   legend=False)
-        # Generate text annotations for the Percent SLoC
-        if self.config.show_text_annotations:
-            totals = show_df.sum(axis=1)
-            for y, value in zip(ax.get_yticks(), totals):
-                ax.text(value, y, f"{value:.2f}%", fontsize="xx-small", va="center")
-        ax.set_xlabel("% of lines")
-
-    def _do_plot(self, df: pl.DataFrame, base_df: pl.DataFrame, target: PlotTarget):
-        agg_df = self._build_display_data(df, base_df)
-
-        # Ensure we have the proper theme
-        sns.set_theme()
-        # Use tab10 colors, added => green, modified => orange, removed => red
-        cmap = sns.color_palette(as_cmap=True)
-        # ordered as green, orange, red
-        colors = [cmap[2], cmap[1], cmap[3]]
-
-        with new_figure(target.paths()) as fig:
-            ax_l, ax_r = fig.subplots(1, 2, sharey=True)
-            # Absolute SLoC on the left, percent on the right
-            self._plot_absolute_sloc_diff(ax_l, agg_df, colors)
-            self._plot_percent_sloc_diff(ax_r, agg_df, colors)
-
-            # The legend is shared at the top center
-            handles, labels = ax_l.get_legend_handles_labels()
-            fig.legend(handles, labels, ncol=3, loc="upper center", bbox_to_anchor=(0.5, 1.08))
 
     def collect_data(self):
         """
@@ -218,6 +168,7 @@ class ClocByComponent(PlotTask):
         """
         data = [dep.df.get() for dep in self.cloc_data]
         df = pl.concat(data, how="vertical")
+        df = self._patch_cdb_file_paths(df)
         df = self._filter_by_cdb(df)
         return df
 
@@ -227,14 +178,14 @@ class ClocByComponent(PlotTask):
         """
         data = [dep.df.get() for dep in self.cloc_baseline]
         df = pl.concat(data, how="vertical")
+        df = self._patch_cdb_file_paths(df)
 
         # Sanity check: we expect the compilation DB to include *only*
         # files that have been counted or excluded during generation
         # manual audit is required.
         if self.compilation_db is not None:
-            # Patch file paths by scenario to match the compilation DB source path
-            df = self._patch_cdb_file_paths(df)
             self.logger.info("Generate CDB audit file %s", self.cdb_extra_audit.single_path())
+            # keep rows in cdb that are not in baseline
             extra = self.compilation_db.join(df, on="file", how="anti")
             extra.write_csv(self.cdb_extra_audit.single_path())
         df = self._filter_by_cdb(df)
@@ -245,14 +196,19 @@ class ClocByComponent(PlotTask):
         baseline_df = self.collect_baseline()
 
         # Apply extra filters (e.g. tests)
+        for scenario, filter_config in self.config.filters.items():
+            head_df = self._filter_by_file(head_df, scenario, filter_config)
+            baseline_df = self._filter_by_file(baseline_df, scenario, filter_config)
 
         # Assign components to each
-        head_df = head_df.with_columns(pl.col("scenario").alias("component"))
         head_df = self._assign_component(head_df)
-        baseline_df = baseline_df.with_columns(pl.col("scenario").alias("component"))
         baseline_df = self._assign_component(baseline_df)
 
-        # XXX somehow there zfs is missing
+        # Dump absolute diff data sorted by # of changes
+        dump_df = head_df.sort("component",
+                               pl.col("added") + pl.col("modified") + pl.col("removed")).select(
+                                   "component", "file", "added", "modified", "removed")
+        dump_df.write_csv(self.diff_audit.single_path())
 
         # Create per-component baseline counts
         group_cols = ["target", "variant", "runtime", "scenario", "component"]
@@ -262,7 +218,7 @@ class ClocByComponent(PlotTask):
             pl.col("removed").sum(),
             pl.col("modified").sum(),
             pl.col("same").sum())
-        df = head_agg_df.join(baseline_agg_df, on=group_cols)
+        df = head_agg_df.join(baseline_agg_df, on=group_cols, how="left").with_columns(pl.col("count").fill_null(0))
 
         # Now create the absolute and % difference data in long-form
         # This is going to be used for the DisplayGrid.
@@ -308,5 +264,19 @@ class ClocByComponent(PlotTask):
             })
 
         with DisplayGrid(self.cloc_plot, view_df, config) as grid:
-            grid.map(grid_barplot, x="count", y="component", orient="y", stack=True, coordgen_kwargs={"pad_ratio": 0.2})
+            grid.map(grid_barplot, x="count", y="component", orient="y", stack=True, coordgen_kwargs={"pad_ratio": 0.5})
+            grid.map(lambda tile, chunk: tile.ax.tick_params(axis="y", labelsize="x-small"))
+
+            # Generate text annotations for the Absolute SLoC
+            # if self.config.show_text_annotations:
+            #     totals = show_df.sum(axis=1)
+            #     for y, value in zip(ax.get_yticks(), totals):
+            #         magnitude = np.log10(value)
+            #         if magnitude > 6:
+            #             txt_value = f"{np.round(value / 10**6, 2):.2f}M"
+            #         elif magnitude > 3:
+            #             txt_value = f"{np.round(value / 10**3, 2):.2f}K"
+            #         else:
+            #             txt_value = f"{value:d}"
+            #         ax.text(value, y, txt_value, fontsize="xx-small", va="center")
             grid.add_legend()

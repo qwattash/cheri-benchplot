@@ -327,6 +327,9 @@ class PlotGrid(AbstractContextManager):
         if self._config.tile_row_as_ylabel:
             tile.ax.set_ylabel(tile.row, loc="center")
         else:
+            if self._config.tile_sharey and tile.col_index > 0:
+                # Clear the Y axis label if this isn't the first column
+                tile.ax.set_ylabel("").set_visible(False)
             if tile.col_index == ncols - 1 and self._config.tile_row:
                 text = tile.ax.annotate(f"{self.tile_row_param} = {tile.row}",
                                         xy=(1.02, .5),
