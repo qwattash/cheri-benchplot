@@ -1,0 +1,50 @@
+# Execute the cloc command to extract and parse diff information in a repository.
+
+echo "Extract LoC diff from {{ scenario_config.repo_path }} {{ scenario_config.head_ref}}..{{ scenario_config.baseline_ref }}"
+
+{% set baseline_suffix = "." + scenario_config.baseline_ref %}
+{% set head_suffix = "." + scenario_config.head_ref %}
+TMP_OUT="{{ cloc_output | path_parent }}/tmp"
+BASELINE_OUT="${TMP_OUT}{{ baseline_suffix }}"
+HEAD_OUT="${TMP_OUT}{{ head_suffix }}"
+DIFF_OUT="${TMP_OUT}.diff{{ baseline_suffix }}{{ head_suffix }}"
+
+{% macro accept_filter() %}
+  {% if scenario_config.accept_filter -%}
+    --match-d='{{ scenario_config.accept_filter }}'
+  {%- endif %}
+{% endmacro %}
+
+{% macro reject_filter() %}
+  {% if scenario_config.reject_filter -%}
+    --not-match-d='{{ scenario_config.reject_filter }}'
+  {%- endif %}
+{% endmacro %}
+
+{% macro baseline() %}
+  {% if scenario_config.baseline_path != scenario_config.repo_path -%}
+    {{ scenario_config.baseline_path }}
+  {%- else -%}
+    {{ scenario_config.baseline_ref }}
+  {%- endif %}
+{% endmacro %}
+
+# Note: run in subshell
+(cd {{ scenario_config.repo_path }} && \
+	cloc --skip-uniqueness \
+		 --file-encoding=UTF-8 \
+		 --by-file \
+		 --json \
+		 --git \
+		 --count-and-diff \
+		 "--exclude-content=DO NOT EDIT" \
+		 "--include-ext={{ scenario_config.accept_ext | join(',') | trim }}" \
+		 {{ accept_filter() | trim }} {{ reject_filter() | trim }} \
+		 "--report-file=${TMP_OUT}" \
+		 {{ scenario_config.cloc_args | join(" ") }} \
+		 {{ baseline() | trim }} \
+		 {{ scenario_config.head_ref }})
+
+# Extract outputs
+mv ${DIFF_OUT} "{{ cloc_output }}"
+mv ${BASELINE_OUT} "{{ cloc_baseline }}"

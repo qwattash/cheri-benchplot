@@ -1,0 +1,9 @@
+# Execute cheribuild under strace or truss.
+# This will capture a trace containing all files that are opened during the build.
+
+strace \
+    -qqq -f -z \
+	-o "{{ compilationdb_output }}" \
+	"--signal=!SIGCHLD" \
+	"--trace=open,openat" \
+	{{ cheribuild | trim}} {{ scenario_config.target }} --skip-update {{ cheribuild_args | join(" ") }}

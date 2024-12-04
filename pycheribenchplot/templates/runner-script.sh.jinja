@@ -32,8 +32,8 @@ echo -e "\t{{ pkey }}='{{ pval }}'"
 
 {% macro gen_iter_hook(phase, iteration, hook) %}
   {{ debug("{{ phase }} iteration {{ iteration }} hook '{{ hook.name }}'") }}
-  {% if hook.template -%}
-    {% include 'templates/hooks/%s' % hook.template %}
+  {% if hook.template %}
+    {% include 'hooks/%s' % hook.template %}
   {% else %}
     {% for cmd in hook.commands %}
       {{ cmd }}
@@ -53,21 +53,24 @@ echo -e "\t{{ pkey }}='{{ pval }}'"
 {% block iteration_loop %}
   echo "Run benchmark for {{ iterations }} iterations"
   for ITERATION in $(seq 0 {{ iterations - 1 }}); do
-    {% set current_iteration = "${ITERATION}" -%}
-    {% block iteration_setup scoped %}
+    {%- set current_iteration = "${ITERATION}" -%}
+    {%- block iteration_setup scoped %}
       {% for hook in iter_setup_hooks %}
         {{ gen_iter_hook("Setup", current_iteration, hook) }}
       {% endfor %}
-    {% endblock iteration_setup %}
+    {% endblock iteration_setup -%}
 
-    {% block iteration_exec scoped %}
-    {% endblock iteration_exec %}
+    {%- block iteration_exec scoped %}
+      {% for hook in iter_exec_hooks %}
+        {{ gen_iter_hook("Exec", current_iteration, hook) }}
+      {% endfor %}
+    {% endblock iteration_exec -%}
 
-    {% block iteration_teardown scoped %}
+    {%- block iteration_teardown scoped %}
       {% for hook in iter_teardown_hooks %}
         {{ gen_iter_hook("Teardown", current_iteration, hook) }}
       {% endfor %}
-    {% endblock iteration_teardown %}
+    {% endblock iteration_teardown -%}
   done
   echo "Benchmark done"
 {% endblock iteration_loop %}

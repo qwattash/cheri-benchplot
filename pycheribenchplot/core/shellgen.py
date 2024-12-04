@@ -39,6 +39,12 @@ def path_name(path: Path) -> str:
     return path.name
 
 
+@script_filter
+def path_with_suffix(path: Path, suffix: str) -> Path:
+    """Helper to replace the suffix of a path"""
+    return path.with_suffix(suffix)
+
+
 class ScriptContextBase:
     """
     Generates a script based on a Jinja2 template and parameters.
@@ -122,24 +128,29 @@ class ScriptContext(ScriptContextBase):
             "teardown_hooks": [],
             "iter_setup_hooks": [],
             "iter_teardown_hooks": [],
+            "iter_exec_hooks": [],
         }
 
     def add_hook(self, phase: str, hook: ScriptHook):
         with self._lock:
             self._context[f"{phase}_hooks"].append(hook)
 
-    def setup(self, name, *, command: str = None, template: Path = None):
-        assert command is None or template is None
-        self.add_hook("setup", ScriptHook(name, template=template, command=command))
+    def setup(self, name, *, commands: str = None, template: Path = None):
+        assert commands is None or template is None
+        self.add_hook("setup", ScriptHook(name, template=template, commands=commands))
 
-    def teardown(self, name, *, command: str = None, template: Path = None):
-        assert command is None or template is None
-        self.add_hook("teardown", ScriptHook(name, template=template, command=command))
+    def teardown(self, name, *, commands: str = None, template: Path = None):
+        assert commands is None or template is None
+        self.add_hook("teardown", ScriptHook(name, template=template, commands=commands))
 
-    def setup_iteration(self, name, *, command: str = None, template: Path = None):
-        assert command is None or template is None
-        self.add_hook("iter_setup", ScriptHook(name, template=template, command=command))
+    def setup_iteration(self, name, *, commands: str = None, template: Path = None):
+        assert commands is None or template is None
+        self.add_hook("iter_setup", ScriptHook(name, template=template, commands=commands))
 
-    def teardown_iteration(self, name, *, command: str = None, template: Path = None):
-        assert command is None or template is None
-        self.add_hook("iter_teardown", ScriptHook(name, template=template, command=command))
+    def teardown_iteration(self, name, *, commands: str = None, template: Path = None):
+        assert commands is None or template is None
+        self.add_hook("iter_teardown", ScriptHook(name, template=template, commands=commands))
+
+    def exec_iteration(self, name, *, commands: str = None, template: Path = None):
+        assert commands is None or template is None
+        self.add_hook("iter_exec", ScriptHook(name, template=template, commands=commands))
