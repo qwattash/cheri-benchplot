@@ -1,0 +1,78 @@
+{#
+ # Runner script for unixbench benchmarks.
+ # This extends the standard runner-script.sh.jinja template
+ #
+ # This supports the timing and hwpmc extensions.
+ #}
+{% extends "runner-script.sh.jinja" %}
+
+{% import "hwpmc.inc.jinja" as hwpmc with context %}
+
+{% macro _nginx_bin() %}
+  {{ nginx_config.prefix }}/sbin/nginx
+{% endmacro %}
+
+{% macro _nginx_start(iter) %}
+  {{ hwpmc.pmcstat(iter) }} {{ _nginx_bin() | trim }}  &
+{% endmacro %}
+
+{% macro _nginx_stop(iter) %}
+  {{ _nginx_bin() | trim }} -s stop
+{% endmacro %}
+
+{% macro _nginx_workload(iter) %}
+  sleep 2
+  wrk -t {{ scenario_config.threads }} -c {{ scenario_config.connections }} \
+      -s wrk-report.lua {{ scenario_config.args | join(" ") }}\
+      {{ scenario_config.endpoint }}
+{% endmacro %}
+
+{% macro _nginx_workload_done(iter) %}
+  mv wrk-result.json {{ nginx_gen_output_path(iter) }}
+{% endmacro %}
+
+{% block global_setup %}
+  {{ super() }}
+  # Install server certificates in the nginx configuration directory
+  cp "{{ asset_path }}/server.key" "{{ nginx_config.prefix }}/conf/server.key"
+  cp "{{ asset_path }}/server.crt" "{{ nginx_config.prefix }}/conf/server.crt"
+  # Install www directory (could be symlinked?)
+  if [ -d "{{ nginx_config.prefix }}/cheri-nginx-www" ]; then
+      echo "Warning: found leftover cheri-nginx-www in {{ nginx_config.prefix }}"
+  fi
+  mkdir -p "{{ nginx_config.prefix}}/cheri-nginx-www"
+  cp -r "{{ asset_path }}/www" "{{ nginx_config.prefix }}/cheri-nginx-www"
+  # Update nginx configuration
+  if [ ! -d "{{ nginx_config.prefix }}" ]; then
+      echo "Error: nginx data is not installed at {{ nginx_config.prefix }}"
+      exit 1
+  fi
+  if [ -f "{{ nginx_config.prefix }}/conf/nginx.conf" ]; then
+      cp "{{ nginx_config.prefix }}/conf/nginx.conf" "{{ nginx_config.prefix }}/conf/nginx.conf.bak"
+  fi
+  cp nginx.conf "{{ nginx_config.prefix }}/conf/nginx.conf"
+{% endblock %}
+
+{% block iteration_exec %}
+  echo "Run nginx {{ scenario_config.test }} iterations {{ current_iteration }}"
+
+  {{ _nginx_start(current_iteration) | trim }}
+  {{ _nginx_workload(current_iteration) | trim }}
+  {{ _nginx_stop(current_iteration) | trim }}
+{% endblock %}
+
+{% block iteration_teardown %}
+  {{ _nginx_workload_done(current_iteration) | trim }}
+{% endblock %}
+
+{% block global_teardown %}
+  {{ super() }}
+  {% for i in range(iterations) -%}
+    {{ hwpmc.pmcstat_postprocess(i) | trim }}
+  {%- endfor %}
+  # Restore nginx configuration
+  if [ -f "{{ nginx_config.prefix }}/conf/nginx.conf.bak" ]; then
+      cp "{{ nginx_config.prefix }}/conf/nginx.conf.bak" "{{ nginx_config.prefix }}/conf/nginx.conf"
+  fi
+  rm -r "{{ nginx_config.prefix}}/cheri-nginx-www"
+{% endblock global_teardown %}

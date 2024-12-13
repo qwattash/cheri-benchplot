@@ -19,7 +19,7 @@ from .benchmark import Benchmark, ExecTaskConfig
 from .config import (AnalysisConfig, BenchplotUserConfig, Config, ConfigContext, ExecTargetConfig, InstanceConfig,
                      PipelineConfig, SessionRunConfig, TaskTargetConfig)
 from .instance import InstanceManager
-from .shellgen import ScriptContextBase
+from .shellgen import TemplateContextBase
 from .task import (ExecutionTask, SessionExecutionTask, TaskRegistry, TaskScheduler)
 from .util import new_logger
 
@@ -373,7 +373,7 @@ class Session:
             section = section.select(
                 pl.col("descriptor").map_elements(lambda bench: bench.get_run_script_path().relative_to(data_root),
                                                   return_dtype=pl.Object).alias("run_script"))
-            ctx = ScriptContextBase(self.logger)
+            ctx = TemplateContextBase(self.logger)
             ctx.set_template("run-target.sh.jinja")
             ctx.extend_context({
                 "target": target,

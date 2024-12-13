@@ -45,7 +45,7 @@ def path_with_suffix(path: Path, suffix: str) -> Path:
     return path.with_suffix(suffix)
 
 
-class ScriptContextBase:
+class TemplateContextBase:
     """
     Generates a script based on a Jinja2 template and parameters.
 
@@ -102,7 +102,7 @@ class ScriptContextBase:
         fd.writelines(map(lstrip_spaces, script.splitlines()))
 
 
-class ScriptContext(ScriptContextBase):
+class ScriptContext(TemplateContextBase):
     """
     Generates a benchmark runner script from a template.
 

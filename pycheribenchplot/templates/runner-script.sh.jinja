@@ -41,6 +41,13 @@ echo -e "\t{{ pkey }}='{{ pval }}'"
   {% endif %}
 {% endmacro %}
 
+{#
+ # Path to the session asset directory.
+ # Note that this is relative to the run/xxx directory that is set as
+ # the working directory when running this script.
+ #}
+{% set asset_path = "../../assets" %}
+
 #### Global setup
 {% block global_setup %}
   echo "Global benchmark setup"

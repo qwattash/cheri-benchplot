@@ -42,7 +42,7 @@ class BenchmarkExecTask(Task):
         #: Script template context for this benchmark context
         self.script = ScriptContext(benchmark)
         #: Whether we need to request a VM instance, this becomes valid after
-        #: dependency scanning
+        #: dependency scanning (deprecated)
         self._need_instance = None
 
         # Borg initialization occurs here
