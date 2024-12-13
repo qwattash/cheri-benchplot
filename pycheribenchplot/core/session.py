@@ -248,7 +248,13 @@ class Session:
         Produce a compressed archive with all the session output.
         """
         bundle_path = path if path else self.session_root_path.parent
-        bundle_file = bundle_path / self.session_root_path.with_suffix(".tar.gz").name
+        if bundle_path.exists() and bundle_path.is_dir():
+            bundle_file = bundle_path / self.session_root_path.with_suffix(".tar.gz").name
+        else:
+            if bundle_path.name.endswith(".tar.gz"):
+                bundle_file = bundle_path
+            else:
+                bundle_file = bundle_path.with_suffix(".tar.gz")
         self.logger.info("Generate %s bundle", self.session_root_path)
         if bundle_file.exists():
             self.logger.info("Replacing old bundle %s", bundle_file)
