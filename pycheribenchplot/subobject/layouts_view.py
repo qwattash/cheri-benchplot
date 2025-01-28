@@ -1,12 +1,9 @@
 import polars as pl
-import polars.selectors as cs
-from sqlalchemy import func, select
 
 from ..core.analysis import AnalysisTask
 from ..core.artefact import HTMLTemplateTarget
 from ..core.task import dependency, output
-from .model import LayoutMember, TypeLayout
-from .scan_dwarf import LoadStructLayouts
+from .scan_dwarf import AnnotateImpreciseSubobjectLayouts
 
 
 class TargetGroupHelper:
@@ -80,45 +77,11 @@ class ImpreciseSubobjectLayouts(AnalysisTask):
 
     @dependency
     def layouts(self):
-        # yapf: disable
-        has_imprecise = (
-            select(TypeLayout.id)
-            .join(LayoutMember.owner_entry)
-            .group_by(TypeLayout.id)
-            .having(func.max(LayoutMember.is_imprecise) == 1)
-        )
-        q = (
-            select(
-                TypeLayout.id,
-                TypeLayout.file,
-                TypeLayout.line,
-                TypeLayout.name,
-                TypeLayout.is_union,
-                TypeLayout.size.label("total_size"),
-                LayoutMember.id.label("member_id"),
-                LayoutMember.name.label("member_name"),
-                LayoutMember.type_name.label("member_type"),
-                LayoutMember.byte_size,
-                LayoutMember.bit_size,
-                LayoutMember.byte_offset,
-                LayoutMember.bit_offset,
-                LayoutMember.array_items,
-                LayoutMember.base,
-                LayoutMember.top,
-                LayoutMember.is_pointer,
-                LayoutMember.is_function,
-                LayoutMember.is_union.label("is_member_union"),
-                LayoutMember.is_imprecise,
-            )
-            .join(LayoutMember.owner_entry)
-            .where(TypeLayout.id.in_(has_imprecise))
-        )
-        # yapf: enable
-        return LoadStructLayouts(self.session, self.analysis_config, query=q)
+        return AnnotateImpreciseSubobjectLayouts(self.session, self.analysis_config)
 
     def outputs(self):
         yield from super().outputs()
-        scenarios = self.layouts.struct_layouts.get()["scenario"].unique()
+        scenarios = self.layouts.imprecise_layouts.get()["scenario"].unique()
         for scenario in scenarios:
             yield (scenario, HTMLTemplateTarget(self, "html/imprecise-subobject-layout.html.jinja", scenario))
 
@@ -126,57 +89,9 @@ class ImpreciseSubobjectLayouts(AnalysisTask):
         """
         Render the HTML template.
 
-        The dataframe is grouped recursively to produce nested datasets that are
-        convenient to use for the template. Synthetic columns generated explicitly for
-        the template rendering are prefixed by 'tmpl_'.
+        Produce a plot for each scenario, assuming that the scenario keys a different set dwarf sources.
         """
-        df = self.layouts.struct_layouts.get()
-
-        # Columns that uniquely identify a structure layout within a dataset parameterization
-        STRUCT_LAYOUT_ID_COLS = ["dataset_id", "name", "file", "line", "total_size"]
-        # Columns that uniquely identify a flattened layout member within
-        # a dataset parameterization
-        STRUCT_MEMBER_ID_COLS = STRUCT_LAYOUT_ID_COLS + ["member_name"]
-        IMPRECISE_MEMBER_ID_COLS = STRUCT_LAYOUT_ID_COLS + ["member_name__r"]
-
-        # Compute overlap group IDs for each imprecise member.
-        # This is used to color overlapping elements depending onthe capability
-        # base and top of imprecise members
-
-        imprecise = df.filter(is_imprecise=True).with_row_index("_alias_color")
-        tmp_df = df.join(imprecise, on=STRUCT_MEMBER_ID_COLS, how="left", suffix="__r").select(~cs.ends_with("__r"))
-
-        # For each structure layout, join each member with the imprecise members
-        # within that layout.
-        tmp_df = tmp_df.join(imprecise, suffix="__r", on=STRUCT_LAYOUT_ID_COLS, how="left")
-
-        # We then mark the members that fall within the base/top of imprecise members.
-        top = pl.col("byte_offset") + pl.col("byte_size") + ((pl.col("bit_offset") + pl.col("bit_size")) / 8).ceil()
-        have_overlap = ((pl.col("byte_offset") <= pl.col("top__r")) & (pl.col("base__r") <= top) &
-                        # Do not consider overlapping members that are known children of the imprecise member
-                        ~pl.col("member_name").str.starts_with(pl.col("member_name__r") + "::") &
-                        # Do not consider overlapping members that are known parents of the imprecise member
-                        ~pl.col("member_name__r").str.starts_with(pl.col("member_name") + "::") &
-                        # Can't overlap with yourself
-                        (pl.col("member_name__r") != pl.col("member_name")))
-        tmp_df = tmp_df.with_columns(
-            pl.when(have_overlap).then(pl.col("_alias_color__r")).otherwise(pl.lit(None)).alias("_aliased_by"))
-
-        # Collect all imprecise members that alias at least a pointer/function pointer
-        imprecise = tmp_df.filter(~pl.col("_aliased_by").is_null()).group_by(IMPRECISE_MEMBER_ID_COLS).agg(
-            pl.col("is_pointer").any().alias("_alias_pointer_member"))
-
-        # Finally, coalesce _aliased_by color lists, keeping all left columns unchanged
-        tmp_df = tmp_df.group_by(STRUCT_MEMBER_ID_COLS).agg((~cs.ends_with("__r") & cs.exclude("_aliased_by")).first(),
-                                                            pl.col("_aliased_by"))
-
-        assert len(tmp_df) == len(df)
-        assert set(tmp_df.columns) == set(df.columns + ["_aliased_by", "_alias_color"])
-        df = tmp_df.join(imprecise,
-                         left_on=STRUCT_MEMBER_ID_COLS,
-                         right_on=IMPRECISE_MEMBER_ID_COLS,
-                         suffix="__r",
-                         how="left").select(~cs.ends_with("__r"))
+        df = self.layouts.imprecise_layouts.get()
 
         def make_struct_list(df_slice) -> list[StructDescHelper]:
             ## XXX sort by field index as well?
