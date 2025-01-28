@@ -13,7 +13,6 @@ import scipy.stats as scs
 from .artefact import BenchmarkIterationTarget, DataFrameTarget
 from .benchmark import Benchmark
 from .config import AnalysisConfig, Config, InstanceConfig
-from .model import DataModel
 from .task import ExecutionTask, SessionTask, dependency
 
 

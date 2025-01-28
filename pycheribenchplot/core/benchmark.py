@@ -9,7 +9,6 @@ import pandas as pd
 
 from .artefact import RemoteTarget
 from .config import (AnalysisConfig, CommandHookConfig, Config, ExecTargetConfig, config_field)
-from .dwarf import DWARFManager
 from .elf import AddressSpaceManager
 from .error import TaskNotFound
 from .instance import InstanceManager
@@ -155,8 +154,6 @@ class Benchmark:
 
         # Symbol mapping handler for this benchmark instance
         self.sym_resolver = AddressSpaceManager(self)
-        # Dwarf information extraction helper
-        self.dwarf = DWARFManager(self)
 
     def __str__(self):
         return f"{self.config.name}({self.uuid})"

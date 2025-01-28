@@ -11,8 +11,8 @@
 {%- endmacro %}
 
 {% macro _prefix() %}
-  {% if scenario_config.strip_src_prefix -%}
-    --prefix {{ scenario_config.strip_src_prefix }}
+  {% if scenario_config.src_prefix -%}
+    --prefix {{ scenario_config.src_prefix }}
   {%- endif %}
 {% endmacro %}
 
@@ -35,8 +35,11 @@
   echo "Extract DWARF information to {{ dws_database }}"
   mkdir -p {{ dws_database | path_parent }}
   {% for src in scenario_config.dwarf_data_sources %}
-    find {{ src.path }} | grep "{{ src.matcher }}" >> /tmp/dwarf-scraper-src.txt
+    find "{{ src.path }}" | grep "{{ src.matcher }}" >> /tmp/dwarf-scraper-src.txt
   {% endfor %}
-  {{ _scraper() }} {{ _verbose() }} {{ _prefix() }} --input-file /tmp/dwarf-scraper-src.txt \
-    --scrapers struct-layout --database {{ dws_database }}
+
+  {{ _scraper() }} {{ _verbose() }} {{ _prefix() }} --read-input /tmp/dwarf-scraper-src.txt \
+    --database {{ dws_database }} flat-layout
+
+  rm -f /tmp/dwarf-scraper-src.txt
 {% endblock %}

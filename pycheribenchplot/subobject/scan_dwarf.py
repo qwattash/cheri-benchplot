@@ -3,11 +3,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, List, Optional
 
-from ..core.artefact import SQLTarget
+import polars as pl
+from sqlalchemy import select
+
+from ..core.analysis import AnalysisTask
+from ..core.artefact import DataFrameLoadTask, SQLTarget, ValueTarget
 from ..core.config import Config, ConfigPath
-from ..core.task import ExecutionTask, output
+from ..core.task import ExecutionTask, dependency, output
 from ..core.tvrs import TVRSExecConfig, TVRSExecTask
 from ..core.util import SubprocessHelper, resolve_system_command
+from .model import LayoutMember, TypeLayout
 
 
 @dataclass
@@ -39,7 +44,7 @@ class ExtractImpreciseScenario(Config):
     #: cheribuild rootfs.
     dwarf_data_sources: List[PathMatchSpec]
     #: Optional path prefix to strip from source file paths
-    strip_src_prefix: str | None = None
+    src_prefix: str | None = None
 
 
 class ExtractImpreciseSubobject(TVRSExecTask):
@@ -67,3 +72,51 @@ class ExtractImpreciseSubobject(TVRSExecTask):
             # XXX this should be relative to the benchmark run dir
             "dws_database": self.struct_layout_db.single_path()
         })
+
+
+class TypeLayoutLoader(DataFrameLoadTask):
+    """
+    Load flattened layouts from the database into a polars dataframe.
+    """
+    task_name = "type-layout-loader"
+
+    def __init__(self, target, query):
+        super().__init__(target)
+        self._query = query
+
+    def _load_one(self, path):
+        df = pl.read_database(self._query, self.target.sql_engine)
+        return df
+
+
+class LoadStructLayouts(AnalysisTask):
+    """
+    Load imprecise subobject data into an unified dataframe
+    for futher aggregation.
+    """
+    task_namespace = "subobject"
+    task_name = "load-struct-layouts"
+
+    def __init__(self, session, analysis_config, query=None, **kwargs):
+        super().__init__(session, analysis_config, **kwargs)
+        if query is None:
+            query = select(TypeLayout, LayoutMember).join(LayoutMember.owner_entry)
+        self._query = query
+
+    @output
+    def struct_layouts(self):
+        return ValueTarget(self, "all-layouts")
+
+    @dependency
+    def dataset_layouts(self):
+        for desc in self.session.all_benchmarks():
+            task = desc.find_exec_task(ExtractImpreciseSubobject)
+            yield TypeLayoutLoader(task.struct_layout_db, self._query)
+
+    def run(self):
+        super().run()
+        data = []
+        for loader in self.dataset_layouts:
+            data.append(loader.df.get())
+        df = pl.concat(data, how="vertical", rechunk=True)
+        self.struct_layouts.assign(df)

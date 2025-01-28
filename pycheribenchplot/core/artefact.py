@@ -3,8 +3,6 @@ from itertools import product
 from pathlib import Path
 from typing import Callable, ForwardRef, Iterator, Type
 
-import pandas as pd
-import pandera as pa
 import polars as pl
 import sqlalchemy as sqla
 from jinja2 import (Environment, PackageLoader, TemplateNotFound, select_autoescape)
@@ -12,7 +10,6 @@ from sqlalchemy.orm import Session as SqlSession
 from typing_extensions import Self
 
 from .borg import Borg
-from .model import BaseDataModel, DerivedSchemaBuilder
 from .task import DatasetTask, SessionTask, Task, output
 
 
@@ -245,14 +242,16 @@ class RemoteBenchmarkIterationTarget(BenchmarkIterationTarget, RemoteTarget):
             params = [*product(*param_gen.values())]
             # For this to make sense we should only have a single combination here
             if len(params) > 1:
-                self.logger.warning("Suspect script template output path: the bash template "
-                                    "should only vary along the 'iteration' axis. "
-                                    "Found combinations %s, arbitrarily taking the first.", params)
+                self.logger.warning(
+                    "Suspect script template output path: the bash template "
+                    "should only vary along the 'iteration' axis. "
+                    "Found combinations %s, arbitrarily taking the first.", params)
             param_args = dict(zip(self._path_parameters.keys(), params[0]))
             path_template = Path(self._path_template.format(**param_args))
             if path_template.is_absolute():
                 path_template = path_template.relative_to("/")
             return path_template
+
         return _gen_path
 
 
@@ -283,7 +282,7 @@ class DataFrameTarget(ValueTarget):
     """
     def __init__(self,
                  task: Task,
-                 model: BaseDataModel | DerivedSchemaBuilder | None,
+                 model: "BaseDataModel | DerivedSchemaBuilder | None",
                  output_id: str | None = None,
                  **kwargs):
         if model:
@@ -314,10 +313,11 @@ class HTMLTemplateTarget(Target):
     """
     env = Environment(loader=PackageLoader("pycheribenchplot", "templates"), autoescape=select_autoescape())
 
-    def __init__(self, task: Task, template: str):
+    def __init__(self, task: Task, template: str, output_id: str | None = None):
         self._template = template
-        base_name = template.split(".")[0]
-        super().__init__(task, output_id=base_name, ext="html")
+        if output_id is None:
+            output_id = template.split(".")[0]
+        super().__init__(task, output_id=output_id, ext="html")
 
     def render(self, **kwargs):
         try:
@@ -337,11 +337,11 @@ class SQLTarget(Target):
     Queries can be executed by obtaining an SQL session as a
     context manager.
     """
-    def __init__(self, task: Task, output_id: str):
+    def __init__(self, task: Task, output_id: str, loader: Callable[[Self], Task] | None = None):
         self._engine = None
 
         # Borg state initialization here
-        super().__init__(task, output_id, ext="sqlite")
+        super().__init__(task, output_id, ext="sqlite", loader=loader)
         # Avoid creating useless engines
         if self._engine is None:
             db_path = self.single_path()
@@ -353,14 +353,13 @@ class SQLTarget(Target):
     def sql_engine(self):
         return self._engine
 
-    def session(self) -> SqlSession:
+    def sql_session(self) -> SqlSession:
         return SqlSession(self._engine)
 
 
 class DataFrameLoadTaskMixin:
     """
     Polars version of the dataframe load task.
-    XXX This should supersede the pandas one.
     """
     def _load_one_csv(self, path: Path, **kwargs) -> pl.DataFrame:
         """
@@ -472,56 +471,8 @@ class DataFrameLoadTaskMixin:
             acc.vstack(df, in_place=True)
         return acc.rechunk()
 
-    def _load_pandas_from(self, target: Target, schema) -> pd.DataFrame:
-        df = self._load_from(target)
-        pd_df = df.to_pandas()
-        if schema:
-            names = list(schema.index.names)
-            for n in names:
-                if n is None:
-                    self.logger.error("DataFrameSchema does not have name of index level, "
-                                      "if this is the only index level, it should have the "
-                                      "pandera.Field(check_name=True) descriptor")
-                    raise ValueError("Invalid DataFrameSchema index")
-            pd_df = pd_df.set_index(names)
-            pd_df = schema.validate(pd_df)
-        return pd_df
-
 
 class DataFrameLoadTask(DatasetTask, DataFrameLoadTaskMixin):
-    """
-    Internal task to load target data.
-
-    This is the default loader task that loads data from file targets.
-    """
-    task_namespace = "internal"
-    task_name = "target-load"
-
-    def __init__(self, benchmark: "Benchmark", target: Target, model: BaseDataModel | None = None):
-        self.target = target
-        self.model = model
-
-        # Borg state initialization occurs here
-        super().__init__(benchmark)
-
-    @property
-    def task_id(self):
-        return super().task_id + "-for-" + self.target.borg_state_id
-
-    def run(self):
-        if self.model:
-            schema = self.model.to_schema(self.session)
-            df = self._load_pandas_from(self.target, schema)
-        else:
-            df = self._load_pandas_from(self.target, None)
-        self.df.assign(df)
-
-    @output
-    def df(self):
-        return DataFrameTarget(self, self.model, output_id=f"loaded-df-for-{super().task_id}")
-
-
-class PLDataFrameLoadTask(DatasetTask, DataFrameLoadTaskMixin):
     """
     Internal task to load target data.
 
@@ -533,7 +484,7 @@ class PLDataFrameLoadTask(DatasetTask, DataFrameLoadTaskMixin):
     def __init__(self, target: Target):
         self.target = target
         if target.task.is_session_task():
-            raise TypeError("Use PLDataFrameSessionLoadTask for session-wide targets")
+            raise TypeError("Use DataFrameSessionLoadTask for session-wide targets")
 
         # Borg state initialization occurs here
         super().__init__(target.task.benchmark)
@@ -552,48 +503,15 @@ class PLDataFrameLoadTask(DatasetTask, DataFrameLoadTaskMixin):
 
 class DataFrameSessionLoadTask(SessionTask, DataFrameLoadTaskMixin):
     """
-    Internal task to load target data.
-
-    This is the default loader task that loads data from file targets.
+    Internal task to load session-wide target data.
     """
     task_namespace = "internal"
     task_name = "target-session-load"
 
-    def __init__(self, session: "Session", target: Target, model: BaseDataModel | None = None):
-        self.target = target
-        self.model = model
-
-        # Borg state initialization occurs here
-        super().__init__(session)
-
-    @property
-    def task_id(self):
-        return super().task_id + "-for-" + self.target.borg_state_id
-
-    def run(self):
-        if self.model:
-            schema = self.model.to_schema(self.session)
-            df = self._load_pandas_from(self.target, schema)
-        else:
-            df = self._load_pandas_from(self.target, None)
-        self.df.assign(df)
-
-    @output
-    def df(self):
-        return DataFrameTarget(self, self.model, output_id=f"loaded-df-for-{super().task_id}")
-
-
-class PLDataFrameSessionLoadTask(SessionTask, DataFrameLoadTaskMixin):
-    """
-    Internal task to load session-wide target data.
-    """
-    task_namespace = "internal"
-    task_name = "pl-target-session-load"
-
     def __init__(self, target: Target):
         self.target = target
         if target.task.is_dataset_task():
-            raise TypeError("Use PLDataFrameLoadTask for per-dataset targets")
+            raise TypeError("Use DataFrameLoadTask for per-dataset targets")
 
         # Borg state initialization occurs here
         super().__init__(target.task.session)
@@ -610,14 +528,6 @@ class PLDataFrameSessionLoadTask(SessionTask, DataFrameLoadTaskMixin):
         return ValueTarget(self, output_id=f"loaded-df-for-{super().task_id}")
 
 
-def make_dataframe_loader(model: BaseDataModel | None = None) -> Callable[[Target], Task]:
-    """
-    Helper to build a DataFrameLoader task for a given model, given a target object.
-    """
-    def with_model(target: Target) -> Task:
-        if target.task.is_session_task():
-            return DataFrameSessionLoadTask(target.task.session, target, model)
-        else:
-            return DataFrameLoadTask(target.task.benchmark, target, model)
-
-    return with_model
+# Just alias the old names
+PLDataFrameSessionLoadTask = DataFrameSessionLoadTask
+PLDataFrameLoadTask = DataFrameLoadTask
