@@ -325,6 +325,47 @@ class AnalysisTask(SessionTask):
         else:
             return self._do_mean_overhead(df, metric, extra_groupby, overhead_scale)
 
+    def histogram(self,
+                  df: pl.DataFrame,
+                  value: str,
+                  bins: list[float] | None = None,
+                  bin_count: int = 100,
+                  prefix: str = "hist_",
+                  extra_groupby: list[str] | None = None) -> pl.DataFrame:
+        """
+        Compute an histogram along the parameterization axes.
+        This produces two columns:
+         - <prefix>bin containing bin left edges
+         - <prefix>count containing histogram data
+
+        :param df: Input dataframe.
+        :param value: Name of the column to build the histogram from.
+        :param bins: Custom bin breakpoints, by default determined by data min and max.
+        :param bin_count: Number of bins to use when custom bins are not provided.
+        :param prefix: Column prefix for output columns.
+        :param extra_groupby: Any additional group levels other than the parameterization axes.
+        :returns: New dataframe containing the histogram data in long form.
+        """
+        param_columns = self.param_columns
+        if extra_groupby:
+            param_columns += extra_groupby
+
+        if not bins:
+            if bin_count <= 0:
+                raise ValueError(f"Invalid bin_count {bin_count} must be > 0")
+            lo, hi = df[value].min(), df[value].max()
+            bins = np.arange(lo, hi, (hi - lo) / bin_count)
+
+        hist_column = f"{prefix}_histogram"
+        hdf = df.group_by(param_columns).agg(
+            pl.col(value).hist(bins=bins, include_breakpoint=True).alias(hist_column),
+            # Note: preserve the columns assuming the param_columns form a table key
+            cs.by_name(df.columns).exclude(param_columns).first())
+        hdf = hdf.explode(hist_column).with_columns(
+            pl.col(hist_column).struct[0].alias(f"{prefix}bin"),
+            pl.col(hist_column).struct[1].alias(f"{prefix}count"))
+        return hdf.select(df.columns + [f"{prefix}bin", f"{prefix}count"])
+
 
 class DatasetAnalysisTask(AnalysisTask):
     """
