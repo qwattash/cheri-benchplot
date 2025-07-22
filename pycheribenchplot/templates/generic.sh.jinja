@@ -1,0 +1,29 @@
+{#
+ # Runner script for generic workloads.
+ # This extends the standard runner-script.sh.jinja template
+ #
+ # This supports the timing and hwpmc extensions.
+ #}
+{% extends "runner-script.sh.jinja" %}
+
+{% import "timing.inc.jinja" as timing with context %}
+{% import "hwpmc.inc.jinja" as hwpmc with context %}
+
+{% macro _gen_command(iter) %}
+  {{ hwpmc.pmcstat(iter) }} {{ generic_config.command | trim }}
+{% endmacro %}
+
+{% block iteration_exec %}
+  echo "Run command {{ generic_config.command }} iteration {{ current_iteration }}"
+
+  {% call() timing.timeit(current_iteration) -%}
+    {{ _gen_command(current_iteration) | trim }}
+  {%- endcall %}
+{% endblock %}
+
+{% block global_teardown %}
+  {{ super() }}
+  {% for i in range(iterations) %}
+    {{ hwpmc.pmcstat_postprocess(i) }}
+  {% endfor %}
+{% endblock global_teardown %}

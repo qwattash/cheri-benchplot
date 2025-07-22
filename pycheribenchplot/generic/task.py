@@ -1,18 +1,23 @@
 import shlex
 from dataclasses import dataclass
 
-from ..core.artefact import BenchmarkIterationTarget
-from ..core.config import Config
-from ..core.task import ExecutionTask, output
+from ..core.artefact import RemoteBenchmarkIterationTarget
+from ..core.config import Config, config_field
+from ..core.task import output
+from .timing import TimingConfig, TimingExecTask
 
 
 @dataclass
-class GenericTaskConfig(Config):
+class GenericTaskConfig(TimingConfig):
     #: The command to execute
-    command: str
+    command: str = config_field(None, desc="Workload command to execute")
+    #: Collect command output, note this is incompatible with timing.
+    collect_stdout: bool = config_field(False, desc="Collect command stdout, note this is incompatible with timing")
+
+    # XXX validation hook to check for collect_stdout && timing conflict
 
 
-class GenericExecTask(ExecutionTask):
+class GenericExecTask(TimingExecTask):
     """
     This is a simple generic executor that uses the run_options configuration entry to run
     a custom command and collect the output to the output file.
@@ -23,11 +28,10 @@ class GenericExecTask(ExecutionTask):
 
     @output
     def stdout(self):
-        return BenchmarkIterationTarget(self, "stdout", ext="txt")
+        # TODO handle optional outputs as optional dependencies
+        return RemoteBenchmarkIterationTarget(self, "stdout", ext="txt")
 
     def run(self):
-        for i, path_entry in range(self.benchmark.config.iterations, self.stdout.paths()):
-            _, output_path = path_entry
-            section = self.script.benchmark_sections[i]["benchmark"]
-            parts = shlex.split(self.config.command)
-            section.add_cmd(parts[0], parts[1:], output=output_path)
+        super().run()
+        self.script.set_template("generic.sh.jinja")
+        self.script.extend_context({"generic_config": self.config, "stdout_paths": self.stdout.shell_path_builder()})
