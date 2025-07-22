@@ -1,0 +1,109 @@
+{
+    "version": "1.0",
+    "benchmark_config": {
+        "name": "c18n benchmarking",
+        "desc": "Whatever",
+        "iterations": 1,
+        "parameterize": {
+            "cpuarch": ["toooba", "morello"],
+            "uarch": ["base", "ddep", "strq"],
+            "host-variant": ["base", "zicond", "benchmark"],
+            "host": ["{cpuarch}-{uarch}-{host-variant}"],
+            "variant": ["func-plt", "socket", "pipe", "mutex", "signal"],
+            "runtime": ["c18n-enabled", "c18n-disabled"],
+            "twoway": ["yes", "no"],
+            "bufsize": ["64, 128"],
+            "scenario": ["{bufsize}"]
+        },
+        "parameterize_options": {
+            "skip": [
+                {"cpuarch": "toooba", "uarch": "ddep"},
+                {"cpuarch": "toooba", "uarch": "strq"},
+                {"cpuarch": "morello", "host-variant": "zicond"},
+                {"cpuarch": "toooba", "host-variant": "benchmark"},
+
+                {"variant": "socket", "runtime": "c18n-enabled"},
+                {"variant": "pipe", "runtime": "c18n-enabled"},
+                {"variant": "mutex", "runtime": "c18n-enabled"},
+                {"variant": "signal", "runtime": "c18n-enabled"},
+            ]
+        },
+        "system": [{
+            "matches": { "cpuarch": "toooba", "uarch": "base", "host-variant": "base" },
+            "host_system": {
+                "name": "toooba-base",
+                "kernel": "CHERI-PURECAP-GFE-NODEBUG",
+                "cheri_target": "riscv64-purecap",
+                "kernelabi": "purecap"
+            }
+        }, {
+            "matches": { "cpuarch": "toooba", "uarch": "base", "host-variant": "zicond" },
+            "host_system": {
+                "name": "toooba-zicond",
+                "kernel": "CHERI-PURECAP-GFE-NODEBUG",
+                "cheri_target": "riscv64-purecap",
+                "kernelabi": "purecap"
+            }
+        }, {
+            "matches": { "cpuarch": "morello", "uarch": "base", "host-variant": "base" },
+            "host_system": {
+                "name": "morello-base",
+                "kernel": "GENERIC-MORELLO-PURECAP",
+                "cheri_target": "morello-purecap",
+                "kernelabi": "purecap"
+            }
+        }, {
+            "matches": { "cpuarch": "morello", "uarch": "ddep", "host-variant": "base" },
+            "host_system": {
+                "name": "morello-ddep",
+                "kernel": "GENERIC-MORELLO-PURECAP",
+                "cheri_target": "morello-purecap",
+                "kernelabi": "purecap"
+            }
+        }, {
+            "matches": { "cpuarch": "morello", "uarch": "strq", "host-variant": "base" },
+            "host_system": {
+                "name": "morello-strq",
+                "kernel": "GENERIC-MORELLO-PURECAP",
+                "cheri_target": "morello-purecap",
+                "kernelabi": "purecap"
+            }
+        }, {
+            "matches": { "cpuarch": "morello", "uarch": "base", "host-variant": "benchmark" },
+            "host_system": {
+                "name": "morello-bench-base",
+                "kernel": "GENERIC-MORELLO-PURECAP",
+                "cheri_target": "morello-purecap",
+                "kernelabi": "purecap"
+            }
+        }, {
+            "matches": { "cpuarch": "morello", "uarch": "ddep", "host-variant": "benchmark" },
+            "host_system": {
+                "name": "morello-bench-ddep",
+                "kernel": "GENERIC-MORELLO-PURECAP",
+                "cheri_target": "morello-purecap",
+                "kernelabi": "purecap"
+            }
+        }, {
+            "matches": { "cpuarch": "morello", "uarch": "strq", "host-variant": "benchmark" },
+            "host_system": {
+                "name": "morello-bench-strq",
+                "kernel": "GENERIC-MORELLO-PURECAP",
+                "cheri_target": "morello-purecap",
+                "kernelabi": "purecap"
+            }
+        }],
+        "command_hooks": {
+            "setup": [{
+                "matches": {},
+                "commands": [
+                    "sysctl security.cheri.runtime_revocation_default=0"
+                ]
+            }]
+        },
+        "generators": [{
+            "handler": "c18n-microbench.exec",
+            "task_options": {}
+        }]
+    }
+}
