@@ -223,7 +223,7 @@ class AnnotateImpreciseSubobjectLayouts(AnalysisTask):
 
         # Finally, coalesce _aliased_by color lists, keeping all left columns unchanged
         tmp_df = tmp_df.group_by(STRUCT_MEMBER_ID_COLS).agg((~cs.ends_with("__r") & cs.exclude("_aliased_by")).first(),
-                                                            pl.col("_aliased_by"))
+                                                            pl.col("_aliased_by").drop_nulls())
 
         assert len(tmp_df) == len(df)
         assert set(tmp_df.columns) == set(df.columns + ["_aliased_by", "_alias_color"])
