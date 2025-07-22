@@ -50,12 +50,12 @@ class PlotGridConfig(Config):
         4, desc="Number of columns in the legend, this affects the necessary vspace and tile_aspect.")
 
     def set_default(self, **kwargs):
-        for key, value in kwargs.items():
-            if hasattr(self, key) and getattr(self, key) is None:
-                setattr(self, key, value)
+        defaults = {k: v for k, v in kwargs.items() if hasattr(self, k) and getattr(self, k) is None}
+        config = replace(self, **defaults)
+        return config
 
     def setdefault(self, **kwargs):
-        self.set_default(**kwargs)
+        return self.set_default(**kwargs)
 
     def set_fixed(self, **kwargs) -> Self:
         """
