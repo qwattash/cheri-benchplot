@@ -264,7 +264,7 @@ Finally, we update the `command` to run `proccontrol` and we use template substi
         "parameterize": {
             "host": ["morello"],
             "variant": ["default"],
-            "runtime": ["enabled", "disabled"],
+            "runtime": ["enable", "disable"],
             "scenario": ["https://github.com/CTSRD-CHERI/cheribsd-ports.git"]
         },
         "system": [{
@@ -309,7 +309,7 @@ Session clone-demo (cbd72a08-2fc6-47a9-920e-5e00ed385f12):
                 Parameterization:
                  - host = morello
                  - variant = default
-                 - runtime = enabled
+                 - runtime = enable
                  - scenario = https://github.com/CTSRD-CHERI/cheribsd-ports.git
                  - target = morello
                 Generators:
@@ -318,7 +318,7 @@ Session clone-demo (cbd72a08-2fc6-47a9-920e-5e00ed385f12):
                 Parameterization:
                  - host = morello
                  - variant = default
-                 - runtime = disabled
+                 - runtime = disable
                  - scenario = https://github.com/CTSRD-CHERI/cheribsd-ports.git
                  - target = morello
                 Generators:
