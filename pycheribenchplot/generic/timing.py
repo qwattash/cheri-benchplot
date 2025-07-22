@@ -12,7 +12,11 @@ from ..core.task import ExecutionTask, dependency, output
 
 
 class TimingTool(Enum):
+    #: Do not collect timing
+    DISABLED = "disabled"
+    #: Use the UNIX time utility
     TIME = "time"
+    #: Use the hyperfine tool (dependency for the benchmark host)
     HYPERFINE = "hyperfine"
 
 
@@ -25,7 +29,7 @@ class IngestTimingStats(PLDataFrameLoadTask):
     """
     Loader for stats data that produces a standard polars dataframe.
     """
-    task_namespace = "unixbench"
+    task_namespace = "timing"
     task_name = "ingest-stats"
 
     def _load_one(self, path: Path) -> pl.DataFrame:
@@ -77,7 +81,8 @@ class IngestTimingStats(PLDataFrameLoadTask):
 
 class TimingExecTask(ExecutionTask):
     """
-    Mixin for execution tasks that configures the timing helpers
+    This task can either be used as a base task by inheriting both the configuration and the
+    task, or as a separate generator in the same was as PMC.
     """
     @property
     def timing_config(self):

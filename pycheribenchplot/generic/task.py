@@ -2,7 +2,7 @@ import shlex
 from dataclasses import dataclass
 
 from ..core.artefact import RemoteBenchmarkIterationTarget
-from ..core.config import Config, config_field
+from ..core.config import config_field
 from ..core.task import output
 from .timing import TimingConfig, TimingExecTask
 
