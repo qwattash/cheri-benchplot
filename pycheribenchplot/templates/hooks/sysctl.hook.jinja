@@ -1,0 +1,10 @@
+{#
+ # This hook samples a set of sysctl values and dumps the output to a file.
+ #
+ # The `phase` variable is expected to be defined in the parent scope.
+ #}
+{% if hook_phase == "setup" or hook_phase == "iter_setup" -%}
+sysctl -e {{ sysctl_config.names | join(" ") }} > {{ sysctl_gen_out_before(iteration) }}
+{% elif hook_phase == "teardown" or hook_phase == "iter_teardown" -%}
+sysctl -e {{ sysctl_config.names | join(" ") }} > {{ sysctl_gen_out_after(iteration) }}
+{% endif %}
