@@ -157,30 +157,46 @@ class AnalysisTask(SessionTask):
             baseline.select(cs.by_name(join_columns).n_unique()).transpose(
                 include_header=True, header_name="column",
                 column_names=["n_values"]).filter(pl.col("n_values") > 1)["column"])
-        jdf = df.join(baseline, on=dof).select(~cs.ends_with("_right"))
-        # Note that we expect the shape of the dataframe not to change
-        assert jdf.shape[0] == df.shape[0], "Unexpected baseline join result"
+        if dof:
+            jdf = df.join(baseline, on=dof).select(~cs.ends_with("_right"))
+            # Note that we expect the shape of the dataframe not to change
+            assert jdf.shape[0] == df.shape[0], "Unexpected baseline join result"
+        else:
+            # No unconstrained param_columns on the baseline, this should be a single row
+            # If this is the case, it means we also have a single iteration.
+            # There is no point of bootstrapping in this case, but the functions
+            # below will take care of this.
+            assert baseline.shape[0] == 1, "Unexpected baseline shape"
+            jdf = df.join(baseline, how="cross")
+        assert metric_b in jdf.columns, "Baseline data column missing"
         df = jdf
 
         ci_low_col = f"{metric}_low"
         ci_high_col = f"{metric}_high"
 
         def _bootstrap(chunk: "DataFrame", selectors, statistic_fn):
-            data = tuple(chunk[s] for s in selectors)
-            if len(data[0]) > 1:
-                boot = scs.bootstrap(data, statistic_fn, vectorized=True, method="basic")
+            """
+            Compute a bootstrap confidence interval for the given statistic.
+            The selectors argument extracts the columns to use as arguments
+            for the statistic.
+            The first selector MUST be the `metric` column.
+            """
+            assert selectors[0] == metric
+            args = tuple(chunk[s] for s in selectors)
+
+            if chunk.shape[0] > 1:
+                boot = scs.bootstrap(args, statistic_fn, vectorized=True, method="basic")
                 ci_low, ci_high = boot.confidence_interval.low, boot.confidence_interval.high
             else:
-                self.logger.debug("Can not bootstrap confidence interval with < 2 samples")
-                ci_low = statistic_fn(*data, axis=0)
-                ci_high = statistic_fn(*data, axis=0)
-
-            stat_chunk = chunk.select(
+                res = statistic_fn(*args, axis=0)
+                ci_low = ci_high = res
+            s_value = statistic_fn(*args, axis=0)
+            stats_chunk = chunk.select(
                 cs.by_name(param_columns).first(),
-                pl.lit(statistic_fn(*data, axis=0)).alias(metric),
+                pl.lit(s_value).alias(metric),
                 pl.lit(ci_low).alias(ci_low_col),
                 pl.lit(ci_high).alias(ci_high_col))
-            return stat_chunk
+            return stats_chunk
 
         def _median_diff(left, right, axis=-1):
             return np.median(left, axis=axis) - np.median(right, axis=axis)
