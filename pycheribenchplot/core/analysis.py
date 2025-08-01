@@ -1,5 +1,6 @@
 import copy
 from dataclasses import MISSING, dataclass, field
+from functools import cached_property
 from pathlib import Path
 from typing import List, Optional, Type
 from uuid import UUID
@@ -157,10 +158,17 @@ class AnalysisTask(SessionTask):
             baseline.select(cs.by_name(join_columns).n_unique()).transpose(
                 include_header=True, header_name="column",
                 column_names=["n_values"]).filter(pl.col("n_values") > 1)["column"])
+        self.logger.debug("Bootstrap statistics with param=%s extra=%s baseline=%s dof=%s", self.param_columns,
+                          extra_groupby, baseline_sel, dof)
         if dof:
             jdf = df.join(baseline, on=dof).select(~cs.ends_with("_right"))
             # Note that we expect the shape of the dataframe not to change
-            assert jdf.shape[0] == df.shape[0], "Unexpected baseline join result"
+            if jdf.shape[0] != df.shape[0]:
+                self.logger.fatal(
+                    "Unexpected baseline join result. Your data may not be aligned on the "
+                    "free baseline axes, consider checking that every parameterisation group "
+                    "has all the value combinations for %s", dof)
+                raise RuntimeError("Data constraint violation")
         else:
             # No unconstrained param_columns on the baseline, this should be a single row
             # If this is the case, it means we also have a single iteration.
@@ -239,6 +247,23 @@ class AnalysisTask(SessionTask):
         a dataframe containing data for this session.
         """
         return list(self._param_columns)
+
+    @property
+    def param_columns_with_iter(self) -> list[str]:
+        """
+        Return the set of parameter names that are configured by the parameterisation matrix,
+        with the addition of the iteration index column.
+        """
+        return [*self.param_columns, "iteration"]
+
+    @property
+    def key_columns_with_iter(self) -> list[str]:
+        """
+        Row ID columns including the iteration.
+        This includes the parameterisation columns and the dataset ID colum,
+        plus the iteration index.
+        """
+        return ["dataset_id", *self.param_columns, "iteration"]
 
     def get_instance_config(self, g_uuid: str) -> InstanceConfig:
         """
@@ -549,7 +574,8 @@ class GenericAnalysisConfig(Config):
     #: XXX I think I want to allow multiple task specs here
     #: We should have a special configuration type for SliceTargetConfig
     #: this would allow us to filter for slice targets at configuration time
-    broadcast: TaskTargetConfig = config_field(MISSING, desc="Analysis task that is run for each fixed_axes grouping")
+    broadcast: List[TaskTargetConfig] = config_field(MISSING,
+                                                     desc="Analysis task that is run for each fixed_axes grouping")
 
     #: Name of axes to keep fixed and broadcast. Note that the names are
     #: completely user-defined. We have a reserved set of axes that must
@@ -614,15 +640,21 @@ class GenericAnalysisTask(AnalysisTask):
         Note that this depends on the inner slice task, so we can define multiple
         generic analysis passes within the same analysis configuration.
         """
-        slice_id = self.broadcast_task_class.task_namespace + "." + self.broadcast_task_class.task_name
+        task_id = f"{super().task_id}-slice"
+        for broadcast_class, _ in self.resolved_slice_tasks:
+            task_id += "-" + broadcast_class.task_namespace + broadcast_class.task_name
 
-        return f"{super().task_id}-slice-{slice_id}"
+        return task_id
 
-    @property
-    def broadcast_task_class(self) -> Type[SliceAnalysisTask]:
+    @cached_property
+    def resolved_slice_tasks(self) -> list[tuple[Type[SliceAnalysisTask], Config]]:
         # Note: the config layer guarantees that the handler is valid at this point
         # XXX we need to support multiple broadcast handlers
-        return TaskRegistry.resolve_task(self.config.broadcast.handler)[0]
+        task_types = []
+        for slice_config in self.config.broadcast:
+            for slice_task_type in TaskRegistry.resolve_task(slice_config.handler):
+                task_types.append((slice_task_type, slice_config.task_options))
+        return task_types
 
     @dependency
     def children(self):
@@ -633,10 +665,12 @@ class GenericAnalysisTask(AnalysisTask):
             groups = self.session.parameterization_matrix.group_by(self.config.fixed_axes)
         else:
             groups = [(tuple(), self.session.parameterization_matrix)]
-        for name, group_slice in groups:
-            group_options = copy.deepcopy(self.config.broadcast.task_options)
-            fixed_slice_params = dict(zip(self.config.fixed_axes, name))
-            slice_info = ParamSliceInfo(fixed_params=fixed_slice_params,
-                                        free_axes=list(self._free_axes),
-                                        rank=self._rank)
-            yield self.broadcast_task_class(self.session, slice_info, self.analysis_config, group_options)
+        for slice_task, slice_config in self.resolved_slice_tasks:
+            for name, group_slice in groups:
+                group_options = copy.deepcopy(slice_config)
+                fixed_slice_params = dict(zip(self.config.fixed_axes, name))
+                slice_info = ParamSliceInfo(fixed_params=fixed_slice_params,
+                                            free_axes=list(self._free_axes),
+                                            rank=self._rank)
+                # XXX check that the rank is not too large
+                yield slice_task(self.session, slice_info, self.analysis_config, group_options)
