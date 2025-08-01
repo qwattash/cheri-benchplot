@@ -21,7 +21,7 @@ from marshmallow import Schema, ValidationError, validates, validates_schema
 from marshmallow.validate import And, ContainsOnly, OneOf, Predicate
 from marshmallow_dataclass import NewType, class_schema
 from typing_extensions import Self
-from typing_inspect import get_args, get_origin, is_generic_type, is_union_type
+from typing_inspect import (get_args, get_origin, is_generic_type, is_optional_type, is_union_type)
 
 from .error import ConfigurationError
 from .util import new_logger, root_logger
@@ -295,6 +295,42 @@ def config_field(default: Any, desc: str = None, field_kwargs: dict = None, **me
     return dc.field(**kwargs)
 
 
+def describe_type(dtype) -> tuple[str, list[Type["Config"]]]:
+    """
+    Given a field type annotation, provide a description of the accepted types.
+
+    This returns a tuple with a textual description of the data type and
+    a list containing all the referenced nested Config types.
+    """
+    if is_optional_type(dtype):
+        desc_str, config_types = describe_type(get_args(dtype)[0])
+        return f"<{desc_str}>?", config_types
+    if is_union_type(dtype):
+        desc = [describe_type(t) for t in get_args(dtype)]
+        desc_str = " | ".join(map(lambda d: d[0], desc))
+        config_types = list(it.chain(*map(lambda d: d[1], desc)))
+        return desc_str, config_types
+    if is_generic_type(dtype):
+        origin = get_origin(dtype)
+        config_types = []
+        if origin == dict:
+            kt, vt = get_args(dtype)
+            kt_desc, conf_t = describe_type(kt)
+            config_types.extend(conf_t)
+            vt_desc, conf_t = describe_type(vt)
+            config_types.extend(conf_t)
+            return f"dict[{kt_desc}, {vt_desc}]", config_types
+        if origin == list:
+            lt_desc, config_types = describe_type(get_args(dtype)[0])
+            return f"list[{lt_desc}]", config_types
+
+    config_types = []
+    if dc.is_dataclass(dtype) and issubclass(dtype, Config):
+        config_types.append(dtype)
+    type_name = dtype.__name__
+    return str(type_name).split(".")[-1], config_types
+
+
 @dc.dataclass
 class Config:
     """
@@ -333,6 +369,7 @@ class Config:
         """
         Produce a human-readable description of the configuration.
         """
+        nested_configs = set()
         desc = StringIO()
         for idx, field in enumerate(dc.fields(cls)):
             help_ = field.metadata.get("desc")
@@ -343,8 +380,8 @@ class Config:
                 help_string = "".join(map(lambda l: f"#: {l}\n", wrap(help_)))
                 desc.write(help_string)
 
-            dtype = field.type if is_generic_type(field.type) else field.type.__name__
-            dtype = str(dtype).split(".")[-1]
+            dtype, nested = describe_type(field.type)
+            nested_configs.update(nested)
             desc.write(f"{field.name}: {dtype}")
             if field.default != dc.MISSING:
                 desc.write(f" = {field.default}")
@@ -353,6 +390,14 @@ class Config:
             else:
                 desc.write(" <required>")
             desc.write("\n")
+
+        for config_type in nested_configs:
+            desc.write("\n")
+            desc.write(config_type.__name__ + "\n")
+            desc.write("=" * len(config_type.__name__))
+            desc.write(config_type.__doc__ + "\n")
+            desc.write(indent(config_type.describe(), " " * 4))
+
         return desc.getvalue()
 
     def __post_init__(self):
