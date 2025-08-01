@@ -130,10 +130,6 @@ class TimingSlicePlotTask(SlicePlotTask):
     #: Describe overridable axes for plot output
     synthetic_axes = ["_metric_type"]
 
-    @property
-    def timing_config(self):
-        return self.config
-
     @dependency
     def timing(self):
         for b in self.session.all_benchmarks():
@@ -160,8 +156,8 @@ class TimingSlicePlotTask(SlicePlotTask):
         name_mapping_defaults = {"times": default_display_name}
         if self.config.hue:
             name_defaults.update({self.config.hue: self.config.hue.capitalize()})
+
         grid_config = self.config.set_display_defaults(param_names=name_mapping_defaults)
-        # XXX propagate the whole tiling configuration
         with DisplayGrid(target, view_df, grid_config) as grid:
             grid.map(grid_barplot, x=self.config.tile_xaxis, y="times", err=["times_low", "times_high"])
             grid.add_legend()
