@@ -247,6 +247,8 @@ class PlotGrid(AbstractContextManager):
         # This will be populated after the frame sort order is known
         self._color_palette = None
         self._rc_context = None
+        # This is set when legend is enabled, kwargs may be an empty dict
+        self._legend_kwargs = None
 
     def __enter__(self):
         # Determine tiling row and column parameters
@@ -274,9 +276,10 @@ class PlotGrid(AbstractContextManager):
         self.map(self._set_titles)
         if self._rc_context:
             self._rc_context.__exit__(exc_type, exc_value, traceback)
-        # XXX provide a way to adjust these
-        # self._figure.tight_layout()
-        # self._figure.subplots_adjust(bottom=0.15)
+        if self._legend_kwargs is not None:
+            self._generate_legend()
+            # XXX provide a way to adjust these
+            # self._figure.subplots_adjust(bottom=0.15)
         for path in self._target.paths():
             self._figure.savefig(path)
         plt.close(self._figure)
@@ -351,6 +354,25 @@ class PlotGrid(AbstractContextManager):
     def _make_tile(self, ax, ri, ci, row, col):
         return PlotTile(ax=ax, hue=self._config.hue, palette=self._color_palette, coords=(ri, ci), loc=(row, col))
 
+    def _generate_legend(self):
+        if not self._config.hue:
+            return
+        self._figure.tight_layout()
+        if self._config.legend_hide:
+            return
+        labels = self._df[self.hue_param].unique(maintain_order=True)
+        patches = [Patch(color=color) for color in self._color_palette]
+        reserved_y_fraction = 1 - self._config.legend_vspace
+
+        # Make space between the title and the subplot axes
+        self._figure.subplots_adjust(top=reserved_y_fraction, bottom=self._config.legend_vspace)
+        self._figure.legend(patches,
+                            labels,
+                            bbox_to_anchor=(0., reserved_y_fraction, 1., self._config.legend_vspace),
+                            ncols=self._config.legend_columns,
+                            loc="center",
+                            **self._legend_kwargs)
+
     @property
     def tile_row_param(self):
         return self._config.tile_row
@@ -375,23 +397,12 @@ class PlotGrid(AbstractContextManager):
                 tile_plotter(tile, chunk, *args, **kwargs)
 
     def add_legend(self, **kwargs):
-        if not self._config.hue:
-            return
-        self._figure.tight_layout()
-        if self._config.legend_hide:
-            return
-        labels = self._df[self.hue_param].unique(maintain_order=True)
-        patches = [Patch(color=color) for color in self._color_palette]
-        reserved_y_fraction = 1 - self._config.legend_vspace
+        """
+        Add the legend on top of the axes.
 
-        # Make space between the title and the subplot axes
-        self._figure.subplots_adjust(top=reserved_y_fraction, bottom=self._config.legend_vspace)
-        self._figure.legend(patches,
-                            labels,
-                            bbox_to_anchor=(0., reserved_y_fraction, 1., self._config.legend_vspace),
-                            ncols=self._config.legend_columns,
-                            loc="center",
-                            **kwargs)
+        The legend is generated lazily on contextmanager exit.
+        """
+        self._legend_kwargs = kwargs
 
 
 class DisplayGrid(PlotGrid):
