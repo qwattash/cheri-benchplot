@@ -1,19 +1,19 @@
-from dataclasses import dataclass, field
+import copy
+from dataclasses import MISSING, dataclass, field
 from pathlib import Path
-from typing import Type
+from typing import List, Optional, Type
 from uuid import UUID
 from warnings import warn
 
 import numpy as np
-import pandas as pd
 import polars as pl
 import polars.selectors as cs
 import scipy.stats as scs
 
 from .artefact import BenchmarkIterationTarget, DataFrameTarget
 from .benchmark import Benchmark
-from .config import AnalysisConfig, Config, InstanceConfig
-from .task import ExecutionTask, SessionTask, dependency
+from .config import (AnalysisConfig, Config, InstanceConfig, TaskTargetConfig, config_field)
+from .task import ExecutionTask, SessionTask, TaskRegistry, dependency
 
 
 class AnalysisTask(SessionTask):
@@ -188,8 +188,8 @@ class AnalysisTask(SessionTask):
                 boot = scs.bootstrap(args, statistic_fn, vectorized=True, method="basic")
                 ci_low, ci_high = boot.confidence_interval.low, boot.confidence_interval.high
             else:
-                res = statistic_fn(*args, axis=0)
-                ci_low = ci_high = res
+                # Do not generate error  bars, single iteration
+                ci_low = ci_high = None
             s_value = statistic_fn(*args, axis=0)
             stats_chunk = chunk.select(
                 cs.by_name(param_columns).first(),
@@ -464,3 +464,179 @@ class DatasetAnalysisTaskGroup(AnalysisTask):
     def run(self):
         # Nothing to do here
         pass
+
+
+@dataclass
+class ParamSliceInfo:
+    """
+    Internal helper that identifies a parameterization slice
+    """
+    #: Map { param_name: param_value } that identifies this slice
+    fixed_params: dict[str, any]
+    #: Names of free-floating parameters in this slice
+    free_axes: list[str]
+    #: Rank the slice. This is the number of
+    #: free_axes that are actually independent of each other.
+    rank: int
+
+    @property
+    def fixed_axes(self) -> list[str]:
+        return list(self.fixed_params.keys())
+
+
+class SliceAnalysisTask(AnalysisTask):
+    """
+    Base class for slice analysis tasks.
+
+    This task is scheduled by a GenericAnalysisTask to generate results based
+    on an arbitrary separation of `fixed_axes` and `free_axes` in the
+    parameterisation.
+
+    Note that a publicly visible SliceAnalysisTask can only be scheduled
+    within a GenericAnalysisTask. When free-floating, the session automatically
+    generates a GenericAnalysisTask with a default set of `free_axes`.
+
+    XXX this is not a session task, the current distinction of
+    Session vs Dataset does not make sense here.
+    I need to inherit AnalysisTask because I want to reuse the overhead computing.
+    """
+    #: Maximum number of `free_axes` supported
+    max_degrees_of_freedom = 4
+
+    #: List of valid data axes statically known for this task
+    data_axes: list[str] = []
+
+    def __init__(self,
+                 session: "Session",
+                 slice_info: ParamSliceInfo,
+                 analysis_config: AnalysisConfig,
+                 task_config: Config | None = None):
+        self._slice_info = slice_info
+        # Borg state initialization
+        super().__init__(session, analysis_config, task_config)
+
+    @property
+    def task_id(self):
+        """
+        Note that this depends on the inner slice task, so we can define multiple
+        generic analysis passes within the same analysis configuration.
+        """
+        param_pairs = map("_".join, self._slice_info.fixed_params.items())
+        slice_id = "-".join(param_pairs) or "nofixed"
+        return f"{super().task_id}-slice-{slice_id}"
+
+    @property
+    def all_data_axes(self) -> list[str]:
+        """
+        Produce a list of legal data axes for this analysis task.
+        This is used to validate the configuration input.
+        """
+        return self.data_axes
+
+
+@dataclass
+class GenericAnalysisConfig(Config):
+    """
+    Base configuration for generic analysis tasks.
+
+    This specifies two groups of parameterisation axes:
+     1. The `fixed_axes` are used to slice the input data and broadcast the
+        groups to the configured SliceAnalysisTask.
+     2. The `free_axes` are the degrees of freedom available to the
+        SliceAnalysisTask.
+    """
+    #: The handler that we broadcast each data slice to, must be a SliceAnalysisConfig.
+    #: XXX I think I want to allow multiple task specs here
+    #: We should have a special configuration type for SliceTargetConfig
+    #: this would allow us to filter for slice targets at configuration time
+    broadcast: TaskTargetConfig = config_field(MISSING, desc="Analysis task that is run for each fixed_axes grouping")
+
+    #: Name of axes to keep fixed and broadcast. Note that the names are
+    #: completely user-defined. We have a reserved set of axes that must
+    #: always be present: ["target", "scenario"], but need not be fixed.
+    fixed_axes: List[str] = config_field(list, desc="Parameterisation axes to keep fixed")
+
+    #: Override the baseline selector for this specific analysis
+    baseline: Optional[dict] = config_field(
+        None, desc="Override baseline selector. This must uniquely identify a single benchmark run.")
+
+
+class GenericAnalysisTask(AnalysisTask):
+    """
+    A generic analysis task allows to configure the grouping and slicing of
+    dependent and independent variables.
+
+    Let's assume that we have a set of parameterization axes A, B, C, D; where
+    A = {a_1, a_2 ...} and so forth.
+    This task allows to arbitrarily split the set into two groups:
+     1. The `fixed_axes` are the set of axes that we fix across the sub-analyses.
+     2. The `free_axes` are the set of axes that are allowed to vary within
+        each sub-analysis.
+
+    So, for instance, if we set fixed_axes = [A, B] and free_axes = [C, D],
+    this task will schedule N dependent SliceAnalysisTask, where N = card(A x B).
+    Each SliceAnalysisTask is assigned a tuple (a_i, b_i) that identifies the data slice,
+    this tuple is fixed within the slice.
+    The SliceAnalysisTask is in charge of analysing a subset of the data; this task will
+    produce a result and the user can configure how the free_axes are handled.
+
+    The top-level GenericAnalysisTask collects the input data into a single dataframe
+    that is then sliced dynamically for the SliceAnalysisTasks.
+
+    This is the base class that can be extended by specific tasks or can be used directly
+    in the analysis configuration to configure the dynamic analysis.
+    When used directly, the analysis configuration permits the nested configuration of
+    a specific SliceAnalysisTask.
+    """
+    task_namespace = "analysis"
+    task_name = "dynamic"
+    task_config_class = GenericAnalysisConfig
+    public = True
+
+    def __init__(self, session: "Session", analysis_config: AnalysisConfig, task_config: Config | None = None):
+        super().__init__(session, analysis_config, task_config)
+
+        if not set(self.param_columns).issuperset(self.config.fixed_axes):
+            self.logger.error("Invalid configuration: fixed_axes=%s must be a subset of parameterisation %s",
+                              self.config.fixed_axes, self.param_columns)
+            raise ConfigurationError(f"Invalid {self.task_config_class} configuration")
+
+        self._free_axes = set(self.param_columns).difference(self.config.fixed_axes)
+        # Determine the degrees of freedom for the free axes
+        # XXX I need to groupby here
+        self._rank = self.session.parameterization_matrix.select(
+            pl.sum_horizontal(cs.by_name(self._free_axes).n_unique() > 1)).item()
+        self.logger.debug("Using axes fixed=%s free=%s (%d DOF)", self.config.fixed_axes, self._free_axes, self._rank)
+
+    @property
+    def task_id(self):
+        """
+        Note that this depends on the inner slice task, so we can define multiple
+        generic analysis passes within the same analysis configuration.
+        """
+        slice_id = self.broadcast_task_class.task_namespace + "." + self.broadcast_task_class.task_name
+
+        return f"{super().task_id}-slice-{slice_id}"
+
+    @property
+    def broadcast_task_class(self) -> Type[SliceAnalysisTask]:
+        # Note: the config layer guarantees that the handler is valid at this point
+        # XXX we need to support multiple broadcast handlers
+        return TaskRegistry.resolve_task(self.config.broadcast.handler)[0]
+
+    @dependency
+    def children(self):
+        """
+        Schedule one instance of task_class for each dataset in the session
+        """
+        if self.config.fixed_axes:
+            groups = self.session.parameterization_matrix.group_by(self.config.fixed_axes)
+        else:
+            groups = [(tuple(), self.session.parameterization_matrix)]
+        for name, group_slice in groups:
+            group_options = copy.deepcopy(self.config.broadcast.task_options)
+            fixed_slice_params = dict(zip(self.config.fixed_axes, name))
+            slice_info = ParamSliceInfo(fixed_params=fixed_slice_params,
+                                        free_axes=list(self._free_axes),
+                                        rank=self._rank)
+            yield self.broadcast_task_class(self.session, slice_info, self.analysis_config, group_options)

@@ -12,7 +12,7 @@ import matplotlib as mpl
 import polars as pl
 import seaborn as sns
 
-from .analysis import AnalysisTask, DatasetAnalysisTask
+from .analysis import AnalysisTask, DatasetAnalysisTask, SliceAnalysisTask
 from .artefact import Target
 from .config import Config
 from .task import Task
@@ -231,6 +231,17 @@ class DatasetPlotTask(DatasetAnalysisTask, PlotTaskMixin):
     Dataset-level plotting task.
 
     This task generates one or more plots for each dataset collected.
+    """
+    def run(self):
+        self._run_with_plot_sandbox()
+
+
+class SlicePlotTask(SliceAnalysisTask, PlotTaskMixin):
+    """
+    SliceAnalysisTask that produces one or more plots.
+
+    Note that the plot output will depend on the current slice ID.
+    See :class:`PlotTarget`.
     """
     def run(self):
         self._run_with_plot_sandbox()

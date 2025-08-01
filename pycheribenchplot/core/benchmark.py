@@ -266,7 +266,7 @@ class Benchmark:
         exec_task = BenchmarkExecTask(self, task_config=exec_config)
         return exec_task
 
-    def find_exec_task(self, task_class: Type[AnyExecTask]) -> AnyExecTask:
+    def find_exec_task(self, task_class: Type[AnyExecTask], include_subclass=False) -> AnyExecTask:
         """
         Find the given execution task configured for the current benchmark context.
 
@@ -282,6 +282,8 @@ class Benchmark:
                     self.logger.error("Found generator for %s but it is not an instance of %s", task.task_id,
                                       task_class)
                     raise RuntimeError("Invalid exec task instance")
+                return task
+            if include_subclass and isinstance(task, task_class):
                 return task
         # XXX Recursively look into dependencies
         raise TaskNotFound("Task %s can not be found among the session generators", task_class)

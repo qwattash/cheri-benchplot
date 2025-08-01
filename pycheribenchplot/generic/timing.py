@@ -6,7 +6,7 @@ import polars as pl
 
 from ..core.artefact import PLDataFrameLoadTask, RemoteBenchmarkIterationTarget
 from ..core.config import Config, config_field
-from ..core.plot import PlotTarget, PlotTask
+from ..core.plot import PlotTarget, PlotTask, SlicePlotTask
 from ..core.plot_util import (DisplayGrid, DisplayGridConfig, grid_barplot, grid_pointplot)
 from ..core.task import ExecutionTask, dependency, output
 
@@ -57,7 +57,7 @@ class IngestTimingStats(PLDataFrameLoadTask):
                 if len(entry) != 2:
                     raise RuntimeError(f"Invalid `time` output file {path}")
                 key, value = entry
-                data[key] = [value]
+                data[key] = [float(value)]
         return pl.DataFrame(data).rename({"real": "times"})
 
     def _load_hyperfine_sample(self, path: Path) -> pl.DataFrame:
@@ -112,11 +112,85 @@ class TimingPlotConfig(DisplayGridConfig):
     tile_xaxis: str = config_field("target", desc="Parameter to use for the X axis of each tile")
 
 
+class TimingSlicePlotTask(SlicePlotTask):
+    """
+    Simple overview of the collected timing data from a generic.exec task run.
+    """
+    task_namespace = "timing"
+    task_name = "plot-slice"
+    public = True
+    task_config_class = TimingPlotConfig
+
+    # XXX should be able to name a specific handler in config in case
+    # multiple tasks inherit from TimingExecTask?
+    exec_task_class = TimingExecTask
+
+    #: Describe allowed data axes for output
+    data_axes = ["times"]
+    #: Describe overridable axes for plot output
+    synthetic_axes = ["_metric_type"]
+
+    @property
+    def timing_config(self):
+        return self.config
+
+    @dependency
+    def timing(self):
+        for b in self.session.all_benchmarks():
+            task = b.find_exec_task(self.exec_task_class, include_subclass=True)
+            yield task.timing.get_loader()
+
+    @output
+    def absolute_time(self):
+        return PlotTarget(self, "abstime")
+
+    @output
+    def relative_time(self):
+        return PlotTarget(self, "reltime")
+
+    @output
+    def time_overhead(self):
+        return PlotTarget(self, "ovhtime")
+
+    def _collect_timing(self):
+        df = pl.concat((t.df.get() for t in self.timing), how="vertical", rechunk=True)
+        return df
+
+    def _do_plot(self, target, view_df, default_display_name):
+        name_mapping_defaults = {"times": default_display_name}
+        if self.config.hue:
+            name_defaults.update({self.config.hue: self.config.hue.capitalize()})
+        grid_config = self.config.set_display_defaults(param_names=name_mapping_defaults)
+        # XXX propagate the whole tiling configuration
+        with DisplayGrid(target, view_df, grid_config) as grid:
+            grid.map(grid_barplot, x=self.config.tile_xaxis, y="times", err=["times_low", "times_high"])
+            grid.add_legend()
+
+    def run_plot(self):
+        df = self._collect_timing()
+
+        self.logger.info("Compute timing statistics")
+        stats = self.compute_overhead(df, "times", how="median", overhead_scale=100)
+
+        self.logger.info("Plot absolute time measurements")
+        self._do_plot(self.absolute_time, stats.filter(_metric_type="absolute"), "Time (s)")
+
+        self.logger.info("Plot relative time measurements")
+        delta_stats = stats.filter((pl.col("_metric_type") == "delta") & ~pl.col("_is_baseline"))
+        self._do_plot(self.relative_time, delta_stats, "∆ Time (s)")
+
+        self.logger.info("Plot time overhead measurements")
+        ovh_stats = stats.filter((pl.col("_metric_type") == "overhead") & ~pl.col("_is_baseline"))
+        self._do_plot(self.time_overhead, ovh_stats, "% Overhead")
+
+
 class TimingPlotTask(PlotTask):
     """
     Base task to generate a set of plots with the extracted timing information.
 
     This supports execution tasks that are subclasses of TimingExecTask.
+
+    XXX DEPRECATED, use the slice task instead
     """
     task_config_class = TimingPlotConfig
     exec_task_class = None

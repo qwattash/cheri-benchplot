@@ -4,7 +4,7 @@ import shutil
 import subprocess
 from collections import defaultdict, namedtuple
 from contextlib import AbstractContextManager
-from dataclasses import asdict, fields
+from dataclasses import fields
 from enum import Enum
 from pathlib import Path
 from typing import Type

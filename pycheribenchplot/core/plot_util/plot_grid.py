@@ -362,7 +362,7 @@ class PlotGrid(AbstractContextManager):
         for i, (ax_stride, (row_param, row_chunk)) in enumerate(zip(self._grid, self._grid_rows(self._df))):
             for j, (ax, (col_param, chunk)) in enumerate(zip(ax_stride, self._grid_cols(row_chunk))):
                 tile = self._make_tile(ax, i, j, row_param, col_param)
-                self.logger.debug("PlotGrid: tile callback (%s, %s) %s", row_param, col_param, chunk)
+                self.logger.debug("PlotGrid: tile callback (row=%s, col=%s) %s", row_param, col_param, chunk)
                 tile_plotter(tile, chunk, *args, **kwargs)
 
     def add_legend(self, **kwargs):
