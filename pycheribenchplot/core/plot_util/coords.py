@@ -98,17 +98,17 @@ class CoordGenerator:
         # This means that every shift_by and stack_by group must have the same number of elements.
         tmp_col = f"{prefix}_tmp"
         if config.shift_by:
-            check = df.group_by(config.shift_by).len(name=tmp_col).select(pl.col(tmp_col) == pl.col(tmp_col).max())
-            if not check[tmp_col].all():
+            shift_groups = df.group_by(config.shift_by).len(name="__len")
+            if shift_groups.n_unique("__len") != 1:
                 raise ValueError("The input dataframe is not aligned at the shift_by level")
-            ngroups = len(check)
+            ngroups = len(shift_groups)
         else:
             ngroups = 1
         if config.stack_by:
-            check = df.group_by(config.stack_by).len(name=tmp_col).select(pl.col(tmp_col) == pl.col(tmp_col).max())
-            if not check[tmp_col].all():
+            stack_groups = df.group_by(config.stack_by).len(name="__len")
+            if stack_groups.n_unique("__len") != 1:
                 raise ValueError("The input dataframe is not aligned at the stack_by level")
-            nstacks = len(check)
+            nstacks = len(stack_groups)
         else:
             nstacks = 1
         nmetrics = len(dependent_vars)
