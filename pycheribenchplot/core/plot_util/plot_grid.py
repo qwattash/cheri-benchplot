@@ -131,17 +131,26 @@ class DisplayGridConfig(PlotGridConfig):
     group_by over parameterization axes.
     """
     param_sort_weight: Optional[Dict[str, ParamWeight]] = config_field(
-        None, desc="Weight for determining the order of labels based on the parameters")
+        None,
+        desc="Weight for determining the order of labels based on the parameters. "
+        "The dictionary key must be a parameter name, the value is a weight descriptor.")
+
     param_sort_order: WeightOrder = config_field(WeightOrder.Ascending,
                                                  desc="Sort order by ascending or descending weight.")
+
     param_names: Optional[Dict[str, str]] = config_field(
         None, desc="Relabel parameter keys specified in PipelineBenchmarkConfig.parameterize")
+
     param_values: Optional[Dict[str, Dict[str, Any]]] = config_field(
-        None, desc="Relabel parameter values, specified as part of PipelineBenchmarkConfig.parameterize")
+        None,
+        desc="Relabel parameter values. The key is a parameter name, the value "
+        "is a mapping of the form { <parameter value> => <value alias> }.")
+
     param_filter: Optional[Dict[str, Any]] = config_field(
         None,
-        desc="Filter the data for the given set of parameters. Specify constraints as key=value pairs, " +
-        "multiple constraints on the same key are not supported.")
+        desc="Filter the data for the given set of parameters. Specify constraints as key=value pairs, "
+        "multiple constraints on the same key are not supported. Note that depending on the "
+        "tiling setup, this may result in an unaligned dataframe and cause errors.")
 
     def set_display_defaults(self,
                              param_names: dict | None = None,
