@@ -24,6 +24,7 @@ class PMCSet(Enum):
     Branch = "branch"
     TLB = "tlb"
     Stall = "stall"
+    Revocation = "revocation"
 
 
 PMC_SET_COUNTERS = {
@@ -58,6 +59,10 @@ PMC_SET_COUNTERS = {
     PMCSet.Stall: [
         "CPU_CYCLES", "INST_RETIRED", "STALL", "STALL_FRONTEND", "STALL_BACKEND", "STALL_SLOT", "STALL_SLOT_FRONTEND",
         "STALL_SLOT_BACKEND", "STALL_BACKEND_MEM"
+    ],
+    PMCSet.Revocation: [
+        "CPU_CYCLES", "INST_RETIRED", "INST_SPEC", "L1D_CACHE_REFILL", "L1D_CACHE", "BUS_ACCESS", "L1D_TLB_REFILL",
+        "L1D_TLB", "L2D_TLB_REFILL", "DTLB_WALK"
     ]
 }
 
