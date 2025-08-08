@@ -1,4 +1,5 @@
 import re
+from functools import cached_property
 from itertools import product
 from pathlib import Path
 from typing import Callable, ForwardRef, Iterator, Type
@@ -338,23 +339,18 @@ class SQLTarget(Target):
     context manager.
     """
     def __init__(self, task: Task, output_id: str, loader: Callable[[Self], Task] | None = None):
-        self._engine = None
-
         # Borg state initialization here
         super().__init__(task, output_id, ext="sqlite", loader=loader)
-        # Avoid creating useless engines
-        if self._engine is None:
-            db_path = self.single_path()
-            db_path.parent.mkdir(exist_ok=True)
-            assert db_path.is_absolute(), "The path must always be absolute here"
-            self._engine = sqla.create_engine(f"sqlite+pysqlite:///{db_path}")
 
-    @property
+    @cached_property
     def sql_engine(self):
-        return self._engine
+        db_path = self.single_path()
+        db_path.parent.mkdir(exist_ok=True)
+        assert db_path.is_absolute(), "The path must always be absolute here"
+        return sqla.create_engine(f"sqlite+pysqlite:///{db_path}")
 
     def sql_session(self) -> SqlSession:
-        return SqlSession(self._engine)
+        return SqlSession(self.sql_engine)
 
 
 class DataFrameLoadTaskMixin:

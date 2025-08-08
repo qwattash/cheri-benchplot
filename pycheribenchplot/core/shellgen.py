@@ -84,6 +84,10 @@ class TemplateContextBase:
                     continue
                 self._context[name] = value
 
+    @property
+    def context(self) -> dict[str, any]:
+        return self._context
+
     def render(self, fd: IO[str]):
         try:
             tmpl = ENV.get_template(self._template)
