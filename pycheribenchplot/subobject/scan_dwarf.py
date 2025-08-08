@@ -9,46 +9,44 @@ from sqlalchemy import func, select
 
 from ..core.analysis import AnalysisTask
 from ..core.artefact import DataFrameLoadTask, SQLTarget, ValueTarget
-from ..core.config import Config, ConfigPath
+from ..core.config import Config, ConfigPath, config_field
 from ..core.task import ExecutionTask, dependency, output
-from ..core.tvrs import TVRSExecConfig, TVRSExecTask
 from ..core.util import SubprocessHelper, resolve_system_command
 from .model import LayoutMember, TypeLayout
 
 
 @dataclass
 class PathMatchSpec(Config):
-    #: Base path interpreted as the command `find {path}`
-    path: ConfigPath
-    #: Path match regex interpreted as a grep regular expression
-    matcher: str | None = None
+    """
+    Path match specifier used to filter ELF objects that should be
+    scanned for DWARF information.
+    """
+    path: ConfigPath = config_field(Config.REQUIRED, desc="Base path interpreted as the command `find {path}`")
+
+    matcher: str | None = config_field(None, desc="Path match regex interpreted as a grep regular expression")
 
 
 @dataclass
-class ExtractImpreciseConfig(TVRSExecConfig):
+class ExtractImpreciseConfig(Config):
     """
     Configure the imprecise sub-object extractor.
     """
-    #: Optional path to the dwarf scraper tool
-    dwarf_scraper: ConfigPath | None = None
+    dwarf_scraper: ConfigPath | None = config_field(
+        None, desc="Optional path to the dwarf_scraper tool. Otherwise, assume that the tool is in $PATH")
 
-    #: Enable verbose output from dwarf_scraper
-    verbose_scraper: bool = False
+    verbose_scraper: bool = config_field(False, desc="Enable verbose output from dwarf_scraper")
 
+    dwarf_data_sources: list[PathMatchSpec] = config_field(
+        Config.REQUIRED,
+        desc="List of paths that are used to extract DWARF information. "
+        "Note that multiple paths will be considered as belonging to the same 'object', "
+        "if multiple objects are being compared, we should use parameterization. "
+        "Relative paths will be interpreted as relative paths into a cheribuild rootfs.")
 
-@dataclass
-class ExtractImpreciseScenario(Config):
-    #: List of paths that are used to extract DWARF information.
-    #: Note that multiple paths will be considered as belonging to the same "object",
-    #: if multiple objects are being compared, we should use parameterization.
-    #: Note that relative paths will be interpreted as relative paths into a
-    #: cheribuild rootfs.
-    dwarf_data_sources: List[PathMatchSpec]
-    #: Optional path prefix to strip from source file paths
-    src_prefix: str | None = None
+    src_prefix: str | None = config_field(None, desc="Optional path prefix to strip from source file paths")
 
 
-class ExtractImpreciseSubobject(TVRSExecTask):
+class ExtractImpreciseSubobject(ExecutionTask):
     """
     Extract CheriBSD DWARF type information for aggregate data types.
     This will generate a database using the dwarf_scraper tool.
@@ -60,7 +58,6 @@ class ExtractImpreciseSubobject(TVRSExecTask):
     task_name = "extract-imprecise"
     script_template = "dwarf-scraper.sh.jinja"
     task_config_class = ExtractImpreciseConfig
-    scenario_config_class = ExtractImpreciseScenario
 
     @output
     def struct_layout_db(self):
@@ -186,6 +183,10 @@ class AnnotateImpreciseSubobjectLayouts(AnalysisTask):
         Construct the transformed dataframe.
         """
         df = self.layouts.struct_layouts.get()
+        if len(df) == 0:
+            # XXX Did not find any imprecise members, return an empty frame with the right columns
+            self.imprecise_layouts.assign(df)
+            return
 
         # Columns that uniquely identify a structure layout within a dataset parameterization
         STRUCT_LAYOUT_ID_COLS = ["dataset_id", "name", "file", "line", "total_size"]
@@ -207,7 +208,7 @@ class AnnotateImpreciseSubobjectLayouts(AnalysisTask):
 
         # We then mark the members that fall within the base/top of imprecise members.
         top = pl.col("byte_offset") + pl.col("byte_size") + ((pl.col("bit_offset") + pl.col("bit_size")) / 8).ceil()
-        have_overlap = ((pl.col("byte_offset") <= pl.col("top__r")) & (pl.col("base__r") <= top) &
+        have_overlap = ((pl.col("byte_offset") < pl.col("top__r")) & (pl.col("base__r") < top) &
                         # Do not consider overlapping members that are known children of the imprecise member
                         ~pl.col("member_name").str.starts_with(pl.col("member_name__r") + "::") &
                         # Do not consider overlapping members that are known parents of the imprecise member
