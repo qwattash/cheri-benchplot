@@ -276,22 +276,29 @@ class ConfigContext:
         return resolved
 
 
-def config_field(default: Any, desc: str = None, field_kwargs: dict = None, **metadata) -> dc.Field:
+def config_field(default, /, desc: str = None, field_kwargs: dict = None, **metadata) -> dc.Field:
     """
     Helper to define configuration fields defaults
 
-    Use dataclasses.MISSING as default for required fields.
+    If the first argument is not provided, there is no default value and we will
+    enforce validation via marshmallow.
     """
+
     kwargs = dict(metadata=metadata)
     if field_kwargs is not None:
         kwargs.update(field_kwargs)
-    if callable(default):
-        kwargs["default_factory"] = default
+    if default == Config.REQUIRED:
+        # No default, make the field required but pacify dataclass
+        kwargs["metadata"]["required"] = True
+        kwargs["default"] = None
     else:
-        kwargs["default"] = default
-    if issubclass(type(default), Enum):
-        kwargs["metadata"].setdefault("by_value", True)
-    kwargs["metadata"]["desc"] = desc
+        if callable(default):
+            kwargs["default_factory"] = default
+        else:
+            kwargs["default"] = default
+        if issubclass(type(default), Enum):
+            kwargs["metadata"].setdefault("by_value", True)
+    kwargs["metadata"]["metadata"] = dict(desc=desc)
     return dc.field(**kwargs)
 
 
@@ -346,8 +353,10 @@ class Config:
     any unmatched template string will be retained unchanged after a call to
     :meth:`Config.bind`.
     """
-    class Meta:
-        ordered = True
+
+    #: Marker for required fields
+    def REQUIRED():
+        raise ValueError("Attempt to default-construct required field")
 
     @classmethod
     def schema(cls):
@@ -372,7 +381,8 @@ class Config:
         nested_configs = set()
         desc = StringIO()
         for idx, field in enumerate(dc.fields(cls)):
-            help_ = field.metadata.get("desc")
+            meta_ = field.metadata.get("metadata")
+            help_ = meta_.get("desc")
             if help_:
                 if idx > 0:
                     # Extra space to separate docstring from previous field
