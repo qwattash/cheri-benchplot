@@ -62,7 +62,8 @@ echo -e "\t{{ pkey }}='{{ pval }}'"
 {% block iteration_loop %}
   echo "Run benchmark for {{ iterations }} iterations"
   for ITERATION in $(seq 0 {{ iterations - 1 }}); do
-    {%- set current_iteration = "${ITERATION}" -%}
+    {% set current_iteration = "${ITERATION}" %}
+
     {%- block iteration_setup scoped %}
       {% for hook in iter_setup_hooks %}
         {{ gen_iter_hook("iter_setup", current_iteration, hook) }}

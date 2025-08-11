@@ -23,7 +23,7 @@ class PathMatchSpec(Config):
     """
     path: ConfigPath = config_field(Config.REQUIRED, desc="Base path interpreted as the command `find {path}`")
 
-    matcher: str | None = config_field(None, desc="Path match regex interpreted as a grep regular expression")
+    matcher: str | None = config_field(None, desc="Path match regex interpreted as a grep extended regular expression")
 
 
 @dataclass
@@ -56,7 +56,6 @@ class ExtractImpreciseSubobject(ExecutionTask):
     public = True
     task_namespace = "subobject"
     task_name = "extract-imprecise"
-    script_template = "dwarf-scraper.sh.jinja"
     task_config_class = ExtractImpreciseConfig
 
     @output
@@ -65,6 +64,7 @@ class ExtractImpreciseSubobject(ExecutionTask):
 
     def run(self):
         super().run()
+        self.script.set_template("dwarf-scraper.sh.jinja")
         self.script.extend_context({
             "dws_config": self.config,
             # XXX this should be relative to the benchmark run dir
