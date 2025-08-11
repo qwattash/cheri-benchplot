@@ -20,6 +20,7 @@ setup(name="pycheribenchplot",
           "sqlalchemy", "sqlalchemy_utils", "pyarrow"
       ],
       extras_require={"dev": [
+          "pre-commit",
           "pytest",
           "pytest-mock",
           "pytest-timeout",
