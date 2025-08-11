@@ -1,12 +1,9 @@
-import os
-import re
 import subprocess
 from pathlib import Path
 
 import polars as pl
 import pytest
 
-from pycheribenchplot.core.config import AnalysisConfig
 from pycheribenchplot.subobject.scan_dwarf import *
 
 from .util.session import *

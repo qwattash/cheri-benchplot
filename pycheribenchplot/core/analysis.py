@@ -555,7 +555,10 @@ class SliceAnalysisTask(AnalysisTask):
         Produce a slice of the session parameterisation matrix with the
         descriptors for the current slice.
         """
-        sliced = self.session.parameterization_matrix.filter(**self.slice_info.fixed_params)
+        if self.slice_info.fixed_params:
+            sliced = self.session.parameterization_matrix.filter(**self.slice_info.fixed_params)
+        else:
+            sliced = self.session.parameterization_matrix
         return sliced["descriptor"]
 
     @property

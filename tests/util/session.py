@@ -1,16 +1,15 @@
 #
 # Utility for standard session and benchmark fixtures
 #
-import random
 import typing
 import uuid
 from pathlib import Path
 
 import pytest
 
+from pycheribenchplot.core.analysis import ParamSliceInfo, SliceAnalysisTask
 from pycheribenchplot.core.artefact import Target
-from pycheribenchplot.core.config import (AnalysisConfig, BenchplotUserConfig, Config, SessionRunConfig,
-                                          TaskTargetConfig)
+from pycheribenchplot.core.config import (AnalysisConfig, BenchplotUserConfig, Config, SessionRunConfig)
 from pycheribenchplot.core.session import Session
 from pycheribenchplot.core.shellgen import ScriptContext
 from pycheribenchplot.core.task import SessionTask, Task
@@ -89,17 +88,20 @@ class TaskFactory:
         if analysis_config is None:
             analysis_config = AnalysisConfig()
 
-        if issubclass(task_type, SessionTask):
+        if issubclass(task_type, SliceAnalysisTask):
+            return task_type(self._session, ParamSliceInfo(fixed_params={}, free_axes=["target"], rank=1),
+                             analysis_config, config)
+        elif issubclass(task_type, SessionTask):
             if task_type.is_exec_task():
                 return task_type(self._session, script=None, task_config=config)
             else:
-                return task_type(self._session, analysis_config=analysis_config, task_config=config)
+                return task_type(self._session, analysis_config, task_config=config)
         else:
             context = self._session.all_benchmarks()[0]
             if task_type.is_exec_task():
                 return task_type(context, script=ScriptContext(context), task_config=config)
             else:
-                return task_type(context, analysis_config=analysis_config, task_config=config)
+                return task_type(context, analysis_config, task_config=config)
 
 
 @pytest.fixture
