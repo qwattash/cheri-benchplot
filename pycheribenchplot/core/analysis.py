@@ -639,9 +639,22 @@ class GenericAnalysisTask(AnalysisTask):
 
         self._free_axes = set(self.param_columns).difference(self.config.fixed_axes)
         # Determine the degrees of freedom for the free axes
-        # XXX I need to groupby here
-        self._rank = self.session.parameterization_matrix.select(
-            pl.sum_horizontal(cs.by_name(self._free_axes).n_unique() > 1)).item()
+        # Use a one-hot encoding for the values for each non-numeric column, as a result
+        # each non-numeric parameter axis contributes at most k - 1 independent columns
+        # to the encoded matrix.
+        # In order to distinguish the number of linearly independent columns in the paramater
+        # matrix, we do an SVD decomposition of the encoded matrix.
+        # The s vector contains the singular values, counting non-zero values will give us the rank.
+        # free_ax_sel = (cs.by_name(self._free_axes) & ~cs.numeric())
+        # onehot_df = self.session.parameterization_matrix.select(free_ax_sel.name.suffix("_dummy")).to_dummies()
+        # encoded_df = self.session.parameterization_matrix.select(self._free_axes).drop(free_ax_sel).hstack(onehot_df)
+        # matrix = encoded_df.to_numpy().astype(float)
+        # U, s, Vh = np.linalg.svd(matrix, full_matrices=False)
+        # rank = np.sum(s > 10**-10)
+
+        # XXX this is not true, need to do something more refined
+        self._rank = len(self._free_axes)
+
         self.logger.debug("Using axes fixed=%s free=%s (%d DOF)", self.config.fixed_axes, self._free_axes, self._rank)
 
     @property
