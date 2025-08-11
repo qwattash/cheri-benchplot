@@ -1,16 +1,37 @@
+from dataclasses import dataclass
+
 import polars as pl
 
-from ..core.analysis import AnalysisTask
+from ..core.analysis import SliceAnalysisTask
 from ..core.artefact import HTMLTemplateTarget
+from ..core.config import Config, config_field
 from ..core.task import dependency, output
 from .scan_dwarf import AnnotateImpreciseSubobjectLayouts
 
 
-class TargetGroupHelper:
-    def __init__(self, group_id, desc, struct_list):
+class BlockGroupHelper:
+    def __init__(self, group_id, df):
         self.id = group_id
-        self.desc = desc
-        self.struct_list = struct_list
+        self._df = df
+
+    @property
+    def desc(self):
+        """
+        Human readable description of the free parameter axes for this block group
+        """
+        assert self._df.n_unique("_block") == 1, "Invalid block group"
+        return self._df["_block"].first()
+
+    @property
+    def struct_list(self):
+        """
+        Generate a list of data structure descriptors for the block.
+        The data strucutes will have a stable order across blocks.
+        """
+        ## XXX sort by field index as well?
+        struct_groups = self._df.sort(by=["name", "file", "line"]).group_by("id", maintain_order=True)
+        for (struct_id, ), struct_members in struct_groups:
+            yield StructDescHelper(struct_id, struct_members)
 
 
 class StructDescHelper:
@@ -20,7 +41,6 @@ class StructDescHelper:
 
         # Generate helper columns
         self.df = self.df.with_columns(pl.col("member_name").str.strip_prefix(pl.col("name") + "::"))
-
         self.df = self.df.with_columns(
             (pl.col("member_name").str.split("::").list.len() - 1).alias("_record_helper_depth"),
             (~pl.col("array_items").is_null()).alias("_record_helper_is_array"))
@@ -63,7 +83,16 @@ class StructDescHelper:
         return self.df.sort(by=["member_id", "byte_offset", "bit_offset"])
 
 
-class ImpreciseSubobjectLayouts(AnalysisTask):
+@dataclass
+class ImpreciseSubobjectConfig(Config):
+    """
+    Configure imprecise subobject report rendering.
+    """
+    group_name: list[str] | None = config_field(
+        None, desc="List of parameter axes to include in the subobject group description")
+
+
+class ImpreciseSubobjectLayouts(SliceAnalysisTask):
     """
     Render an HTML to interactively browse the structure layouts with annotated
     imprecise sub-objects.
@@ -74,16 +103,18 @@ class ImpreciseSubobjectLayouts(AnalysisTask):
     public = True
     task_namespace = "subobject"
     task_name = "imprecise-layouts"
+    task_config_class = ImpreciseSubobjectConfig
+
+    # Allow only one-dimensional data in the slice parameterisation.
+    max_degrees_of_freedom = 1
 
     @dependency
     def layouts(self):
-        return AnnotateImpreciseSubobjectLayouts(self.session, self.analysis_config)
+        return AnnotateImpreciseSubobjectLayouts(self.session, self.slice_info, self.analysis_config)
 
-    def outputs(self):
-        yield from super().outputs()
-        scenarios = self.layouts.imprecise_layouts.get()["scenario"].unique()
-        for scenario in scenarios:
-            yield (scenario, HTMLTemplateTarget(self, "html/imprecise-subobject-layout.html.jinja", scenario))
+    @output
+    def html_output(self):
+        return HTMLTemplateTarget(self, "imprecise-subobject-layout.html.jinja")
 
     def run(self):
         """
@@ -93,20 +124,17 @@ class ImpreciseSubobjectLayouts(AnalysisTask):
         """
         df = self.layouts.imprecise_layouts.get()
 
-        def make_struct_list(df_slice) -> list[StructDescHelper]:
-            ## XXX sort by field index as well?
-            struct_groups = df_slice.sort(by=["name", "file", "line"]).group_by("id", maintain_order=True)
-            desc_list = []
-            for (struct_id, ), struct_members in struct_groups:
-                desc_list.append(StructDescHelper(struct_id, struct_members))
-            return desc_list
+        if self.config.group_name is None:
+            self.config.group_name = self.slice_info.free_axes
+        block_desc = [pl.lit(f"{n}=") + pl.col(n) for n in self.config.group_name]
+        df = df.with_columns(pl.concat_str(block_desc, separator=" ").alias("_block"))
 
-        for (scenario, ), df_slice in df.group_by("scenario"):
-            dslice = df_slice.with_columns((pl.lit("target=") + pl.col("target") + pl.lit(" variant=") +
-                                            pl.col("variant") + " runtime=" + pl.col("runtime")).alias("_block"))
-            blocks = dslice.sort(by="_block").group_by("_block", maintain_order=True)
-            layout_data = []
-            for index, (group_keys, data) in enumerate(blocks):
-                layout_data.append(TargetGroupHelper(index, group_keys[0], make_struct_list(data)))
+        if self.slice_info.free_axes:
+            blocks = df.group_by(self.slice_info.free_axes)
+        else:
+            blocks = [(None, df)]
 
-            self.output_map[scenario].render(layout_data=layout_data)
+        layout_data = []
+        for index, (_, block_df) in enumerate(blocks):
+            layout_data.append(BlockGroupHelper(index, block_df))
+        self.html_output.render(layout_data=layout_data)

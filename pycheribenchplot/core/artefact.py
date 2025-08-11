@@ -2,7 +2,8 @@ import re
 from functools import cached_property
 from itertools import product
 from pathlib import Path
-from typing import Callable, ForwardRef, Iterator, Type
+from typing import Callable, Iterator
+from warnings import deprecated
 
 import polars as pl
 import sqlalchemy as sqla
@@ -155,7 +156,7 @@ class Target(Borg):
         if self._loader:
             loader_factory = self._loader
         else:
-            loader_factory = make_dataframe_loader()
+            raise NotImplementedError("Implement default dataframe loading")
 
         return loader_factory(self)
 
@@ -277,33 +278,9 @@ class ValueTarget(Target):
         return self._value
 
 
+@deprecated("Use ValueTarget directly")
 class DataFrameTarget(ValueTarget):
-    """
-    Target wrapping an output dataframe from a task.
-    """
-    def __init__(self,
-                 task: Task,
-                 model: "BaseDataModel | DerivedSchemaBuilder | None",
-                 output_id: str | None = None,
-                 **kwargs):
-        if model:
-            schema = model.to_schema(task.session)
-            validator = lambda df: schema.validate(df)
-        else:
-            validator = lambda df: df.copy()
-        # Original model for checking
-        self._model = model
-
-        if output_id is None:
-            output_id = model.get_name() if model is not None else "frame"
-        # Borg state initialization occurs here
-        super().__init__(task, output_id, validator=validator, **kwargs)
-
-        # Sanity check to verify that the model is consistent
-        if model and self._model != model:
-            task.logger.error("DataFrameTarget ID collision detected for %s, output_id=%s", self.borg_state_id,
-                              output_id)
-            raise RuntimeError("DataFrameTarget Target ID collision")
+    pass
 
 
 class HTMLTemplateTarget(Target):
@@ -312,7 +289,7 @@ class HTMLTemplateTarget(Target):
 
     Note that the templates are located in pycheribenchplot/templates.
     """
-    env = Environment(loader=PackageLoader("pycheribenchplot", "templates"), autoescape=select_autoescape())
+    env = Environment(loader=PackageLoader("pycheribenchplot", "templates/html"), autoescape=select_autoescape())
 
     def __init__(self, task: Task, template: str, output_id: str | None = None):
         self._template = template

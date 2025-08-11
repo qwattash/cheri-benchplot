@@ -1,9 +1,7 @@
 import copy
-from dataclasses import MISSING, dataclass, field
+from dataclasses import MISSING, dataclass
 from functools import cached_property
-from pathlib import Path
-from typing import List, Optional, Type
-from uuid import UUID
+from typing import List, Optional, Type, TypeAlias
 from warnings import deprecated
 
 import numpy as np
@@ -11,10 +9,13 @@ import polars as pl
 import polars.selectors as cs
 import scipy.stats as scs
 
-from .artefact import BenchmarkIterationTarget, DataFrameTarget
 from .benchmark import Benchmark
 from .config import (AnalysisConfig, Config, InstanceConfig, TaskTargetConfig, config_field)
-from .task import ExecutionTask, SessionTask, TaskRegistry, dependency
+from .error import ConfigurationError
+from .task import SessionTask, TaskRegistry, dependency
+
+# Forward definition, XXX remove circular import if possible...
+Session: TypeAlias = "Session"
 
 
 class AnalysisTask(SessionTask):
@@ -30,7 +31,7 @@ class AnalysisTask(SessionTask):
     """
     task_namespace = "analysis"
 
-    def __init__(self, session: "Session", analysis_config: AnalysisConfig, task_config: Config | None = None):
+    def __init__(self, session: Session, analysis_config: AnalysisConfig, task_config: Config | None = None):
         super().__init__(session, task_config=task_config)
         # Analysis configuration for this invocation
         self.analysis_config = analysis_config
@@ -99,8 +100,7 @@ class AnalysisTask(SessionTask):
         ovh = delta.with_columns(
             pl.lit(metric + "_overhead").alias("_metric_type"),
             (pl.col(metric) / pl.col(bs_val)).mul(overhead_scale),
-            ((pl.col(m_std) / pl.col(metric)).pow(2) +
-             (pl.col(bs_std) / pl.col(bs_val)).pow(2)).alias("_tmp_sum_of_err_squared"),
+            rel_err_sum.alias("_tmp_sum_of_err_squared"),
         ).with_columns((pl.col(metric).abs() * pl.col("_tmp_sum_of_err_squared").sqrt()).alias(m_std)).with_columns(
             # Mask the baseline slice with NaN
             pl.when(**baseline_sel).then(float("nan")).otherwise(pl.col(metric)).alias(metric),
@@ -182,7 +182,7 @@ class AnalysisTask(SessionTask):
         ci_low_col = f"{metric}_low"
         ci_high_col = f"{metric}_high"
 
-        def _bootstrap(chunk: "DataFrame", selectors, statistic_fn):
+        def _bootstrap(chunk: pl.DataFrame, selectors, statistic_fn):
             """
             Compute a bootstrap confidence interval for the given statistic.
             The selectors argument extracts the columns to use as arguments
@@ -292,7 +292,7 @@ class AnalysisTask(SessionTask):
             self.logger.error("Missing baseline selector in analysis configuration")
             raise ValueError("Invalid Configuration")
 
-        if type(baseline_sel) == dict:
+        if type(baseline_sel) is dict:
             # If we have the 'instance' parameter, replace it with the corresponding
             # dataset_gid
             if "instance" in baseline_sel:
@@ -463,7 +463,7 @@ class DatasetAnalysisTaskGroup(AnalysisTask):
     task_name = "sched-group"
 
     def __init__(self,
-                 session: "Session",
+                 session: Session,
                  task_class: Type[DatasetAnalysisTask],
                  analysis_config: AnalysisConfig,
                  task_config: Config | None = None):
@@ -531,7 +531,7 @@ class SliceAnalysisTask(AnalysisTask):
     max_degrees_of_freedom = 4
 
     def __init__(self,
-                 session: "Session",
+                 session: Session,
                  slice_info: ParamSliceInfo,
                  analysis_config: AnalysisConfig,
                  task_config: Config | None = None):
@@ -545,17 +545,25 @@ class SliceAnalysisTask(AnalysisTask):
         Note that this depends on the inner slice task, so we can define multiple
         generic analysis passes within the same analysis configuration.
         """
-        param_pairs = map("_".join, self._slice_info.fixed_params.items())
+        param_pairs = map("=".join, self._slice_info.fixed_params.items())
         slice_id = "-".join(param_pairs) or "nofixed"
         return f"{super().task_id}-slice-{slice_id}"
 
     @property
-    def all_data_axes(self) -> list[str]:
+    def slice_benchmarks(self) -> list[Benchmark]:
         """
-        Produce a list of legal data axes for this analysis task.
-        This is used to validate the configuration input.
+        Produce a slice of the session parameterisation matrix with the
+        descriptors for the current slice.
         """
-        return self.data_axes
+        sliced = self.session.parameterization_matrix.filter(**self.slice_info.fixed_params)
+        return sliced["descriptor"]
+
+    @property
+    def slice_info(self) -> ParamSliceInfo:
+        """
+        Get the slice parameterisation descriptor.
+        """
+        return self._slice_info
 
 
 @dataclass
@@ -618,7 +626,7 @@ class GenericAnalysisTask(AnalysisTask):
     task_config_class = GenericAnalysisConfig
     public = True
 
-    def __init__(self, session: "Session", analysis_config: AnalysisConfig, task_config: Config | None = None):
+    def __init__(self, session: Session, analysis_config: AnalysisConfig, task_config: Config | None = None):
         super().__init__(session, analysis_config, task_config)
 
         if not set(self.param_columns).issuperset(self.config.fixed_axes):

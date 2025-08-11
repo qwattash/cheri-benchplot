@@ -1,17 +1,13 @@
-import re
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Iterator, List, Optional
 
 import polars as pl
 import polars.selectors as cs
 from sqlalchemy import func, select
 
-from ..core.analysis import AnalysisTask
+from ..core.analysis import SliceAnalysisTask
 from ..core.artefact import DataFrameLoadTask, SQLTarget, ValueTarget
 from ..core.config import Config, ConfigPath, config_field
 from ..core.task import ExecutionTask, dependency, output
-from ..core.util import SubprocessHelper, resolve_system_command
 from .model import LayoutMember, TypeLayout
 
 
@@ -87,7 +83,7 @@ class TypeLayoutLoader(DataFrameLoadTask):
         return df
 
 
-class LoadStructLayouts(AnalysisTask):
+class LoadStructLayouts(SliceAnalysisTask):
     """
     Load imprecise subobject data into an unified dataframe
     for futher aggregation.
@@ -95,8 +91,8 @@ class LoadStructLayouts(AnalysisTask):
     task_namespace = "subobject"
     task_name = "load-struct-layouts"
 
-    def __init__(self, session, analysis_config, query=None, **kwargs):
-        super().__init__(session, analysis_config, **kwargs)
+    def __init__(self, session, slice_info, analysis_config, query=None, **kwargs):
+        super().__init__(session, slice_info, analysis_config, **kwargs)
         if query is None:
             query = select(TypeLayout, LayoutMember).join(LayoutMember.owner_entry)
         self._query = query
@@ -107,7 +103,7 @@ class LoadStructLayouts(AnalysisTask):
 
     @dependency
     def dataset_layouts(self):
-        for desc in self.session.all_benchmarks():
+        for desc in self.slice_benchmarks:
             task = desc.find_exec_task(ExtractImpreciseSubobject)
             yield TypeLayoutLoader(task.struct_layout_db, self._query)
 
@@ -120,7 +116,7 @@ class LoadStructLayouts(AnalysisTask):
         self.struct_layouts.assign(df)
 
 
-class AnnotateImpreciseSubobjectLayouts(AnalysisTask):
+class AnnotateImpreciseSubobjectLayouts(SliceAnalysisTask):
     """
     Load imprecise subobject data and annotate imprecise subobject layouts.
 
@@ -172,7 +168,7 @@ class AnnotateImpreciseSubobjectLayouts(AnalysisTask):
             .where(TypeLayout.id.in_(has_imprecise))
         )
         # yapf: enable
-        return LoadStructLayouts(self.session, self.analysis_config, query=q)
+        return LoadStructLayouts(self.session, self.slice_info, self.analysis_config, query=q)
 
     @output
     def imprecise_layouts(self):
