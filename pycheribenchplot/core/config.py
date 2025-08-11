@@ -12,14 +12,14 @@ from enum import Enum, auto
 from io import StringIO
 from pathlib import Path
 from textwrap import indent, wrap
-from typing import Any, Dict, List, Optional, Set, Type, Union
+from typing import Annotated, Any, Dict, List, Optional, Set, Type, Union
 from uuid import UUID, uuid4
 
 import marshmallow.fields as mfields
 from git import Repo
 from marshmallow import Schema, ValidationError, validates, validates_schema
 from marshmallow.validate import And, ContainsOnly, OneOf, Predicate
-from marshmallow_dataclass import NewType, class_schema
+from marshmallow_dataclass import class_schema
 from typing_extensions import Self
 from typing_inspect import (get_args, get_origin, is_generic_type, is_optional_type, is_union_type)
 
@@ -179,12 +179,12 @@ class UUIDField(mfields.Field):
 
 
 # Helper type for dataclasses to use the PathField
-ConfigTaskSpec = NewType("ConfigTaskSpec", str, field=TaskSpecField)
-ConfigExecTaskSpec = NewType("ConfigExecTaskSpec", str, field=ExecTaskSpecField)
-ConfigPath = NewType("ConfigPath", Path, field=PathField)
-ConfigAny = NewType("ConfigAny", Any, field=mfields.Raw)
-LazyNestedConfig = NewType("LazyNestedConfig", dict[str, Any], field=LazyNestedConfigField)
-UUIDStr = NewType("UUIDStr", str, field=UUIDField)
+ConfigTaskSpec = Annotated[str, TaskSpecField]
+ConfigExecTaskSpec = Annotated[str, ExecTaskSpecField]
+ConfigPath = Annotated[Path, PathField]
+ConfigAny = Annotated[Any, mfields.Raw]
+LazyNestedConfig = Annotated[dict[str, Any], LazyNestedConfigField]
+UUIDStr = Annotated[str, UUIDField]
 
 
 class ConfigContext:
