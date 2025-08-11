@@ -1,11 +1,9 @@
 from dataclasses import dataclass
 
+import numpy as np
 import polars as pl
-import polars.selectors as cs
-import seaborn as sns
-from sqlalchemy import func, select
 
-from ..core.plot import PlotTarget, PlotTask
+from ..core.plot import PlotTarget, SlicePlotTask
 from ..core.plot_util import DisplayGrid, DisplayGridConfig, grid_barplot
 from ..core.task import dependency, output
 from .scan_dwarf import AnnotateImpreciseSubobjectLayouts
@@ -16,7 +14,7 @@ class ImpreciseSizeDistPlotConfig(DisplayGridConfig):
     pass
 
 
-class ImpreciseSizeDistPlot(PlotTask):
+class ImpreciseSizeDistPlot(SlicePlotTask):
     """
     Produce a plot that shows the distribution of subobject imprecision sizes.
 
@@ -25,12 +23,14 @@ class ImpreciseSizeDistPlot(PlotTask):
     """
     public = True
     task_namespace = "subobject"
-    task_name = "imprecise-size-dist-plot"
+    task_name = "imprecise-size-distribution"
     task_config_class = ImpreciseSizeDistPlotConfig
+
+    rc_params = {"text.usetex": True}
 
     @dependency
     def layouts(self):
-        return AnnotateImpreciseSubobjectLayouts(self.session, self.analysis_config)
+        return AnnotateImpreciseSubobjectLayouts(self.session, self.slice_info, self.analysis_config)
 
     @output
     def size_dist(self):
@@ -52,15 +52,29 @@ class ImpreciseSizeDistPlot(PlotTask):
                              (pl.col("top") - req_top).alias("top_padding"))
         assert (df["base_padding"] >= 0).all(), "Negative base padding!"
         assert (df["top_padding"] >= 0).all(), "Negative top padding!"
-        base_pad_hist = self.histogram(df, "base_padding", prefix="hist_").with_columns(pl.lit("base").alias("side"))
-        top_pad_hist = self.histogram(df, "top_padding", prefix="hist_").with_columns(pl.lit("top").alias("side"))
-        hist = pl.concat([base_pad_hist, top_pad_hist], how="vertical")
+        # Compute padding size range for bins
+        bin_max = max(df["base_padding"].max(), df["top_padding"].max())
+        bin_pow = np.arange(0, np.log2(bin_max) + 1, dtype=int)
+        bin_edges = [2**n for n in bin_pow]
 
-        defaults = {"tile_row": "scenario", "tile_col": "target", "tile_sharex": True, "tile_sharey": True}
-        grid_config = self.config.set_fixed(hue="side").set_default(**defaults)
+        # Now produce the histograms for base and top padding and combine them into long form,
+        # keyed on the `side` column.
+        base_pad_hist = self.histogram(df, "base_padding", prefix="hist_",
+                                       bins=bin_edges).with_columns(pl.lit("base").alias("side"))
+        top_pad_hist = self.histogram(df, "top_padding", prefix="hist_",
+                                      bins=bin_edges).with_columns(pl.lit("top").alias("side"))
+        hist = pl.concat([base_pad_hist, top_pad_hist], how="vertical").cast({"hist_bin": pl.UInt64})
+
+        grid_config = self.config.set_fixed(hue="side")
+        # Build a default mapping for the hist_bin labels
+        grid_config = grid_config.set_display_defaults(
+            param_values={"hist_bin": {
+                2**n: f"$2^{{{n}}}$"
+                for n in bin_pow
+            }})
 
         with DisplayGrid(self.size_dist, hist, grid_config) as grid:
-            grid.map(grid_barplot, x=bin_endpoints, y="value")
+            grid.map(grid_barplot, x="hist_bin", y="hist_count")
             grid.add_legend()
 
 

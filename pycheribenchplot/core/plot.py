@@ -2,20 +2,15 @@
 General purpose matplotlib helpers
 """
 from contextlib import contextmanager
-from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock, local
-from typing import List, Optional
-from uuid import UUID
 from warnings import deprecated
 
 import matplotlib as mpl
-import polars as pl
 import seaborn as sns
 
 from .analysis import AnalysisTask, DatasetAnalysisTask, SliceAnalysisTask
 from .artefact import Target
-from .config import Config
 from .task import Task
 
 
@@ -47,7 +42,7 @@ class RcParamsThreadWrapper:
         return f"ThreadedRcParams{{{self.thr_params.rc}}}"
 
     def setup_thread(self):
-        self.thr_params.rc = getattr(self.thr_params, "rc", default_rc.copy())
+        self.thr_params.rc = getattr(self.thr_params, "rc", mpl.rcParams.copy())
 
 
 @contextmanager
@@ -169,14 +164,15 @@ class PlotTaskMixin:
             rc_override = {}
 
         def do_run():
-            with mpl.rc_context():
-                # Use default theme as base
+            self.logger.debug("Override matplotlib rcParams: %s", rc_override)
+            with mpl.rc_context(rc=rc_override):
+                # XXX Use default theme as base
                 sns.set_theme()
                 with sns.plotting_context(rc=rc_override):
                     self.run_plot()
 
         if self.analysis_config.plot.parallel:
-            matplotlib.rcParams.setup_thread()
+            mpl.rcParams.setup_thread()
             do_run()
         else:
             with PlotTaskMixin.rc_mutex:
