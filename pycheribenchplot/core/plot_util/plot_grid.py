@@ -4,6 +4,7 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass, replace
 from functools import reduce
 from typing import Any, Callable, Dict, Iterable, Optional, Self
+from warnings import deprecated
 
 import matplotlib.pyplot as plt
 import polars as pl
@@ -54,6 +55,7 @@ class PlotGridConfig(Config):
         config = replace(self, **defaults)
         return config
 
+    @deprecated("Use PlotGridConfig.set_default() instead")
     def setdefault(self, **kwargs):
         return self.set_default(**kwargs)
 

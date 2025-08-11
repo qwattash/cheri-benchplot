@@ -4,7 +4,7 @@ from functools import cached_property
 from pathlib import Path
 from typing import List, Optional, Type
 from uuid import UUID
-from warnings import warn
+from warnings import deprecated
 
 import numpy as np
 import polars as pl
@@ -408,6 +408,7 @@ class AnalysisTask(SessionTask):
         return hdf.select(df.columns + [f"{prefix}bin", f"{prefix}count"])
 
 
+@deprecated("Use SliceAnalisysTask instead")
 class DatasetAnalysisTask(AnalysisTask):
     """
     Base class for analysis tasks that operate on a single dataset context.
@@ -432,8 +433,8 @@ class DatasetAnalysisTask(AnalysisTask):
         return True
 
     @classmethod
+    @deprecated("is_benchmark_task has been renamed is_dataset_task")
     def is_benchmark_task(cls):
-        warn(f"{cls.__name__}.is_benchmark_task has been renamed is_dataset_task", DeprecationWarning, 2)
         return cls.is_dataset_task()
 
     @property
@@ -454,6 +455,7 @@ class DatasetAnalysisTask(AnalysisTask):
         return f"{self.task_namespace}.{self.task_name}-{self.benchmark.uuid}"
 
 
+@deprecated("Use GenericAnalisysTask instead")
 class DatasetAnalysisTaskGroup(AnalysisTask):
     """
     Synthetic target that schedules a per-dataset analysis task for each dataset in the session.
@@ -527,9 +529,6 @@ class SliceAnalysisTask(AnalysisTask):
     """
     #: Maximum number of `free_axes` supported
     max_degrees_of_freedom = 4
-
-    #: List of valid data axes statically known for this task
-    data_axes: list[str] = []
 
     def __init__(self,
                  session: "Session",

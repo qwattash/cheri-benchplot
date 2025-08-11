@@ -7,6 +7,7 @@ from pathlib import Path
 from threading import Lock, local
 from typing import List, Optional
 from uuid import UUID
+from warnings import deprecated
 
 import matplotlib as mpl
 import polars as pl
@@ -215,6 +216,7 @@ class PlotTaskMixin:
         raise NotImplementedError("Must override")
 
 
+@deprecated("Use SlicePlotTask instead")
 class PlotTask(AnalysisTask, PlotTaskMixin):
     """
     Session-level plotting task.
@@ -226,6 +228,7 @@ class PlotTask(AnalysisTask, PlotTaskMixin):
         self._run_with_plot_sandbox()
 
 
+@deprecated("Use SlicePlotTask instead")
 class DatasetPlotTask(DatasetAnalysisTask, PlotTaskMixin):
     """
     Dataset-level plotting task.
