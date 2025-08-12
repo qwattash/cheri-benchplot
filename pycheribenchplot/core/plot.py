@@ -171,6 +171,8 @@ class PlotTaskMixin:
                 with sns.plotting_context(rc=rc_override):
                     self.run_plot()
 
+        self.setup_plot()
+
         if self.analysis_config.plot.parallel:
             mpl.rcParams.setup_thread()
             do_run()
@@ -201,6 +203,15 @@ class PlotTaskMixin:
                      bbox_to_anchor=(0., 1.02, 1, 0.2),
                      ncols=4,
                      **kwargs)
+
+    def setup_plot(self):
+        """
+        Pre-process plot data.
+
+        This runs outside the plot context but in parallel with other tasks.
+        This should be used to prepare the dataframe used for plotting.
+        """
+        pass
 
     def run_plot(self):
         """
