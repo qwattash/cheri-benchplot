@@ -510,6 +510,11 @@ class ParamSliceInfo:
     def fixed_axes(self) -> list[str]:
         return list(self.fixed_params.keys())
 
+    def __str__(self):
+        fixed = ", ".join([f"{k}={v}" for k, v in self.fixed_params.items()])
+        free = ", ".join(self.free_axes)
+        return f"<{fixed} | [{free}]>"
+
 
 class SliceAnalysisTask(AnalysisTask):
     """
