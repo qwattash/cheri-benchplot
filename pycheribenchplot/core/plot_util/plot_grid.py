@@ -50,14 +50,21 @@ class PlotGridConfig(Config):
     legend_columns: int = config_field(
         4, desc="Number of columns in the legend, this affects the necessary vspace and tile_aspect.")
 
-    def set_default(self, **kwargs):
+    def with_config_default(self, **kwargs):
+        """
+        Clone the configuration with the given default values.
+        """
         defaults = {k: v for k, v in kwargs.items() if hasattr(self, k) and getattr(self, k) is None}
         config = replace(self, **defaults)
         return config
 
-    @deprecated("Use PlotGridConfig.set_default() instead")
+    @deprecated("Use PlotGridConfig.with_config_default() instead")
+    def set_default(self, **kwargs):
+        return self.with_config_default(**kwargs)
+
+    @deprecated("Use PlotGridConfig.with_config_default() instead")
     def setdefault(self, **kwargs):
-        return self.set_default(**kwargs)
+        return self.with_config_default(**kwargs)
 
     def set_fixed(self, **kwargs) -> Self:
         """
@@ -154,17 +161,39 @@ class DisplayGridConfig(PlotGridConfig):
         "multiple constraints on the same key are not supported. Note that depending on the "
         "tiling setup, this may result in an unaligned dataframe and cause errors.")
 
+    @deprecated("Use with_default_axis_rename and with_default_axis_remap")
     def set_display_defaults(self,
-                             param_names: dict | None = None,
+                             param_names: dict[str, any] | None = None,
                              param_values: dict[str, dict[str, any]] | None = None) -> Self:
         """
         Set default renames
         """
-        config = replace(self)
+        config = self
         if param_names:
-            config.param_names = dict(param_names, **default(config.param_names, {}))
+            config = config.with_default_axis_rename(param_names)
         if param_values:
-            config.param_values = dict(param_values, **default(config.param_values, {}))
+            config = config.with_default_axis_remap(param_values)
+        return config
+
+    def with_default_axis_rename(self, rename_map: dict[str, any]) -> Self:
+        """
+        Clone the configuration with the given default column renaming.
+        """
+        config = replace(self)
+        rename_map.update(config.param_names or {})
+        config.param_names = rename_map
+        return config
+
+    def with_default_axis_remap(self, rename_map: dict[str, dict[str, any]]) -> Self:
+        """
+        Clone the configuration with the given column values renaming.
+        """
+        config = replace(self)
+        if config.param_values is None:
+            config.param_values = {}
+        for key, rename in rename_map.items():
+            rename.update(config.param_values.get(key, {}))
+            config.param_values[key] = rename
         return config
 
 
