@@ -1,14 +1,10 @@
-import collections
 import dataclasses as dc
-import functools as ft
 import itertools as it
 import json
-import logging
 import re
 import shutil
 from collections import OrderedDict
-from datetime import date, datetime
-from enum import Enum, auto
+from enum import Enum
 from io import StringIO
 from pathlib import Path
 from textwrap import indent, wrap
@@ -17,7 +13,7 @@ from uuid import UUID, uuid4
 
 import marshmallow.fields as mfields
 from git import Repo
-from marshmallow import Schema, ValidationError, validates, validates_schema
+from marshmallow import ValidationError, validates, validates_schema
 from marshmallow.validate import And, ContainsOnly, OneOf, Predicate
 from marshmallow_dataclass import class_schema
 from typing_extensions import Self
@@ -320,14 +316,14 @@ def describe_type(dtype) -> tuple[str, list[Type["Config"]]]:
     if is_generic_type(dtype):
         origin = get_origin(dtype)
         config_types = []
-        if origin == dict:
+        if origin is dict:
             kt, vt = get_args(dtype)
             kt_desc, conf_t = describe_type(kt)
             config_types.extend(conf_t)
             vt_desc, conf_t = describe_type(vt)
             config_types.extend(conf_t)
             return f"dict[{kt_desc}, {vt_desc}]", config_types
-        if origin == list:
+        if origin is list:
             lt_desc, config_types = describe_type(get_args(dtype)[0])
             return f"list[{lt_desc}]", config_types
 
@@ -352,6 +348,10 @@ class Config:
     Some template substitutions may become available later during initialization, therefore
     any unmatched template string will be retained unchanged after a call to
     :meth:`Config.bind`.
+
+    XXX use custom base schema with on_bind_field to provide session config information
+    to analysis configurations? In particular we could detect and resolve the parameterisation
+    there and compute defaults accordingly.
     """
 
     #: Marker for required fields
@@ -387,7 +387,7 @@ class Config:
                 if idx > 0:
                     # Extra space to separate docstring from previous field
                     desc.write("\n")
-                help_string = "".join(map(lambda l: f"#: {l}\n", wrap(help_)))
+                help_string = "".join(map(lambda line: f"#: {line}\n", wrap(help_)))
                 desc.write(help_string)
 
             dtype, nested = describe_type(field.type)
@@ -430,9 +430,9 @@ class Config:
 
         if dc.is_dataclass(dtype) and issubclass(dtype, Config):
             return value.bind(context)
-        if dtype == str:
+        if dtype is str:
             template = value
-        elif dtype == Path or dtype == ConfigPath or (type(dtype) == type and issubclass(dtype, Path)):
+        elif dtype is Path or dtype is ConfigPath or (type(dtype) is type and issubclass(dtype, Path)):
             # Path-like object expected here
             template = str(value)
             dtype = Path
@@ -504,12 +504,12 @@ class Config:
                 return self._bind_field(context, type(value), value, loc)
             # Check if None is allowed
             for t in args:
-                if t == type(None):
+                if t is type(None):
                     break
             else:
                 raise ConfigurationError("None type is not allowed")
             return None
-        elif type(value) == list:
+        elif type(value) is list:
             if origin is List or origin is list:
                 inner_type = get_args(dtype)[0]
                 config_logger.debug("Bind recurse into list[%s]", inner_type)
@@ -517,7 +517,7 @@ class Config:
                 inner_type = Any
                 config_logger.debug("Bind recurse into list: can not determine item dtype")
             return [self._bind_field(context, inner_type, v, f"{loc}[{i}]") for i, v in enumerate(value)]
-        elif type(value) == dict:
+        elif type(value) is dict:
             if origin is Dict or origin is dict:
                 key_type, inner_type = get_args(dtype)
                 config_logger.debug("Bind recurse into dict[%s, %s]", key_type, inner_type)
@@ -912,7 +912,7 @@ class TaskTargetConfig(Config):
         super().__post_init__()
         # Resolve the lazy task options if this is not already a Config
         if dc.is_dataclass(self.task_options):
-            assert isinstance(self.task_options, Config), f"Task options must inherit from Config"
+            assert isinstance(self.task_options, Config), "Task options must inherit from Config"
         else:
             self.task_options = resolve_task_options(self.handler, self.task_options, is_exec=False)
 
@@ -933,7 +933,7 @@ class ExecTargetConfig(Config):
         super().__post_init__()
         # Resolve the lazy task options if this is not already a Config
         if dc.is_dataclass(self.task_options):
-            assert isinstance(self.task_options, Config), f"Task options must inherit from Config"
+            assert isinstance(self.task_options, Config), "Task options must inherit from Config"
         else:
             self.task_options = resolve_task_options(self.handler, self.task_options, is_exec=True)
 
@@ -1123,7 +1123,7 @@ class PipelineBenchmarkConfig(CommonBenchmarkConfig):
 
     @validates("parameterize")
     def validate_parameterize(self, data, **kwargs):
-        if (type(data) != dict):
+        if (type(data) is not dict):
             raise ValidationError("Must be a dictionary")
         for pk in data.keys():
             if not re.fullmatch(r"[a-zA-Z0-9_]+", pk):
@@ -1358,7 +1358,6 @@ class SessionRunConfig(CommonSessionConfig):
         logger.info("Create new session %s", session.uuid)
 
         bench_config = config.benchmark_config
-        param_levels = list(bench_config.parameterize.keys())
         sorted_params = OrderedDict(bench_config.parameterize)
 
         # Host system names must be unique, warn if this is not the case.
