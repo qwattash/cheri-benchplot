@@ -27,6 +27,7 @@ from .util import new_logger
 SESSION_RUN_FILE = "session-run.json"
 benchplot_logger = logging.getLogger("cheri-benchplot")
 
+# XXX Is `target` reserved as well?
 RESERVED_PARAMETER_NAMES = ["descriptor"]
 
 
