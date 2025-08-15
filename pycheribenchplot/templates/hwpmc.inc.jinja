@@ -28,7 +28,7 @@
   {%- for cnt in hwpmc_counters %}{{ _pmcstat_counter(cnt) | trim }} {% endfor -%}
 {% endmacro %}
 
-{% macro _pmcstat_output(iteration) %}
+{% macro _output_file(iteration) %}
   {% if hwpmc_config.sampling_mode %}
     -O {{ hwpmc_gen_output(iteration) }}.tmp
   {% else %}
@@ -37,20 +37,28 @@
 {% endmacro %}
 
 {% macro _pmcstat_impl(iteration) %}
-  pmcstat {{ hwpmc_descendants_flag }} {{ _pmcstat_counters() | trim }} {{ _pmcstat_output(iteration) | trim }}
+  pmcstat {{ hwpmc_descendants_flag }} {{ _pmcstat_counters() | trim }} {{ _output_file(iteration) | trim }}
 {% endmacro %}
 
 {% macro _pmcstat(iteration, extra_flags) %}
-  {% if hwpmc_config is defined %}
-    {{ _pmcstat_impl(iteration) | trim }} {{ extra_flags }}
-  {% endif %}
+  {{ _pmcstat_impl(iteration) | trim }} {{ extra_flags }}
+{% endmacro %}
+
+{% macro _statcounters(iteration, extra_flags) %}
+env LD_PRELOAD=/usr/lib/libstatcounters.so STATCOUNTERS_OUTPUT={{ _output_file(iteration) | trim }} STATCOUNTERS_FORMAT="csv" {{ extra_flags }}
 {% endmacro %}
 
 {#
  # Return the pmcstat command suitable to invoke pmcstat for an iteration.
  #}
 {% macro pmcstat(iteration, extra_flags) %}
-{{ _pmcstat(iteration, extra_flags) | trim -}}
+  {% if hwpmc_config is defined -%}
+    {% if hwpmc_config.pmc_type == PMCType.HWPMC -%}
+      {{ _pmcstat(iteration, extra_flags) | trim -}}
+    {% elif hwpmc_config.pmc_type == PMCType.STATCOUNTERS -%}
+      {{ _statcounters(iteration, extra_flags) | trim -}}
+    {% endif -%}
+  {% endif -%}
 {% endmacro %}
 
 {% macro _pmcstat_post_impl(iteration) %}
@@ -59,7 +67,7 @@
 {% endmacro %}
 
 {% macro _pmcstat_post(iteration) %}
-  {% if hwpmc_config is defined and hwpmc_config.sampling_mode %}
+  {% if hwpmc_config is defined and hwpmc_config.pmc_type == PMCType.HWPMC and hwpmc_config.sampling_mode %}
     {{ _pmcstat_post_impl(iteration) | trim }}
   {% endif %}
 {% endmacro %}

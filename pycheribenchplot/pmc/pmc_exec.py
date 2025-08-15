@@ -5,10 +5,19 @@ from pathlib import Path
 
 import pandas as pd
 import polars as pl
+from marshmallow import ValidationError, validates_schema
 
 from ..core.artefact import DataFrameLoadTask, RemoteBenchmarkIterationTarget
 from ..core.config import Config, config_field
 from ..core.task import ExecutionTask, output
+
+
+class PMCType(Enum):
+    """
+    The interface to access PMC counters.
+    """
+    HWPMC = "hwpmc"
+    STATCOUNTERS = "libstatcounters"
 
 
 class PMCSet(Enum):
@@ -71,12 +80,29 @@ class PMCExecConfig(Config):
     """
     HWPMC configuration.
     """
+    pmc_type: PMCType = config_field(PMCType.HWPMC, desc="PMC interface type")
     system_mode: bool = config_field(False, desc="Use system mode counters")
     sampling_mode: bool = config_field(False, desc="Use sampling vs counting mode")
     sampling_rate: int = config_field(97553, desc="Counter sampling rate, only relevant in sampling mode")
     counters: list[str] = config_field(list, desc="List of PMC counters to use")
     group: str | None = config_field(None, desc="Pre-defined group of counters, overrides 'counters' option")
     follow_fork: bool = config_field(False, desc="Trace children on fork")
+
+    @validates_schema
+    def check_supported_modes(self):
+        if self.config.pmc_type == PMCType.STATCOUNTERS:
+            if self.config.sampling_mode:
+                raise ValidationError("sampling_mode not supported for this pmc_type")
+            if not self.config.system_mode:
+                raise ValidationError("system_mode is mandatory for this pmc_type")
+            if self.config.follow_fork:
+                raise ValidationError("follow_fork is not supported for this pmc_type")
+            if self.config.counters:
+                self.logger.warning(
+                    "Specified set of counters but libstatcounters does not allow configuration, ignored")
+            if self.config.group:
+                self.logger.warning(
+                    "Specified counters group but libstatcounters does not allow configuration, ignored")
 
     @property
     def pmc_counters(self):
@@ -193,3 +219,4 @@ class PMCExec(ExecutionTask):
             "hwpmc_counters": self.config.pmc_counters,
             "hwpmc_gen_output": self.pmc_data.shell_path_builder()
         })
+        self.script.register_global("PMCType", PMCType)
