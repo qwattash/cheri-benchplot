@@ -12,8 +12,8 @@ from typing_extensions import Self
 
 from .analysis import AnalysisTask, DatasetAnalysisTaskGroup
 from .benchmark import Benchmark, ExecTaskConfig
-from .config import (AnalysisConfig, BenchplotUserConfig, ConfigContext, InstanceConfig,
-                     PipelineConfig, SessionRunConfig)
+from .config import (AnalysisConfig, BenchplotUserConfig, ConfigContext, InstanceConfig, PipelineConfig,
+                     SessionRunConfig)
 from .instance import InstanceManager
 from .shellgen import TemplateContextBase
 from .task import (ExecutionTask, SessionExecutionTask, TaskRegistry, TaskScheduler)
@@ -133,6 +133,8 @@ class Session:
         """
         ctx = ConfigContext()
         ctx.add_namespace(self.user_config, "user")
+        # Relative path of the assets dir with respect to the benchmark runner scripts
+        ctx.add_values(assets="../../assets")
         return config.bind(ctx)
 
     def _resolve_parameterization_matrix(self) -> pl.DataFrame:
@@ -261,8 +263,7 @@ class Session:
         else:
             archive_src = self.get_plot_root_path()
 
-        result = subprocess.run(
-            ["tar", "-z", "-c", "-C", archive_src, "-f", bundle_file, self.session_root_path.name])
+        result = subprocess.run(["tar", "-z", "-c", "-C", archive_src, "-f", bundle_file, self.session_root_path.name])
         if result.returncode:
             self.logger.fatal("Failed to produce bundle")
             raise RuntimeError("Failed to bundle session")
