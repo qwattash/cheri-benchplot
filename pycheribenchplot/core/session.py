@@ -2,22 +2,18 @@ import logging
 import re
 import shutil
 import subprocess
-from collections import defaultdict, namedtuple
-from contextlib import AbstractContextManager
-from dataclasses import fields
-from enum import Enum
+from collections import defaultdict
 from pathlib import Path
 from typing import Type
 from uuid import UUID
 
 import polars as pl
-from marshmallow.exceptions import ValidationError
 from typing_extensions import Self
 
 from .analysis import AnalysisTask, DatasetAnalysisTaskGroup
 from .benchmark import Benchmark, ExecTaskConfig
-from .config import (AnalysisConfig, BenchplotUserConfig, Config, ConfigContext, ExecTargetConfig, InstanceConfig,
-                     PipelineConfig, SessionRunConfig, TaskTargetConfig)
+from .config import (AnalysisConfig, BenchplotUserConfig, ConfigContext, InstanceConfig,
+                     PipelineConfig, SessionRunConfig)
 from .instance import InstanceManager
 from .shellgen import TemplateContextBase
 from .task import (ExecutionTask, SessionExecutionTask, TaskRegistry, TaskScheduler)
@@ -98,7 +94,7 @@ class Session:
     def __init__(self, user_config: BenchplotUserConfig, config: SessionRunConfig, session_path: Path = None):
         super().__init__()
         # Pre-initialization logger
-        self.logger = new_logger(f"session-init")
+        self.logger = new_logger("session-init")
         #: The local user configuration
         self.user_config = user_config
         #: Main session configuration
@@ -244,7 +240,7 @@ class Session:
         self.logger.info("Remove session %s (%s)", self.name, self.uuid)
         shutil.rmtree(self.session_root_path)
 
-    def bundle(self, path: Path | None = None, include_raw_data: bool = True):
+    def bundle(self, path: Path | None = None, include_raw_data: bool = True) -> Path:
         """
         Produce a compressed archive with all the session output.
         """
@@ -261,15 +257,31 @@ class Session:
             self.logger.info("Replacing old bundle %s", bundle_file)
             bundle_file.unlink()
         if include_raw_data:
-            archive_src = self.session_root_path
+            archive_src = self.session_root_path.parent
         else:
             archive_src = self.get_plot_root_path()
 
         result = subprocess.run(
-            ["tar", "-z", "-c", "-C", self.session_root_path.parent, "-f", bundle_file, self.session_root_path.name])
+            ["tar", "-z", "-c", "-C", archive_src, "-f", bundle_file, self.session_root_path.name])
         if result.returncode:
-            self.logger.error("Failed to produce bundle")
+            self.logger.fatal("Failed to produce bundle")
+            raise RuntimeError("Failed to bundle session")
         self.logger.info("Archive created at %s", bundle_file)
+        return bundle_file
+
+    def push(self, host: str, bundle_file: Path):
+        """
+        Push a bundled session to the given host.
+
+        :param host: scp-like host address
+        :bundle_file: source bundle to push
+        """
+        self.logger.info("Push %s to %s", bundle_file, host)
+        result = subprocess.run(["scp", "-q", bundle_file, host])
+        if result.returncode:
+            self.logger.fatal("Failed to push session to %s", host)
+            raise RuntimeError("Failed to push session")
+        self.logger.info("Session bundle pushed")
 
     def get_instance_configuration(self, g_uuid: UUID | str) -> InstanceConfig:
         """
@@ -396,13 +408,19 @@ class Session:
         self.logger.info("Session %s execution plan ready", self.name)
         self.scheduler.report_failures(self.logger)
 
-    def run(self, driver_config: "DriverConfig", clean: bool = True):
+    def run(self, driver_config, clean: bool = True):
         """
         Run the session on host machines.
+
+        TODO NOT IMPLEMENTED
+        Need to define DriverConfig.
+        Implement Runner infrastructure
 
         This uses different executor strategies depending on the host where we
         are going to run.
         """
+        raise NotImplementedError("TODO")
+
         # Cleanup previous run, to avoid any confusion
         if clean:
             self.clean_all()
@@ -411,13 +429,13 @@ class Session:
         self.scheduler.register_resource(instance_manager)
 
         # Resolve the session driver strategy
-        driver_class = TaskRegistry.resolve_task(driver_config.handler, kind=SessionDriver)
+        # driver_class = TaskRegistry.resolve_task(driver_config.handler, kind=SessionDriver)
 
         # Package the session to transfer to the remote hosts
-        session_root = self.session_root_path
+        # session_root = self.session_root_path
 
         # Schedule the session driver task
-        self.scheduler.add_task(driver)
+        # self.scheduler.add_task(driver)
         self.logger.info("Session %s begin execution", self.name)
         self.scheduler.run()
         self.logger.info("Session %s execution completed", self.name)

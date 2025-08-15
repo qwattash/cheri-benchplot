@@ -1,14 +1,8 @@
 #!/usr/bin/env python
 
-import argparse as ap
-import logging
 import re
-import traceback
-import uuid
-from json.decoder import JSONDecodeError
 from pathlib import Path
 
-from marshmallow.exceptions import ValidationError
 
 from pycheribenchplot.core.config import (AnalysisConfig, BenchplotUserConfig, PipelineConfig, TaskTargetConfig)
 from pycheribenchplot.core.error import ToolArgparseError
@@ -72,6 +66,15 @@ class SessionSubCommand(SubCommand):
                                 help="Output directory, defaults to the directory containing the session")
         self._register_session_arg(sub_bundle)
 
+        sub_push = session_subparsers.add_parser("push", help="Push the session to a remote location as a bundle")
+        sub_push.add_argument("host", type=str, help="SCP destination location, a .tar.gz containing the session will be copied there")
+        sub_push.add_argument("-o",
+                              "--output",
+                              default=None,
+                              type=Path,
+                              help="Output bundle directory, see `benchplot-cli session bundle`")
+        self._register_session_arg(sub_push)
+
     def handle_create(self, user_config, args):
         """
         Hook to handle the create subcommand.
@@ -127,6 +130,11 @@ class SessionSubCommand(SubCommand):
         session = self._get_session(user_config, args)
         session.bundle(path=args.output)
 
+    def handle_push(self, user_config, args):
+        session = self._get_session(user_config, args)
+        bundle_file = session.bundle(path=args.output)
+        session.push(args.host, bundle_file)
+
     def handle(self, user_config, args):
         if args.session_action is None:
             raise ToolArgparseError("Missing session action")
@@ -169,7 +177,6 @@ class TaskInfoSubCommand(SubCommand):
         Display information about the tasks and the data within a session.
         """
         session = self._get_session(user_config, args)
-        configurations = session.config.configurations
         print(f"Session {session.config.name} ({session.config.uuid}):")
         for c in session.config.configurations:
             print(f"\t{c.name} ({c.uuid}) on {c.instance}")
