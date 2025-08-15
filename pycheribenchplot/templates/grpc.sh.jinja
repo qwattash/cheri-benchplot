@@ -1,0 +1,59 @@
+{#
+ # Runner script for the qps workload.
+ # This extends the standard runner-script.sh.jinja template
+ #
+ # Supports the hwpmc extension.
+ #}
+{% extends "runner-script.sh.jinja" %}
+
+{% import "hwpmc.inc.jinja" as hwpmc with context %}
+
+{% macro _gen_command(iter) %}
+  {{ hwpmc.pmcstat(iter) }} {{ generic_config.command | trim }}
+{% endmacro %}
+
+{% macro _server_prctl() %}
+  {%- if qps_config.server_procctl_args -%}
+    proccontrol {{ qps_config.server_procctl_args | join(" ") }}
+  {%- endif -%}
+{% endmacro %}
+
+{% macro _client_prctl() %}
+  {%- if qps_config.client_procctl_args -%}
+    proccontrol {{ qps_config.client_procctl_args | join(" ") }}
+  {%- endif -%}
+{% endmacro %}
+
+{% block global_setup %}
+  {{ super() }}
+  # Note the first one is always picked as the server
+  export QPS_WORKERS=localhost:10000,localhost:20000
+  export PATH=${PATH}:{{ qps_config.qps_path }}
+{% endblock %}
+
+{% block iteration_setup %}
+  {{ super() }}
+  {{ hwpmc.pmcstat(current_iteration) }} {{ _server_prctl() }} grpc_qps_worker --driver_port 10000 --server_port=10001 &
+  SERVER_PID=$!
+  {{ _client_prctl() }} grpc_qps_worker --driver_port 20000 --server_port=20001 &
+  CLIENT_PID=$!
+
+  sleep 1
+{% endblock %}
+
+{% block iteration_exec %}
+  echo "Run QPS {{ qps_config.scenario_file }} iteration {{ current_iteration }}"
+
+  grpc_qps_json_driver \
+	--scenarios_file {{ qps_config.scenario_file }} \
+	--scenario_result_file {{ qps_gen_output(current_iteration) }} \
+	--json_file_out {{ qps_gen_output(current_iteration) | trim }}.log
+{% endblock %}
+
+{% block iteration_teardown %}
+  {{ super() }}
+  kill -TERM ${SERVER_PID}
+  kill -TERM ${CLIENT_PID}
+  pwait ${SERVER_PID}
+  pwait ${CLIENT_PID}
+{% endblock %}
