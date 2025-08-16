@@ -13,7 +13,10 @@ class QPSExecConfig(Config):
     scenario_file: ConfigPath = config_field(Config.REQUIRED, desc="Scenario configuration to run")
     qps_path: ConfigPath = config_field(None, desc="Path of grpc qps binaries")
     client_procctl_args: list[str] = config_field(list, desc="proccontrol arguments for the client worker")
+    client_cpu: list[int] = config_field(list, desc="Restrict client worker to the given CPUs")
     server_procctl_args: list[str] = config_field(list, desc="proccontrol arguments for the server worker")
+    server_cpu: list[int] = config_field(list, desc="Restrict server worker to the given CPUs")
+    driver_cpu: list[int] = config_field(list, desc="Restrict driver to the given CPUs")
 
 
 class QPSExecTask(ExecutionTask):

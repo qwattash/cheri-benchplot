@@ -8,19 +8,28 @@
 
 {% import "hwpmc.inc.jinja" as hwpmc with context %}
 
-{% macro _gen_command(iter) %}
-  {{ hwpmc.pmcstat(iter) }} {{ generic_config.command | trim }}
-{% endmacro %}
-
-{% macro _server_prctl() %}
+{% macro _server_exec(iter) %}
   {%- if qps_config.server_procctl_args -%}
     proccontrol {{ qps_config.server_procctl_args | join(" ") }}
-  {%- endif -%}
+  {%- endif %}
+  {%- if qps_config.server_cpu %}
+    cpuset -c -l {{ qps_config.server_cpu | join(",") }}
+  {%- endif %}
+  {{ hwpmc.pmcstat(iter) -}}
 {% endmacro %}
 
-{% macro _client_prctl() %}
-  {%- if qps_config.client_procctl_args -%}
+{% macro _client_exec(iter) %}
+  {%- if qps_config.client_procctl_args %}
     proccontrol {{ qps_config.client_procctl_args | join(" ") }}
+  {%- endif %}
+  {%- if qps_config.client_cpu %}
+    cpuset -c -l {{ qps_config.client_cpu | join(",") }}
+  {%- endif %}
+{% endmacro %}
+
+{% macro _driver_exec(iter) %}
+  {%- if qps_config.driver_cpu -%}
+    cpuset -c -l {{ qps_config.driver_cpu | join(",") }}
   {%- endif -%}
 {% endmacro %}
 
@@ -33,9 +42,9 @@
 
 {% block iteration_setup %}
   {{ super() }}
-  {{ hwpmc.pmcstat(current_iteration) }} {{ _server_prctl() }} grpc_qps_worker --driver_port 10000 --server_port=10001 &
+  {{ _server_exec(current_iteration) }} grpc_qps_worker --driver_port 10000 --server_port=10001 &
   SERVER_PID=$!
-  {{ _client_prctl() }} grpc_qps_worker --driver_port 20000 --server_port=20001 &
+  {{ _client_exec(current_iteration) }} grpc_qps_worker --driver_port 20000 --server_port=20001 &
   CLIENT_PID=$!
 
   sleep 1
@@ -44,7 +53,7 @@
 {% block iteration_exec %}
   echo "Run QPS {{ qps_config.scenario_file }} iteration {{ current_iteration }}"
 
-  grpc_qps_json_driver \
+  {{ _driver_exec(current_iteration) }} grpc_qps_json_driver \
 	--scenarios_file {{ qps_config.scenario_file }} \
 	--scenario_result_file {{ qps_gen_output(current_iteration) }} \
 	--json_file_out {{ qps_gen_output(current_iteration) | trim }}.log
