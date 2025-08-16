@@ -12,8 +12,8 @@ from typing_extensions import Self
 
 from .analysis import AnalysisTask, DatasetAnalysisTaskGroup
 from .benchmark import Benchmark, ExecTaskConfig
-from .config import (AnalysisConfig, BenchplotUserConfig, ConfigContext, InstanceConfig, PipelineConfig,
-                     SessionRunConfig)
+from .config import (AnalysisConfig, AssetConfig, AssetImportAction, BenchplotUserConfig, ConfigContext, InstanceConfig,
+                     PipelineConfig, SessionRunConfig)
 from .instance import InstanceManager
 from .shellgen import TemplateContextBase
 from .task import (ExecutionTask, SessionExecutionTask, TaskRegistry, TaskScheduler)
@@ -55,7 +55,9 @@ class Session:
         session_path.mkdir()
         with open(session_path / SESSION_RUN_FILE, "w") as runfile:
             runfile.write(run_config.emit_json())
-        return Session(user_config, run_config, session_path=session_path)
+        session = Session(user_config, run_config, session_path=session_path)
+        session.import_assets(config.assets)
+        return session
 
     @classmethod
     def is_session(cls, path: Path) -> bool:
@@ -241,6 +243,27 @@ class Session:
         """
         self.logger.info("Remove session %s (%s)", self.name, self.uuid)
         shutil.rmtree(self.session_root_path)
+
+    def import_assets(self, assets: dict[str, AssetConfig]):
+        """
+        Import the given set of assets into the session.
+        Overwrite existing assets.
+        """
+        for name, import_config in assets.items():
+            self.logger.info("Import asset %s", name)
+            if import_config.dst:
+                if import_config.dst.is_absolute():
+                    self.logger.warning("Asset destination is absolute path %s", import_config.dst)
+                    import_config.dst = import_config.dst.relative_to("/")
+                dst = self.get_asset_root_path() / import_config.dst
+            else:
+                dst = self.get_asset_root_path()
+
+            match import_config.action:
+                case AssetImportAction.COPY:
+                    shutil.copytree(import_config.src, dst, dirs_exist_ok=True)
+                case _:
+                    self.logger.error("Unexpected import action %s, asset ignored", import_config.action)
 
     def bundle(self, path: Path | None = None, include_raw_data: bool = True) -> Path:
         """

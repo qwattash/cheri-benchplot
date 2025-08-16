@@ -8,7 +8,7 @@ from enum import Enum
 from io import StringIO
 from pathlib import Path
 from textwrap import indent, wrap
-from typing import Annotated, Any, Dict, List, Optional, Set, Type, Union
+from typing import Annotated, Any, Dict, List, Optional, Set, Type
 from uuid import UUID, uuid4
 
 import marshmallow.fields as mfields
@@ -1162,6 +1162,24 @@ class BenchmarkRunConfig(CommonBenchmarkConfig):
         config_logger.debug("Resolved BenchmarkRunConfig for %s", ", ".join(params))
 
 
+class AssetImportAction(Enum):
+    """
+    Actions for importing assets into the session.
+    """
+    #: Copy directory or files from src to dst. The src path may contain a glob pattern.
+    COPY = "copy"
+
+
+@dc.dataclass
+class AssetConfig(Config):
+    """
+    Describes an asset to import into the session and how.
+    """
+    action: AssetImportAction = config_field(Config.REQUIRED, by_value=True, desc="Import operation")
+    src: str = config_field(Config.REQUIRED, desc="Source for the asset, depends on the action")
+    dst: ConfigPath | None = config_field(None, desc="Destination relative to the session assets root")
+
+
 @dc.dataclass
 class CommonSessionConfig(Config):
     """
@@ -1224,10 +1242,14 @@ class PipelineConfig(CommonSessionConfig):
     the substitution can be replicated with a different user configuration every time.
     """
     #: Configuration format version
-    version: str = "0.0",
+    version: str = config_field("1.0", desc="Session configuration version")
 
     #: Benchmark configuration, required
-    benchmark_config: Union[PipelineBenchmarkConfig, List[PipelineBenchmarkConfig]] = dc.field(default_factory=list)
+    benchmark_config: PipelineBenchmarkConfig | list[PipelineBenchmarkConfig] = config_field(
+        list, desc="Benchmark parameterisation configuration")
+
+    #: Assets to import into the session
+    assets: dict[str, AssetConfig] = config_field(dict, desc="Configure assets to import into the session")
 
 
 @dc.dataclass
