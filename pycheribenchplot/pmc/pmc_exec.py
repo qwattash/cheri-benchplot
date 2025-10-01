@@ -17,7 +17,7 @@ class PMCType(Enum):
     The interface to access PMC counters.
     """
     HWPMC = "hwpmc"
-    STATCOUNTERS = "libstatcounters"
+    STATCOUNTERS = "statcounters"
 
 
 class PMCSet(Enum):
@@ -89,18 +89,18 @@ class PMCExecConfig(Config):
     follow_fork: bool = config_field(False, desc="Trace children on fork")
 
     @validates_schema
-    def check_supported_modes(self):
-        if self.config.pmc_type == PMCType.STATCOUNTERS:
-            if self.config.sampling_mode:
+    def check_supported_modes(self, data, **kwargs):
+        if data["pmc_type"] == PMCType.STATCOUNTERS:
+            if data["sampling_mode"]:
                 raise ValidationError("sampling_mode not supported for this pmc_type")
-            if not self.config.system_mode:
+            if not data["system_mode"]:
                 raise ValidationError("system_mode is mandatory for this pmc_type")
-            if self.config.follow_fork:
+            if data["follow_fork"]:
                 raise ValidationError("follow_fork is not supported for this pmc_type")
-            if self.config.counters:
+            if data["counters"]:
                 self.logger.warning(
                     "Specified set of counters but libstatcounters does not allow configuration, ignored")
-            if self.config.group:
+            if data["group"]:
                 self.logger.warning(
                     "Specified counters group but libstatcounters does not allow configuration, ignored")
 

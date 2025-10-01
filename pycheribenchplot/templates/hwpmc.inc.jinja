@@ -15,6 +15,9 @@
   {% endif %}
 
   {% set hwpmc_descendants_flag = "-d" if hwpmc_config.follow_fork else "" %}
+  {% set hwpmc_enabled = True %}
+{% else %}
+  {% set hwpmc_enabled = False %}
 {% endif %}
 
 
@@ -29,10 +32,14 @@
 {% endmacro %}
 
 {% macro _output_file(iteration) %}
-  {% if hwpmc_config.sampling_mode %}
-    -O {{ hwpmc_gen_output(iteration) }}.tmp
+  {% if hwpmc_config.pmc_type == PMCType.HWPMC %}
+    {% if hwpmc_config.sampling_mode %}
+      -O {{ hwpmc_gen_output(iteration) }}.tmp
+    {% else %}
+      -o {{ hwpmc_gen_output(iteration) }}
+    {% endif %}
   {% else %}
-    -o {{ hwpmc_gen_output(iteration) }}
+    {{ hwpmc_gen_output(iteration) }}
   {% endif %}
 {% endmacro %}
 
