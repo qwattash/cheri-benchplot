@@ -10,27 +10,27 @@ set -e
   {% if verbose %}
     echo "DEBUG: {{ msg }}"
   {% endif %}
-{% endmacro %}
+{% endmacro -%}
 
 echo "Run benchmark configuration ID={{ dataset_id }} with {{ iterations }} iterations."
 echo "Instance '{{ instance.name }}' ID={{ dataset_gid }}."
 echo "Parameters:"
-{% for pkey, pval in parameters.items() %}
-echo -e "\t{{ pkey }}='{{ pval }}'"
-{% endfor %}
+{% for pkey, pval in parameters.items() -%}
+    echo -e "\t{{ pkey }}='{{ pval }}'"
+{% endfor -%}
 
-{% macro gen_hook(phase, hook) -%}
+{%- macro gen_hook(phase, hook) -%}
   {{ debug("{{ phase }} hook '{{ hook.name }}'") }}
   {%- if hook.template -%}
     {% include "hooks/%s" % hook.template %}
   {%- else -%}
     {% for cmd in hook.commands -%}
       {{ cmd }}
-    {%- endfor %}
+    {% endfor -%}
   {%- endif -%}
 {% endmacro -%}
 
-{% macro gen_iter_hook(phase, iteration, hook) -%}
+{%- macro gen_iter_hook(phase, iteration, hook) -%}
   {{ debug("{{ phase }} iteration {{ iteration }} hook '{{ hook.name }}'") }}
   {% if hook.template %}
     {%- with hook_phase=phase -%}
@@ -43,12 +43,13 @@ echo -e "\t{{ pkey }}='{{ pval }}'"
   {% endif %}
 {% endmacro -%}
 
-{#
- # Path to the session asset directory.
- # Note that this is relative to the run/xxx directory that is set as
- # the working directory when running this script.
- #}
-{% set asset_path = "../../assets" -%}
+{# Path to the session asset directory, relative to the runner-script directory #}
+{%- set asset_path = "../../assets" -%}
+{# Shell variable holding the current iteration #}
+{%- set current_iteration = "${ITERATION}" -%}
+
+{% block functions scoped %}
+{% endblock %}
 
 #### Global setup
 {% block global_setup %}
@@ -62,7 +63,6 @@ echo -e "\t{{ pkey }}='{{ pval }}'"
 {% block iteration_loop %}
   echo "Run benchmark for {{ iterations }} iterations"
   for ITERATION in $(seq 0 {{ iterations - 1 }}); do
-    {% set current_iteration = "${ITERATION}" %}
 
     {%- block iteration_setup scoped %}
       {% for hook in iter_setup_hooks %}
