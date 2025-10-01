@@ -3,7 +3,6 @@
 import re
 from pathlib import Path
 
-
 from pycheribenchplot.core.config import (AnalysisConfig, BenchplotUserConfig, PipelineConfig, TaskTargetConfig)
 from pycheribenchplot.core.error import ToolArgparseError
 from pycheribenchplot.core.session import Session
@@ -67,7 +66,9 @@ class SessionSubCommand(SubCommand):
         self._register_session_arg(sub_bundle)
 
         sub_push = session_subparsers.add_parser("push", help="Push the session to a remote location as a bundle")
-        sub_push.add_argument("host", type=str, help="SCP destination location, a .tar.gz containing the session will be copied there")
+        sub_push.add_argument("host",
+                              type=str,
+                              help="SCP destination location, a .tar.gz containing the session will be copied there")
         sub_push.add_argument("-o",
                               "--output",
                               default=None,
@@ -159,18 +160,27 @@ class TaskInfoSubCommand(SubCommand):
         sub_session.add_argument("-a",
                                  "--show-analysis-tasks",
                                  action="store_true",
+                                 default=False,
                                  help="Show compatible analysis tasks")
 
         sub_task = info_subparsers.add_parser("task", help="Display information about a task")
         sub_task.add_argument("task_spec", nargs="+", help="Name(s) of task(s) to describe")
 
         sub_config = info_subparsers.add_parser("config", help="Display configuration information")
-        sub_config.add_argument("-u",
-                                "--user",
-                                type=Path,
+        sub_config.add_argument("-g",
+                                "--generate",
+                                type=str,
                                 required=False,
                                 default=None,
-                                help="Generate a default user configuration file")
+                                choices=("user", "pipeline"),
+                                help="Generate a default configuration to stdout")
+
+        sub_config.add_argument("-d",
+                                "--desc",
+                                required=False,
+                                default=None,
+                                choices=("user", "pipeline"),
+                                help="Describe a configuration object")
 
     def handle_session(self, user_config, args):
         """
@@ -215,12 +225,17 @@ class TaskInfoSubCommand(SubCommand):
         Without any arguments, this will dump the existing user config,
         or a default one if none is found.
         """
-        if hasattr(args, "u"):
-            if args.u.exists():
-                self.logger.warning("User configuration file already exists: %s", args.u)
-            with open(args.u, "w+") as outconfig:
-                outconfig.write(BenchplotUserConfig().emit_json())
-        else:
+        if args.desc == "user":
+            print(BenchplotUserConfig.describe(include_header=True))
+        elif args.desc == "pipeline":
+            print(PipelineConfig.describe(include_header=True))
+
+        if args.generate == "user":
+            print(BenchplotUserConfig().emit_json())
+        elif args.generate == "pipeline":
+            print(PipelineConfig().emit_json())
+
+        if args.desc is None and args.generate is None:
             print(user_config.emit_json())
 
     def handle(self, user_config, args):

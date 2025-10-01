@@ -374,15 +374,20 @@ class Config:
         return cls.schema().load(data)
 
     @classmethod
-    def describe(cls):
+    def describe(cls, include_header=False):
         """
         Produce a human-readable description of the configuration.
         """
         nested_configs = set()
         desc = StringIO()
+        if include_header:
+            desc.write("=" * len(cls.__name__) + "\n")
+            desc.write(cls.__name__ + "\n")
+            desc.write("=" * len(cls.__name__) + "\n\n")
+
         for idx, field in enumerate(dc.fields(cls)):
             meta_ = field.metadata.get("metadata")
-            help_ = meta_.get("desc")
+            help_ = (meta_ or dict()).get("desc")
             if help_:
                 if idx > 0:
                     # Extra space to separate docstring from previous field
@@ -404,7 +409,7 @@ class Config:
         for config_type in nested_configs:
             desc.write("\n")
             desc.write(config_type.__name__ + "\n")
-            desc.write("=" * len(config_type.__name__))
+            desc.write("=" * len(config_type.__name__) + "\n")
             desc.write(config_type.__doc__ + "\n")
             desc.write(indent(config_type.describe(), " " * 4))
 
