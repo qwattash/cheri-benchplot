@@ -8,6 +8,45 @@
 
 {% import "hwpmc.inc.jinja" as hwpmc with context %}
 
+{% block functions %}
+  {{ super() }}
+
+__server_exec()
+{
+{% if qps_config.server_procctl_args %}
+	proccontrol {{ qps_config.server_procctl_args | join(" ") }} \
+{% endif %}
+{% if qps_config.server_cpu %}
+	cpuset -c -l {{ qps_config.server_cpu | join(",") }} \
+{% endif %}
+{% if hwpmc.hwpmc_enabled %}
+	{{ hwpmc.pmcstat(current_iteration) }} \
+{% endif %}
+	grpc_qps_worker --driver_port 10000 --server_port=10001 &
+	SERVER_PID=$!
+}
+
+__client_exec()
+{
+{% if qps_config.client_procctl_args %}
+	proccontrol {{ qps_config.client_procctl_args | join(" ") }} \
+{% endif %}
+{% if qps_config.client_cpu %}
+	cpuset -c -l {{ qps_config.client_cpu | join(",") }} \
+{% endif %}
+	grpc_qps_worker --driver_port 20000 --server_port=20001 &
+	CLIENT_PID=$!
+}
+
+__driver_exec()
+{
+{% if qps_config.driver_cpu %}
+	cpuset -c -l {{ qps_config.driver_cpu | join(",") }} \
+{% endif %}
+	grpc_qps_json_driver $@
+}
+{% endblock %}
+
 {% macro _server_exec(iter) %}
   {%- if qps_config.server_procctl_args -%}
     proccontrol {{ qps_config.server_procctl_args | join(" ") }}
@@ -42,18 +81,20 @@
 
 {% block iteration_setup %}
   {{ super() }}
-  {{ _server_exec(current_iteration) }} grpc_qps_worker --driver_port 10000 --server_port=10001 &
-  SERVER_PID=$!
-  {{ _client_exec(current_iteration) }} grpc_qps_worker --driver_port 20000 --server_port=20001 &
-  CLIENT_PID=$!
-
+  __server_exec
+  __client_exec
   sleep 1
+  # {{ _server_exec(current_iteration) }} grpc_qps_worker --driver_port 10000 --server_port=10001 &
+  # SERVER_PID=$!
+  # {{ _client_exec(current_iteration) }} grpc_qps_worker --driver_port 20000 --server_port=20001 &
+  # CLIENT_PID=$!
 {% endblock %}
 
 {% block iteration_exec %}
   echo "Run QPS {{ qps_config.scenario_file }} iteration {{ current_iteration }}"
 
-  {{ _driver_exec(current_iteration) }} grpc_qps_json_driver \
+  # {{ _driver_exec(current_iteration) }} grpc_qps_json_driver
+  __driver_exec \
 	--scenarios_file {{ qps_config.scenario_file }} \
 	--scenario_result_file {{ qps_gen_output(current_iteration) }} \
 	--json_file_out {{ qps_gen_output(current_iteration) | trim }}.log
@@ -61,8 +102,7 @@
 
 {% block iteration_teardown %}
   {{ super() }}
-  kill -TERM ${SERVER_PID}
-  kill -TERM ${CLIENT_PID}
+  __driver_exec --quit
   pwait ${SERVER_PID}
   pwait ${CLIENT_PID}
 {% endblock %}
