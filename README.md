@@ -1,25 +1,28 @@
 # Introduction
-The CHERI benchplot tool/library is an attempt to build a flexible system to run CHERI experiments on CheriBSD and process the results.
-Ideally the structure is modular and reusable enough that it can be adapted to speed-up data analysis or used as a starting point
-for custom data analysis and visualization.
+The CHERI benchplot tool/library is an attempt to build a flexible system to
+run CHERI experiments on CheriBSD and process the results.
+Ideally the structure is modular and reusable enough that it can be adapted
+to speed-up data analysis or used as a starting point for custom data analysis
+and visualization.
 
 ## Installation
 
 The framework depends on Python 3.11+ due to the use of some newer features.
-Furthermore, the `tools` directory contains some C++ tools that are used to accelerate parsing of
-DWARF structures and QEMU protobuf traces. These are optionally needed, depending what analysis is being run.
-The DWARF scraper tool requires the CHERI LLVM libraries to be installed in the CHERISDK directory and the `boost` libraries.
+Furthermore, the `tools` directory contains some C++ tools that are used to
+accelerate parsing of DWARF structures and QEMU protobuf traces.
+These are optionally needed, depending what analysis is being run.
+The DWARF scraper tool requires the CHERI LLVM libraries to be installed
+in the CHERISDK directory and the `boost` libraries.
 
 The following commands should install the dependencies and the pycheribenchplot package:
 ```
 # This must point to the root of the cherisdk, containing the rootfs and the 'sdk' directory.
-$ export CHERISDK=/path/to/cherisdk
 # It is recommended to setup a virtual environment
 $ virtualenv my-env
 $ source my-env/bin/activate
 (my-env) $ pip install .
 # To check that the installation succeeded:
-(my-env) $ benchplot-cli.py -h
+(my-env) $ benchplot-cli -h
 ```
 
 It is possible to run tests as follows:
@@ -46,8 +49,8 @@ for analisys and still get useful results without baking local paths into the in
 
 The main entry point is the `benchplot-cli` tool. This provides a number of subcommands:
 ```
-(my-env) $ benchplot-cli.py
-usage: benchplot-cli.py [-h] [-v] [-l LOGFILE] [-w WORKERS] [-c CONFIG] {session,info} ...
+(my-env) $ benchplot-cli
+usage: benchplot-cli [-h] [-v] [-l LOGFILE] [-w WORKERS] [-c CONFIG] {session,info} ...
 
 CHERI plot and data analysis tool benchplot-cli
 
@@ -70,12 +73,12 @@ options:
 The workflow is organised in the following phases:
  1. Write or reuse and existing _pipeline configuration_.
  2. Create a new session from the _pipeline configuration_
-    `benchplot-cli.py session create /path/to/config.json path/to/session`.
+    `benchplot-cli session create /path/to/config.json path/to/session`.
  3. Generate benchmark run scripts for the session
-    `benchplot-cli.py session generate path/to/session`.
+    `benchplot-cli session generate path/to/session`.
     This step will populate the `<session>/run` directory with run scripts.
  4. Bundle the session
-    `benchplot-cli.py session bundle -o bundles/path path/to/session`.
+    `benchplot-cli session bundle -o bundles/path path/to/session`.
     This will produce a `bundles/path/session.tar.gz`, but you can always manually do this step.
  5. Move the bundle to the benchmark host and untar it.
  6. On the benchmark host, enter the `<session>/run` directory and run the appropriate script for the host.
@@ -83,7 +86,7 @@ The workflow is organised in the following phases:
  7. Once all the benchmarks have run, collect the session directory tree back to the analysis host.
  8. Write or reuse an existing _analysis configuration_.
  9. Run the analysis pass on your data
-    `benchplot-cli.py session analyse -a path/to/analysis-config.json path/to/session`.
+    `benchplot-cli session analyse -a path/to/analysis-config.json path/to/session`.
     This will populate plots and output artefrats in the `<session>/plots` directory.
 
 Note that the benchmark host has minimal dependencies, we only require that it can
@@ -164,7 +167,7 @@ the benchmark workload. In this case, we are fine with a _generic_ generator,
 so let's find out how to configure it:
 
 ```
-$ benchplot-cli.py info task generic.exec
+$ benchplot-cli info task generic.exec
 # generic.exec (GenericExecTask):
 
 This is a simple generic executor that uses the run_options configuration entry to run
@@ -342,7 +345,7 @@ We have now completed our [pipeline configuration](./demo.json), so we can use
 it to generate our first _session_ as follows:
 
 ```
-$ benchplot-cli.py session create demo.json out/demo
+$ benchplot-cli session create demo.json out/demo
 [INFO] cheri-benchplot: Create new session 6e01b402-dbca-47f4-a9bd-5f11ab83641d
 ```
 
