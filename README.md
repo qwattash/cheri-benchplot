@@ -152,6 +152,225 @@ pipeline configuration.
 Note that the configuration descriptions will include all the nested configuration
 objects.
 
+#### Example -- pipeline configuration using the _generic_ task
+
+In this example, we will use the benchplot `generic` task to collect timing of an
+arbitrary workload that can be run from the shell. In this case, suppose we want to
+time the execution of `git clone` with and without CHERI temporal safety enabled.
+We start by using the configuration skeleton shown above.
+
+First, we will add a `generator` configuration that produces the scripts to run
+the benchmark workload. In this case, we are fine with a _generic_ generator,
+so let's find out how to configure it:
+
+```
+$ benchplot-cli.py info task generic.exec
+# generic.exec (GenericExecTask):
+
+This is a simple generic executor that uses the run_options configuration entry to run
+a custom command and collect the output to the output file.
+
+    Task configuration: GenericTaskConfig
+GenericTaskConfig(timing_mode: pycheribenchplot.generic.timing.TimingTool = <TimingTool.HYPERFINE: 'hyperfine'>, command: str = None, collect_stdout: bool = False)
+    #: Timing tool to use
+    timing_mode: TimingTool = TimingTool.HYPERFINE
+
+    #: Workload command to execute
+    command: str <required>
+
+    #: Collect command stdout, note this is incompatible with timing
+    collect_stdout: bool = False
+```
+
+This tells us that the `generic.exec` task expects a `command` configuration parameter,
+which is the command to run. So let's start filling the pipeline configuration,
+in this case, we will use `git clone` as the workload. Now, we need to collect
+execution time, to do so, we will use the existing integration of the
+`generic.exec` task with the `timing` module. Since we don't want to depend on
+hyperfine for collecting timing results, we will set `timing_tool` to "time".
+
+```
+{
+    "version": "1.0",
+    "concurrent_instances": 1,
+    "benchmark_config": {
+        "name": "my-generic-example",
+        "desc": "Description for humans",
+        "iterations": 1,
+        "parameterize": {},
+        "system": [],
+        "command_hooks": {},
+        "generators": [{
+            "handler": "generic.exec",
+            "task_options": {
+                "command": "git clone https://github.com/CTSRD-CHERI/cheribsd-ports.git",
+                "timing_mode": "time"
+            }
+        }]
+    }
+}
+```
+
+Now that we have this ironed out, we need to determine where we are running and
+what benchmark combinations we have. In this example, we want to collect the run
+time depending on temporal safety. There are multiple ways to go about this,
+but we will pick one that I think is convenient enough.
+
+> [!TIP]
+> The parameterisation configuration is completely left to the user, except for
+> the reserved parameter axes. Generally, it may be useful to define one or two
+> parameter axes for the platform architecture and other boot-time variants.
+> The parameterisation tuple will then uniquely identify a benchmark execution,
+> and it is internally associated to a unique value of the "dataset_id"
+> dataframe column.
+
+First, we determine the benchmark host on which we are going to run,
+a Morello machine in this case, and we decide to use the `host` parameter axis
+for this. The `host` parameter axis is also used to provide a matching `system`
+allocation descriptor for the host.
+The `system.name` field will be used to populate the internal `target`
+parameterisation axis.
+Then, we add a `revocation` axis with values "enabled" and "disabled". This is
+used to switch on and off CHERI temporal safety.
+Finally we move the git repository URL in the `repo` axis.
+
+> [!TIP]
+> While it is possible to specify directly the `target` parameterisation axis
+> in place of `host`, here we highlight the existence of the host system
+> configuration. Currently the `system` configuration is not really used
+> internally, unless the task needs to know the cheri target string or
+> kernel ABI; however, the idea is that we could automate the full workflow
+> and the host_system mappings gives us a place to specify where to run
+> different benchmark parameterisations (i.e. if we have multiple host machines
+> with different architectures).
+
+As we move the repository URL into a parameter axis, we need a way to reference
+its value in the command template string for the `task_options`.
+This is done by using the configuration template mechanism, which allows to
+substitute the value of a parameter anywhere within the benchmark configuration.
+This means that when the benchmark combinations are generated, the
+`task_options.command` string, the `{repo}` template is substituted with the
+value of the `repo` parameter axis assigned to the specific benchmark combination.
+
+```
+{
+    "version": "1.0",
+    "concurrent_instances": 1,
+    "benchmark_config": {
+        "name": "my-generic-example",
+        "desc": "Description for humans",
+        "iterations": 1,
+        "parameterize": {
+            "host": ["morello"],
+            "revocation": ["enabled", "disabled"],
+            "repo": ["https://github.com/CTSRD-CHERI/cheribsd-ports.git"]
+        },
+        "system": [{
+            "matches": { "host": "morello" },
+            "host_system": {
+                "name": "morello",
+                "kernel": "GENERIC-MORELLO-PURECAP-BENCHMARK-NODEBUG",
+                "cheri_target": "morello-purecap",
+                "kernelabi": "purecap"
+            }
+        }],
+        "command_hooks": {},
+        "generators": [{
+            "handler": "generic.exec",
+            "task_options": {
+                "command": "git clone {repo}",
+                "timing_mode": "time"
+            }
+        }]
+    }
+}
+```
+
+Now, we need to enable and disable revocation based on the `revocation` axis.
+In order to do so, we first disable revocation globally and then use
+`proccontrol` command to switch revocation on.
+To disable revocation we want to run a `sysctl` command before starting any
+of the benchmarking. This can be accomplished by adding a hook in the setup
+phase.
+Note that the `command_hooks.setup[0].matches` field can be used to restrict
+the hook to a specific parameterisation, however we leave it empty here to
+match any parameterisation tuple.
+
+Finally, we update the `command` to run `proccontrol` and we use template
+substitution to use the `revocation` axis as an argument to `proccontrol`.
+
+```
+{
+    "version": "1.0",
+    "concurrent_instances": 1,
+    "benchmark_config": {
+        "name": "my-generic-example",
+        "desc": "Description for humans",
+        "iterations": 1,
+        "parameterize": {
+            "host": ["morello"],
+            "revocation": ["enable", "disable"],
+            "repo": ["https://github.com/CTSRD-CHERI/cheribsd-ports.git"]
+        },
+        "system": [{
+            "matches": { "host": "morello" },
+            "host_system": {
+                "name": "morello",
+                "kernel": "GENERIC-MORELLO-PURECAP-BENCHMARK-NODEBUG",
+                "cheri_target": "morello-purecap",
+                "kernelabi": "purecap"
+            }
+        }],
+        "command_hooks": {
+            "setup": [{
+                "matches": {},
+                "commands": ["sysctl security.cheri.runtime_revocation_default=0"]
+            }]
+        },
+        "generators": [{
+            "handler": "generic.exec",
+            "task_options": {
+                "command": "proccontrol -m cherirevoke -s {revocation} git clone {repo}",
+                "timing_mode": "time"
+            }
+        }]
+    }
+}
+```
+
+We have now completed our [pipeline configuration](./demo.json), so we can use
+it to generate our first _session_ as follows:
+
+```
+$ benchplot-cli.py session create demo.json out/demo
+[INFO] cheri-benchplot: Create new session 6e01b402-dbca-47f4-a9bd-5f11ab83641d
+```
+
+We can now inspect what benchmark combinations have been generated and
+verify that the parameters have been assigned as expected.
+
+```
+$ bechplot-cli.py info session out/demo
+Session demo (6e01b402-dbca-47f4-a9bd-5f11ab83641d):
+        my-generic-example (6cd68504-4704-4542-ac73-f04067581e1c) on morello
+                Parameterization:
+                 - host = morello
+                 - revocation = enable
+                 - repo = https://github.com/CTSRD-CHERI/cheribsd-ports.git
+                 - target = morello
+                Generators:
+                 - generic.exec
+        my-generic-example (58de55db-1d8a-4976-9bd9-88f44d5fc387) on morello
+                Parameterization:
+                 - host = morello
+                 - revocation = disable
+                 - repo = https://github.com/CTSRD-CHERI/cheribsd-ports.git
+                 - target = morello
+                Generators:
+                 - generic.exec
+```
+
+
 ### Analysis
 
 > [!WARNING]
@@ -172,224 +391,3 @@ Each benchmark contains a group of tasks (`ExecutionTask` subclasses) that repre
 These tasks are responsible for generating the commands to produce the data, extract the data from the target cheribsd (or other) instance
 once the benchmark is done, and load the data for analysis.
 
-## Example -- using the _generic_ task
-
-In this example, we will use the benchplot `generic` task to collect timing of an arbitrary workload that can be run from the shell.
-We start by using the following configuration skeleton:
-
-```
-{
-    "version": "1.0",
-    "concurrent_instances": 1,
-    "benchmark_config": {
-        "name": "my-generic-example",
-        "desc": "Description for humans",
-        "iterations": 1,
-        "parameterize": {
-            "host": [],
-            "variant": [],
-            "runtime": [],
-            "scenario": []
-        },
-        "system": [],
-        "command_hooks": {},
-        "generators": []
-    }
-}
-```
-
-First, we will add a `generator` configuration that produces the scripts to run the benchmark workload.
-In this case, we are fine with a _generic_ generator, so let's find out how to configure it:
-
-```
-$ benchplot-cli.py info task generic.exec
-# generic.exec (GenericExecTask):
-
-This is a simple generic executor that uses the run_options configuration entry to run
-a custom command and collect the output to the output file.
-
-    Task configuration: GenericTaskConfig
-GenericTaskConfig(timing_mode: pycheribenchplot.generic.timing.TimingTool = <TimingTool.HYPERFINE: 'hyperfine'>, command: str = None, collect_stdout: bool = False)
-    #: Timing tool to use
-    timing_mode: TimingTool = TimingTool.HYPERFINE
-
-    #: Workload command to execute
-    command: str = None
-
-    #: Collect command stdout, note this is incompatible with timing
-    collect_stdout: bool = False
-```
-
-This tells us that the `generic.exec` task expects a `command` configuration parameter, which is the command to run.
-So let's start filling the pipeline configuration, in this case, we will use `git clone` as the workload.
-Now, we need to collect execution time, to do so, we will use the existing integration of the `generic.exec` task with the `timing` module. Since we don't want to depend on hyperfine for collecting timing results, we will set `timing_tool` to "time".
-
-```
-{
-    "version": "1.0",
-    "concurrent_instances": 1,
-    "benchmark_config": {
-        "name": "my-generic-example",
-        "desc": "Description for humans",
-        "iterations": 1,
-        "parameterize": {
-            "host": [],
-            "variant": [],
-            "runtime": [],
-            "scenario": []
-        },
-        "system": [],
-        "command_hooks": {},
-        "generators": [{
-            "handler": "generic.exec",
-            "task_options": {
-                "command": "git clone https://github.com/CTSRD-CHERI/cheribsd-ports.git",
-                "timing_mode": "time"
-            }
-        }]
-    }
-}
-```
-
-Now that we have this ironed out, we need to determine where we are running and what benchmark combinations we have.
-In this example, we want to collect the run time depending on temporal safety. There are multiple ways to go about this,
-but we will pick one that I think is convenient enough.
-
-> [!TIP]
-> Currently, the framework assumes that you always have 4 parameterisation axes that uniquely identify your benchmark run.
-> The tuple (target, variant, runtime, scenario) should uniquely identify your run.
-> This requirement will be relaxed in the future.
-
-First, we define the benchmark host on which we are going to run, a Morello machine in this case.
-In order to do this, we fill the `host` parameter axis and provide a matching `system` descriptor for the host.
-The `system.name` field will be used to populate the internal `target` parameterisation axis.
-Then, we add two `runtime` values, which represent whether the revocation is enabled or not, and finally we
-move the git repository URL in the scenario axis.
-The `variant` axis is unused here and we just use a placeholder "default" value there.
-
-> [!TIP]
-> While it is possible to specify directly the `target` parameterisation axis in place of `host`,
-> this is done to highlight the existence of the host system configuration. Currently the `system`
-> configuration is not really used internally, unless the task needs to know the cheri target string or kernel ABI;
-> however, the idea is that we could automate the full workflow and the host_system mappings gives us
-> a place to specify where to run different benchmark parameterisations
-> (i.e. if we have multiple host machines with different architectures).
-
-You may have noticed that as part of moving the repository URL to the `scenario` axis, we have replaced it
-in the command with `{scenario}`. This means that when the benchmark combinations are generated, the command
-string is substituted with the value of the scenario assigned to the specific benchmark combination.
-In this case, there is only a single scenario value so the result is the same.
-
-```
-{
-    "version": "1.0",
-    "concurrent_instances": 1,
-    "benchmark_config": {
-        "name": "my-generic-example",
-        "desc": "Description for humans",
-        "iterations": 1,
-        "parameterize": {
-            "host": ["morello"],
-            "variant": ["default"],
-            "runtime": ["enabled", "disabled"],
-            "scenario": ["https://github.com/CTSRD-CHERI/cheribsd-ports.git"]
-        },
-        "system": [{
-            "matches": { "host": "morello" },
-            "host_system": {
-                "name": "morello",
-                "kernel": "GENERIC-MORELLO-PURECAP-BENCHMARK-NODEBUG",
-                "cheri_target": "morello-purecap",
-                "kernelabi": "purecap"
-            }
-        }],
-        "command_hooks": {},
-        "generators": [{
-            "handler": "generic.exec",
-            "task_options": {
-                "command": "git clone {scenario}",
-                "timing_mode": "time"
-            }
-        }]
-    }
-}
-```
-
-Now, we need to enable and disable revocation based on the `runtime` axis.
-In order to do so, we first disable revocation globally and then use `proccontrol` command to switch revocation on.
-To disable revocation we want to run a `sysctl` command before starting any of the benchmarking.
-This can be accomplished by adding a hook in the setup phase as follows; note the empty `command_hooks.setup[0].matches` field, which means the command hook will run for all the parameterisations.
-
-Finally, we update the `command` to run `proccontrol` and we use template substitution to use the `runtime` axis as an argument to `proccontrol`.
-
-```
-{
-    "version": "1.0",
-    "concurrent_instances": 1,
-    "benchmark_config": {
-        "name": "my-generic-example",
-        "desc": "Description for humans",
-        "iterations": 1,
-        "parameterize": {
-            "host": ["morello"],
-            "variant": ["default"],
-            "runtime": ["enable", "disable"],
-            "scenario": ["https://github.com/CTSRD-CHERI/cheribsd-ports.git"]
-        },
-        "system": [{
-            "matches": { "host": "morello" },
-            "host_system": {
-                "name": "morello",
-                "kernel": "GENERIC-MORELLO-PURECAP-BENCHMARK-NODEBUG",
-                "cheri_target": "morello-purecap",
-                "kernelabi": "purecap"
-            }
-        }],
-        "command_hooks": {
-            "setup": [{
-                "matches": {},
-                "commands": ["sysctl security.cheri.runtime_revocation_default=0"]
-            }]
-        },
-        "generators": [{
-            "handler": "generic.exec",
-            "task_options": {
-                "command": "proccontrol -m cherirevoke -s {runtime} git clone {scenario}",
-                "timing_mode": "time"
-            }
-        }]
-    }
-}
-```
-
-Armed with this _pipeline configuration_ file, we generate our first _session_:
-
-```
-$ benchplot-cli.py session create clone-example.json out/clone-example
-[INFO] cheri-benchplot: Create new session cbd72a08-2fc6-47a9-920e-5e00ed385f12
-```
-
-We can now inspect what benchmark combinations are present with
-
-```
-$ bechplot-cli.py info session out/clone-example
-Session clone-demo (cbd72a08-2fc6-47a9-920e-5e00ed385f12):
-        my-generic-example (2bbb5428-498b-4848-ad90-953de1d39b10) on morello
-                Parameterization:
-                 - host = morello
-                 - variant = default
-                 - runtime = enable
-                 - scenario = https://github.com/CTSRD-CHERI/cheribsd-ports.git
-                 - target = morello
-                Generators:
-                 - generic.exec
-        my-generic-example (cecb3902-392c-4acd-9fc8-eff60f67a309) on morello
-                Parameterization:
-                 - host = morello
-                 - variant = default
-                 - runtime = disable
-                 - scenario = https://github.com/CTSRD-CHERI/cheribsd-ports.git
-                 - target = morello
-                Generators:
-                 - generic.exec
-```

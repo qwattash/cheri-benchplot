@@ -1,0 +1,36 @@
+{
+    "version": "1.0",
+    "concurrent_instances": 1,
+    "benchmark_config": {
+        "name": "my-generic-example",
+        "desc": "Description for humans",
+        "iterations": 1,
+        "parameterize": {
+            "host": ["morello"],
+            "revocation": ["enable", "disable"],
+            "repo": ["https://github.com/CTSRD-CHERI/cheribsd-ports.git"]
+        },
+        "system": [{
+            "matches": { "host": "morello" },
+            "host_system": {
+                "name": "morello",
+                "kernel": "GENERIC-MORELLO-PURECAP-BENCHMARK-NODEBUG",
+                "cheri_target": "morello-purecap",
+                "kernelabi": "purecap"
+            }
+        }],
+        "command_hooks": {
+            "setup": [{
+                "matches": {},
+                "commands": ["sysctl security.cheri.runtime_revocation_default=0"]
+            }]
+        },
+        "generators": [{
+            "handler": "generic.exec",
+            "task_options": {
+                "command": "proccontrol -m cherirevoke -s {revocation} git clone {repo}",
+                "timing_mode": "time"
+            }
+        }]
+    }
+}
