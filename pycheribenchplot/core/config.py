@@ -386,8 +386,8 @@ class Config:
             desc.write("=" * len(cls.__name__) + "\n\n")
 
         for idx, field in enumerate(dc.fields(cls)):
-            meta_ = field.metadata.get("metadata")
-            help_ = (meta_ or dict()).get("desc")
+            meta_ = field.metadata.get("metadata", {})
+            help_ = meta_.get("desc")
             if help_:
                 if idx > 0:
                     # Extra space to separate docstring from previous field
@@ -398,12 +398,14 @@ class Config:
             dtype, nested = describe_type(field.type)
             nested_configs.update(nested)
             desc.write(f"{field.name}: {dtype}")
-            if field.default != dc.MISSING:
+            if field.metadata.get("required"):
+                desc.write(" <required>")
+            elif field.default != dc.MISSING:
                 desc.write(f" = {field.default}")
             elif field.default_factory != dc.MISSING:
                 desc.write(f" = {field.default_factory.__name__}()")
             else:
-                desc.write(" <required>")
+                logger.debug("Suspicious field documentation: %s: %s", cls, field.name)
             desc.write("\n")
 
         for config_type in nested_configs:

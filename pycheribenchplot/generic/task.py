@@ -2,7 +2,7 @@ import shlex
 from dataclasses import dataclass
 
 from ..core.artefact import RemoteBenchmarkIterationTarget
-from ..core.config import config_field
+from ..core.config import Config, config_field
 from ..core.task import output
 from .timing import TimingConfig, TimingExecTask, TimingPlotTask
 
@@ -10,7 +10,7 @@ from .timing import TimingConfig, TimingExecTask, TimingPlotTask
 @dataclass
 class GenericTaskConfig(TimingConfig):
     #: The command to execute
-    command: str = config_field(None, desc="Workload command to execute")
+    command: str = config_field(Config.REQUIRED, desc="Workload command to execute")
     #: Collect command output, note this is incompatible with timing.
     collect_stdout: bool = config_field(False, desc="Collect command stdout, note this is incompatible with timing")
 
