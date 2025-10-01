@@ -38,7 +38,7 @@ The benchplot framework organisise data in _sessions_. A _session_ is a self-con
  - Plots and other artefacts that are produced during analysis.
  - Any other supporting assets that may be required.
 
-Each _session_ is created from a specific __pipeline configuration_ (`core.config.PipelineConfig`) file,
+Each _session_ is created from a specific _pipeline configuration_ (`core.config.PipelineConfig`) file,
 which defines the benchmark parameterisation axes and the combinations of benchmark configurations to run.
 A separate _user configuration_ (`core.config.BenchplotUserConfig`) file is used to resolve artefacts
 that may vary from system to system; this allows to move an existing session to a different machine
@@ -86,7 +86,76 @@ The workflow is organised in the following phases:
     `benchplot-cli.py session analyse -a path/to/analysis-config.json path/to/session`.
     This will populate plots and output artefrats in the `<session>/plots` directory.
 
-Note that the benchmark host has minimal dependencies, we only require that it can run shell scripts and the benchmark executable. Depending on the data collected, we may require some auxiliary commands to be available; for example, collecting hardware performance counters requires the FreeBSD `pmcstat` utility.
+Note that the benchmark host has minimal dependencies, we only require that it can
+run shell scripts and the benchmark executable. Depending on the data collected,
+we may require some auxiliary commands to be available; for example, collecting
+hardware performance counters may require the FreeBSD `pmcstat` utility.
+
+### Pipeline Configuration
+
+The pipeline configuration is the user-facing description of the desired
+benchmark parameterisation. This describes the benchmark parameterisation axes
+and how these are used to generate the benchmark workload combinations to execute.
+Below is a worked example that produces a configuration that generates the generic
+workload executor.
+
+The JSON pipeline configuration has the following shape:
+
+```
+{
+    "version": "1.0",
+    "concurrent_instances": 1,
+    "benchmark_config": {
+        "name": "my-generic-example",
+        "desc": "Description for humans",
+        "iterations": 1,
+        "parameterize": {},
+        "system": [],
+        "command_hooks": {},
+        "generators": []
+    }
+}
+```
+
+The key fields in this file are:
+
+ - *parameterize*: describes the parameterization axes as a dictionary of
+ "axis name" => [axis values]. For example, `{ "buffer-size"; [1, 1024, 2048 ]}`
+ defines a single benchmarking axis named "buffer-size" with values 1, 1024 and 2048.
+ This means that the pipeline configuration will be expanded to produce three benchmark
+ executions, each with its own buffer-size value.
+ - *system*: defines the "target" assignment for different parameter combinations.
+  This is intended to describe if/how different parameterisations map to the
+  platform on which they run. For instance, if we have a `"platform": ["arm", "riscv"]`
+  parameter axis, we probably want all "arm" benchmark workloads to run on an ARM
+  benchmark host. Similarly, this can be done to differentiate benchmark workloads that
+  require booting the host with different kernels or boot-time tunables.
+ - *command_hooks*: describes additional commands to be injected at different
+ stages of the benchmark run script. This is useful, for instance, to load kernel
+ modules or set sysctl values corresponding to different parameterisations.
+ - *generators*: configures the tasks that generate the benchmark executor scripts.
+ These can be further inspected using the `benchplot-cli info task` command.
+
+> [!TIP]
+> Some parameterisation axis names are reserved and will result in errors.
+> The name "iteration" is reserved for internal use (the benchmark iteration number).
+> The name "descriptor" is reserved for internal use.
+> The name "target" is semi-reserved, the value is automatically generated from the
+> `benchmark_config.system` mapping, but can be forced if the axis is explicitly
+> specificed.
+
+The `benchplot-cli` tool is your friend, this can be used to show
+a description for the various fields as `benchplot-cli info config --desc pipeline`.
+This will produce a description of the pipeline configuration; furthermore,
+`benchplot-cli info config --generate pipeline` will emit a default empty
+pipeline configuration.
+Note that the configuration descriptions will include all the nested configuration
+objects.
+
+### Analysis
+
+> [!WARNING]
+> TODO this needs to be documented.
 
 ## Internals
 
@@ -324,80 +393,3 @@ Session clone-demo (cbd72a08-2fc6-47a9-920e-5e00ed385f12):
                 Generators:
                  - generic.exec
 ```
-
-# Legacy documentation
-## Example
-
- - XXX Rework this example to make it simpler.
-
-Required branches:
- - cheribsd: statcounters-update
- - qemu: qemu-experimental-tracing
- - netperf: cheri-netperf
- - cheri-perfetto: cheri-perfetto
- - cheri-benchplot: master
- 
-The example runs a simple UDP_RR netperf benchmark and collects data from all supported data sources.
- 1. Build cheribsd: `cheribuild cheribsd-riscv64-purecap --cheribsd/build-alternate-abi-kernels --cheribsd/build-bench-kernels`
- 2. Build qemu: `cheribuild qemu --qemu/configure-options '--enable-perfetto-log-instr'`
- 3. Build netperf: `cheribuild netperf-riscv64-purecap`
- 4. Build cheri-perfetto: this is not currently automated by cheribuild.
- ```
- cd path/to/cheri-perfetto
- mkdir -p out
- tools/install-build-deps
- # Can either use the shipped gn/ninja or the system gn/ninja
- tools/gn gen out/cheri-perfetto
- tools/ninja -C out/cheri-perfetto
- ```
- 7. Install benchplot and the perfetto python bindings (might be best to use a virtualenv)
- ```
- pip install -e path/to/cheri-benchplot
- pip install -e path/to/cheri-perfetto/src/trace_processor/python
- ```
- 5. Make sure the benchplot user configuration in `.config/cheri-benchplot.json` matches the your setup:
-```
-{
-    "sdk_path": "path/to/cherisdk",
-    "perfetto_path": "path/to/cheri-perfetto/out/cheri-perfetto",
-    "cheribuild_path": "path/to/cheribuild/cheribuild.py"
-}
-```
- 6. Run the demo session:
- ```
- python benchplot.py demo/demo-netperf-multi-instance/benchplot_config.json run
- python benchplot.py demo/demo-netperf-multi-instance/benchplot_config.json analyse
- ```
-
-## Other tracing backends
-CHERI-QEMU supports two other tracing backends that may be useful
- - protobuf backend:
-   + Build qemu with `--enable-protobuf-log-instr`, run with `--cheri-trace-backend protobuf`
-   + Emits a stream of protobufs that represent the trace entries. See `cheri-perfetto/protos/perfetto/trace/track_event/qemu_log_entry.proto` for the proto definitions.
- - json backend:
-   + Build qemu with `--enable-json-log-instr`, run with `--cheri-trace-backend json`
-   + Emit a json file that contains the log entries. The format should be more stable and easier to parse than the text format, however protobufs or perfetto should
-   be used for any trace that is not a toy program.
-
-## CHERI Trace Processor
-This is currently a skeleton for more advanced parsing of qemu traces from both the protobuf and the perfetto backends.
-It contains an example to read a protobuf trace from the protobuf backend. Perfetto traces should be loaded using the
-`trace_processor_shell` from the cheri-perfetto repository.
-
-### Example setup to record and observe protobuf traces
-Required branches:
- - cheribsd: statcounters-update (should also work on dev, with less data output)
- - qemu: qemu-experimental-tracing
- - cheri-benchplot: master
- 
- 1. Build qemu `cheribuild qemu --qemu/configure-options '--enable-protobuf-log-instr'`
- 2. Run qemu (assuming you have built cheribsd and a disk image) `cheribuild run-riscv64-purecap --run-riscv64-purecap/extra-options '--cheri-trace-backend protobuf'`
- 3. In the qemu guest, run a sample program:
-
-     ```sh
-     $ sysctl hw.qemu_trace_perthread=1
-     $ qtrace exec helloworld
-     $ poweroff
-     ```
-     This will generate the qemu-protobuf.pb file (currently hardcoded, sorry I am lazy...)
- 4. Run `python cheri_trace_processor/cheri_trace_processor.py path/to/qemu-protobuf.pb`
