@@ -172,14 +172,14 @@ class TaskInfoSubCommand(SubCommand):
                                 type=str,
                                 required=False,
                                 default=None,
-                                choices=("user", "pipeline"),
+                                choices=("user", "pipeline", "analysis"),
                                 help="Generate a default configuration to stdout")
 
         sub_config.add_argument("-d",
                                 "--desc",
                                 required=False,
                                 default=None,
-                                choices=("user", "pipeline"),
+                                choices=("user", "pipeline", "analysis"),
                                 help="Describe a configuration object")
 
     def handle_session(self, user_config, args):
@@ -229,11 +229,15 @@ class TaskInfoSubCommand(SubCommand):
             print(BenchplotUserConfig.describe(include_header=True))
         elif args.desc == "pipeline":
             print(PipelineConfig.describe(include_header=True))
+        elif args.desc == "analysis":
+            print(AnalysisConfig.describe(include_header=True))
 
         if args.generate == "user":
             print(BenchplotUserConfig().emit_json())
         elif args.generate == "pipeline":
             print(PipelineConfig().emit_json())
+        elif args.generate == "analysis":
+            print(AnalysisConfig().emit_json())
 
         if args.desc is None and args.generate is None:
             print(user_config.emit_json())
