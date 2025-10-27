@@ -376,10 +376,118 @@ Session demo (6e01b402-dbca-47f4-a9bd-5f11ab83641d):
 
 ### Analysis
 
-> [!WARNING]
-> TODO this needs to be documented.
+The analysis phase is used to configure post-processing tasks that operate on
+the data collected by the benchmark execution.
+For this, we use a separate analysis configuration, which can be tweaked
+and modified without re-running the benchmark.
 
-## Internals
+Similarly to the pipeline configuration, the analysis configuration is
+documented by `benchplot-cli info config --desc analysis`.
+
+The JSON analysis configuration has the following shape:
+
+```
+{
+    "plot": {
+        "plot_output_format": ["pdf"]
+    },
+    "parameter_constants": {},
+    "baseline": null,
+    "tasks": []
+}
+```
+
+The key fields are:
+
+ - *plot*: describes general plotting configuration, such as the plot output
+ file extensions.
+ - *tasks*: configures the analysis tasks that should run.
+
+Analysis tasks provide a way to configure how the parameterisation axes are
+used within the various plots.
+The `analysis.dynamic` task is used to separate the parameter axes in two groups,
+a set of _fixed axes_ and _free axes_. This task will take a cross section of the
+benchmark data grouping on the _fixed axes_, and running child analysis tasks on
+the data cross section. The child analysis tasks are configured in the
+`task_options.broadcast` field.
+Each instance of the child analysis tasks will produce a separate plot,
+corresponding to each possible combination of the _fixed axes_.
+
+#### Example -- analysis configuration for the _generic_ task
+
+Continuing the example above, we want to produce a plot that shows the timing
+from the `git clone` command.
+
+We start from the analysis configuration skeleton and we add the `analysis.dynamic`
+handler. We also set the baseline selector, this will be used by all analysis
+tasks to determine which slice of the dataset contains the baseline measurements.
+Note that we don't have any _fixed axes_ in this case, because we will use all
+the parameterisation dimensions within the plot.
+
+```
+{
+    "plot": {
+        "plot_output_format": ["pdf"]
+    },
+    "baseline": { "host": "morello", "revocation": "disable" },
+    "tasks": [{
+        "handler": "analysis.dynamic",
+        "task_options": {
+            "broadcast": [],
+            "fixed_axes": []
+        }
+    }]
+}
+```
+
+Now that we have the basic structure done, we add the task configuration for
+the plot we want to produce. In this case, we use the `timing.plot-slice` task.
+This is a generic timing plot that interoperates with the `analysis.dynamic` task
+to produce a plot for a given _free axes_ cross section.
+
+Again, we can see what parameters are supported using
+`benchplot-cli info task timing.plot-slice`.
+
+The plot is generated on a grid. The grid columns and rows can be tiled using
+values from one of the _free axes_.
+In this case, we use:
+ - the "revocation" axis as the grid column ID,
+ - the implicit "target" axis as the tile X axis, for all grid subplots
+
+Finally, we tune the aspect-ratio of the tiles to a more pleasant shape.
+
+```
+{
+    "plot": {
+        "plot_output_format": ["pdf"]
+    },
+    "baseline": { "host": "morello", "revocation": "disable" },
+    "tasks": [{
+        "handler": "analysis.dynamic",
+        "task_options": {
+            "broadcast": [{
+                "handler": "timing.plot-slice",
+                "task_options": {
+                    "tile_col": "revocation",
+                    "tile_xaxis": "target",
+                    "tile_aspect": 2.0
+                }
+            }],
+            "fixed_axes": []
+        }
+    }]
+}
+```
+
+> [!TIP]
+> The plot task options are fairly involved and allow a very arbitrary reshaping
+> of the plot grid. This includes the ability to tweak the human-visible text of
+> all labels that are plotted.
+> Furthermore, the output depends on the sorting of the plot input data. The
+> ordering is completely tunable by assigning different weights to different
+> parameter axes.
+
+## Internals / Hacking
 
 > [!WARNING]
 > TODO this is outdated and incomplete. Maybe should move to sphinx docs.

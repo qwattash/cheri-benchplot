@@ -1,0 +1,21 @@
+{
+    "plot": {
+        "plot_output_format": ["pdf"]
+    },
+    "baseline": { "host": "morello", "revocation": "disable" },
+    "tasks": [{
+        "handler": "analysis.dynamic",
+        "task_options": {
+            "broadcast": [{
+                "handler": "timing.plot-slice",
+                "task_options": {
+                    "tile_col": "runtime",
+                    "tile_xaxis": "target",
+                    "tile_aspect": 2.0
+                }
+            }],
+            "fixed_axes": []
+        }
+    }]
+}
+
