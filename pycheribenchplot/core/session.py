@@ -333,8 +333,15 @@ class Session:
         # Now that we are happy with the UUIDs, actually merge the results
         for src_session in srcs.values():
             self.logger.debug("Merging session %s", src_session.session_root_path)
-            shutil.copytree(src_session.get_data_root_path(), self.get_data_root_path())
+            self.merge_raw(src_session.get_data_root_path())
         self.logger.info("Merged sessions run data")
+
+    def merge_raw(self, data_root_dir: Path):
+        """
+        Merge the given run directory into the current session.
+        """
+        self.logger.debug("Merge run directory %s", data_root_dir)
+        shutil.copytree(data_root_dir, self.get_data_root_path(), dirs_exist_ok=True)
 
     def get_instance_configuration(self, g_uuid: UUID | str) -> InstanceConfig:
         """

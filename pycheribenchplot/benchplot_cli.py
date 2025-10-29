@@ -1,8 +1,11 @@
 #!/usr/bin/env python
 
 import argparse as ap
+import base64
 import re
+import tarfile
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from pycheribenchplot.core.config import (AnalysisConfig, BenchplotUserConfig, PipelineConfig, TaskTargetConfig)
 from pycheribenchplot.core.error import ToolArgparseError
@@ -38,6 +41,11 @@ class SessionSubCommand(SubCommand):
 
         sub_merge = session_subparsers.add_parser("merge", help="Merge partial results into a session")
         self._register_session_arg(sub_merge, required=True)
+        sub_merge.add_argument(
+            "-d",
+            "--decode",
+            action="store_true",
+            help="Interpret sources as base64-encoded tarballs which only contain the run directory.")
         sub_merge.add_argument("partials", type=Path, nargs="+", help="Partial runs to merge")
 
         sub_clean = session_subparsers.add_parser("clean", help="Clean session data and plots.")
@@ -117,11 +125,17 @@ class SessionSubCommand(SubCommand):
         session for analysis.
         """
         session = self._get_session(user_config, args)
-        to_merge = []
-        for src_path in args.partials:
-            partial = self._get_session(user_config, ap.Namespace(target=src_path))
-            to_merge.append(partial)
-        session.merge(to_merge)
+
+        if args.decode:
+            for src_path in args.partials:
+                self._handle_raw_merge(session, src_path)
+                self.logger.info("Merged %s", src_path)
+        else:
+            to_merge = []
+            for src_path in args.partials:
+                partial = self._get_session(user_config, ap.Namespace(target=src_path))
+                to_merge.append(partial)
+            session.merge(to_merge)
 
     def handle_clean(self, user_config, args):
         # XXX add safety net question?
@@ -159,6 +173,28 @@ class SessionSubCommand(SubCommand):
         handler_name = f"handle_{args.session_action}"
         handler = getattr(self, handler_name)
         handler(user_config, args)
+
+    def _handle_raw_merge(self, session, src_path):
+        if not src_path.exists():
+            self.logger.error("Invalid source path %s", src_path)
+            raise ValueError("Invalid path")
+
+        with TemporaryDirectory() as src_tmp:
+            self.logger.debug("Using temporary directory %s", src_tmp)
+            tarball_path = Path(src_tmp) / "src.tar.gz"
+            src_tarball = open(tarball_path, "w+b")
+            src_file = open(src_path, "rb")
+            base64.decode(src_file, src_tarball)
+            src_file.close()
+            src_tarball.close()
+
+            raw_run = Path(src_tmp) / "extract"
+            raw_run.mkdir()
+            src_archive = tarfile.open(tarball_path)
+            src_archive.extractall(raw_run)
+            src_archive.close()
+
+            session.merge_raw(raw_run)
 
 
 class TaskInfoSubCommand(SubCommand):
