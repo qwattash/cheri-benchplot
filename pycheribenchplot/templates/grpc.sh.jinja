@@ -84,16 +84,11 @@ __driver_exec()
   __server_exec
   __client_exec
   sleep 1
-  # {{ _server_exec(current_iteration) }} grpc_qps_worker --driver_port 10000 --server_port=10001 &
-  # SERVER_PID=$!
-  # {{ _client_exec(current_iteration) }} grpc_qps_worker --driver_port 20000 --server_port=20001 &
-  # CLIENT_PID=$!
 {% endblock %}
 
 {% block iteration_exec %}
   echo "Run QPS {{ qps_config.scenario_file }} iteration {{ current_iteration }}"
 
-  # {{ _driver_exec(current_iteration) }} grpc_qps_json_driver
   __driver_exec \
 	--scenarios_file {{ qps_config.scenario_file }} \
 	--scenario_result_file {{ qps_gen_output(current_iteration) }} \
@@ -103,6 +98,6 @@ __driver_exec()
 {% block iteration_teardown %}
   {{ super() }}
   __driver_exec --quit
-  pwait ${SERVER_PID}
-  pwait ${CLIENT_PID}
+  wait ${SERVER_PID}
+  wait ${CLIENT_PID}
 {% endblock %}
