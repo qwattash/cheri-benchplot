@@ -307,6 +307,35 @@ class Session:
             raise RuntimeError("Failed to push session")
         self.logger.info("Session bundle pushed")
 
+    def merge(self, other: "list[Session]"):
+        """
+        Merge data from other sessions into this one.
+
+        Note that the sessions must be copies of this one, so we check that
+        the UUID matches.
+
+        :param other: List of sessions to merge into the current one.
+        """
+        self.logger.info("Merge session %s runs", self)
+        srcs = {}
+        for src_session in other:
+            if src_session.uuid != self.uuid:
+                self.logger.error("Can not merge sessions with mismatching UUIDs: %s", src_session.session_root_path)
+                raise RuntimeError("Session UUID mismatch")
+            if src_session.session_root_path == self.session_root_path:
+                self.logger.warning("Skipping merge into self: %s", src_session.session_root_path)
+                continue
+            if src_session.session_root_path in srcs:
+                self.logger.warning("Skipping duplicate session to merge: %s", src_session.session_root_path)
+                continue
+            srcs[src_session.session_root_path] = src_session
+
+        # Now that we are happy with the UUIDs, actually merge the results
+        for src_session in srcs.values():
+            self.logger.debug("Merging session %s", src_session.session_root_path)
+            shutil.copytree(src_session.get_data_root_path(), self.get_data_root_path())
+        self.logger.info("Merged sessions run data")
+
     def get_instance_configuration(self, g_uuid: UUID | str) -> InstanceConfig:
         """
         Helper to retreive an instance configuration for the given g_uuid.

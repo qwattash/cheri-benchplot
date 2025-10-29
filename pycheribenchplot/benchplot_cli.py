@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import argparse as ap
 import re
 from pathlib import Path
 
@@ -34,6 +35,10 @@ class SessionSubCommand(SubCommand):
 
         sub_run = session_subparsers.add_parser("run", help="Run the benchmark session")
         self._register_session_arg(sub_run)
+
+        sub_merge = session_subparsers.add_parser("merge", help="Merge partial results into a session")
+        self._register_session_arg(sub_merge, required=True)
+        sub_merge.add_argument("partials", type=Path, nargs="+", help="Partial runs to merge")
 
         sub_clean = session_subparsers.add_parser("clean", help="Clean session data and plots.")
         self._register_session_arg(sub_clean)
@@ -105,6 +110,18 @@ class SessionSubCommand(SubCommand):
         """
         session = self._get_session(user_config, args)
         session.run()
+
+    def handle_merge(self, user_config, args):
+        """
+        Merge results from partial session copies into a single master
+        session for analysis.
+        """
+        session = self._get_session(user_config, args)
+        to_merge = []
+        for src_path in args.partials:
+            partial = self._get_session(user_config, ap.Namespace(target=src_path))
+            to_merge.append(partial)
+        session.merge(to_merge)
 
     def handle_clean(self, user_config, args):
         # XXX add safety net question?
