@@ -85,21 +85,29 @@ class WeightMode(enum.Enum):
     SortDescendingAsBytes = "descending_bytes"
     SortAscendingAsStr = "ascending_str"
     SortDescendingAsStr = "descending_str"
+    SortAscendingCat = "ascending_cat"
+    SortDescendingCat = "descending_cat"
     Custom = "custom"
 
     def is_descending(self):
         if (self == WeightMode.SortDescendingAsInt or self == WeightMode.SortDescendingAsBytes
-                or self == WeightMode.SortDescendingAsStr):
+                or self == WeightMode.SortDescendingAsStr or self == WeightMode.SortDescendingCat):
             return True
         return False
 
-    def weight_transform(self):
-        if self == WeightMode.SortAscendingAsStr or self == WeightMode.SortDescendingAsStr:
-            return lambda series: series.cast(pl.String)
-        if self == WeightMode.SortAscendingAsInt or self == WeightMode.SortDescendingAsInt:
-            return lambda series: series.cast(pl.Int64)
-        if self == WeightMode.SortAscendingAsBytes or self == WeightMode.SortDescendingAsBytes:
-            return lambda series: series.map_elements(bytes2int, return_dtype=pl.Int64)
+    def weight_transform(self, weight_config: "ParamWeight"):
+        match self:
+            case WeightMode.SortAscendingAsStr | WeightMode.SortDescendingAsStr:
+                return lambda series: series.cast(pl.String)
+            case WeightMode.SortAscendingAsInt | WeightMode.SortDescendingAsInt:
+                return lambda series: series.cast(pl.Int64)
+            case WeightMode.SortAscendingAsBytes | WeightMode.SortDescendingAsBytes:
+                return lambda series: series.map_elements(bytes2int, return_dtype=pl.Int64)
+            case WeightMode.SortAscendingCat | WeightMode.SortDescendingCat:
+                assert weight_config.order is not None
+                nvalues = len(weight_config.order)
+                mapping = dict(zip(weight_config.order, range(nvalues)))
+                return lambda series: series.replace(mapping)
         return None
 
 
@@ -114,20 +122,40 @@ class ParamWeight(Config):
     Parameter weighting rule for stable output ordering.
     """
     mode: WeightMode = config_field(WeightMode.SortAscendingAsStr, desc="Strategy for assigning weights")
-    base: Optional[int] = config_field(None, desc="Base weight, ignored for 'custom' strategy.")
-    step: Optional[int] = config_field(None, desc="Weight increment, ignored for 'custom' strategy.")
-    weights: Optional[Dict[str, int]] = config_field(None, desc="Custom mapping of parameter values to weights")
+    base: int | None = config_field(None, desc="Base weight, ignored for 'custom' strategy.")
+    step: int | None = config_field(None, desc="Weight increment, ignored for 'custom' strategy.")
+    weights: dict[str, int] | None = config_field(
+        None, desc="Custom mapping of parameter values to weights, only valid for 'custom' mode.")
+    order: list[str] | None = config_field(None, desc="Custom order of parameter values, only valid for '*_cat' modes.")
 
     @validates_schema
     def validate_mode(self, data, **kwargs):
-        if data["mode"] == WeightMode.Custom:
-            if data["weights"] is None:
-                raise ValidationError("ParamWeight.weights must be set when TVRSParamWeight.mode is 'custom'")
-        else:
-            if data["base"] is None:
-                raise ValidationError("ParamWeight.base must be set")
-            if data["step"] is None:
-                raise ValidationError("ParamWeight.step must be set")
+        mode_name = data["mode"].value
+
+        def _required(field_name):
+            if data[field_name] is None:
+                raise ValidationError(f"ParamWeight.{field_name} must be set when ParamWeight.mode = '{mode_name}'", )
+
+        def _ignored(field_name):
+            if data[field_name] is not None:
+                raise ValidationError(f"ParamWeight.{field_name} is ignored when ParamWeight.mode = '{mode_name}'")
+
+        match data["mode"]:
+            case WeightMode.Custom:
+                _required("weights")
+                _ignored("order")
+                _ignored("base")
+                _ignored("step")
+            case WeightMode.SortAscendingCat | WeightMode.SortDescendingCat:
+                _required("order")
+                _required("base")
+                _required("step")
+                _ignored("weights")
+            case _:
+                _required("base")
+                _required("step")
+                _ignored("weights")
+                _ignored("order")
 
 
 @dataclass
@@ -531,7 +559,7 @@ class DisplayGrid(PlotGrid):
             else:
                 descending = weight_spec.mode.is_descending()
                 unique_values = df[name].unique()
-                if transform := weight_spec.mode.weight_transform():
+                if transform := weight_spec.mode.weight_transform(weight_spec):
                     unique_values = transform(unique_values)
                 sorted_values = sorted(unique_values, reverse=descending)
                 mapping = {v: weight_spec.base + i * weight_spec.step for i, v in enumerate(sorted_values)}
