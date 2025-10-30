@@ -1,6 +1,7 @@
 import copy
+import operator
 from dataclasses import MISSING, dataclass
-from functools import cached_property
+from functools import cached_property, reduce
 from typing import List, Optional, Type, TypeAlias
 from warnings import deprecated
 
@@ -575,6 +576,23 @@ class SliceAnalysisTask(AnalysisTask):
 
 
 @dataclass
+class ParamFilterRule(Config):
+    """
+    Parameter filter rule that matches a specific value along an axis.
+    """
+    matches: dict[str, str | int] = config_field(Config.REQUIRED, desc="Mapping of parameter key/values to match")
+
+
+@dataclass
+class ParamFilterConfig(Config):
+    """
+    Define filtering rules to exclude a subset of the data.
+    """
+    keep: list[ParamFilterRule] = config_field(list, desc="List of whitelist rules")
+    drop: list[ParamFilterRule] = config_field(list, desc="List of blacklist rules")
+
+
+@dataclass
 class GenericAnalysisConfig(Config):
     """
     Base configuration for generic analysis tasks.
@@ -596,6 +614,11 @@ class GenericAnalysisConfig(Config):
     #: completely user-defined. We have a reserved set of axes that must
     #: always be present: ["target", "scenario"], but need not be fixed.
     fixed_axes: List[str] = config_field(list, desc="Parameterisation axes to keep fixed")
+
+    #: Filter the parameterization before ingestion, so that only a subset of the slices
+    #: will be actually scheduled
+    param_filter: ParamFilterConfig | None = config_field(
+        None, desc="Filter the parameterisation to process only a subset of the slices.")
 
     #: Override the baseline selector for this specific analysis
     baseline: Optional[dict] = config_field(
@@ -674,6 +697,30 @@ class GenericAnalysisTask(AnalysisTask):
 
         return task_id
 
+    @property
+    def descriptor_matrix(self):
+        df = self.session.parameterization_matrix
+        if self.config.param_filter is None:
+            return df
+
+        if rules := self.config.param_filter.keep:
+            conditions = []
+            for rule in rules:
+                cond = [pl.col(k) == v for k, v in rule.matches.items()]
+                conditions.append(reduce(operator.and_, cond))
+            cond = reduce(operator.or_, conditions)
+            df = df.filter(cond)
+
+        if rules := self.config.param_filter.drop:
+            conditions = []
+            for rule in rules:
+                cond = [pl.col(k) == v for k, v in rule.matches.items()]
+                conditions.append(reduce(operator.and_, cond))
+            cond = reduce(operator.or_, conditions)
+            df = df.filter(~cond)
+
+        return df
+
     @cached_property
     def resolved_slice_tasks(self) -> list[tuple[Type[SliceAnalysisTask], Config]]:
         # Note: the config layer guarantees that the handler is valid at this point
@@ -690,9 +737,9 @@ class GenericAnalysisTask(AnalysisTask):
         Schedule one instance of task_class for each dataset in the session
         """
         if self.config.fixed_axes:
-            groups = self.session.parameterization_matrix.group_by(self.config.fixed_axes)
+            groups = self.descriptor_matrix.group_by(self.config.fixed_axes)
         else:
-            groups = [(tuple(), self.session.parameterization_matrix)]
+            groups = [(tuple(), self.descriptor_matrix)]
         for slice_task, slice_config in self.resolved_slice_tasks:
             for name, group_slice in groups:
                 group_options = copy.deepcopy(slice_config)
