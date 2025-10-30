@@ -132,7 +132,7 @@ class TimingSlicePlotTask(SlicePlotTask):
 
     @dependency
     def timing(self):
-        for b in self.session.all_benchmarks():
+        for b in self.slice_benchmarks():
             task = b.find_exec_task(self.exec_task_class, include_subclass=True)
             yield task.timing.get_loader()
 
