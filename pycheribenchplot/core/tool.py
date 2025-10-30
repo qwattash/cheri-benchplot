@@ -46,9 +46,13 @@ class SubCommand:
             self.logger.error("Malformed configuration %s: %s", path, ex)
             raise
         except ValidationError as ex:
-            self.logger.error("Invalid configuration %s: %s", path, ex)
+            self.logger.error("Invalid configuration %s", path)
+            self._dump_validation_error(ex)
             raise
         return config
+
+    def _dump_validation_error(self, err: ValidationError):
+        self.logger.error("Validation failed %s", err)
 
     def _get_session(self, user_config: BenchplotUserConfig, args: ap.Namespace, missing_ok: bool = False):
         """
