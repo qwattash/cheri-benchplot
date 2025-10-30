@@ -46,7 +46,8 @@ def grid_pointplot(tile, chunk, x, y, err=None, shift=True, padding=0.1):
             view = view.with_columns(pl.lit(0).alias("_offset_"))
             error_cap_width = 5
 
-        for color, (hue_label, hue_group) in zip(tile.palette, view.group_by(hue, maintain_order=True)):
+        for (hue_label, ), hue_group in view.group_by(hue, maintain_order=True):
+            color = tile.palette[hue_label]
             x = hue_group["_xcoord_"] + hue_group["_offset_"]
             if err:
                 lower, upper = err

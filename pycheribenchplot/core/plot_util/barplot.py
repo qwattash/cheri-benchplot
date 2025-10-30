@@ -99,7 +99,8 @@ def grid_barplot(tile: "PlotTile",
     set_catlabel(catcol)
     set_mlabel(metric)
     # Draw the plot
-    for color, (hue_label, hue_group) in zip(tile.palette, view.group_by(hue, maintain_order=True)):
+    for (hue_label, ), hue_group in view.group_by(hue, maintain_order=True):
+        color = tile.palette[hue_label]
         error_kwargs = {}
         if err:
             lower, upper = err

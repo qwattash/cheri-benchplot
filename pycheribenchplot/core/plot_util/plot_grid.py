@@ -16,6 +16,7 @@ from matplotlib.patches import Patch
 
 from ..artefact import Target
 from ..config import Config, config_field
+from ..error import ConfigurationError
 from ..util import bytes2int
 
 
@@ -321,6 +322,7 @@ class PlotGrid(AbstractContextManager):
         self._grid = None
         self._margin_titles = []
         # This will be populated after the frame sort order is known
+        # dictionary mapping hue column value to a color
         self._color_palette = None
         self._rc_context = None
         # This is set when legend is enabled, kwargs may be an empty dict
@@ -388,18 +390,19 @@ class PlotGrid(AbstractContextManager):
         if self._config.hue is None:
             self._color_palette = None
         else:
-            hue_count = self._df.select(pl.n_unique(self.hue_param).alias("count"))
-            ncolors = hue_count["count"][0]
+            # Keep the order so that the user has control on the mapping between
+            # data points and hue colors even when not using explicit color mapping.
+            hue_keys = self._df[self.hue_param].unique(maintain_order=True)
+            ncolors = len(hue_keys)
             if self._config.hue_colors is not None:
                 if len(self._config.hue_colors) != ncolors:
-                    self.logger.error(
-                        "Invalid number of colors in configuration: expected %d, found %d for hue level %s", ncolors,
-                        len(self._config.hue_colors), self._config.hue)
-                    raise ValueError("Configuration error")
-                hues = self._df[self.hue_param].unique(maintain_order=True)
-                self._color_palette = [self._config.hue_colors[h] for h in hues]
+                    self.logger.error("Hue level %s: invalid number of colors in configuration: expected %d, found %d",
+                                      self._config.hue, ncolors, len(self._config.hue_colors))
+                    raise ConfigurationError("Configuration error")
+                self._color_palette = {h: self._config.hue_colors[h] for h in hue_keys}
             else:
-                self._color_palette = sns.color_palette(n_colors=ncolors)
+                colors = sns.color_palette(n_colors=ncolors)
+                self._color_palette = dict(zip(hue_keys.to_list(), colors))
 
     def _set_titles(self, tile, chunk):
         """
@@ -437,7 +440,7 @@ class PlotGrid(AbstractContextManager):
         if self._config.legend_hide:
             return
         labels = self._df[self.hue_param].unique(maintain_order=True)
-        patches = [Patch(color=color) for color in self._color_palette]
+        patches = [Patch(color=self._color_palette[hue_key]) for hue_key in labels]
         reserved_y_fraction = 1 - self._config.legend_vspace
 
         # Make space between the title and the subplot axes
