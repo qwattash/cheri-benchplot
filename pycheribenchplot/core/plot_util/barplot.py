@@ -1,9 +1,24 @@
-import matplotlib.pyplot as plt
-import numpy as np
-import polars as pl
-import seaborn as sns
+from dataclasses import dataclass
 
+import matplotlib.pyplot as plt
+import polars as pl
+
+from ..config import Config, config_field
 from .coords import CoordGenConfig, CoordGenerator
+from .plot_grid import PlotConfigBase
+
+
+@dataclass
+class BarPlotConfig(PlotConfigBase):
+    """
+    Display grid configuration extension specific to bar plots.
+    """
+    tile_xaxis: str = config_field(Config.REQUIRED, desc="Parameter to use for the X axis of each tile")
+    stack_by: str | None = config_field(None, desc="Stack bars by the given parameter")
+    shift_by: str | None = config_field(None, desc="Shift bars by the given parameter")
+
+    def uses_param(self, name: str) -> bool:
+        return (super().uses_param(name) or self.tile_xaxis == name or self.stack_by == name or self.shift_by == name)
 
 
 def grid_barplot(tile: "PlotTile",
@@ -13,10 +28,11 @@ def grid_barplot(tile: "PlotTile",
                  err: tuple[str, str] | None = None,
                  orient: str = "x",
                  stack: bool = False,
-                 coordgen_kwargs: dict | None = None):
+                 coordgen_kwargs: dict | None = None,
+                 config: BarPlotConfig | None = None):
     """
     Produce a grouped bar plot on the given plot grid tile.
-    # XXX add stacked and shifted version
+    # XXX add stacked + shifted version
     # XXX add twin-axis versions
 
     :param tile: The plot grid tile

@@ -26,7 +26,21 @@ def default(value, default):
 
 
 @dataclass
-class PlotGridConfig(Config):
+class PlotConfigBase(Config):
+    """
+    Base class for all plot configs.
+
+    This is used as the base class to absorb calls to common plot methods.
+    """
+    def uses_param(self, name: str) -> bool:
+        """
+        Check if the given parameter axis is used by the configuration
+        """
+        return False
+
+
+@dataclass
+class PlotGridConfig(PlotConfigBase):
     title: Optional[str] = config_field(None, desc="Override figure title.")
     tile_row: Optional[str] = config_field(None, desc="Override parameter for grid rows.")
     tile_col: Optional[str] = config_field(None, desc="Override parameter for grid cols.")
@@ -76,6 +90,9 @@ class PlotGridConfig(Config):
                 self.logger.warning("Configuration %s is disabled in this task, forced to %s", key, value)
         config = replace(self, **kwargs)
         return config
+
+    def uses_param(self, name: str) -> bool:
+        return (super().uses_param(name) or self.tile_row == name or self.tile_col == name or self.hue == name)
 
 
 class WeightMode(enum.Enum):
