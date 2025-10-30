@@ -1074,10 +1074,9 @@ class DerivedParamSpec(Config):
     """
     Derived parameter description
     """
-    #: Dictionary of parameterization key/values that enable this description.
-    matches: Dict[str, ConfigAny]
-    #: Value to assign to the derived parameter
-    value: str
+    matches: dict[str, str | int] = config_field(
+        Config.REQUIRED, desc="Dictionary of parameterization key/values that enable this description.")
+    value: str | int = config_field(Config.REQUIRED, desc="Value to assign to the derived parameter.")
 
 
 @dc.dataclass
