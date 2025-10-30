@@ -177,10 +177,9 @@ class Session:
         # of values.
         for dataset_config in self.config.configurations:
             descriptor_axes = set(dataset_config.parameters.keys())
-            if descriptor_axes.symmetric_difference(all_parameters):
-                self.logger.error(
-                    "Dataset parameterization for '%s' is incomplete: "
-                    "found parameter axes %s, expected %s", dataset_config.name, descriptor_axes, all_parameters)
+            if diff := descriptor_axes.symmetric_difference(all_parameters):
+                self.logger.error("Data parameterization for '%s' is incomplete: "
+                                  "missing values for axes: %s", dataset_config.name, ",".join(diff))
                 raise RuntimeError("Configuration error")
             # Add one row to the table skeleton
             descriptor = Benchmark(self, dataset_config)
