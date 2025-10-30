@@ -1,12 +1,83 @@
+import json
+import re
 from dataclasses import dataclass
+from pathlib import Path
 
-from ..core.artefact import RemoteBenchmarkIterationTarget
+import polars as pl
+
+from ..core.artefact import PLDataFrameLoadTask, RemoteBenchmarkIterationTarget
 from ..core.config import Config, ConfigPath, config_field
 from ..core.task import ExecutionTask, output
 
 
+def to_snake_case(name):
+    """
+    Convert column names from camelCase to snake_case
+    """
+    return re.sub(r"(?<=[a-z])(?=[A-Z])", "_", name).lower()
+
+
+class LoadQpsData(PLDataFrameLoadTask):
+    """
+    Load and merge data from QPS runs.
+    """
+    task_namespace = "qps"
+    task_name = "ingest"
+
+    COLUMN_NAMES = [
+        "qps",
+        "message_count",
+        "elapsed_time",
+        "latency50",
+        "latency90",
+        "latency95",
+        "latency99",
+        "latency99_9",
+        "req_size",
+        "res_size",
+    ]
+
+    COLUMN_RENAME = {
+        "latency999": "latency99_9",
+        "resp_size": "res_size",
+    }
+
+    def _load_one(self, path: Path) -> pl.DataFrame:
+        """
+        Load data for a benchmark run for the given target file.
+
+        This loads the QPS and latency metrics, along with a number
+        of scenario parameters that are propagated to the output by
+        the QPS driver.
+
+        Columns:
+         - qps: the QPS metric
+         - message_count: Number of exchanged messages
+         - elapsed_time: Benchmark time (s)
+         - latency50: 50th percentile latency (ns)
+         - latency90: 90th percentile latency (ns)
+         - latency95: 95th percentile latency (ns)
+         - latency99: 99th percentile latency (ns)
+         - latency99_9: 99.9th percentile latency (ns)
+         - req_size: request size (from scenario)
+         - res_size: response size (from scenario)
+        """
+        self.logger.debug("Ingest QPS data for %s", path)
+        with open(path, "r") as data_file:
+            data = json.load(data_file)
+        payload_config = data["scenario"]["clientConfig"].get("payloadConfig", {})
+
+        params = {"reqSize": 0, "respSize": 0}
+        payload_params = payload_config.get("simpleParams", {})
+        params.update(payload_params)
+
+        row = {**data["summary"], **params}
+        df = pl.DataFrame(row).rename(to_snake_case).rename(self.COLUMN_RENAME)
+        return df.select(self.COLUMN_NAMES)
+
+
 @dataclass
-class QPSExecConfig(Config):
+class QpsExecConfig(Config):
     """
     Configure the QPS benchmark.
     """
@@ -19,7 +90,7 @@ class QPSExecConfig(Config):
     driver_cpu: list[int] = config_field(list, desc="Restrict driver to the given CPUs")
 
 
-class QPSExecTask(ExecutionTask):
+class QpsExecTask(ExecutionTask):
     """
     Execute the GRPC QPS benchmark with the given scenario file.
 
@@ -33,11 +104,11 @@ class QPSExecTask(ExecutionTask):
     task_namespace = "qps"
     task_name = "exec"
     public = True
-    task_config_class = QPSExecConfig
+    task_config_class = QpsExecConfig
 
     @output
     def qps_driver_output(self):
-        return RemoteBenchmarkIterationTarget(self, "qps", ext="json")
+        return RemoteBenchmarkIterationTarget(self, "qps", ext="json", loader=LoadQpsData)
 
     def run(self):
         self.script.set_template("grpc.sh.jinja")

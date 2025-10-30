@@ -1,3 +1,3 @@
-from . import analyse, ingest, qps_exec
+from . import qps_exec, qps_plot
 
-__all__ = (analyse, ingest, qps_exec)
+__all__ = (qps_exec, qps_plot)

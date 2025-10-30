@@ -7,6 +7,7 @@ from ..core.artefact import BenchmarkIterationTarget, PLDataFrameLoadTask
 from ..core.config import Config, ConfigPath, InstanceCheriBSD
 from ..core.task import DataGenTask, output
 
+
 @dataclass
 class IngestQPSConfig(Config):
     #: Path to the QPS results directory hierarchy
@@ -30,18 +31,16 @@ class IngestQPSData(DataGenTask):
     """
     task_config_class = IngestQPSConfig
     task_namespace = "qps"
-    task_name = "ingest"
+    task_name = "ingest-external"
     public = True
 
     @output
     def data(self):
-        return BenchmarkIterationTarget(self, "summary", ext="json",
-                                        loader=PLDataFrameLoadTask)
+        return BenchmarkIterationTarget(self, "summary", ext="json", loader=PLDataFrameLoadTask)
 
     @output
     def histogram(self):
-        return BenchmarkIterationTarget(self, "latency-histogram", ext="json",
-                                        loader=PLDataFrameLoadTask)
+        return BenchmarkIterationTarget(self, "latency-histogram", ext="json", loader=PLDataFrameLoadTask)
 
     def run(self):
         user_abi = self.benchmark.config.instance.cheri_target
@@ -106,8 +105,7 @@ class IngestQPSData(DataGenTask):
                     hmax = hp.get("maxPossible", hmax)
                     hres = hp.get("resolution", hres)
                 num_buckets = (np.log(hmax) / np.log(1.0 + hres)) + 1
-                buckets_start = np.logspace(0, len(buckets), num=int(num_buckets),
-                                            base=(1 + hres), endpoint=False)
+                buckets_start = np.logspace(0, len(buckets), num=int(num_buckets), base=(1 + hres), endpoint=False)
                 assert len(buckets) == len(buckets_start)
                 json.dump({
                     "buckets": buckets,
