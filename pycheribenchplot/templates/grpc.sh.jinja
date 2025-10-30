@@ -90,7 +90,7 @@ __driver_exec()
   echo "Run QPS {{ qps_config.scenario_file }} iteration {{ current_iteration }}"
 
   __driver_exec \
-	--scenarios_file {{ qps_config.scenario_file }} \
+	--scenarios_file {{ qps_scenario }} \
 	--scenario_result_file {{ qps_gen_output(current_iteration) }} \
 	--json_file_out {{ qps_gen_output(current_iteration) | trim }}.log
 {% endblock %}
