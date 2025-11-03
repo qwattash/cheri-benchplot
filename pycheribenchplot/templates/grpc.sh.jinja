@@ -17,7 +17,7 @@ __server_exec()
 	proccontrol {{ qps_config.server_procctl_args | join(" ") }} \
 {% endif %}
 {% if qps_config.server_cpu %}
-	cpuset -c -l {{ qps_config.server_cpu | join(",") }} \
+	cpuset -l {{ qps_config.server_cpu | join(",") }} \
 {% endif %}
 {% if hwpmc.hwpmc_enabled %}
 	{{ hwpmc.pmcstat(current_iteration) }} \
@@ -32,7 +32,7 @@ __client_exec()
 	proccontrol {{ qps_config.client_procctl_args | join(" ") }} \
 {% endif %}
 {% if qps_config.client_cpu %}
-	cpuset -c -l {{ qps_config.client_cpu | join(",") }} \
+	cpuset -l {{ qps_config.client_cpu | join(",") }} \
 {% endif %}
 	grpc_qps_worker --driver_port 20000 --server_port=20001 &
 	CLIENT_PID=$!
@@ -41,7 +41,7 @@ __client_exec()
 __driver_exec()
 {
 {% if qps_config.driver_cpu %}
-	cpuset -c -l {{ qps_config.driver_cpu | join(",") }} \
+	cpuset -l {{ qps_config.driver_cpu | join(",") }} \
 {% endif %}
 	grpc_qps_json_driver $@
 }
