@@ -5,6 +5,16 @@ class ConfigurationError(RuntimeError):
     pass
 
 
+class ConfigTemplateBindError(ConfigurationError):
+    """
+    Failed to bind a configuration template field to a value
+    """
+    def __init__(self, msg):
+        super().__init__(msg)
+
+        self.location = ""
+
+
 class TaskNotFound(RuntimeError):
     """
     Exception signaling that a given task could not be found.

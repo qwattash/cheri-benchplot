@@ -4,6 +4,7 @@ import pytest
 
 from pycheribenchplot.core.util import setup_logging
 
+
 def pytest_addoption(parser):
     parser.addoption("--benchplot-user-config", type=Path, default=None)
     parser.addoption("--run-qemu-trace", action="store_true", default=False, help="run slow qemu tests")
@@ -15,7 +16,7 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "slow: mark slow test")
     config.addinivalue_line("markers", "user_config: mark test requiring a benchplot user config")
     if config.getoption("-v"):
-        setup_logging(verbose=True)
+        setup_logging(verbose=True, debug_config=True)
 
 
 def pytest_collection_modifyitems(config, items):
@@ -29,5 +30,3 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(skip_slow)
         if not config.getoption("--benchplot-user-config") and "user_config" in item.keywords:
             item.add_marker(skip_user_conf)
-
-

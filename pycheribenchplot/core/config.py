@@ -13,13 +13,13 @@ from uuid import UUID, uuid4
 
 import marshmallow.fields as mfields
 from git import Repo
-from marshmallow import ValidationError, validates, validates_schema
+from marshmallow import Schema, ValidationError, validates, validates_schema
 from marshmallow.validate import And, ContainsOnly, OneOf, Predicate
 from marshmallow_dataclass import class_schema
 from typing_extensions import Self
 from typing_inspect import (get_args, get_origin, is_generic_type, is_optional_type, is_union_type)
 
-from .error import ConfigurationError
+from .error import ConfigTemplateBindError, ConfigurationError
 from .util import new_logger, root_logger
 
 # Global configuration logger
@@ -174,6 +174,73 @@ class UUIDField(mfields.Field):
         return str(uid)
 
 
+class TemplateFieldProxy(mfields.Field):
+    """
+    Generic field that wraps another existing field automatically.
+
+    This field will delay parsing until the template binding
+    phase.
+    """
+    def __init__(self, wrapped):
+        super().__init__(required=wrapped.required,
+                         load_default=wrapped.load_default,
+                         dump_default=wrapped.dump_default)
+        self._wrapped_field = wrapped
+
+    def _has_template(self, value: any) -> bool:
+        if type(value) is not str:
+            return False
+        m = ConfigTemplateSpec.TEMPLATE_REGEX.search(value)
+        return m is not None
+
+    def _deserialize(self, value, attr, data, **kwargs):
+        has_template = False
+        if type(value) is list:
+            has_template = any([self._has_template(v) for v in value])
+        elif type(value) is dict:
+            tmpl_keys = [self._has_template(k) for k in value.keys()]
+            tmpl_vals = [self._has_template(v) for v in value.values()]
+            has_template = any(tmpl_keys) or any(tmpl_vals)
+        else:
+            has_template = self._has_template(value)
+
+        if has_template:
+            return ConfigTemplateSpec(value)
+        return self._wrapped_field._deserialize(value, attr, data, **kwargs)
+
+    def _serialize(self, value, attr, obj, **kwargs):
+        if isinstance(value, ConfigTemplateSpec):
+            value = value.value
+        return self._wrapped_field._serialize(value, attr, obj, **kwargs)
+
+
+class BaseConfigSchema(Schema):
+    """
+    Base schema for Configs.
+
+    This takes care of field wrapping to enable template resolution,
+    while retaining type validation accuracy.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # Wrap all fields with the template proxy field
+        replacement = {}
+        load_replacement = {}
+        dump_replacement = {}
+        for field_name, field_obj in self.fields.items():
+            if isinstance(field_obj, mfields.Nested):
+                continue
+            replacement[field_name] = TemplateFieldProxy(field_obj)
+            if field_name in self.load_fields:
+                load_replacement[field_name] = replacement[field_name]
+            if field_name in self.dump_fields:
+                dump_replacement[field_name] = replacement[field_name]
+        self.fields.update(replacement)
+        self.load_fields.update(load_replacement)
+        self.dump_fields.update(dump_replacement)
+
+
 # Helper type for dataclasses to use the PathField
 ConfigTaskSpec = Annotated[str, TaskSpecField]
 ConfigExecTaskSpec = Annotated[str, ExecTaskSpecField]
@@ -231,6 +298,9 @@ class ConfigContext:
         """
         self._namespaces[name] = config
 
+    def mark_resolved(self, count):
+        self._resolved += count
+
     def find(self, key: str) -> str | None:
         """
         Resolve a dot-separated key to the corresponding substitution value.
@@ -268,8 +338,169 @@ class ConfigContext:
             config_logger.debug("Unresolved template '%s'", key)
         else:
             config_logger.debug("Resolved template '%s' => '%s'", key, resolved)
-            self._resolved += 1
+            # self._resolved += 1
         return resolved
+
+
+class ConfigTemplateSpec:
+    """
+    Object that wraps a template string in the configuration.
+
+    This will be substituted and re-verified with the configuration
+    after template value resolution.
+    """
+    TEMPLATE_REGEX = re.compile(r"(\{([a-zA-Z0-9_.-]+)(:[dfs])?\})")
+
+    def __init__(self, value: any):
+        self.value = value
+
+    def _bind_value(self, value: any, context: ConfigContext, dtype: type):
+        """
+        Bind a single value, this may occur within a collection.
+        """
+        # If not a string, there is nothing to bind at this point
+        if type(value) is not str:
+            return value
+
+        # Query the context for the substitution
+        # Now we can query the context for substitution keys to resolve.
+        chunks = []
+        last_match = 0
+        n_bound = 0
+        n_patterns = 0
+        for m in self.TEMPLATE_REGEX.finditer(value):
+            n_patterns += 1
+            key = m.group(2)
+            subst = context.find(key)
+            if subst is None:
+                continue
+            n_bound += 1
+            chunks.append(value[last_match:m.start()])
+            chunks.append(str(subst))
+            last_match = m.end()
+
+        chunks.append(value[last_match:])
+        result = "".join(chunks)
+
+        # If we correctly substituted all patterns, failing the the type coercion
+        # is an error and it should be reported as such.
+        # If we did not substitute everything, there is no point in trying to coerce.
+        if n_patterns == n_bound:
+            result_value = self._coerce_value(result, dtype)
+            context.mark_resolved(n_patterns)
+            return result_value
+        else:
+            raise ValueError("Incomplete template binding")
+
+    def _coerce_union(self, value: str, candidate_dtypes: list[type]):
+        # If we get here, optional types have a value, so ignore the optional
+        for value_ty in candidate_dtypes:
+            if value_ty is type(None):
+                continue
+            try:
+                return value_ty(value)
+            except ValueError:
+                config_logger.debug("Trying to coerce %s to union alternative %s, failed", value, value_ty)
+                continue
+        raise ValueError(f"Can not coerce {value} to any of the union types")
+
+    def _coerce_value(self, value: str, dtype: type):
+        try:
+            if is_union_type(dtype):
+                args = get_args(dtype)
+                return self._coerce_union(value, args)
+            else:
+                return dtype(value)
+        except ValueError:
+            config_logger.debug("Failed to coerce %s to %s", value, dtype)
+            raise ConfigTemplateBindError(f"Failed type coercion for {value} to type {dtype}")
+
+    def _bind_string(self, context: ConfigContext, dtype: type) -> str | float | int | Self:
+        try:
+            config_logger.debug("Bind scalar %s: %s", dtype, self.value)
+            return self._bind_value(self.value, context, dtype)
+        except ValueError:
+            # Bail in the hope that we will come back to it later.
+            return self
+
+    def _bind_list(self, context: ConfigContext, dtype: type) -> list[str | float | int | Self]:
+        origin_ty = get_origin(dtype)
+        assert origin_ty is List or origin_ty is list
+        element_ty = get_args(dtype)[0]
+
+        config_logger.debug("Bind list[%s]: %s", element_ty, self.value)
+        result = []
+        remaining = False
+        for i, v in enumerate(self.value):
+            try:
+                result.append(self._bind_value(v, context, element_ty))
+            except ValueError:
+                remaining = True
+                result.append(v)
+            except ConfigTemplateBindError as err:
+                err.location = f"[{i}]{err.location}"
+                raise err
+        if remaining:
+            # Update the template state with the partial substitution
+            self.value = result
+            return self
+        return result
+
+    def _bind_dict(self, context: ConfigContext, dtype: type) -> dict[str, str | float | int | Self]:
+        origin_ty = get_origin(dtype)
+        assert origin_ty is Dict or origin_ty is dict
+        key_ty = get_args(dtype)[0]
+        element_ty = get_args(dtype)[1]
+
+        config_logger.debug("Bind dict[%s, %s]: %s", key_ty, element_ty, self.value)
+        result = {}
+        remaining = False
+        for k, v in self.value.items():
+            try:
+                bound_key = self._bind_value(k, context, key_ty)
+                bound_val = self._bind_value(v, context, element_ty)
+                result[bound_key] = bound_val
+            except ValueError:
+                remaining = True
+                result[k] = v
+            except ConfigTemplateBindError as err:
+                err.location = f"[{k}]{err.location}"
+                raise err
+        if remaining:
+            # Update the template state with the partial substition
+            self.value = result
+            return self
+        return result
+
+    def bind(self, context: ConfigContext, dtype: type):
+        """
+        Attempt to substitute the current value with the given context.
+
+        Currently, the template mini-syntax is simpler than the python
+        :func:`format()`. This constrains the complexity, but should
+        support most of the common use cases.
+
+        The format string can specify a single key as "{my_key}", or
+        a namespaced key in the context as "{my_key.other}".
+        Explicit format conversions are specified as:
+         - d: cast to integer
+         - f: cast to float
+         - s: cast to string
+
+        We expect the inner value to be either:
+         - a string
+         - a list of items, possibly etherogeneous
+         - a dict of items, possibly etherogeneous
+        """
+        vtype = type(self.value)
+        if vtype is str:
+            return self._bind_string(context, dtype)
+        elif vtype is list:
+            return self._bind_list(context, dtype)
+        elif vtype is dict:
+            return self._bind_dict(context, dtype)
+        else:
+            raise ConfigTemplateBindError(f"Invalid serialized value type: {vtype}")
 
 
 def config_field(default, /, desc: str = None, field_kwargs: dict = None, **metadata) -> dc.Field:
@@ -360,7 +591,7 @@ class Config:
 
     @classmethod
     def schema(cls):
-        return class_schema(cls)()
+        return class_schema(cls, base_schema=BaseConfigSchema)()
 
     @classmethod
     def copy(cls, other):
@@ -420,121 +651,62 @@ class Config:
     def __post_init__(self):
         return
 
-    def _bind_value(self, context: ConfigContext, dtype: Type, value: Any, loc: str) -> Any:
+    def _bind_field(self, context: ConfigContext, dtype: type, value: any, loc: str, meta: dict) -> any:
         """
-        Resolve all template keys in this configuration value and produce the substituted value.
-
-        :param context: The template configuration context
-        :param dtype: Type annotation of the field
-        :param value: Current value of the field. At this point, this is assumed to be
-        a string-like object or a nested configuration.
-        :return: The substituted value
+        Bind values for a template spec or nested configuration objects.
         """
-        if value is None:
-            return None
-        if dtype == ConfigAny or dtype == Any:
-            dtype = type(value)
+        self.logger.debug("Bind field (%s) with dtype %s", loc, dtype)
+        if isinstance(value, ConfigTemplateSpec):
+            return value.bind(context, dtype)
 
-        if dc.is_dataclass(dtype) and issubclass(dtype, Config):
-            return value.bind(context)
-        if dtype is str:
-            template = value
-        elif dtype is Path or dtype is ConfigPath or (type(dtype) is type and issubclass(dtype, Path)):
-            # Path-like object expected here
-            template = str(value)
-            dtype = Path
-        else:
-            # Anything else is assumed to never contain things to bind
+        # If this is not a TemplateSpec, this means that we need to recurse into
+        # it only if it is a container or union of nested Config types.
+
+        def _has_nested_config_type(target_ty) -> bool:
+            origin_ty = get_origin(target_ty)
+            if is_union_type(target_ty):
+                args_ty = get_args(target_ty)
+                return any([_has_nested_config_type(ty) for ty in args_ty])
+            elif origin_ty is Annotated:
+                data_ty = get_args(target_ty)[0]
+                return _has_nested_config_type(data_ty)
+            elif is_generic_type(target_ty):
+                args_ty = get_args(target_ty)
+                return any([_has_nested_config_type(ty) for ty in args_ty])
+            elif target_ty is any:
+                # Can not really know, conservatively say yes
+                return True
+            else:
+                is_config = issubclass(target_ty, Config)
+                # All Configs must be dataclasses
+                assert not is_config or dc.is_dataclass(target_ty)
+                return is_config
+
+        def _bind_nested_config(target, nested_loc) -> any:
+            if isinstance(target, list):
+                result = []
+                for idx, val in enumerate(target):
+                    result.append(_bind_nested_config(val, f"{nested_loc}[{idx}]"))
+                return result
+            elif isinstance(target, dict):
+                result = {}
+                for key, val in target.items():
+                    # Note: can't have a nested config as a dictionary key
+                    result[key] = _bind_nested_config(val, f"{nested_loc}[{key}]")
+                return result
+            elif isinstance(target, Config):
+                return target.bind(context, nested_loc)
+            else:
+                # Undecidable any type does not hold a nested config
+                return value
+
+        if not _has_nested_config_type(dtype):
             return value
 
-        # Now we can query the context for substitution keys to resolve.
-        chunks = []
-        last_match = 0
-        for m in re.finditer(r"\{([a-zA-Z0-9_.]+)\}", template):
-            key = m.group(1)
-            subst = context.find(key)
-            if subst is None:
-                continue
-            chunks.append(template[last_match:m.start()])
-            chunks.append(str(subst))
-            last_match = m.end()
-
-        chunks.append(template[last_match:])
-        return dtype("".join(chunks))
-
-    def _bind_field(self,
-                    context: ConfigContext,
-                    dtype: Type,
-                    value: Any,
-                    loc: str,
-                    metadata: dict | None = None) -> Any:
-        """
-        Run the template substitution on a config field.
-        If the field is a collection or a nested Config, we recursively bind
-        each value.
-        """
-        config_logger.debug("(%s) <%s> -> coerce to %s", loc, self.__class__.__name__, dtype)
-        if dc.is_dataclass(dtype) and issubclass(dtype, Config):
-            # If it is a nested dataclass, just forward it
-            config_logger.debug("Bind recurse into nested config %s", dtype.__name__)
-            return value.bind(context, loc=loc)
-        elif dtype == LazyNestedConfig:
-            # If it is a lazy_nested_config field, treat this either as a dataclass or a dict
-            if dc.is_dataclass(value):
-                config_logger.debug("Bind lazy config as %s", type(value).__name__)
-                return value.bind(context, loc=loc)
-            else:
-                config_logger.debug("Bind lazy config as dict %s", value)
-                return self._bind_generic(context, dict, value, loc)
-        elif is_generic_type(dtype) or is_union_type(dtype):
-            # Recurse through the type
-            config_logger.debug("Bind recurse into generic %s: %s", dtype, value)
-            return self._bind_generic(context, dtype, value, loc)
-        elif dtype == Any and (isinstance(value, dict) or isinstance(value, list)):
-            # We don't have a strict type for the dict/list coercion, but we need
-            # to recurse nontheless to bind template values within.
-            config_logger.debug("Bind recurse into untyped generic %s: %s", type(value), value)
-            return self._bind_generic(context, dtype, value, loc)
-        else:
-            # Handle as a single value
-            config_logger.debug("Bind value '%s' to %s", value, dtype)
-            return self._bind_value(context, dtype, value, loc)
-
-    def _bind_generic(self, context: ConfigContext, dtype: Type, value: Any, loc: str) -> Any:
-        """
-        Recursively bind values in generic container types.
-        """
-        origin = get_origin(dtype)
-        if is_union_type(dtype):
-            args = get_args(dtype)
-            if value is not None:
-                return self._bind_field(context, type(value), value, loc)
-            # Check if None is allowed
-            for t in args:
-                if t is type(None):
-                    break
-            else:
-                raise ConfigurationError("None type is not allowed")
-            return None
-        elif type(value) is list:
-            if origin is List or origin is list:
-                inner_type = get_args(dtype)[0]
-                config_logger.debug("Bind recurse into list[%s]", inner_type)
-            else:
-                inner_type = Any
-                config_logger.debug("Bind recurse into list: can not determine item dtype")
-            return [self._bind_field(context, inner_type, v, f"{loc}[{i}]") for i, v in enumerate(value)]
-        elif type(value) is dict:
-            if origin is Dict or origin is dict:
-                key_type, inner_type = get_args(dtype)
-                config_logger.debug("Bind recurse into dict[%s, %s]", key_type, inner_type)
-            else:
-                config_logger.debug("Bind recurse into dict: can not determine key, value dtypes")
-                key_type = str
-                inner_type = Any
-            return {key: self._bind_field(context, inner_type, v, f"{loc}[{key}]") for key, v in value.items()}
-        else:
-            return self._bind_value(context, dtype, value, loc)
+        self.logger.debug("(%s) recurse into nested generic", loc)
+        # This time we base the recursion on the actual data value,
+        # not on the expected type
+        return _bind_nested_config(value, loc)
 
     def _bind_config(self, source: Self, context: ConfigContext, loc: str) -> Self:
         """
@@ -549,16 +721,20 @@ class Config:
         for f in dc.fields(self):
             if not f.init:
                 continue
+            field_loc = f"{loc}.{f.name}"
+            field_value = getattr(source, f.name)
+            meta = f.metadata.get("metadata", {})
             try:
-                metadata = f.metadata.get("metadata", {})
-                field_loc = f"{loc}.{f.name}"
-                replaced = self._bind_field(context, f.type, getattr(source, f.name), field_loc, metadata)
-                config_logger.debug("(%s) <= %s", field_loc, replaced)
+                result = self._bind_field(context, f.type, field_value, field_loc, meta)
+                config_logger.debug("(%s) <= %s", field_loc, result)
+            except ConfigTemplateBindError as err:
+                err.location = f"{field_loc}{err.location}"
+                raise err
             except Exception as ex:
                 raise ConfigurationError(f"Failed to bind {f.name} with value "
                                          f"{getattr(source, f.name)}: {ex}")
-            if replaced:
-                changes[f.name] = replaced
+            if result:
+                changes[f.name] = result
         config_logger.debug("(%s) -> Done binding %s", loc, self.__class__.__name__)
         return dc.replace(source, **changes)
 
@@ -582,8 +758,8 @@ class Config:
                 break
             last_matched = context.resolved_count
         else:
-            raise RuntimeError("LOOP")
             logger.warning("Configuration template binding exceeded recursion depth limit")
+            raise RuntimeError("Template substitution recursion limit")
         return bound
 
     def emit_json(self) -> str:

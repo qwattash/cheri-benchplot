@@ -34,7 +34,7 @@ class LogColorFormatter(logging.Formatter):
         return msg
 
 
-def setup_logging(verbose: bool = False, logfile: Path = None, debug: bool = False):
+def setup_logging(verbose: bool = False, logfile: Path = None, debug_config: bool = False):
     log_fmt = "[%(levelname)s] %(name)s: %(message)s"
     date_fmt = None
     default_level = logging.INFO
@@ -67,8 +67,10 @@ def setup_logging(verbose: bool = False, logfile: Path = None, debug: bool = Fal
     if logfile:
         sql_logger.addHandler(file_handler)
     # Silence the configuration logger by default
-    if not debug:
-        config_logger = new_logger("config")
+    config_logger = new_logger("config")
+    if debug_config:
+        config_logger.setLevel(logging.DEBUG)
+    else:
         config_logger.setLevel(logging.WARNING)
     return logger
 
