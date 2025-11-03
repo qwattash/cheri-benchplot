@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import pytest
 from marshmallow import ValidationError
 
-from pycheribenchplot.core.config import (Config, ConfigContext, ConfigTemplateSpec, config_field)
+from pycheribenchplot.core.config import (Config, ConfigAny, ConfigContext, ConfigTemplateSpec, config_field)
 from pycheribenchplot.core.error import (ConfigTemplateBindError, ConfigurationError)
 
 
@@ -297,5 +297,39 @@ def test_nested_template():
 def test_config_dtype_any_template():
     @dataclass
     class TestConfig(Config):
-        simple_any: any = config_field(None)
-        nested_any: dict[str, any] = config_field(dict)
+        simple_any: ConfigAny = config_field(None)
+        nested_any: dict[str, ConfigAny] = config_field(dict)
+
+    config = TestConfig.schema().load({"simple_any": "{param0}", "nested_any": {"a": "foo", "b": "{param1}"}})
+    cc = ConfigContext()
+    cc.add_values(param0=100, param1="bar")
+    bound = config.bind(cc)
+
+    assert bound.simple_any == "100"
+    assert bound.nested_any["a"] == "foo"
+    assert bound.nested_any["b"] == "bar"
+
+
+def test_config_template_explicit_dtype_cast():
+    @dataclass
+    class TestConfig(Config):
+        union_val_one: str | int = config_field(0)
+        union_val_two: int | str = config_field(0)
+        any_val_one: ConfigAny = config_field(None)
+        any_val_two: ConfigAny = config_field(None)
+
+    config = TestConfig.schema().load({
+        "union_val_one": "{param0:d}",
+        "union_val_two": "{param0:s}",
+        "any_val_one": "{param1:d}",
+        "any_val_two": "{param1:f}",
+    })
+
+    cc = ConfigContext()
+    cc.add_values(param0="100", param1="200")
+    bound = config.bind(cc)
+
+    assert bound.union_val_one == 100
+    assert bound.union_val_two == "100"
+    assert bound.any_val_one == 200
+    assert isinstance(bound.any_val_two, float) and bound.any_val_two == 200

@@ -8,7 +8,7 @@ from enum import Enum
 from io import StringIO
 from pathlib import Path
 from textwrap import indent, wrap
-from typing import Annotated, Any, Dict, List, Optional, Set, Type
+from typing import (Annotated, Any, Dict, List, Optional, Set, Type, get_args, get_origin)
 from uuid import UUID, uuid4
 
 import marshmallow.fields as mfields
@@ -17,7 +17,7 @@ from marshmallow import Schema, ValidationError, validates, validates_schema
 from marshmallow.validate import And, ContainsOnly, OneOf, Predicate
 from marshmallow_dataclass import class_schema
 from typing_extensions import Self
-from typing_inspect import (get_args, get_origin, is_generic_type, is_optional_type, is_union_type)
+from typing_inspect import is_generic_type, is_optional_type, is_union_type
 
 from .error import ConfigTemplateBindError, ConfigurationError
 from .util import new_logger, root_logger
@@ -187,7 +187,7 @@ class TemplateFieldProxy(mfields.Field):
                          dump_default=wrapped.dump_default)
         self._wrapped_field = wrapped
 
-    def _has_template(self, value: any) -> bool:
+    def _has_template(self, value: Any) -> bool:
         if type(value) is not str:
             return False
         m = ConfigTemplateSpec.TEMPLATE_REGEX.search(value)
@@ -349,12 +349,12 @@ class ConfigTemplateSpec:
     This will be substituted and re-verified with the configuration
     after template value resolution.
     """
-    TEMPLATE_REGEX = re.compile(r"(\{([a-zA-Z0-9_.-]+)(:[dfs])?\})")
+    TEMPLATE_REGEX = re.compile(r"(\{([a-zA-Z0-9_.-]+)(:([dfs]))?\})")
 
-    def __init__(self, value: any):
+    def __init__(self, value: Any):
         self.value = value
 
-    def _bind_value(self, value: any, context: ConfigContext, dtype: type):
+    def _bind_value(self, value: Any, context: ConfigContext, dtype: type):
         """
         Bind a single value, this may occur within a collection.
         """
@@ -368,6 +368,7 @@ class ConfigTemplateSpec:
         last_match = 0
         n_bound = 0
         n_patterns = 0
+        cast_to = None
         for m in self.TEMPLATE_REGEX.finditer(value):
             n_patterns += 1
             key = m.group(2)
@@ -378,6 +379,17 @@ class ConfigTemplateSpec:
             chunks.append(value[last_match:m.start()])
             chunks.append(str(subst))
             last_match = m.end()
+            # Somewhat weirdly, we use the type hint from the last match to do the
+            # forced type coercion. There should be a better way, but do I care?
+            match m.group(4):
+                case "d":
+                    cast_to = int
+                case "f":
+                    cast_to = float
+                case "s":
+                    cast_to = str
+                case _:
+                    pass
 
         chunks.append(value[last_match:])
         result = "".join(chunks)
@@ -386,14 +398,20 @@ class ConfigTemplateSpec:
         # is an error and it should be reported as such.
         # If we did not substitute everything, there is no point in trying to coerce.
         if n_patterns == n_bound:
-            result_value = self._coerce_value(result, dtype)
+            result_value = self._coerce_value(result, dtype, cast_to)
             context.mark_resolved(n_patterns)
             return result_value
         else:
             raise ValueError("Incomplete template binding")
 
-    def _coerce_union(self, value: str, candidate_dtypes: list[type]):
+    def _coerce_union(self, value: str, candidate_dtypes: list[type], cast_dtype: type | None):
         # If we get here, optional types have a value, so ignore the optional
+        if cast_dtype is not None:
+            if cast_dtype not in candidate_dtypes:
+                config_logger.error("Invalid cast type %s for union with types %s", cast_dtype, candidate_dtypes)
+                raise ConfigTemplateBindError(f"Failed union coercion to incompatible type {cast_dtype}")
+            return cast_dtype(value)
+
         for value_ty in candidate_dtypes:
             if value_ty is type(None):
                 continue
@@ -404,11 +422,28 @@ class ConfigTemplateSpec:
                 continue
         raise ValueError(f"Can not coerce {value} to any of the union types")
 
-    def _coerce_value(self, value: str, dtype: type):
+    def _coerce_value(self, value: str, dtype: type, cast_dtype: type | None = None):
         try:
             if is_union_type(dtype):
                 args = get_args(dtype)
-                return self._coerce_union(value, args)
+                return self._coerce_union(value, args, cast_dtype)
+            origin_ty = get_origin(dtype)
+            # If binding an Annotated type, convert it back to the base type
+            if origin_ty is Annotated:
+                dtype = get_args(dtype)[0]
+
+            config_logger.debug("Requested cast %s", cast_dtype)
+            if cast_dtype is not None:
+                if dtype is Any:
+                    return cast_dtype(value)
+                # Verify that cast agrees with field type
+                if dtype is not cast_dtype:
+                    config_logger.error("Invalid cast type %s for field of type %s", cast_dtype, dtype)
+                    raise ConfigTemplateBindError(f"Failed type coercion to incompatible type {cast_dtype}")
+                return cast_dtype(value)
+            # No specific cast requrested
+            if dtype is Any:
+                return value
             else:
                 return dtype(value)
         except ValueError:
@@ -651,7 +686,7 @@ class Config:
     def __post_init__(self):
         return
 
-    def _bind_field(self, context: ConfigContext, dtype: type, value: any, loc: str, meta: dict) -> any:
+    def _bind_field(self, context: ConfigContext, dtype: type, value: Any, loc: str, meta: dict) -> Any:
         """
         Bind values for a template spec or nested configuration objects.
         """
@@ -682,7 +717,7 @@ class Config:
                 assert not is_config or dc.is_dataclass(target_ty)
                 return is_config
 
-        def _bind_nested_config(target, nested_loc) -> any:
+        def _bind_nested_config(target, nested_loc) -> Any:
             if isinstance(target, list):
                 result = []
                 for idx, val in enumerate(target):
@@ -717,7 +752,7 @@ class Config:
         template parameters unchanged for later passes.
         """
         changes = {}
-        config_logger.debug("(%s) -> Bind Config %s", loc, self.__class__.__name__)
+        self.logger.debug("(%s) -> Bind Config %s", loc, self.__class__.__name__)
         for f in dc.fields(self):
             if not f.init:
                 continue
@@ -726,16 +761,16 @@ class Config:
             meta = f.metadata.get("metadata", {})
             try:
                 result = self._bind_field(context, f.type, field_value, field_loc, meta)
-                config_logger.debug("(%s) <= %s", field_loc, result)
+                self.logger.debug("(%s) <= %s", field_loc, result)
             except ConfigTemplateBindError as err:
                 err.location = f"{field_loc}{err.location}"
                 raise err
             except Exception as ex:
-                raise ConfigurationError(f"Failed to bind {f.name} with value "
-                                         f"{getattr(source, f.name)}: {ex}")
+                msg = f"Failed to bind {f.name} with value {field_value}"
+                raise ConfigurationError(msg) from ex
             if result:
                 changes[f.name] = result
-        config_logger.debug("(%s) -> Done binding %s", loc, self.__class__.__name__)
+        self.logger.debug("(%s) -> Done binding %s", loc, self.__class__.__name__)
         return dc.replace(source, **changes)
 
     @property
@@ -1319,16 +1354,18 @@ class BenchmarkRunConfig(CommonBenchmarkConfig):
     This represents a resolved benchmark run, associated to an ID and set of parameters.
     """
     #: Unique benchmark run identifier
-    uuid: UUIDStr = dc.field(default_factory=make_uuid)
+    uuid: UUIDStr = config_field(Config.REQUIRED,
+                                 desc="Unique identifier for the benchmar run. This identifier is stable across "
+                                 "sessions with the same parameterization, even if the session UUID differs.")
 
     #: Unique benchmark group identifier, links benchmarks that run on the same instance
-    g_uuid: Optional[UUIDStr] = None
+    g_uuid: UUIDStr | None = config_field(None, desc="DEPRECATED")
 
     #: Benchmark parameters
-    parameters: Dict[str, ConfigAny] = dc.field(default_factory=dict)
+    parameters: dict[str, ConfigAny] = config_field(dict, desc="Parameterisation tuple for this benchmark run.")
 
     #: Instance configuration
-    instance: Optional[InstanceConfig] = None
+    instance: InstanceConfig | None = config_field(None, desc="DEPRECATED")
 
     def __str__(self):
         generators = [g.handler for g in self.generators]
