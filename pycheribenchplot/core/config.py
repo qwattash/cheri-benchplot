@@ -814,45 +814,49 @@ class BenchplotUserConfig(Config):
     The main point of the user configuration is to make sessions portable,
     so that a session that is run on a machine can be analysed on another.
     """
+    session_path: ConfigPath = config_field(Path.cwd,
+                                            validate=validate_dir_exists,
+                                            desc="Prefix path where cheri-benchplot sessions are created")
 
-    #: Path to write the cheri-benchplot sessions to
-    session_path: ConfigPath = dc.field(default_factory=Path.cwd, metadata=dict(validate=validate_dir_exists))
+    sdk_path: ConfigPath = config_field(
+        Path("~/cheri/cherisdk"),
+        validate=validate_dir_exists,
+        desc="CHERI SDK path. This should point to the cherisdk directory, not the inner cherisdk/sdk.")
 
-    #: CHERI sdk path
-    sdk_path: ConfigPath = dc.field(default=Path("~/cheri/cherisdk"), metadata=dict(validate=validate_dir_exists))
+    build_path: ConfigPath = config_field(
+        Path("~/cheri/build"),
+        validate=validate_dir_exists,
+        desc="CHERI projects build directory, the directory layout should match cheribuild.")
 
-    #: CHERI projects build directory, expects the format from cheribuild
-    build_path: ConfigPath = dc.field(default=Path("~/cheri/build"), metadata=dict(validate=validate_dir_exists))
+    src_path: ConfigPath = config_field(Path("~/cheri"),
+                                        validate=validate_dir_exists,
+                                        desc="Source directory, the directory layout should match cheribuild.")
 
-    #: git repositories path
-    src_path: ConfigPath = dc.field(default=Path("~/cheri"), metadata=dict(validate=validate_dir_exists))
+    openocd_path: ConfigPath = config_field(
+        Path("/usr/bin/openocd"),
+        desc="Path to openocd, will be inferred if missing (only relevant when running FPGA).")
 
-    #: Path to the CHERI perfetto fork build directory
-    perfetto_path: ConfigPath = Path("~/cheri/cheri-perfetto/build")
+    flamegraph_path: ConfigPath = config_field(
+        Path("flamegraph.pl"), desc="Path to BrendanGregg's flamegraph repository containing flamegraph.pl.")
 
-    #: Path to openocd, will be inferred if missing (only relevant when running FPGA)
-    openocd_path: ConfigPath = Path("/usr/bin/openocd")
+    rootfs_path: ConfigPath | None = config_field(
+        None,
+        desc="CHERI rootfs path, the directory layout should match cheribuild. "
+        "If missing, it is inferred from sdk_path.")
 
-    #: Path to BrendanGregg's flamegraph repository containing flamegraph.pl
-    flamegraph_path: ConfigPath = Path("flamegraph.pl")
+    cheribuild_path: ConfigPath | None = config_field(
+        None, desc="Path to cheribuild. If missing, it is inferred from src_path.")
 
-    #: CHERI rootfs path
-    rootfs_path: Optional[ConfigPath] = None
+    cheribsd_path: ConfigPath | None = config_field(
+        None, desc="Path to the CheriBSD sources. If missing, it is inferred from src_path.")
 
-    #: Path to cheribuild, inferred from :attr:`src_path` if missing
-    cheribuild_path: Optional[ConfigPath] = dc.field(init=False, default=None)
+    qemu_path: ConfigPath | None = config_field(
+        None, desc="Path to the qemu sources. If missing, it is inferred from src_path.")
 
-    #: Path to the CheriBSD sources, inferred from :attr:`src_path` if missing
-    cheribsd_path: Optional[ConfigPath] = dc.field(init=False, default=None)
+    llvm_path: ConfigPath | None = config_field(
+        None, desc="Path to the Cheri LLVM sources. If missing, it is inferred from src_path.")
 
-    #: Path to the qemu sources, inferred from :attr:`src_path` if missing
-    qemu_path: Optional[ConfigPath] = dc.field(init=False, default=None)
-
-    #: Path to the Cheri LLVM sources, inferred from :attr:`src_path` if missing
-    llvm_path: Optional[ConfigPath] = dc.field(init=False, default=None)
-
-    #: Override the maximum number of workers to use
-    concurrent_workers: Optional[int] = None
+    concurrent_workers: int | None = config_field(None, desc="Override the maximum number of workers to use.")
 
     def __post_init__(self):
         super().__post_init__()
