@@ -7,7 +7,7 @@ import polars as pl
 from marshmallow import ValidationError, validates
 
 from ..core.artefact import PLDataFrameLoadTask, RemoteBenchmarkIterationTarget
-from ..core.config import Config, ConfigPath, config_field
+from ..core.config import Config, ConfigAny, ConfigPath, config_field
 from ..core.task import ExecutionTask, output
 
 
@@ -86,12 +86,15 @@ class QpsExecConfig(Config):
         Config.REQUIRED,
         desc="Scenario configuration to run. Note that this must be imported into assets first, "
         "as the path is assumed to be relative to the assets directory.")
-    qps_path: ConfigPath = config_field(None, desc="Path of grpc qps binaries")
-    client_procctl_args: list[str] = config_field(list, desc="proccontrol arguments for the client worker")
-    client_cpu: list[int | str] = config_field(list, desc="Restrict client worker to the given CPUs")
-    server_procctl_args: list[str] = config_field(list, desc="proccontrol arguments for the server worker")
-    server_cpu: list[int | str] = config_field(list, desc="Restrict server worker to the given CPUs")
-    driver_cpu: list[int | str] = config_field(list, desc="Restrict driver to the given CPUs")
+    qps_path: ConfigPath = config_field(None, desc="Path of grpc qps binaries.")
+    client_procctl_args: list[str] = config_field(list, desc="proccontrol arguments for the client worker.")
+    client_cpu: list[int] = config_field(list, desc="Restrict client worker to the given CPUs.")
+    server_procctl_args: list[str] = config_field(list, desc="proccontrol arguments for the server worker.")
+    server_cpu: list[int] = config_field(list, desc="Restrict server worker to the given CPUs.")
+    driver_cpu: list[int] = config_field(list, desc="Restrict driver to the given CPUs.")
+    scenario_template_context: dict[str,
+                                    ConfigAny] = config_field(dict,
+                                                              desc="Additional key/values for the scenario template.")
 
     @validates("scenario_file")
     def check_scenario(self, data, **kwargs):
@@ -150,6 +153,8 @@ class QpsExecTask(ExecutionTask):
                 if fmt_spec:
                     fmt_spec = fmt_spec.strip(":")
                 value = self.benchmark.parameters.get(key)
+                if value is None:
+                    value = self.config.scenario_template_context.get(key)
                 value = self._coerce(fmt_spec, value)
                 if value is None:
                     return data
