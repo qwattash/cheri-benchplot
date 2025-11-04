@@ -1,14 +1,15 @@
+import operator
 import os
 import re
 from dataclasses import dataclass
-from functools import cached_property
+from functools import cached_property, reduce
 
 import polars as pl
 import polars.selectors as cs
 import seaborn as sns
 
 from ..core.artefact import Target
-from ..core.config import Config, ConfigPath, config_field
+from ..core.config import Any, Config, ConfigPath, config_field
 from ..core.plot import PlotTarget, PlotTask
 from ..core.plot_util import (DisplayGrid, DisplayGridConfig, ParamWeight, WeightMode, grid_barplot)
 from ..core.task import dependency, output
@@ -17,21 +18,47 @@ from .cloc_exec import CheriBSDClocExecTask, ClocExecTask
 
 @dataclass
 class FilterConfig(Config):
+    when: dict[str, Any] = config_field(Config.REQUIRED,
+                                        desc="Key/value parameterisation matcher to enable the filter.")
     accept: list[str] = config_field(list, desc="Accept filter regex list")
     reject: list[str] = config_field(list, desc="Reject filter regex list, run after accept")
 
 
 @dataclass
+class ComponentSpec(Config):
+    """
+    Configure component mappings from the input cloc data.
+
+    The component name can be assigned by matching a regex on the files, or by using
+    a combination of the parameterisation axes.
+    """
+    name: str = config_field(Config.REQUIRED, desc="Component name to assign.")
+    when: dict[str, Any] = config_field(dict, desc="Match a key/value parameterisation.")
+    regex: str | None = config_field(None, desc="Regular expression to match.")
+
+
+@dataclass
 class ClocByComponentConfig(DisplayGridConfig):
-    components: dict[str, str] = config_field(dict,
-                                              desc="Component matchers: the key is the component name, "
-                                              "the value is a regex that matches the file path")
+    """
+    Configure component assignment and data filtering.
+
+    The :class:`ClocByComponent` plot aggregates data from all the cloc
+    runs and produces a per-session plot with all data separated by component.
+
+    The :att:`ClocByComponentConfig.cdb` can be used to reference an external
+    compilation DB listing the files to include.
+    """
+    components: list[ComponentSpec] = config_field(Config.REQUIRED, desc="List of component assignment configurations.")
+
     cdb: ConfigPath | None = config_field(None, desc="Compilation database to filter relevant files")
+
     # This is used map components from a repository to the
     # correct path in the compilation database
     cdb_prefix: dict[str, str] = config_field(
         dict, desc="Optional mappings to prefix the paths for cross repo changes for each scenario")
-    filters: dict[str, FilterConfig] = config_field(dict, desc="Additional filter specifications for each scenario")
+
+    filters: list[FilterConfig] = config_field(list,
+                                               desc="Additional filter specifications for selected parameterisations.")
 
 
 class ClocByComponent(PlotTask):
@@ -42,6 +69,14 @@ class ClocByComponent(PlotTask):
     group data from multiple scenarios into the same component.
 
     The task allows filtering the data by compilation database.
+
+    The task generates the following auxiliary columns:
+    - how: The type of change, one of 'added', 'modified', 'removed'.
+    - component: Name of the component from the :attr:`ClocByComponentConfig.components`,
+      this identifies the LoC counts for each of the 'how' values.
+    - count: The line count.
+    - metric: Identifies the meaning of the count column, this is the 'delta' count or
+      'overhead' count.
     """
     task_namespace = "cloc"
     task_name = "cloc-by-component"
@@ -95,7 +130,11 @@ class ClocByComponent(PlotTask):
 
     @output
     def cloc_table(self):
-        return Target(self, prefix="raw", ext="csv")
+        """
+        Output csv file containing the tabular data corresponding to the
+        plot output.
+        """
+        return Target(self, "table", ext="csv")
 
     @cached_property
     def compilation_db(self):
@@ -114,16 +153,27 @@ class ClocByComponent(PlotTask):
 
         return df.join(self.compilation_db, on="file")
 
-    def _filter_by_file(self, df: pl.DataFrame, scenario: str, fc: FilterConfig) -> pl.DataFrame:
-        # Accept filters will allow only matching paths to be considered
+    def _apply_file_filter(self, df: pl.DataFrame, fc: FilterConfig) -> pl.DataFrame:
+        """
+        The data in the dataframe is filtered using the given filter configuration.
+
+        The :attr:`FilterConfig.when` is used to select a dataframe slice where the filter
+        applies. The remaining portion of the dataframe is left unchanged.
+        The :attr:`FilterConfig.accept` regexes are used to whitelist paths.
+        The :attr:`FilterConfig.reject` regexes are used to blacklist paths.
+        Note that the whitelist is applied first, then the blacklist is applied on top
+        of the whitelisted paths.
+        """
+        when_stmts = [pl.col(pkey) == pval for pkey, pval in fc.when.items()]
+        when_expr = reduce(operator.or_, when_stmts, False)
         if fc.accept:
             accept_fn = lambda path: any([re.match(p, path) is not None for p in fc.accept])
             is_accept = pl.col("file").map_elements(accept_fn, return_dtype=pl.Boolean)
-            df = df.filter((pl.col("scenario") != scenario) | ((pl.col("scenario") == scenario) & is_accept))
+            df = df.filter(~when_expr | is_accept)
         if fc.reject:
             reject_fn = lambda path: any([re.match(p, path) is not None for p in fc.reject])
             is_reject = pl.col("file").map_elements(reject_fn, return_dtype=pl.Boolean)
-            df = df.filter((pl.col("scenario") != scenario) | ((pl.col("scenario") == scenario) & ~is_reject))
+            df = df.filter(~when_expr | ~is_reject)
         return df
 
     def _patch_cdb_file_paths(self, df) -> pl.DataFrame:
@@ -150,16 +200,26 @@ class ClocByComponent(PlotTask):
         This will automatically define a catch-all component named 'other' that collects
         anything that does not match.
         """
-        if not self.config.components:
-            return df.with_columns(pl.col("scenario").alias("component"))
-
         df = df.with_columns(pl.lit("other").alias("component"))
-        for name, pattern in self.config.components.items():
-            cname = pl.lit(name)
-            default = pl.col("component")
-            is_matching = pl.col("file").map_elements(lambda path: re.match(pattern, path) is not None,
-                                                      return_dtype=pl.Boolean)
-            df = df.with_columns(pl.when(is_matching).then(cname).otherwise(default).alias("component"))
+        true_expr = pl.lit(True, dtype=pl.Boolean)
+        for spec in self.config.components:
+            if spec.when:
+                when_stmts = [pl.col(pkey) == pval for pkey, pval in spec.when.items()]
+                when_expr = reduce(operator.and_, when_stmts, true_expr)
+            else:
+                when_expr = true_expr
+            if spec.regex:
+                # It would be nice to do this, but Rust regex does not support lookarounds
+                # regex_expr = pl.col("file").str.find(spec.regex).is_not_null()
+                match_fn = lambda path: re.match(spec.regex, path) is not None
+                regex_expr = pl.col("file").map_elements(match_fn, return_dtype=pl.Boolean)
+            else:
+                regex_expr = true_expr
+
+            component = pl.lit(spec.name)
+            existing = pl.col("component")
+            df = df.with_columns(pl.when(when_expr & regex_expr).then(component).otherwise(existing).alias("component"))
+
         return df
 
     def collect_data(self):
@@ -196,9 +256,9 @@ class ClocByComponent(PlotTask):
         baseline_df = self.collect_baseline()
 
         # Apply extra filters (e.g. tests)
-        for scenario, filter_config in self.config.filters.items():
-            head_df = self._filter_by_file(head_df, scenario, filter_config)
-            baseline_df = self._filter_by_file(baseline_df, scenario, filter_config)
+        for filter_config in self.config.filters:
+            head_df = self._apply_file_filter(head_df, filter_config)
+            baseline_df = self._apply_file_filter(baseline_df, filter_config)
 
         # Assign components to each
         head_df = self._assign_component(head_df)
@@ -211,7 +271,7 @@ class ClocByComponent(PlotTask):
         dump_df.write_csv(self.diff_audit.single_path())
 
         # Create per-component baseline counts
-        group_cols = ["target", "variant", "runtime", "scenario", "component"]
+        group_cols = [*self.param_columns, "component"]
         baseline_agg_df = baseline_df.group_by(group_cols).agg(pl.col("count").sum())
         head_agg_df = head_df.group_by(group_cols).agg(
             pl.col("added").sum(),
@@ -238,11 +298,10 @@ class ClocByComponent(PlotTask):
                                   variable_name="how",
                                   value_name="count")
 
-        # Ensure we have the proper theme with default colors
-        sns.set_theme()
+        # Grab the color palette as a matplotlib cmap
         cmap = sns.color_palette(as_cmap=True)
 
-        config = self.config.set_fixed(
+        grid_config = self.config.set_fixed(
             tile_col="metric",
             tile_col_as_xlabel=True,
             tile_sharey=True,
@@ -251,19 +310,22 @@ class ClocByComponent(PlotTask):
                 "added": cmap[2],  # green
                 "modified": cmap[1],  # orange
                 "removed": cmap[3]  # red
-            },
-        )
-        config.set_default(
-            param_sort_weight={
-                "component": ParamWeight(mode=WeightMode.SortAscendingAsStr, base=10, step=10),
-                "how": ParamWeight(mode=WeightMode.Custom, weights={
-                    "added": 0,
-                    "modifier": 1,
-                    "removed": 2
+            }).set_default(
+                param_sort_weight={
+                    "component": ParamWeight(mode=WeightMode.AscendingAsStr, base=0, step=10),
+                    "how": ParamWeight(mode=WeightMode.Custom, weights={
+                        "added": 0,
+                        "modified": 1,
+                        "removed": 2
+                    })
                 })
-            })
 
-        with DisplayGrid(self.cloc_plot, view_df, config) as grid:
+        with DisplayGrid(self.cloc_plot, view_df, grid_config) as grid:
+            # Dump the sorted tabular data using the ordering specified by the grid config
+            dump_df = grid.get_grid_df().select(["component", "how", "metric", "count"])
+            dump_df.write_csv(self.cloc_table.single_path())
+
+            # Generate the grid plot
             grid.map(grid_barplot, x="count", y="component", orient="y", stack=True, coordgen_kwargs={"pad_ratio": 0.5})
             grid.map(lambda tile, chunk: tile.ax.tick_params(axis="y", labelsize="x-small"))
 
