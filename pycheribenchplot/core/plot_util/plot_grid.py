@@ -698,12 +698,10 @@ class DisplayGrid(PlotGrid):
         return self._display_map.get(self._config.hue, self._config.hue)
 
 
-def grid_debug(tile: PlotTile, chunk: pl.DataFrame, x: str, y: str):
+def grid_debug(tile: PlotTile, chunk: pl.DataFrame, x: str, y: str, logger: "Logger"):
     """
     Helper for debugging plot generation.
 
     This dumps the output sorted dataframe for each tile.
     """
-
-    print(f"Dump tile ({tile.row}, {tile.col})")
-    print(chunk)
+    logger.debug("Dump tile (%s, %s)\n%s", tile.row, tile.col, chunk)
