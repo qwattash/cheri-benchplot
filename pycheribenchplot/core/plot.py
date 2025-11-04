@@ -223,7 +223,6 @@ class PlotTaskMixin:
         raise NotImplementedError("Must override")
 
 
-@deprecated("Use SlicePlotTask instead")
 class PlotTask(AnalysisTask, PlotTaskMixin):
     """
     Session-level plotting task.
