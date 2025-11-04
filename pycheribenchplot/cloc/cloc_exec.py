@@ -1,5 +1,6 @@
 from dataclasses import MISSING, dataclass
 from pathlib import Path
+from typing import Any
 
 import polars as pl
 import polars.selectors as cs
@@ -8,12 +9,12 @@ from git.exc import BadName, InvalidGitRepositoryError
 
 from ..core.artefact import PLDataFrameLoadTask, Target
 from ..core.config import Config, ConfigPath, config_field
-from ..core.task import output
-from ..core.tvrs import TVRSExecConfig, TVRSExecTask
+from ..core.error import ConfigurationError
+from ..core.task import ExecutionTask, output
 
 
 @dataclass
-class ClocScenario(Config):
+class ClocRepoConfig(Config):
     repo_path: ConfigPath = config_field(MISSING, desc="Target repository path")
     baseline_ref: str = config_field(MISSING, desc="Baseline git ref")
     name: str | None = config_field(None, desc="Human-readable name of the cloc data, defaults to the repo path")
@@ -91,7 +92,7 @@ class LoadClocFile(PLDataFrameLoadTask):
         return df
 
 
-class ClocExecTask(TVRSExecTask):
+class ClocExecTask(ExecutionTask):
     """
     Extract LoC diff information from one or more git repositories.
 
@@ -100,8 +101,7 @@ class ClocExecTask(TVRSExecTask):
     task_namespace = "cloc"
     task_name = "extract"
     public = True
-    task_config_class = TVRSExecConfig
-    scenario_config_class = ClocScenario
+    task_config_class = ClocRepoConfig
 
     @output
     def cloc_output(self):
@@ -110,6 +110,9 @@ class ClocExecTask(TVRSExecTask):
     @output
     def cloc_baseline(self):
         return Target(self, "baseline", ext="json", loader=LoadClocFile)
+
+    def repo_config(self):
+        return self.config
 
     def run(self):
         super().run()
@@ -121,6 +124,7 @@ class ClocExecTask(TVRSExecTask):
 
         self.script.exec_iteration("cloc", template="cloc.hook.jinja")
         self.script.extend_context({
+            "cloc_config": self.repo_config(),
             "cloc_output": self.cloc_output.single_path(),
             "cloc_baseline": self.cloc_baseline.single_path(),
             "cloc_args": cli_args
@@ -128,34 +132,88 @@ class ClocExecTask(TVRSExecTask):
 
 
 @dataclass
-class CheriBSDClocConfig(TVRSExecConfig):
+class ClocRepoSpec(Config):
+    matches: dict[str,
+                  Any] = config_field(Config.REQUIRED,
+                                      desc="Use this repo spec when all parameterisation keys match the given value.")
+    repo_config: ClocRepoConfig = config_field(Config.REQUIRED, desc="Cloc configuration.")
+
+    def check_matches(self, params: dict[str, Any]) -> bool:
+        """
+        Check whether this RepoSpec matches the given parameterisation
+        """
+        for key, val in self.matches.items():
+            if key not in params or params[key] != val:
+                return False
+        return True
+
+
+@dataclass
+class ClocMultiRepoConfig(Config):
     """
-    Configuration with pre-defined scenario configurations for CheriBSD LoC extraction.
+    Configuration to run the Cloc tool over multiple repositories.
+
+    Each repository defines a ClocRepoConfig, which is enabled using
+    parameterisation matchers.
     """
-    cheribsd: ClocScenario = None
-    drm: ClocScenario | None = None
-    zfs: ClocScenario | None = None
+    repos: list[ClocRepoSpec] = config_field(
+        list,
+        desc="Per-repository configurations. Each benchmark run selects one configuration "
+        "based on the matcher, note that the match must be unique.")
 
     def resolve_refs(self, user_config):
-        self.cheribsd.resolve_refs(user_config)
+        for repo_spec in self.repos:
+            repo_spec.repo_config.resolve_refs(user_config)
+
+
+class ClocMultiRepoExecTask(ClocExecTask):
+    """
+    Select the cloc configuration based on the parameterisation.
+    """
+    task_namespace = "cloc"
+    task_name = "multi-extract"
+    public = True
+    task_config_class = ClocMultiRepoConfig
+
+    def repo_config(self):
+        selected = None
+        for repo_spec in self.config.repos:
+            if not repo_spec.check_matches(self.benchmark.parameters):
+                continue
+            if selected is not None:
+                self.logger.error("Can not select unique cloc RepoConfig, multiple matches for parameterisation %s",
+                                  self.benchmark.parameters)
+                raise ConfigurationError("Multiple matching repo configs")
+            selected = repo_spec.repo_config
+        return selected
+
+
+@dataclass
+class CheriBSDClocConfig(ClocMultiRepoConfig):
+    """
+    Configuration with explicit repos related to CheriBSD LoC extraction.
+    """
+    cheribsd: ClocRepoSpec = config_field(Config.REQUIRED, desc="CheriBSD main source tree cloc matcher and config.")
+    drm: ClocRepoSpec | None = config_field(None, desc="CheriBSD DRM subtree cloc matcher and config.")
+    zfs: ClocRepoSpec | None = config_field(None, desc="CheriBSD ZFS subtree cloc matcher and config.")
+
+    def resolve_refs(self, user_config):
+        self.cheribsd.repo_config.resolve_refs(user_config)
         if self.drm:
-            self.drm.resolve_refs(user_config)
+            self.drm.repo_config.resolve_refs(user_config)
         if self.zfs:
-            self.zfs.resolve_refs(user_config)
+            self.zfs.repo_config.resolve_refs(user_config)
+        super().resolve_refs(user_config)
 
 
-class CheriBSDClocExecTask(ClocExecTask):
+class CheriBSDClocExecTask(ClocMultiRepoExecTask):
     """
     Helper task to extract cheribsd LoC diff information.
 
-    This is a convenience task that pre-fills the configuration scenarios
-    with the following:
+    This is a convenience task that handles defaults for CheriBSD specific repos:
     - cheribsd: Configures cloc to extract LoC diff from all kernel subsystems.
     - drm: Configures cloc to extract LoC diff from the DRM kernel subsystem.
     - zfs: Configures cloc to extract LoC diff from the ZFS kernel subsystem.
-
-    If the pre-filled scenarios are not named in the configuration file, this will
-    behave as ClocExecTask.
 
     Cheri kernel sources include a number of subrepos that must be cloned
     separately in order to be used as baseline:
@@ -171,41 +229,42 @@ class CheriBSDClocExecTask(ClocExecTask):
         super().__init__(context, script, task_config)
         self.config.resolve_refs(self.session.user_config)
 
-    def scenario(self):
-        scenario_key = self.benchmark.parameters["scenario"]
+    def repo_config(self):
         default_ext = ["c", "h", "S", "s", "m"]
-        match scenario_key:
-            case "cheribsd":
-                self.logger.info("Using CheriBSD baseline REF %s", self.config.cheribsd.baseline_ref)
-                if not self.config.cheribsd.accept_ext:
-                    self.logger.info("Using default CheriBSD file ext filter: '%s'", default_ext)
-                    self.config.cheribsd.accept_ext = default_ext
-                if not self.config.cheribsd.accept_filter:
-                    default_accept = "sys/"
-                    self.logger.info("Using default CheriBSD accept filter: '%s'", default_accept)
-                    self.config.cheribsd.accept_filter = default_accept
-                return self.config.cheribsd
-            case "drm":
-                if not self.config.drm:
-                    return super().scenario()
-                self.logger.info("Using DRM baseline REF %s", self.config.drm.baseline_ref)
-                if self.config.drm.repo_path != self.config.cheribsd.repo_path:
-                    # Complain if the target DRM repo is not the cheribsd repo
-                    self.logger.warning("Unexpected DRM repo path != CheriBSD repo path")
-                if self.config.drm and not self.config.drm.accept_ext:
-                    self.logger.info("Using default DRM file ext filter: '%s'", default_ext)
-                    self.config.drm.accept_ext = default_ext
-                if not self.config.drm.accept_filter:
-                    default_accept = "sys/dev/drm/"
-                    self.logger.info("Using default DRM accept filter: '%s'", default_accept)
-                    self.config.drm.accept_filter = default_accept
-                return self.config.drm
-            case "zfs":
-                if not self.config.zfs:
-                    return super().scenario()
-                self.logger.info("Using ZFS baseline REF %s", self.config.zfs.baseline_ref)
-                if self.config.zfs and not self.config.zfs.accept_ext:
-                    self.logger.info("Using default ZFS file ext filter: '%s'", default_ext)
-                    self.config.zfs.accept_ext = default_ext
-                return self.config.zfs
-        return super().scenario()
+
+        if self.config.cheribsd.check_matches(self.benchmark.parameters):
+            bsd_config = self.config.cheribsd.repo_config
+            self.logger.info("Using CheriBSD baseline REF %s", bsd_config.baseline_ref)
+            if not bsd_config.accept_ext:
+                self.logger.info("Using default CheriBSD file ext filter: '%s'", default_ext)
+                bsd_config.accept_ext = default_ext
+            if not bsd_config.accept_filter:
+                default_accept = "sys/"
+                self.logger.info("Using default CheriBSD accept filter: '%s'", default_accept)
+                bsd_config.accept_filter = default_accept
+            return bsd_config
+
+        if self.config.drm and self.config.drm.check_matches(self.benchmark.parameters):
+            drm_config = self.config.drm.repo_config
+            self.logger.info("Using DRM baseline REF %s", drm_config.baseline_ref)
+            if drm_config.repo_path != self.config.cheribsd.repo_config.repo_path:
+                # Complain if the target DRM repo is not the cheribsd repo
+                self.logger.warning("Unexpected DRM repo path != CheriBSD repo path")
+            if not drm_config.accept_ext:
+                self.logger.info("Using default DRM file ext filter: '%s'", default_ext)
+                drm_config.accept_ext = default_ext
+            if not drm_config.accept_filter:
+                default_accept = "sys/dev/drm/"
+                self.logger.info("Using default DRM accept filter: '%s'", default_accept)
+                drm_config.accept_filter = default_accept
+            return drm_config
+
+        if self.config.zfs and self.config.zfs.check_matches(self.benchmark.parameters):
+            zfs_config = self.config.zfs.repo_config
+            self.logger.info("Using ZFS baseline REF %s", zfs_config.baseline_ref)
+            if not zfs_config.accept_ext:
+                self.logger.info("Using default ZFS file ext filter: '%s'", default_ext)
+                zfs_config.accept_ext = default_ext
+            return zfs_config
+
+        return super().repo_config()
