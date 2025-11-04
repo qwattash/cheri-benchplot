@@ -1479,8 +1479,8 @@ class PipelineConfig(CommonSessionConfig):
     version: str = config_field("1.0", desc="Session configuration version")
 
     #: Benchmark configuration, required
-    benchmark_config: PipelineBenchmarkConfig | list[PipelineBenchmarkConfig] = config_field(
-        list, desc="Benchmark parameterisation configuration")
+    benchmark_config: PipelineBenchmarkConfig = config_field(Config.REQUIRED,
+                                                             desc="Benchmark parameterisation configuration")
 
     #: Assets to import into the session
     assets: dict[str, AssetConfig] = config_field(dict, desc="Configure assets to import into the session")
