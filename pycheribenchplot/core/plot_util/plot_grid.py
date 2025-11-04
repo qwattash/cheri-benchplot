@@ -43,7 +43,12 @@ class PlotConfigBase(Config):
 
 @dataclass
 class PlotGridConfig(PlotConfigBase):
+    # General figure-level configuration
     title: Optional[str] = config_field(None, desc="Override figure title.")
+    plot_params: Dict[str, Any] = config_field(
+        dict, desc="Plot appearance configuration for tweaking, see matplotlib rc_context documentation")
+
+    # Tiling configuration
     tile_row: Optional[str] = config_field(None, desc="Override parameter for grid rows.")
     tile_col: Optional[str] = config_field(None, desc="Override parameter for grid cols.")
     tile_row_as_ylabel: bool | None = config_field(
@@ -52,15 +57,21 @@ class PlotGridConfig(PlotConfigBase):
         None, desc="Use value of the tile_col parameter as the X axis label for the colum.")
     tile_sharex: Optional[str | bool] = config_field(None, desc="Override X axis sharing.")
     tile_sharey: Optional[str | bool] = config_field(None, desc="Override Y axis sharing.")
-    plot_params: Dict[str, Any] = config_field(
-        dict, desc="Plot appearance configuration for tweaking, see matplotlib rc_context documentation")
+    tile_aspect: float = config_field(1.0, desc="Aspect ratio of each tile.")
+
+    # Per-tile configuration
+    tile_x_margin: float | tuple[float, float] | None = config_field(
+        None, desc="X-axis margin within each tile, in normalised interval units range [0, 1].")
+    tile_y_margin: float | tuple[float, float] | None = config_field(
+        None, desc="Y-axis margin within each tile, in normalised interval untis range [0, 1].")
     hue: Optional[str] = config_field(
         None,
         desc="Override parameter for hue. When no hue is given, the color is controlled by the "
         "plot_param axes.prop_cycle (See matplotlib rcParams).")
     hue_colors: Optional[dict[str, str]] = config_field(
         None, desc="Optional map that forces a specific color for each value of the 'hue' configuration.")
-    tile_aspect: float = config_field(1.0, desc="Aspect ratio of each tile.")
+
+    # Legend configuration
     legend_vspace: float = config_field(0.2, desc="Fraction of the vertical space reserved to legend and suptitle.")
     legend_hide: bool = config_field(False, desc="Disable the legend.")
     legend_columns: int = config_field(
@@ -427,10 +438,7 @@ class PlotGrid(AbstractContextManager):
         self.map(self._set_titles)
         if self._rc_context:
             self._rc_context.__exit__(exc_type, exc_value, traceback)
-        if self._legend_kwargs is not None:
-            self._generate_legend()
-            # XXX provide a way to adjust these
-            # self._figure.subplots_adjust(bottom=0.15)
+        self._finalize_layout()
         for path in self._target.paths():
             self._figure.savefig(path)
         plt.close(self._figure)
@@ -506,11 +514,44 @@ class PlotGrid(AbstractContextManager):
     def _make_tile(self, ax, ri, ci, row, col):
         return PlotTile(ax=ax, hue=self._config.hue, palette=self._color_palette, coords=(ri, ci), loc=(row, col))
 
-    def _generate_legend(self):
-        if not self._config.hue:
-            return
+    def _finalize_layout(self):
         self._figure.tight_layout()
-        if self._config.legend_hide:
+
+        # XXX provide a way to adjust these
+        # self._figure.subplots_adjust(bottom=0.15)
+
+        # Obey tile margin overrides
+        def _set_margins(tile, _chunk):
+            if xm := self._config.tile_x_margin:
+                if not isinstance(xm, tuple):
+                    xm = (xm, xm)
+                assert xm[0] >= 0 and xm[0] <= 1
+                assert xm[1] >= 0 and xm[1] <= 1
+                # We manage margins manually, so don't let matplotlib add more
+                tile.ax.set_xmargin(0)
+                xlow, xhigh = tile.ax.get_xlim()
+                dx = xhigh - xlow
+                dxlow, dxhigh = dx * xm[0], dx * xm[1]
+                tile.ax.set_xlim(xlow - dxlow, xhigh + dxhigh)
+            if ym := self._config.tile_y_margin:
+                if not isinstance(ym, tuple):
+                    ym = (ym, ym)
+                assert ym[0] >= 0 and ym[0] <= 1
+                assert ym[1] >= 0 and ym[1] <= 1
+                # We manage margins manually, so don't let matplotlib add more
+                tile.ax.set_ymargin(0)
+                ylow, yhigh = tile.ax.get_ylim()
+                dy = yhigh - ylow
+                dylow, dyhigh = dy * ym[0], dy * ym[1]
+                tile.ax.set_ylim(ylow - dylow, yhigh + dyhigh)
+
+        self.map(_set_margins)
+
+        # Generate the legend, if enabled
+        if self._legend_kwargs is None or self._config.legend_hide:
+            return
+            self._generate_legend()
+        if not self._config.hue:
             return
         labels = self._df[self.hue_param].unique(maintain_order=True)
         patches = [Patch(color=self._color_palette[hue_key]) for hue_key in labels]
@@ -547,6 +588,9 @@ class PlotGrid(AbstractContextManager):
                 tile = self._make_tile(ax, i, j, row_param, col_param)
                 self.logger.debug("PlotGrid: tile callback (row=%s, col=%s) %s", row_param, col_param, chunk)
                 tile_plotter(tile, chunk, *args, **kwargs)
+
+    def get_grid_df(self) -> pl.DataFrame:
+        return self._df
 
     def add_legend(self, **kwargs):
         """
