@@ -210,7 +210,7 @@ class TemplateFieldProxy(mfields.Field):
 
     def _serialize(self, value, attr, obj, **kwargs):
         if isinstance(value, ConfigTemplateSpec):
-            value = value.value
+            return value.value
         return self._wrapped_field._serialize(value, attr, obj, **kwargs)
 
 
