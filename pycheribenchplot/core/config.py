@@ -708,7 +708,7 @@ class Config:
             elif is_generic_type(target_ty):
                 args_ty = get_args(target_ty)
                 return any([_has_nested_config_type(ty) for ty in args_ty])
-            elif target_ty is any:
+            elif target_ty is Any:
                 # Can not really know, conservatively say yes
                 return True
             else:
@@ -733,7 +733,7 @@ class Config:
                 return target.bind(context, nested_loc)
             else:
                 # Undecidable any type does not hold a nested config
-                return value
+                return target
 
         if not _has_nested_config_type(dtype):
             return value
