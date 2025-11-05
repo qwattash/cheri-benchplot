@@ -3,10 +3,75 @@ from dataclasses import dataclass
 import numpy as np
 import polars as pl
 
+from ..core.analysis import SliceAnalysisTask
+from ..core.artefact import Target
+from ..core.config import Config, config_field
 from ..core.plot import PlotTarget, SlicePlotTask
 from ..core.plot_util import DisplayGrid, DisplayGridConfig, grid_barplot
 from ..core.task import dependency, output
 from .scan_dwarf import AnnotateImpreciseSubobjectLayouts
+
+
+@dataclass
+class ImpreciseSubobjectReportConfig(Config):
+    show_parameters: list[str] | None = config_field(None,
+                                                     desc="Only include these parameter axes in the output tables.")
+
+
+class ImpreciseSubobjectReport(SliceAnalysisTask):
+    """
+    Produce information about imprecise sub-objects in tabular form.
+
+    A summary table lists the number of imprecise sub-objects for each
+    relevant target group, with details on how many are arrays and allow
+    overflow into a pointer.
+
+    A detail table lists each imprecise sub-object with classification tags.
+    """
+    public = True
+    task_namespace = "subobject"
+    task_name = "report"
+    task_config_class = ImpreciseSubobjectReportConfig
+
+    @dependency
+    def layouts(self):
+        return AnnotateImpreciseSubobjectLayouts(self.session, self.slice_info, self.analysis_config)
+
+    @output
+    def summary(self):
+        return Target(self, "summary", ext="csv")
+
+    @output
+    def fields(self):
+        return Target(self, "fields", ext="csv")
+
+    def run(self):
+        df = self.layouts.imprecise_layouts.get()
+
+        if self.config.show_parameters:
+            table_cols = [p for p in self.param_columns if p in self.config.show_parameters]
+        else:
+            table_cols = self.param_columns
+
+        # Generate the detail data
+        self.logger.info("Generate imprecise sub-object fields report")
+        data_cols = ["member_name", "file", "line", "byte_size", "is_array", "is_overrun_into_ptr"]
+        output_cols = [*table_cols, *data_cols]
+        table = df.filter(pl.col("_alias_color").is_not_null())
+        table = table.with_columns(
+            pl.col("_alias_pointer_member").alias("is_overrun_into_ptr"),
+            pl.col("array_items").is_not_null().alias("is_array"))
+        table = table.select(output_cols)
+        table = table.sort([*table_cols, "member_name", "file", "line"])
+        table.write_csv(self.fields.single_path())
+
+        # Generate the summary data
+        self.logger.info("Generate imprecise sub-object summary report")
+        summary = table.group_by(table_cols).agg(
+            pl.col("member_name").count(),
+            pl.col("is_array").sum(),
+            pl.col("is_overrun_into_ptr").sum())
+        summary.write_csv(self.summary.single_path())
 
 
 @dataclass
