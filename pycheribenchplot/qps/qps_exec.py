@@ -2,6 +2,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import polars as pl
 from marshmallow import ValidationError, validates
@@ -92,9 +93,10 @@ class QpsExecConfig(Config):
     server_procctl_args: list[str] = config_field(list, desc="proccontrol arguments for the server worker.")
     server_cpu: list[int] = config_field(list, desc="Restrict server worker to the given CPUs.")
     driver_cpu: list[int] = config_field(list, desc="Restrict driver to the given CPUs.")
-    scenario_template_context: dict[str,
-                                    ConfigAny] = config_field(dict,
-                                                              desc="Additional key/values for the scenario template.")
+    server_env: list[str] = config_field(list, desc="Server env variables.")
+    client_env: list[str] = config_field(list, desc="Client env variables.")
+    scenario_template_context: dict[str, Any] = config_field(dict,
+                                                             desc="Additional key/values for the scenario template.")
 
     @validates("scenario_file")
     def check_scenario(self, data, **kwargs):

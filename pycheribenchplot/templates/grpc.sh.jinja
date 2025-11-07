@@ -22,6 +22,9 @@ __server_exec()
 {% if hwpmc.hwpmc_enabled %}
 	{{ hwpmc.pmcstat(current_iteration) }} \
 {% endif %}
+{% if qps_config.server_env %}
+	env {{ qps_config.server_env | join(" ") }} \
+{% endif %}
 	grpc_qps_worker --driver_port 10000 --server_port=10001 &
 	SERVER_PID=$!
 }
@@ -33,6 +36,9 @@ __client_exec()
 {% endif %}
 {% if qps_config.client_cpu %}
 	cpuset -l {{ qps_config.client_cpu | join(",") }} \
+{% endif %}
+{% if qps_config.client_env %}
+	env {{ qps_config.client_env | join(" ") }} \
 {% endif %}
 	grpc_qps_worker --driver_port 20000 --server_port=20001 &
 	CLIENT_PID=$!
