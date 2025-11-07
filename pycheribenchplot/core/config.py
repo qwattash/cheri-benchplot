@@ -146,7 +146,7 @@ class LazyNestedConfigField(mfields.Field):
         if value is None:
             return {}
         if dc.is_dataclass(value) and isinstance(value, Config):
-            return type(value).schema().dump(value)
+            return value.schema().dump(value)
         return value
 
     def _deserialize(self, value, attr, data, **kwargs):
