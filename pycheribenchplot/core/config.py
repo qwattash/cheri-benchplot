@@ -1655,13 +1655,19 @@ class SessionRunConfig(CommonSessionConfig):
                     raise RuntimeError("Invalid configuration")
 
             # Resolve custom derived parameters
-            derived_specs = bench_config.parameterize_options.derived if bench_config.parameterize_options else dict()
+            derived_specs = {}
+            if specs := bench_config.parameterize_options.derived:
+                derived_specs.update(specs)
             for name, spec in derived_specs.items():
                 if name in parameters:
                     logger.error("Derived parameter name '%s' conflicts with root parameter", name)
-                    raise RuntimeError("Invalid configuration")
-                if value := cls._match_derived_param(parameters, spec):
+                    raise ConfigurationError("Invalid configuration")
+                value = cls._match_derived_param(parameters, spec)
+                if value is not None:
                     run_config.parameters[name] = value
+                else:
+                    logger.error("Unresolved derived parameter %s: %s (%s)", name, spec, parameters)
+                    raise ConfigurationError("Unresolved derived parameter %s for %s", name, parameters)
 
             run_config.uuid = uuid4()
             run_config.instance = InstanceConfig.copy(host_system)
