@@ -194,7 +194,7 @@ class AnalysisTask(SessionTask):
             args = tuple(chunk[s] for s in selectors)
 
             if chunk.shape[0] > 1:
-                boot = scs.bootstrap(args, statistic_fn, vectorized=True, method="basic")
+                boot = scs.bootstrap(args, statistic_fn, vectorized=True, method="BCa")
                 ci_low, ci_high = boot.confidence_interval.low, boot.confidence_interval.high
             else:
                 # Do not generate error  bars, single iteration
