@@ -1,20 +1,22 @@
 import enum
-import inspect
+import operator
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, replace
 from functools import reduce
-from typing import Any, Callable, Dict, Iterable, Optional, Self
+from typing import Any, Callable, Iterable, Self
 from warnings import deprecated
 
 import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
+import polars.selectors as cs
 import seaborn as sns
 from marshmallow import ValidationError, validates_schema
 from matplotlib.axes import Axes
 from matplotlib.gridspec import GridSpec
 from matplotlib.patches import Patch
 
+from ..analysis import ParamFilterConfig
 from ..artefact import Target
 from ..config import Config, config_field
 from ..error import ConfigurationError
@@ -44,38 +46,58 @@ class PlotConfigBase(Config):
 @dataclass
 class PlotGridConfig(PlotConfigBase):
     # General figure-level configuration
-    title: Optional[str] = config_field(None, desc="Override figure title.")
-    plot_params: Dict[str, Any] = config_field(
+    title: str | None = config_field(None, desc="Override figure title.")
+    size: tuple[float, float] | None = config_field(None, desc="Override figure size, in inches.")
+    plot_params: dict[str, Any] = config_field(
         dict, desc="Plot appearance configuration for tweaking, see matplotlib rc_context documentation")
 
     # Tiling configuration
-    tile_row: Optional[str] = config_field(None, desc="Override parameter for grid rows.")
-    tile_col: Optional[str] = config_field(None, desc="Override parameter for grid cols.")
+    tile_row: str | None = config_field(None, desc="Override parameter for grid rows.")
+    tile_col: str | None = config_field(None, desc="Override parameter for grid cols.")
     tile_row_as_ylabel: bool | None = config_field(
         None, desc="Use value of the tile_row parameter as the Y axis label for the row.")
     tile_col_as_xlabel: bool | None = config_field(
         None, desc="Use value of the tile_col parameter as the X axis label for the colum.")
-    tile_sharex: Optional[str | bool] = config_field(None, desc="Override X axis sharing.")
-    tile_sharey: Optional[str | bool] = config_field(None, desc="Override Y axis sharing.")
+    tile_sharex: str | bool | None = config_field(None, desc="Override X axis sharing.")
+    tile_sharex_keep_label: bool = config_field(False, desc="Keep the axis label when sharing the X axis.")
+    tile_sharey: str | bool | None = config_field(None, desc="Override Y axis sharing.")
+    tile_sharey_keep_label: bool = config_field(False, desc="Keep the axis label when sharing the Y axis.")
     tile_aspect: float = config_field(1.0, desc="Aspect ratio of each tile.")
+    tile_height_ratios: list[float] | None = config_field(None, desc="Height ratios for each row.")
 
     # Per-tile configuration
     tile_x_margin: float | tuple[float, float] | None = config_field(
         None, desc="X-axis margin within each tile, in normalised interval units range [0, 1].")
     tile_y_margin: float | tuple[float, float] | None = config_field(
         None, desc="Y-axis margin within each tile, in normalised interval untis range [0, 1].")
-    hue: Optional[str] = config_field(
+    hue: str | tuple[str, ...] | None = config_field(
         None,
-        desc="Override parameter for hue. When no hue is given, the color is controlled by the "
-        "plot_param axes.prop_cycle (See matplotlib rcParams).")
-    hue_colors: Optional[dict[str, str]] = config_field(
+        desc="Override parameter for hue. If multiple parameter names are given, "
+        "the hue colors are associated to every combination of parameter values. "
+        "In this case, the hue_color keys are tuples, the hue key for name substitution is a tuple with the same order. "
+        "When no hue is given, the color is controlled by the plot_param axes.prop_cycle (See matplotlib rcParams).")
+    hue_colors: dict[str | tuple[str, ...], str] | None = config_field(
         None, desc="Optional map that forces a specific color for each value of the 'hue' configuration.")
 
     # Legend configuration
+    # This should be a separate object perhaps
+    # Would be nice to support different strategies:
+    # outer-top, outer-bottom, outer-left, outer-right and inner legend.
+    legend_position: str = config_field("outer-top", desc="Control legend positioning.")
     legend_vspace: float = config_field(0.2, desc="Fraction of the vertical space reserved to legend and suptitle.")
     legend_hide: bool = config_field(False, desc="Disable the legend.")
     legend_columns: int = config_field(
         4, desc="Number of columns in the legend, this affects the necessary vspace and tile_aspect.")
+
+    @property
+    def hue_levels(self):
+        """
+        Number of hue levels to group on.
+        """
+        if isinstance(self.hue, tuple):
+            return len(self.hue)
+        else:
+            return 1
 
     def with_config_default(self, **kwargs):
         """
@@ -105,7 +127,15 @@ class PlotGridConfig(PlotConfigBase):
         return config
 
     def uses_param(self, name: str) -> bool:
-        return (super().uses_param(name) or self.tile_row == name or self.tile_col == name or self.hue == name)
+        if super().uses_param(name) or self.tile_row == name or self.tile_col == name:
+            return True
+        if self.hue and isinstance(self.hue, list):
+            for hue_key in self.hue:
+                if hue_key == name:
+                    return True
+        if self.hue == name:
+            return True
+        return False
 
 
 class WeightMode(enum.Enum):
@@ -269,7 +299,7 @@ class DisplayGridConfig(PlotGridConfig):
     Note that the display renaming/mapping is not allowed to change the behaviour of
     group_by over parameterization axes.
     """
-    param_sort_weight: Optional[Dict[str, ParamWeight]] = config_field(
+    param_sort_weight: dict[str, ParamWeight] | None = config_field(
         None,
         desc="Weight for determining the order of labels based on the parameters. "
         "The dictionary key must be a parameter name, the value is a weight descriptor.")
@@ -277,19 +307,16 @@ class DisplayGridConfig(PlotGridConfig):
     param_sort_order: SortOrder = config_field(SortOrder.Ascending,
                                                desc="Sort order by ascending or descending weight.")
 
-    param_names: Optional[Dict[str, str]] = config_field(
+    param_names: dict[str, str] | None = config_field(
         None, desc="Relabel parameter keys specified in PipelineBenchmarkConfig.parameterize")
 
-    param_values: Optional[Dict[str, Dict[str, Any]]] = config_field(
+    param_values: dict[str, dict[str, Any]] | None = config_field(
         None,
         desc="Relabel parameter values. The key is a parameter name, the value "
         "is a mapping of the form { <parameter value> => <value alias> }.")
 
-    param_filter: Optional[Dict[str, Any]] = config_field(
-        None,
-        desc="Filter the data for the given set of parameters. Specify constraints as key=value pairs, "
-        "multiple constraints on the same key are not supported. Note that depending on the "
-        "tiling setup, this may result in an unaligned dataframe and cause errors.")
+    param_filter: ParamFilterConfig | None = config_field(
+        None, desc="Further filter the data for the given set of parameters.")
 
     @deprecated("Use with_default_axis_rename and with_default_axis_remap")
     def set_display_defaults(self,
@@ -412,36 +439,47 @@ class PlotGrid(AbstractContextManager):
         # This is set when legend is enabled, kwargs may be an empty dict
         self._legend_kwargs = None
 
+        self._gen_normalised_hue()
+
     def __enter__(self):
         # Determine tiling row and column parameters
         nrows, ncols = self._grid_shape()
         # Compute the figure size based on the configured rows and columns
         # and initialize the figure
-        fig_size = (ncols * self._height * self._config.tile_aspect, (nrows + 1) * self._height)
-        self._figure = plt.figure(figsize=fig_size)
+        if self._config.size:
+            fig_size = self._config.size
+        else:
+            fig_size = (ncols * self._height * self._config.tile_aspect, (nrows + 1) * self._height)
+        self._rc_context = plt.rc_context(rc=self._config.plot_params)
+        self._rc_context.__enter__()
+
+        self._figure = plt.figure(figsize=fig_size, layout="constrained")
         # Initialize the grid
         kwargs = {
             "squeeze": False,
             "sharex": default(self._config.tile_sharex, "col"),
             "sharey": default(self._config.tile_sharey, "row"),
         }
+        if ratios := self._config.tile_height_ratios:
+            if len(ratios) != nrows:
+                self.logger.error("Invalid height ratios configuration, expected %d rows", nrows)
+                raise ConfigurationError("Invalid configuration")
+            kwargs["height_ratios"] = ratios
 
         self._grid = self._figure.subplots(nrows, ncols, **kwargs)
 
         if self._config.title:
             self._figure.suptitle(self._config.title)
         self._gen_color_palette()
-        self._rc_context = plt.rc_context(rc=self._config.plot_params).__enter__()
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.map(self._set_titles)
-        if self._rc_context:
-            self._rc_context.__exit__(exc_type, exc_value, traceback)
         self._finalize_layout()
         for path in self._target.paths():
-            self._figure.savefig(path)
+            self._figure.savefig(path, bbox_inches="tight")
         plt.close(self._figure)
+        self._rc_context.__exit__(exc_type, exc_value, traceback)
 
     def _grid_shape(self) -> tuple[int, int]:
         nrows, ncols = 1, 1
@@ -467,7 +505,41 @@ class PlotGrid(AbstractContextManager):
             for (name, ), chunk in df.group_by(self.tile_col_param, maintain_order=True):
                 yield (name, chunk)
 
+    def _gen_normalised_hue(self):
+        """
+        Generate the normalised hue column as "_hue_label".
+
+        When hue is a string, this is interpreted as a single column and _hue_label
+        is an alias for the self._config.hue column.
+        When hue is a tuple, this is interpreted as multiple columns, we will
+        produce as comma-separated concatenation to identify the hue.
+
+        Note that this is done before column/value display remapping, so we use
+        the original values for the hue keys and auto-generated labels at this point.
+        """
+        if self._config.hue is None:
+            # XXX Generate a unique synthetic hue value here
+            return
+        self._df = self._df.with_columns(pl.concat_str(self._config.hue, separator=",").alias("_hue_label"))
+
     def _gen_color_palette(self):
+        """
+        Generate the color palette for the grid tiles.
+
+        When hue is a string, this is interpreted as a single column and we will
+        associate a color for each unique value in the column.
+        When hue is a tuple, this is interpreted as multiple columns and we will
+        associate a color for each unique combination of the values over the
+        given columns in the tuple.
+
+        In the latter case, when the color map is explicit, the hue_colors must
+        be keyed on compatible tuples containing the matching values for each column
+        combination.
+
+        Note that the _color_palette dictionary is always keyed on a tuple, this
+        removes complexity on the plot implementations, because when grouping on
+        the hue level(s) the group label is always going to be a tuple.
+        """
         if self._config.hue is None:
             self._color_palette = None
         else:
@@ -483,7 +555,7 @@ class PlotGrid(AbstractContextManager):
                 self._color_palette = {h: self._config.hue_colors[h] for h in hue_keys}
             else:
                 colors = sns.color_palette(n_colors=ncolors)
-                self._color_palette = dict(zip(hue_keys.to_list(), colors))
+                self._color_palette = dict(zip(hue_keys, colors))
 
     def _set_titles(self, tile, chunk):
         """
@@ -495,6 +567,10 @@ class PlotGrid(AbstractContextManager):
         else:
             if tile.row_index == 0 and self._config.tile_col:
                 tile.ax.set_title(f"{self.tile_col_param} = {tile.col}")
+
+        # Suppress axis label if sharex
+        if (self._config.tile_sharex and not self._config.tile_sharex_keep_label and tile.row_index != nrows - 1):
+            tile.ax.set_xlabel(None)
 
         if self._config.tile_row_as_ylabel:
             tile.ax.set_ylabel(tile.row, loc="center")
@@ -511,41 +587,71 @@ class PlotGrid(AbstractContextManager):
                                         va="center")
                 self._margin_titles.append(text)
 
+        # Suppress axis label if sharey
+        if (self._config.tile_sharey and not self._config.tile_sharey_keep_label and tile.col_index != 0):
+            tile.ax.set_xlabel(None)
+
     def _make_tile(self, ax, ri, ci, row, col):
         return PlotTile(ax=ax, hue=self._config.hue, palette=self._color_palette, coords=(ri, ci), loc=(row, col))
 
-    def _finalize_layout(self):
-        self._figure.tight_layout()
+    def _finalize_margins(self):
+        # Helper internal function to set margin along an axis
+        def _set_margins(tile, _, margins: tuple[float, float] = None, dimension: str = None):
+            # Note we conver from data to display coordinates and from display to axes.
+            # Axes coordinates are in the space [0, 1] x [0, 1].
+            axes_space_tf = tile.ax.transData + tile.ax.transAxes.inverted()
+            data_space_tf = tile.ax.transAxes + tile.ax.transData.inverted()
 
-        # XXX provide a way to adjust these
-        # self._figure.subplots_adjust(bottom=0.15)
+            match dimension:
+                case "x":
+                    get_lim_fn = tile.ax.get_xlim
+                    set_lim_fn = tile.ax.set_xlim
+                    to_axes_space = lambda x: axes_space_tf.transform([x, 0])[0]
+                    to_data_space = lambda x: data_space_tf.transform([x, 0])[0]
+                    # We manage margins manually, so reset the margin here
+                    # this should be redundant
+                    tile.ax.set_xmargin(0)
+                case "y":
+                    get_lim_fn = tile.ax.get_ylim
+                    set_lim_fn = tile.ax.set_ylim
+                    to_axes_space = lambda y: axes_space_tf.transform([0, y])[1]
+                    to_data_space = lambda y: data_space_tf.transform([0, y])[1]
+                    tile.ax.set_ymargin(0)
+                case _:
+                    assert False, "Invalid margins axis name"
+            # Compute the new axis limits according to the margins
+            m_low, m_high = margins
+            assert m_low >= 0 and m_low <= 1
+            assert m_high >= 0 and m_high <= 1
+            d_low, d_high = get_lim_fn()
+            # Move to axis coordinates
+            t_low = to_axes_space(d_low)
+            t_high = to_axes_space(d_high)
+            delta = t_high - t_low
+            delta_low, delta_high = delta * m_low, delta * m_high
+            t_low, t_high = t_low - delta_low, t_high + delta_high
+            # Go back to data coordinates
+            d_low = to_data_space(t_low)
+            d_high = to_data_space(t_high)
+            set_lim_fn(d_low, d_high)
 
         # Obey tile margin overrides
-        def _set_margins(tile, _chunk):
-            if xm := self._config.tile_x_margin:
-                if not isinstance(xm, tuple):
-                    xm = (xm, xm)
-                assert xm[0] >= 0 and xm[0] <= 1
-                assert xm[1] >= 0 and xm[1] <= 1
-                # We manage margins manually, so don't let matplotlib add more
-                tile.ax.set_xmargin(0)
-                xlow, xhigh = tile.ax.get_xlim()
-                dx = xhigh - xlow
-                dxlow, dxhigh = dx * xm[0], dx * xm[1]
-                tile.ax.set_xlim(xlow - dxlow, xhigh + dxhigh)
-            if ym := self._config.tile_y_margin:
-                if not isinstance(ym, tuple):
-                    ym = (ym, ym)
-                assert ym[0] >= 0 and ym[0] <= 1
-                assert ym[1] >= 0 and ym[1] <= 1
-                # We manage margins manually, so don't let matplotlib add more
-                tile.ax.set_ymargin(0)
-                ylow, yhigh = tile.ax.get_ylim()
-                dy = yhigh - ylow
-                dylow, dyhigh = dy * ym[0], dy * ym[1]
-                tile.ax.set_ylim(ylow - dylow, yhigh + dyhigh)
+        if xm := self._config.tile_x_margin:
+            if not isinstance(xm, tuple):
+                xm = (xm, xm)
+            self.map(_set_margins, margins=xm, dimension="x")
+        if ym := self._config.tile_y_margin:
+            if not isinstance(ym, tuple):
+                ym = (ym, ym)
+            self.map(_set_margins, margins=ym, dimension="y")
 
-        self.map(_set_margins)
+    def _finalize_layout(self):
+        """
+        Finalize the figure layout.
+
+        This is called after all plotting is done to handle margins and legend.
+        """
+        self._finalize_margins()
 
         # Generate the legend, if enabled
         if self._legend_kwargs is None or self._config.legend_hide:
@@ -553,18 +659,35 @@ class PlotGrid(AbstractContextManager):
             self._generate_legend()
         if not self._config.hue:
             return
-        labels = self._df[self.hue_param].unique(maintain_order=True)
-        patches = [Patch(color=self._color_palette[hue_key]) for hue_key in labels]
-        reserved_y_fraction = 1 - self._config.legend_vspace
 
-        # Make space between the title and the subplot axes
-        self._figure.subplots_adjust(top=reserved_y_fraction, bottom=self._config.legend_vspace)
-        self._figure.legend(patches,
-                            labels,
-                            bbox_to_anchor=(0., reserved_y_fraction, 1., self._config.legend_vspace),
-                            ncols=self._config.legend_columns,
-                            loc="center",
-                            **self._legend_kwargs)
+        if self._config.legend_position == "inner":
+            self.map(lambda tile, chunk: tile.ax.legend())
+        elif self._config.legend_position == "outer":
+            hue_keys = self._df[self.hue_param].unique(maintain_order=True)
+            labels = self._df[self.hue_param].unique(maintain_order=True)
+            patches = [Patch(color=self._color_palette[hue_key]) for hue_key in hue_keys]
+
+            legend_handles = {}
+
+            def _merge_legend_handles(tile, _chunk):
+                handles, labels = tile.ax.get_legend_handles_labels()
+                for h, l in zip(handles, labels):
+                    if l not in legend_handles:
+                        legend_handles[l] = h
+
+            self.map(_merge_legend_handles)
+
+            # DEPRECATED Make space between the title and the subplot axes
+            # reserved_y_fraction = 1 - self._config.legend_vspace
+            # self._figure.subplots_adjust(top=reserved_y_fraction, bottom=self._config.legend_vspace)
+            # legend_anchor = (0., reserved_y_fraction, 1., self._config.legend_vspace)
+            self._figure.legend(legend_handles.values(),
+                                legend_handles.keys(),
+                                ncols=self._config.legend_columns,
+                                loc="outside upper center",
+                                **self._legend_kwargs)
+        else:
+            raise RuntimeError(f"Invalid legend_position='{self._config.legend_position}'")
 
     @property
     def tile_row_param(self):
@@ -576,7 +699,7 @@ class PlotGrid(AbstractContextManager):
 
     @property
     def hue_param(self):
-        return self._config.hue
+        return "_hue_label"
 
     @property
     def logger(self):
@@ -627,8 +750,24 @@ class DisplayGrid(PlotGrid):
         """
         Filter the dataframe according to the configuration.
         """
-        if filter_args := self._config.param_filter:
-            self._df = self._df.filter(**filter_args)
+        if self._config.param_filter is None:
+            return
+
+        if rules := self._config.param_filter.keep:
+            conditions = []
+            for rule in rules:
+                cond = [pl.col(k) == v for k, v in rule.matches.items()]
+                conditions.append(reduce(operator.and_, cond))
+            cond = reduce(operator.or_, conditions)
+            self._df = self._df.filter(cond)
+
+        if rules := self._config.param_filter.drop:
+            conditions = []
+            for rule in rules:
+                cond = [pl.col(k) == v for k, v in rule.matches.items()]
+                conditions.append(reduce(operator.and_, cond))
+            cond = reduce(operator.or_, conditions)
+            self._df = self._df.filter(~cond)
 
     def _gen_display_columns(self):
         """
@@ -720,8 +859,9 @@ class DisplayGrid(PlotGrid):
         self._df = df.sort(by="_param_weight", descending=is_descending)
 
     def _make_tile(self, ax, ri, ci, row, col):
+        normalised_hue_col = super().hue_param
         tile = DisplayTile(ax=ax,
-                           hue=self._config.hue,
+                           hue=normalised_hue_col,
                            palette=self._color_palette,
                            coords=(ri, ci),
                            loc=(row, col),
@@ -739,7 +879,8 @@ class DisplayGrid(PlotGrid):
 
     @property
     def hue_param(self):
-        return self._display_map.get(self._config.hue, self._config.hue)
+        normalised_hue_col = super().hue_param
+        return self._display_map.get(normalised_hue_col, normalised_hue_col)
 
 
 def grid_debug(tile: PlotTile, chunk: pl.DataFrame, x: str, y: str, logger: "Logger"):
