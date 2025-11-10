@@ -1,22 +1,32 @@
 from dataclasses import dataclass
+from enum import Enum
 
 import polars as pl
+from marshmallow import ValidationError, validates_schema
 
 from ..core.config import config_field
 from ..core.error import ConfigurationError
 from ..core.plot import PlotTarget, SlicePlotTask
-from ..core.plot_util import (BarPlotConfig, DisplayGrid, DisplayGridConfig, grid_barplot, grid_pointplot)
+from ..core.plot_util import (BarPlotConfig, DisplayGrid, DisplayGridConfig, LinePlotConfig, grid_barplot,
+                              grid_lineplot)
 from ..core.task import dependency, output
 from .qps_exec import QpsExecTask
 
 
 @dataclass
-class QpsPlotConfig(DisplayGridConfig, BarPlotConfig):
+class QpsPlotConfig(DisplayGridConfig):
     """
     Configuration for the QPS throughput plot.
     """
+    bar_plot: BarPlotConfig | None = config_field(None, desc="Bar plot configuration.")
+    line_plot: LinePlotConfig | None = config_field(None, desc="Line plot configuration.")
     drop_relative_baseline: bool = config_field(
         True, desc="Drop baseline value from relative metric columns (delta, overhead)")
+
+    @validates_schema
+    def check_plot_kind(self, data, **kwargs):
+        if data["bar_plot"] is None == data["line_plot"] is None:
+            raise ValidationError("One and only one of bar_plot or line_plot must be configured.")
 
 
 class QpsPlotTask(SlicePlotTask):
@@ -76,5 +86,16 @@ class QpsPlotTask(SlicePlotTask):
 
         self.logger.info("Generate QPS plot")
         with DisplayGrid(self.qps_plot, view_df, self.config) as grid:
-            grid.map(grid_barplot, x=self.config.tile_xaxis, y="qps", err=["qps_low", "qps_high"], config=self.config)
+            if plot_config := self.config.bar_plot:
+                grid.map(grid_barplot,
+                         x=plot_config.tile_xaxis,
+                         y="qps",
+                         err=["qps_low", "qps_high"],
+                         config=plot_config)
+            if plot_config := self.config.line_plot:
+                grid.map(grid_lineplot,
+                         x=plot_config.tile_xaxis,
+                         y="qps",
+                         err=["qps_low", "qps_high"],
+                         config=plot_config)
             grid.add_legend()
