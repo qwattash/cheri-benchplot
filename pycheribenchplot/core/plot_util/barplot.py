@@ -78,7 +78,7 @@ def grid_barplot(tile: "PlotTile",
         set_catlabel = tile.ax.set_ylabel
         set_mlabel = tile.ax.set_xlabel
     if hue is None:
-        # Create a fake hue colum set to null
+        # Create a fake hue colum with a non-null value
         chunk = chunk.with_columns(pl.lit("__no_hue__").alias("__gen_hue"))
         hue = "__gen_hue"
         tile.palette = plt.rcParams["axes.prop_cycle"].by_key()["color"][:1]
