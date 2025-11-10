@@ -166,10 +166,7 @@ class PlotTaskMixin:
         def do_run():
             self.logger.debug("Override matplotlib rcParams: %s", rc_override)
             with mpl.rc_context(rc=rc_override):
-                # XXX Use default theme as base
-                sns.set_theme()
-                with sns.plotting_context(rc=rc_override):
-                    self.run_plot()
+                self.run_plot()
 
         self.setup_plot()
 
