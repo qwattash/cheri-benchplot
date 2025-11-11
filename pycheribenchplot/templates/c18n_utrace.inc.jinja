@@ -1,0 +1,51 @@
+
+{%- if c18n_utrace_config is defined -%}
+  {% set enabled = c18n_utrace_config.c18n_utrace_enable %}
+{%- else -%}
+  {% set enabled = false %}
+{%- endif -%}
+
+{% macro c18n_utrace_dump(iteration) -%}
+  {{ c18n_utrace_gen_output_path(iteration) }}
+{%- endmacro %}
+
+{% macro c18n_utrace_out(iteration) -%}
+  {{ c18n_utrace_dump(iteration) }}.out
+{%- endmacro %}
+
+{% macro morello_utrace_env() %}
+{% endmacro %}
+
+{% macro c18n_utrace_env() -%}
+  {%- if instance.cheri_target.is_morello() -%}
+    {%- if instance.userabi == InstanceUserABI.PURECAP -%}
+      env LD_64C_UTRACE_COMPARTMENT=1
+    {%- elif instance.userabi == InstanceUserABI.BENCHMARK -%}
+      env LD_64CB_UTRACE_COMPARTMENT=1
+    {%- else -%}
+      env LD_UTRACE_COMPARTMENT=1
+    {%- endif -%}
+  {%- elif instance.cheri_target.is_riscv() -%}
+    env LD_UTRACE_COMPARTMENT=1
+  {%- endif -%}
+{%- endmacro %}
+
+{#
+ # Use this macro as part of the workload invocation to
+ # enable c18n utrace probes.
+ #}
+{% macro c18n_utrace(iteration) %}
+  {% if enabled -%}
+    {{ c18n_utrace_env() }} ktrace -i -t u -f {{ c18n_utrace_out(iteration) }}
+  {%- endif %}
+{% endmacro %}
+
+{#
+ # Post-processing of the traces must be done on the guest.
+ # This should be placed in the corresponding block.
+ #}
+{% macro post_process_iteration(iteration) %}
+  {% if enabled -%}
+    kdump -f {{ c18n_utrace_out(iteration) }} > {{ c18n_utrace_dump(iteration) }}
+  {%- endif %}
+{% endmacro %}
