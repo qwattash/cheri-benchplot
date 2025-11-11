@@ -6,6 +6,7 @@
  #}
 {% extends "runner-script.sh.jinja" %}
 
+{% import "c18n_utrace.inc.jinja" as c18nktr with context %}
 {% import "hwpmc.inc.jinja" as hwpmc with context %}
 
 {% block functions %}
@@ -24,6 +25,9 @@ __server_exec()
 {% endif %}
 {% if qps_config.server_env %}
 	env {{ qps_config.server_env | join(" ") }} \
+{% endif %}
+{% if c18nktr.enabled %}
+	{{ c18nktr.c18n_utrace(current_iteration) }} \
 {% endif %}
 	grpc_qps_worker --driver_port 10000 --server_port=10001 &
 	SERVER_PID=$!
@@ -106,4 +110,9 @@ __driver_exec()
   __driver_exec --quit
   wait ${SERVER_PID}
   wait ${CLIENT_PID}
+{% endblock %}
+
+{% block post_process_iteration %}
+  {{ super() }}
+  {{ c18nktr.post_process_iteration(current_iteration) }}
 {% endblock %}
