@@ -19,7 +19,7 @@ from .shellgen import TemplateContextBase
 from .task import (ExecutionTask, SessionExecutionTask, TaskRegistry, TaskScheduler)
 from .util import new_logger
 
-#: Constant name of the generated session configuration file
+#: Constant, name of the generated session configuration file
 SESSION_RUN_FILE = "session-run.json"
 benchplot_logger = logging.getLogger("cheri-benchplot")
 
@@ -211,6 +211,21 @@ class Session:
     @property
     def uuid(self):
         return self.config.uuid
+
+    @property
+    def workload_run_script(self) -> str:
+        """
+        Constant, name of the run script for each benchmark workload instantiation.
+        """
+        return "runner-script.sh"
+
+    @property
+    def workload_done_file(self) -> str:
+        """
+        File created at the end of the runner script that marks successful
+        workload termination.
+        """
+        return ".run_completed"
 
     @property
     def parameter_keys(self) -> list[str]:
@@ -442,14 +457,14 @@ class Session:
         # specification.
         data_root = self.get_data_root_path()
         for (target, ), section in self.parameterization_matrix.group_by("target"):
-            section = section.select(
-                pl.col("descriptor").map_elements(lambda bench: bench.get_run_script_path().relative_to(data_root),
-                                                  return_dtype=pl.Object).alias("run_script"))
+            workdirs = [bench.get_benchmark_data_path().relative_to(data_root) for bench in section["descriptor"]]
             ctx = TemplateContextBase(self.logger)
             ctx.set_template("run-target.sh.jinja")
             ctx.extend_context({
                 "target": target,
-                "run_scripts": section["run_script"],
+                "workload_run_script": self.workload_run_script,
+                "workload_workdirs": workdirs,
+                "workload_done_file": self.workload_done_file,
                 "bundle_results": self.config.bundle_results
             })
             run_target = re.sub(r"[\s/]", "-", target)

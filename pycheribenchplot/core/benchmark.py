@@ -135,6 +135,7 @@ class BenchmarkExecTask(Task):
         self._handle_config_command_hooks()
         script_path = self.benchmark.get_run_script_path()
         remote_script_path = Path(f"{self.benchmark.config.name}-{self.benchmark.uuid}.sh")
+        self.script.register_global("workload_done_file", self.session.workload_done_file)
         with open(script_path, "w+") as script_file:
             self.script.render(script_file)
         script_path.chmod(0o755)
@@ -211,7 +212,7 @@ class Benchmark:
         """
         :return: The path to the run script to import to the guest for this benchmark
         """
-        return self.get_benchmark_data_path() / "runner-script.sh"
+        return self.get_benchmark_data_path() / self.session.workload_run_script
 
     def get_benchmark_data_path(self) -> Path:
         """

@@ -92,3 +92,15 @@ echo "Parameters:"
     {{ gen_hook("teardown", hook) }}
   {%- endfor %}
 {% endblock %}
+
+#### Global post-processing phase, per-iteration
+{% block post_process %}
+  echo "Post process hooks"
+  for ITERATION in $(seq 0 {{ iterations - 1 }}); do
+      {% block post_process_iteration scoped %}
+      {% endblock %}
+  done
+{% endblock %}
+
+#### Mark benchmark completed
+date > "{{ workload_done_file }}"

@@ -1,17 +1,69 @@
 #!/bin/sh
 
+OPT_FORCE=
+
+usage() {
+	echo "Run benchmark workload variations for target {{ target }}"
+	echo "Usage: $0 [-f]"
+	echo "-f\tRe-run all workloads overwriting existing results."
+}
+
+while :; do
+	case $1 in
+		-h)
+			usage
+			exit
+			;;
+		-f)
+			OPT_FORCE="yes"
+			;;
+		-*)
+			usage
+			exit
+			;;
+		*)
+			break
+			;;
+	esac
+
+	shift
+done
+
 echo "Run benchmarks for {{ target }}"
 
-_CURRDIR=`pwd`
-{% for script_path in run_scripts %}
-cd "{{ script_path | path_parent }}"
-./{{ script_path | path_name }}
-cd "${_CURRDIR}"
-{% endfor %}
+ROOT_WORKDIR="$(pwd)"
+# List of workload variations for this target
+TARGET_WORKLOADS="{{ workload_workdirs | join('\n') }}"
+# Record failed workloads
+FAILED=""
+
+# Iterate over each target workload.
+for WORKDIR in ${TARGET_WORKLOADS}; do
+	if [ -n "${OPT_FORCE}" ] || [ ! -f "${WORKDIR}/{{ workload_done_file }}" ]; then
+		if ! (cd ${WORKDIR} && ./{{ workload_run_script }}); then
+			FAILED="${FAILED} ${WORKDIR}"
+		fi
+	else
+		echo -n "Skip workload ${WORKDIR}, last run:"
+		cat "${WORKDIR}/{{ workload_done_file }}"
+	fi
+done
+
+if [ -n "${FAILED}" ]; then
+	echo "Benchmark workloads failed:"
+	for WORKDIR in ${FAILED}; do
+		echo "${WORKDIR}"
+	done
+	exit 1
+fi
 
 {% if bundle_results %}
 # Archive the output files and dump them to stdout base64 encoded
 echo "%%TARBALL_START%%"
-tar zc {% for script_path in run_scripts %} {{ script_path | path_parent}} {% endfor %} | base64
+(
+tar zcT - <<EOF
+${TARGET_WORKLOADS}
+EOF
+) | base64
 echo "%%TARBALL_END%%"
 {% endif %}
