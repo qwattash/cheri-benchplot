@@ -113,4 +113,5 @@ def grid_barplot(tile: "PlotTile",
                  hue_group["__gen_width"],
                  hue_group["__gen_stack"],
                  color=color,
+                 label=hue_label,
                  **error_kwargs)
