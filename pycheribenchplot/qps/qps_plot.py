@@ -4,6 +4,7 @@ from enum import Enum
 import polars as pl
 from marshmallow import ValidationError, validates_schema
 
+from ..core.artefact import Target
 from ..core.config import config_field
 from ..core.error import ConfigurationError
 from ..core.plot import PlotTarget, SlicePlotTask
@@ -52,6 +53,10 @@ class QpsPlotTask(SlicePlotTask):
     def qps_plot(self):
         return PlotTarget(self, "qps")
 
+    @output
+    def qps_stats(self):
+        return Target(self, "qps-stats", ext="csv")
+
     def _collect_data(self):
         all_df = []
         for loader in self.qps_data:
@@ -86,6 +91,10 @@ class QpsPlotTask(SlicePlotTask):
 
         self.logger.info("Generate QPS plot")
         with DisplayGrid(self.qps_plot, view_df, self.config) as grid:
+            # Dump the sorted tabular data using the ordering specified by the grid config
+            dump_df = grid.get_grid_df()
+            dump_df.write_csv(self.qps_stats.single_path())
+
             if plot_config := self.config.bar_plot:
                 grid.map(grid_barplot,
                          x=plot_config.tile_xaxis,
