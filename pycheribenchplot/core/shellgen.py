@@ -5,6 +5,8 @@ from typing import IO
 
 from jinja2 import (Environment, PackageLoader, TemplateNotFound, select_autoescape)
 
+from .config import InstanceCheriBSD, InstanceKernelABI, InstanceUserABI
+
 
 @dataclass
 class ScriptHook:
@@ -28,15 +30,21 @@ def script_filter(fn):
 
 
 @script_filter
-def path_parent(path: Path) -> Path:
+def path_parent(value: Path | list[Path]) -> Path | list[Path]:
     """Helper to find the parent path within the template"""
-    return path.parent
+    if isinstance(value, Path):
+        return value.parent
+    else:
+        return [p.parent for p in value]
 
 
 @script_filter
-def path_name(path: Path) -> str:
+def path_name(value: Path | list[Path]) -> str | list[str]:
     """Helper to find the path name portion within the template"""
-    return path.name
+    if isinstance(value, Path):
+        return value.name
+    else:
+        return [p.name for p in value]
 
 
 @script_filter
@@ -124,7 +132,6 @@ class ScriptContext(TemplateContextBase):
         #: Template context
         self._context = {
             "dataset_id": benchmark.uuid,
-            "dataset_gid": benchmark.g_uuid,
             "iterations": benchmark.config.iterations,
             "instance": benchmark.config.instance,
             "parameters": benchmark.parameters,
@@ -134,6 +141,11 @@ class ScriptContext(TemplateContextBase):
             "iter_teardown_hooks": [],
             "iter_exec_hooks": [],
         }
+
+        # Add config enum types to the context
+        self.register_global("InstanceUserABI", InstanceUserABI)
+        self.register_global("InstanceKernelABI", InstanceKernelABI)
+        self.register_global("InstanceCheriBSD", InstanceCheriBSD)
 
     def add_hook(self, phase: str, hook: ScriptHook):
         with self._lock:
