@@ -21,7 +21,8 @@ class LinePlotConfig(PlotConfigBase):
     Display grid configuration extension specific to line plots.
     """
     tile_xaxis: str = config_field(Config.REQUIRED, desc="Parameter to use for the X axis of each tile.")
-    tile_xscale: Scale = config_field(Scale.Linear, desc="Scale for the x axis.")
+    tile_xscale: Scale = config_field(Scale.Linear, desc="Scale for the X axis.")
+    tile_yscale: Scale = config_field(Scale.Linear, desc="Scale for the Y axis.")
     line_width: float | None = config_field(None, desc="Width of the lines.")
     marker_fill: bool = config_field(True, desc="When false, only draw the marker outline.")
     marker_size: float | None = config_field(None, desc="Size of the markers.")
@@ -84,6 +85,14 @@ def grid_lineplot(tile: PlotTile,
             tile.ax.set_xscale("log", base=2)
         case Scale.Log10:
             tile.ax.set_xscale("log", base=10)
+
+    match config.tile_yscale:
+        case Scale.Linear:
+            pass
+        case Scale.Log2:
+            tile.ax.set_yscale("log", base=2)
+        case Scale.Log10:
+            tile.ax.set_yscale("log", base=10)
 
     for (hue_label, ), hue_group in view.group_by(hue, maintain_order=True):
         color = tile.palette[hue_label]
