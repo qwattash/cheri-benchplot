@@ -213,6 +213,12 @@ class TemplateFieldProxy(mfields.Field):
             return value.value
         return self._wrapped_field._serialize(value, attr, obj, **kwargs)
 
+    def _validate(self, value: Any):
+        # Defer validation if we have a template element.
+        if self._has_template(value):
+            return
+        self._wrapped_field._validate(value)
+
 
 class BaseConfigSchema(Schema):
     """
