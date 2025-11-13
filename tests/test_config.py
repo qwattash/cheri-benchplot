@@ -1,9 +1,12 @@
 from dataclasses import dataclass
+from typing import Annotated
 
 import pytest
 from marshmallow import ValidationError
+from marshmallow import fields as mf
+from marshmallow import validate as mv
 
-from pycheribenchplot.core.config import (Config, ConfigAny, ConfigContext, ConfigTemplateSpec, config_field)
+from pycheribenchplot.core.config import *
 from pycheribenchplot.core.error import (ConfigTemplateBindError, ConfigurationError)
 
 
@@ -333,3 +336,24 @@ def test_config_template_explicit_dtype_cast():
     assert bound.union_val_two == "100"
     assert bound.any_val_one == 200
     assert isinstance(bound.any_val_two, float) and bound.any_val_two == 200
+
+
+CustomType = Annotated[str, mf.String(validate=mv.Regexp(r"^[0-9]+$"))]
+
+
+def test_validate_annotated_field():
+    @dataclass
+    class TestConfig(Config):
+        custom: CustomType = config_field(Config.REQUIRED)
+        opt: CustomType | None = config_field(None)
+
+    with pytest.raises(ValidationError):
+        config = TestConfig.schema().load({
+            "custom": "abc",
+        })
+
+    with pytest.raises(ValidationError):
+        config = TestConfig.schema().load({"custom": "0123", "opt": "abc"})
+
+    config = TestConfig.schema().load({"custom": "123"})
+    config = TestConfig.schema().load({"custom": "123", "opt": "987"})
