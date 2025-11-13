@@ -2,10 +2,11 @@ from dataclasses import dataclass
 
 import matplotlib.pyplot as plt
 import polars as pl
+from marshmallow import ValidationError, validates
 
 from ..config import Config, config_field
 from .coords import CoordGenConfig, CoordGenerator
-from .plot_grid import PlotConfigBase
+from .plot_grid import ColRef, PlotConfigBase
 
 
 @dataclass
@@ -13,93 +14,82 @@ class BarPlotConfig(PlotConfigBase):
     """
     Display grid configuration extension specific to bar plots.
     """
-    tile_xaxis: str = config_field(Config.REQUIRED, desc="Parameter to use for the X axis of each tile")
-    stack_by: str | None = config_field(None, desc="Stack bars by the given parameter")
-    shift_by: str | None = config_field(None, desc="Shift bars by the given parameter")
+    tile_xaxis: ColRef = config_field(Config.REQUIRED, desc="Column ref to use for the tile X axis.")
+    stack_by: ColRef | None = config_field(None, desc="Stack bars along the given column ref.")
+    shift_by: ColRef | None = config_field(None, desc="Shift bars along the given column ref.")
+    orient: str = config_field("x", desc="Plot orientation (x or y).")
+
+    @validates("orient")
+    def check_orientation(self, data, **kwargs):
+        if data != "x" and data != "y":
+            raise ValidationError("Orientation must be 'x' or 'y'.")
 
     def uses_param(self, name: str) -> bool:
-        return (super().uses_param(name) or self.tile_xaxis == name or self.stack_by == name or self.shift_by == name)
+        ref = f"<{name}>"
+        return (super().uses_param(name) or self.tile_xaxis == ref or self.stack_by == ref or self.shift_by == ref)
 
 
 def grid_barplot(tile: "PlotTile",
                  chunk: pl.DataFrame,
+                 config: BarPlotConfig,
                  x: str,
                  y: str,
-                 err: tuple[str, str] | None = None,
-                 orient: str = "x",
-                 stack: bool = False,
-                 coordgen_kwargs: dict | None = None,
-                 config: BarPlotConfig | None = None):
+                 err: tuple[str, str] | None = None):
     """
     Produce a grouped bar plot on the given plot grid tile.
     # XXX add stacked + shifted version
     # XXX add twin-axis versions
 
-    :param tile: The plot grid tile
-    :param chunk: Dataframe containing the data to plot
-    :param x: Canonical name of the dataframe column to use for the X axis values
-    :param y: Canonical name of the dataframe column to use for the Y axis values
+    :param tile: The plot grid tile.
+    :param chunk: Dataframe containing the data to plot.
+    :param x: ColRef of the dataframe column to use for the X axis values.
+    :param y: Sanitized name of the dataframe column to use for the Y axis values.
     :param err: 2-tuple of canonical names for columns containing the lower and upper bounds of the
     confidence interval, or None to disable errorbars.
-    :param config: Common configuration for grouping and stacking bars.
-    :param orient: Orientation of the plot, the `orient` axis is used as the categorical axis and
-    the other axis must be numeric.
+    :param config: Bar plot configuration object.
     """
-    if coordgen_kwargs is None:
-        coordgen_kwargs = {}
-
-    # Attempt column renaming
-    if hasattr(tile, "d"):
-        x = tile.d[x]
-        y = tile.d[y]
-        hue = tile.d[tile.hue]
-    else:
-        hue = tile.hue
+    # Note: here all the column refs should have been resolved
+    x = tile.ref_to_col(x)
+    assert not y.startswith("<")
+    assert tile.hue is not None
+    assert not tile.hue.startswith("<")
     palette = tile.palette
 
-    if orient != "x" and orient != "y":
-        raise ValueError("Invalid `orient` value, must be 'x' or 'y'")
-    if orient == "x" and not chunk[y].dtype.is_numeric():
+    if config.orient == "x" and not chunk[y].dtype.is_numeric():
         raise TypeError("Y axis values must be numeric when orient='x'")
-    if orient == "y" and not chunk[x].dtype.is_numeric():
+    if config.orient == "y" and not chunk[x].dtype.is_numeric():
         raise TypeError("X axis values must be numeric when orient='y'")
-    orthogonal_orient = "x" if orient == "y" else "y"
+    orthogonal_orient = "x" if config.orient == "y" else "y"
 
-    if orient == "x":
-        catcol, metric = x, y
+    if config.orient == "x":
+        i_var, d_var = x, y
         bar_plot = tile.ax.bar
         set_ticks = tile.ax.set_xticks
-        set_catlabel = tile.ax.set_xlabel
-        set_mlabel = tile.ax.set_ylabel
+        tile.ax.set_xlabel(x)
+        tile.ax.set_ylabel(y)
     else:
-        catcol, metric = y, x
+        i_var, d_var = y, x
         bar_plot = tile.ax.barh
         set_ticks = tile.ax.set_yticks
-        set_catlabel = tile.ax.set_ylabel
-        set_mlabel = tile.ax.set_xlabel
-    if hue is None:
-        # Create a fake hue colum with a non-null value
-        chunk = chunk.with_columns(pl.lit("__no_hue__").alias("__gen_hue"))
-        hue = "__gen_hue"
-        tile.palette = plt.rcParams["axes.prop_cycle"].by_key()["color"][:1]
+        tile.ax.set_xlabel(y)
+        tile.ax.set_ylabel(x)
 
     # XXX provide a way to propagate this to plot configuration
-    cgen = CoordGenerator(tile.ax, orient=orient)
+    cgen = CoordGenerator(tile.ax, orient=config.orient)
     # XXX handle stacked + shifted
-    if stack:
-        cgen_config = CoordGenConfig(stack_by=hue, **coordgen_kwargs)
-    else:
-        cgen_config = CoordGenConfig(shift_by=hue, **coordgen_kwargs)
+    coordgen_kwargs = {}
+    if config.stack_by:
+        cgen_config = CoordGenConfig(stack_by=tile.hue, **coordgen_kwargs)
+    elif config.shift_by:
+        cgen_config = CoordGenConfig(shift_by=tile.hue, **coordgen_kwargs)
 
-    view = cgen.compute_coordinates(chunk, independent_var=catcol, dependent_vars=[metric], config=cgen_config)
+    view = cgen.compute_coordinates(chunk, independent_var=i_var, dependent_vars=[d_var], config=cgen_config)
 
     # Assign categorical axis ticks and labels
-    ticks = view.select("__gen_coord", catcol).unique(maintain_order=True)
-    set_ticks(ticks=ticks["__gen_coord"], labels=ticks[catcol])
-    set_catlabel(catcol)
-    set_mlabel(metric)
+    ticks = view.select("__gen_coord", i_var).unique(maintain_order=True)
+    set_ticks(ticks=ticks["__gen_coord"], labels=ticks[i_var])
     # Draw the plot
-    for (hue_label, ), hue_group in view.group_by(hue, maintain_order=True):
+    for (hue_label, ), hue_group in view.group_by(tile.hue, maintain_order=True):
         color = tile.palette[hue_label]
         error_kwargs = {}
         if err:
