@@ -702,7 +702,9 @@ class PlotGrid(AbstractContextManager):
         the hue level(s) the group label is always going to be a tuple.
         """
         if self._config.hue is None:
-            self._color_palette = None
+            # Generate synthetic hue column with an uniform value
+            self._df = self._df.with_columns(pl.lit(0).alias("_default_hue"))
+            self._color_palette = {0: plt.rcParams["axes.prop_cycle"].by_key()["color"][0]}
         else:
             # Keep the order so that the user has control on the mapping between
             # data points and hue colors even when not using explicit color mapping.
