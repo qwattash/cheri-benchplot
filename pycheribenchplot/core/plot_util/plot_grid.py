@@ -85,13 +85,21 @@ class DerivedColumnConfig(Config):
             self.name = ref
 
 
+class SortOrder(Enum):
+    Ascending = "ascending"
+    Descending = "descending"
+
+
 @dataclass
 class PlotGridConfig(PlotConfigBase):
     # Data manipulation configuration
     derived_columns: list[DerivedColumnConfig] = config_field(
         list,
         desc="Auxiliary columns. These can be used to arbitrarily rename headers and data, which then are "
-        "used as part of the plot.")
+        "used as part of the plot. The dictionary is keyed on the resulting derived column ColRef.")
+    sort_descending: bool = config_field(False, desc="Sort the grid data in ascending or descending order.")
+    sort_by: list[ColRef] = config_field(list, desc="Define sort keys for the grid data.")
+    sort_order: dict[ColRef, list[Any]] = config_field(dict, desc="Custom categorical ordering for specific columns.")
 
     # General figure-level configuration
     title: str | None = config_field(None, desc="Override figure title.")
@@ -108,15 +116,10 @@ class PlotGridConfig(PlotConfigBase):
         None, desc="Set column ref to use for Y axis labels. Defaults to Y data column name.")
     tile_row_show_title: bool = config_field(True, desc="Show the row tiling title.")
     tile_col_show_title: bool = config_field(True, desc="Show the column tiling title.")
-
-    tile_row_as_ylabel: bool | None = config_field(
-        None, desc="Use value of the tile_row parameter as the Y axis label for the row.")
-    tile_col_as_xlabel: bool | None = config_field(
-        None, desc="Use value of the tile_col parameter as the X axis label for the colum.")
     tile_sharex: str | bool = config_field("col", desc="Override X axis sharing.")
-    tile_sharex_keep_label: bool = config_field(False, desc="Keep the axis label when sharing the X axis.")
     tile_sharey: str | bool = config_field("row", desc="Override Y axis sharing.")
-    tile_sharey_keep_label: bool = config_field(False, desc="Keep the axis label when sharing the Y axis.")
+
+    # Tile sizing configuration
     tile_aspect: float = config_field(1.0, desc="Aspect ratio of each tile.")
     tile_height_ratios: list[float] | None = config_field(None, desc="Height ratios for each row.")
 
@@ -125,11 +128,9 @@ class PlotGridConfig(PlotConfigBase):
         None, desc="X-axis margin within each tile, in normalised interval units range [0, 1].")
     tile_y_margin: float | tuple[float, float] | None = config_field(
         None, desc="Y-axis margin within each tile, in normalised interval untis range [0, 1].")
-    hue: str | tuple[str, ...] | None = config_field(
+    hue: ColRef | list[ColRef] = config_field(
         None,
-        desc="Override parameter for hue. If multiple parameter names are given, "
-        "the hue colors are associated to every combination of parameter values. "
-        "In this case, the hue_color keys are tuples, the hue key for name substitution is a tuple with the same order. "
+        desc="Set ColRef to use for the hue. If multiple levels are needed, consider creating a derived column. "
         "When no hue is given, the color is controlled by the plot_param axes.prop_cycle (See matplotlib rcParams).")
     hue_colors: dict[str | tuple[str, ...], str] | None = config_field(
         None, desc="Optional map that forces a specific color for each value of the 'hue' configuration.")
@@ -204,11 +205,6 @@ class WeightMode(Enum):
     AscendingCat = "ascending_cat"
     DescendingCat = "descending_cat"
     Custom = "custom"
-
-
-class SortOrder(Enum):
-    Ascending = "ascending"
-    Descending = "descending"
 
 
 class SimpleWeightStrategy:
@@ -535,13 +531,10 @@ class PlotGrid(AbstractContextManager):
             info = DataFrameInfo.from_dataframe(data)
         self._init_column_refs(info)
 
-        self._gen_normalised_hue()
-
     def __enter__(self):
-        # self._filter()
-        # self._sort()
-        # self._gen_display_columns()
         self._gen_derived_columns()
+        self._sort()
+        # self._filter()
 
         # XXX verify that sorting is unique across the free axes.
 
@@ -617,27 +610,19 @@ class PlotGrid(AbstractContextManager):
             raise ConfigurationError("Configuration error")
         self._column_refs_map[f"<{ref}>"] = name
 
-    def ref_to_col(self, ref: str | None) -> str | None:
-        if ref is None:
-            return None
-        if ref not in self._column_refs_map:
-            self.logger.error("Column ref %s is not defined", ref)
-            raise ConfigurationError("Undefined column reference")
-        return self._column_refs_map[ref]
-
-    def try_ref_to_col(self, ref: str) -> str:
-        """Try to resolve ref as a ColRef, if not, return it unchanged."""
-        if re.match(COLREF_PATTERN, ref):
-            return self.ref_to_col(ref)
-        return ref
-
     def _gen_derived_identity(self, spec: DerivedColumnConfig):
         src = self.ref_to_col(spec.src)
+        if spec.name in self._df.columns:
+            self.logger.error("Invalid name %s for target column, column exists", spec.name)
+            raise ConfigurationError("Invalid configuration")
         self._df = self._df.with_columns(pl.col(src).alias(spec.name))
         self._register_ref(spec.ref, spec.name)
 
     def _gen_derived_map(self, spec: DerivedColumnConfig):
         src = self.ref_to_col(spec.src)
+        if spec.name in self._df.columns:
+            self.logger.error("Invalid name %s for target column, column exists", spec.name)
+            raise ConfigurationError("Invalid configuration")
         dtypes = {type(v) for v in spec.args.values()}
         if len(dtypes) > 1:
             self.logger.error("Derived column %s map to inconsistent dtypes", spec.name, dtypes)
@@ -666,22 +651,47 @@ class PlotGrid(AbstractContextManager):
                     self.logger.error("Invalid column transform %s", spec.transform)
                     raise RuntimeError("Unsupported column transformation")
 
-    def _gen_normalised_hue(self):
+    def _sort(self):
         """
-        Generate the normalised hue column as "_hue_label".
-
-        When hue is a string, this is interpreted as a single column and _hue_label
-        is an alias for the self._config.hue column.
-        When hue is a tuple, this is interpreted as multiple columns, we will
-        produce as comma-separated concatenation to identify the hue.
-
-        Note that this is done before column/value display remapping, so we use
-        the original values for the hue keys and auto-generated labels at this point.
+        Sort the dataframe according to the configuration.
         """
-        if self._config.hue is None:
-            # XXX Generate a unique synthetic hue value here
+        if not self._config.sort_by:
+            self.logger.warning("Sorting is not configured, use grid tiling order, this may not be stable.")
+            sort_by = [self._config.tile_row, self._config.tile_col, self._config.hue]
+            sort_by = [v for v in sort_by if v is not None]
+        else:
+            sort_by = self._config.sort_by
+        sort_by = [self.ref_to_col(ref) for ref in sort_by]
+
+        # If there is no custom ordering of categorical column values
+        # we can just sort the frame and rely on the internal dtype ordering support.
+        # otherwise, create a custom weight column.
+        if not self._config.sort_order:
+            self._df = self._df.sort(by=sort_by, descending=self._config.sort_descending)
             return
-        self._df = self._df.with_columns(pl.concat_str(self._config.hue, separator=",").alias("_hue_label"))
+
+        sort_order = {self.ref_to_col(ref): order for ref, order in self._config.sort_order.items()}
+        df = self._df.with_columns(pl.lit(0.0).alias("_sort_weight"))
+        weight_base = 0
+        for col in reversed(sort_by):
+            data_order = sort_order.get(col)
+            data_values = df[col].unique()
+            n_weights = len(data_values)
+            if not data_order:
+                data_order = data_values.sort()
+            else:
+                # Verify that the data order is a superset of the data
+                # in the column.
+                if not set(data_values).issubset(data_order):
+                    self.logger.error("Invalid sort weights mapping for %s, requires %s", col, data_values)
+                    raise ConfigurationError("Invalid sort_order configuration")
+            n_weights = max(len(data_order), n_weights)
+            weights = weight_base + np.arange(n_weights)
+            self.logger.debug("Assign weights to column %s: %s", col, list(zip(data_order, weights)))
+            for value, weight in zip(data_order, weights):
+                df = df.with_columns(pl.col("_sort_weight") + pl.when(pl.col(col) == value).then(weight).otherwise(0))
+            weight_base += n_weights
+        self._df = df.sort(by="_sort_weight", descending=self._config.sort_descending)
 
     def _gen_color_palette(self):
         """
@@ -708,7 +718,7 @@ class PlotGrid(AbstractContextManager):
         else:
             # Keep the order so that the user has control on the mapping between
             # data points and hue colors even when not using explicit color mapping.
-            hue_keys = self._df[self.hue_param].unique(maintain_order=True)
+            hue_keys = self._df[self.tile_hue].unique(maintain_order=True)
             ncolors = len(hue_keys)
             if self._config.hue_colors is not None:
                 if len(self._config.hue_colors) != ncolors:
@@ -769,7 +779,7 @@ class PlotGrid(AbstractContextManager):
     def _make_tile(self, ax: "Axes", ri: int, ci: int, row_value: str, col_value: str):
         return PlotTile(grid=self,
                         ax=ax,
-                        hue=self._config.hue,
+                        hue=self.tile_hue,
                         palette=self._color_palette,
                         coords=(ri, ci),
                         loc=(row_value, col_value))
@@ -843,8 +853,8 @@ class PlotGrid(AbstractContextManager):
         if self._config.legend_position == "inner":
             self.map(lambda tile, chunk: tile.ax.legend())
         elif self._config.legend_position == "outer":
-            hue_keys = self._df[self.hue_param].unique(maintain_order=True)
-            labels = self._df[self.hue_param].unique(maintain_order=True)
+            hue_keys = self._df[self.tile_hue].unique(maintain_order=True)
+            labels = self._df[self.tile_hue].unique(maintain_order=True)
             patches = [Patch(color=self._color_palette[hue_key]) for hue_key in hue_keys]
 
             legend_handles = {}
@@ -882,20 +892,28 @@ class PlotGrid(AbstractContextManager):
         return None
 
     @property
-    def tile_row_param(self):
-        return self._config.tile_row
-
-    @property
-    def tile_col_param(self):
-        return self._config.tile_col
-
-    @property
-    def hue_param(self):
-        return "_hue_label"
+    def tile_hue(self) -> str:
+        if ref := self._config.hue:
+            return self.ref_to_col(ref)
+        return "_default_hue"
 
     @property
     def logger(self):
         return self._target.task.logger
+
+    def ref_to_col(self, ref: str | None) -> str | None:
+        if ref is None:
+            return None
+        if ref not in self._column_refs_map:
+            self.logger.error("Column ref %s is not defined", ref)
+            raise ConfigurationError("Undefined column reference")
+        return self._column_refs_map[ref]
+
+    def try_ref_to_col(self, ref: str) -> str:
+        """Try to resolve ref as a ColRef, if not, return it unchanged."""
+        if re.match(COLREF_PATTERN, ref):
+            return self.ref_to_col(ref)
+        return ref
 
     def map(self, tile_plotter: Callable[[PlotTile, pl.DataFrame], None], *args, **kwargs):
         for i, (ax_stride, (row_param, row_chunk)) in enumerate(zip(self._grid, self._grid_rows(self._df))):
@@ -933,7 +951,7 @@ class DisplayGrid(PlotGrid):
 
     def __enter__(self):
         self._filter()
-        self._sort()
+        self._sort2()
         self._gen_display_columns()
         super().__enter__()
         return self
@@ -1034,7 +1052,7 @@ class DisplayGrid(PlotGrid):
                 pl.col("_param_weight") + pl.col(name).replace(mapping, default=0.0, return_dtype=pl.Float32))
         return df
 
-    def _sort(self):
+    def _sort2(self):
         """
         Sort the dataframe according to the configured param_sort_weight.
 
@@ -1051,29 +1069,15 @@ class DisplayGrid(PlotGrid):
         self._df = df.sort(by="_param_weight", descending=is_descending)
 
     def _make_tile(self, ax, ri, ci, row, col):
-        normalised_hue_col = super().hue_param
         tile = DisplayTile(grid=self,
                            ax=ax,
-                           hue=normalised_hue_col,
+                           hue=self.tile_hue,
                            palette=self._color_palette,
                            coords=(ri, ci),
                            loc=(row, col),
                            raw_map=ColumnNameMapping(self._raw_map),
                            display_map=ColumnNameMapping(self._display_map))
         return tile
-
-    @property
-    def tile_row_param(self):
-        return self._display_map.get(self._config.tile_row, self._config.tile_row)
-
-    @property
-    def tile_col_param(self):
-        return self._display_map.get(self._config.tile_col, self._config.tile_col)
-
-    @property
-    def hue_param(self):
-        normalised_hue_col = super().hue_param
-        return self._display_map.get(normalised_hue_col, normalised_hue_col)
 
 
 def grid_debug(tile: PlotTile, chunk: pl.DataFrame, x: str, y: str, logger: "Logger"):
