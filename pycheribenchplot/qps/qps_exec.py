@@ -77,6 +77,25 @@ class LoadQpsData(PLDataFrameLoadTask):
         df = pl.DataFrame(row).rename(to_snake_case).rename(self.COLUMN_RENAME)
         return df.select(self.COLUMN_NAMES)
 
+    # with open(hist_dst, "w+") as fp:
+    # buckets = data["latencies"]["bucket"]
+    # # See grpc/test/core/util/histogram.cc
+    # client_conf = data["scenario"]["clientConfig"]
+    # # defaults from test/cpp/qps/histogram.h
+    # hmax = 6e9
+    # hres = 0.01
+    # if "histogramParams" in client_conf:
+    #     hp = client_conf["histogramParams"]
+    #     hmax = hp.get("maxPossible", hmax)
+    #     hres = hp.get("resolution", hres)
+    # num_buckets = (np.log(hmax) / np.log(1.0 + hres)) + 1
+    # buckets_start = np.logspace(0, len(buckets), num=int(num_buckets), base=(1 + hres), endpoint=False)
+    # assert len(buckets) == len(buckets_start)
+    # json.dump({
+    #     "buckets": buckets,
+    #     "start": list(buckets_start),
+    # }, fp)
+
 
 @dataclass
 class QpsExecConfig(Config):
