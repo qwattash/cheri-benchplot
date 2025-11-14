@@ -7,7 +7,7 @@ import polars as pl
 from ..core.artefact import PLDataFrameLoadTask, RemoteBenchmarkIterationTarget
 from ..core.config import Config, config_field
 from ..core.plot import PlotTarget, PlotTask, SlicePlotTask
-from ..core.plot_util import (PlotGrid, PlotGridConfig, grid_barplot, grid_pointplot)
+from ..core.plot_util import (BarPlotConfig, PlotGrid, PlotGridConfig, grid_barplot)
 from ..core.task import ExecutionTask, dependency, output
 
 
@@ -102,14 +102,11 @@ class TimingExecTask(ExecutionTask):
 
 
 @dataclass
-class TimingPlotConfig(PlotGridConfig):
+class TimingPlotConfig(PlotGridConfig, BarPlotConfig):
     """
     Base configuration for the TimingPlotTask.
-
-    This allows a wide degree of customization of the plot, locking only
-    the Y axis of the tiles to be the time metric.
     """
-    tile_xaxis: str = config_field("target", desc="Parameter to use for the X axis of each tile")
+    pass
 
 
 class TimingSlicePlotTask(SlicePlotTask):
@@ -117,7 +114,7 @@ class TimingSlicePlotTask(SlicePlotTask):
     Simple overview of the collected timing data from a generic.exec task run.
     """
     task_namespace = "timing"
-    task_name = "plot-slice"
+    task_name = "bar-plot-slice"
     public = True
     task_config_class = TimingPlotConfig
 
