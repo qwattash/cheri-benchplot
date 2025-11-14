@@ -64,8 +64,6 @@ class DerivedColumnConfig(Config):
     Note the following conventions:
      - names starting with _ are reserved for internal use and for task-specific auxiliary columns.
     """
-    ref: str = config_field(Config.REQUIRED,
-                            desc="Unique identifier for the derived column. This will become available as <ref>.")
     transform: ColumnTransform = config_field(Config.REQUIRED,
                                               by_value=True,
                                               desc="How to generate transformed column.")
@@ -82,15 +80,15 @@ class DerivedColumnConfig(Config):
 @dataclass
 class PlotGridConfig(PlotConfigBase):
     # Data manipulation configuration
-    derived_columns: list[DerivedColumnConfig] = config_field(
-        list,
+    derived_columns: dict[str, DerivedColumnConfig] = config_field(
+        dict,
         desc="Auxiliary columns. These can be used to arbitrarily rename headers and data, which then are "
-        "used as part of the plot. The dictionary is keyed on the resulting derived column ColRef.")
+        "used as part of the plot. The dictionary is keyed on the resulting derived column ColRef name.")
     sort_descending: bool = config_field(False, desc="Sort the grid data in ascending or descending order.")
     sort_by: list[ColRef] = config_field(list, desc="Define sort keys for the grid data.")
     sort_order: dict[ColRef, list[Any]] = config_field(dict, desc="Custom categorical ordering for specific columns.")
     data_filter: ParamFilterConfig | None = config_field(
-        None, desc="Further filter the data for the given set of parameters.")
+        None, desc="Further filter the data for the given set of parameters. Note that this expects ColRef keys.")
 
     # General figure-level configuration
     title: str | None = config_field(None, desc="Override figure title.")
@@ -340,19 +338,13 @@ class PlotGrid(AbstractContextManager):
             raise ConfigurationError("Configuration error")
         self._column_refs_map[f"<{ref}>"] = name
 
-    def _gen_derived_identity(self, spec: DerivedColumnConfig):
+    def _gen_derived_identity(self, ref: str, spec: DerivedColumnConfig):
         src = self.ref_to_col(spec.src)
-        if spec.name in self._df.columns:
-            self.logger.error("Invalid name %s for target column, column exists", spec.name)
-            raise ConfigurationError("Invalid configuration")
         self._df = self._df.with_columns(pl.col(src).alias(spec.name))
-        self._register_ref(spec.ref, spec.name)
+        self._register_ref(ref, spec.name)
 
-    def _gen_derived_map(self, spec: DerivedColumnConfig):
+    def _gen_derived_map(self, ref: str, spec: DerivedColumnConfig):
         src = self.ref_to_col(spec.src)
-        if spec.name in self._df.columns:
-            self.logger.error("Invalid name %s for target column, column exists", spec.name)
-            raise ConfigurationError("Invalid configuration")
         dtypes = {type(v) for v in spec.args.values()}
         if len(dtypes) > 1:
             self.logger.error("Derived column %s map to inconsistent dtypes", spec.name, dtypes)
@@ -363,7 +355,13 @@ class PlotGrid(AbstractContextManager):
         else:
             src_expr = pl.col(src)
         self._df = self._df.with_columns(src_expr.replace(spec.args).alias(spec.name))
-        self._register_ref(spec.ref, spec.name)
+        self._register_ref(ref, spec.name)
+
+    def _gen_derived_concat(self, ref: str, spec: DerivedColumnConfig):
+        src = [self.ref_to_col(src_ref) for src_ref in spec.src]
+        sep = spec.args.get("separator", ",")
+        self._df = self._df.with_columns(pl.concat_str(src, separator=sep).alias(spec.name))
+        self._register_ref(ref, spec.name)
 
     def _gen_derived_columns(self):
         """
@@ -371,12 +369,17 @@ class PlotGrid(AbstractContextManager):
 
         Note that new columns will be made available in the column_refs_map.
         """
-        for spec in self._config.derived_columns:
+        for ref, spec in self._config.derived_columns.items():
+            if spec.name in self._df.columns:
+                self.logger.error("Invalid name %s for target column, column exists", spec.name)
+                raise ConfigurationError("Invalid configuration")
             match spec.transform:
                 case ColumnTransform.Identity:
-                    self._gen_derived_identity(spec)
+                    self._gen_derived_identity(ref, spec)
                 case ColumnTransform.Map:
-                    self._gen_derived_map(spec)
+                    self._gen_derived_map(ref, spec)
+                case ColumnTransform.StrCat:
+                    self._gen_derived_concat(ref, spec)
                 case _:
                     self.logger.error("Invalid column transform %s", spec.transform)
                     raise RuntimeError("Unsupported column transformation")
