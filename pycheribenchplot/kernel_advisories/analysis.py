@@ -5,7 +5,7 @@ import polars as pl
 from matplotlib.ticker import AutoMinorLocator
 
 from ..core.analysis import AnalysisTask
-from ..core.artefact import DataFrameTarget, Target
+from ..core.artefact import Target
 from ..core.config import (Config, ConfigPath, config_field, validate_file_exists)
 from ..core.plot import PlotTarget, PlotTask
 from ..core.task import SessionDataGenTask, dependency, output
