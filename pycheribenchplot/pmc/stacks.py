@@ -4,12 +4,12 @@ from collections import defaultdict
 
 from ..core.analysis import DatasetAnalysisTask
 from ..core.artefact import BenchmarkIterationTarget, ValueTarget
-from ..core.plot import DatasetPlotTask, PlotTarget
+from ..core.plot import PlotTarget, SlicePlotTask
 from ..core.task import dependency, output
 from .pmc_exec import PMCExec, PMCExecConfig
 
 
-class PMCStacksFlameGraph(DatasetPlotTask):
+class PMCStacksFlameGraph(SlicePlotTask):
     """
     Build a flame graph for each benchmark configuration.
     This uses brendandgregg's flamegraph.pl for simplicity

@@ -97,17 +97,6 @@ class PlotTask(AnalysisTask, PlotTaskMixin):
         self._run_with_plot_sandbox()
 
 
-@deprecated("Use SlicePlotTask instead")
-class DatasetPlotTask(DatasetAnalysisTask, PlotTaskMixin):
-    """
-    Dataset-level plotting task.
-
-    This task generates one or more plots for each dataset collected.
-    """
-    def run(self):
-        self._run_with_plot_sandbox()
-
-
 class SlicePlotTask(SliceAnalysisTask, PlotTaskMixin):
     """
     SliceAnalysisTask that produces one or more plots.
