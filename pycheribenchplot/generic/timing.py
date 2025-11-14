@@ -7,7 +7,7 @@ import polars as pl
 from ..core.artefact import PLDataFrameLoadTask, RemoteBenchmarkIterationTarget
 from ..core.config import Config, config_field
 from ..core.plot import PlotTarget, PlotTask, SlicePlotTask
-from ..core.plot_util import (DisplayGrid, DisplayGridConfig, grid_barplot, grid_pointplot)
+from ..core.plot_util import (PlotGrid, PlotGridConfig, grid_barplot, grid_pointplot)
 from ..core.task import ExecutionTask, dependency, output
 
 
@@ -102,7 +102,7 @@ class TimingExecTask(ExecutionTask):
 
 
 @dataclass
-class TimingPlotConfig(DisplayGridConfig):
+class TimingPlotConfig(PlotGridConfig):
     """
     Base configuration for the TimingPlotTask.
 
@@ -158,7 +158,7 @@ class TimingSlicePlotTask(SlicePlotTask):
             name_defaults.update({self.config.hue: self.config.hue.capitalize()})
 
         grid_config = self.config.set_display_defaults(param_names=name_mapping_defaults)
-        with DisplayGrid(target, view_df, grid_config) as grid:
+        with PlotGrid(target, view_df, grid_config) as grid:
             grid.map(grid_barplot, x=self.config.tile_xaxis, y="times", err=["times_low", "times_high"])
             grid.add_legend()
 
@@ -222,7 +222,7 @@ class TimingPlotTask(PlotTask):
             self.config.hue: self.config.hue.capitalize(),
             "times": default_display_name
         })
-        with DisplayGrid(target, view_df, grid_config) as grid:
+        with PlotGrid(target, view_df, grid_config) as grid:
             grid.map(grid_barplot, x=self.config.tile_xaxis, y="times", err=["times_low", "times_high"])
             grid.add_legend()
 

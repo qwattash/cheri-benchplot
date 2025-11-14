@@ -9,7 +9,7 @@ from ..core.analysis import AnalysisTask
 from ..core.artefact import ValueTarget
 from ..core.config import config_field
 from ..core.plot import PlotTarget, PlotTask
-from ..core.plot_util import DisplayGrid, DisplayGridConfig, grid_barplot
+from ..core.plot_util import PlotGrid, PlotGridConfig, grid_barplot
 from ..core.task import dependency, output
 from ..core.tvrs import TVRSParamsMixin
 from .netperf_exec import NetperfExecTask
@@ -38,7 +38,7 @@ class NetperfStatsUnion(AnalysisTask):
 
 
 @dataclass
-class NetperfPlotConfig(DisplayGridConfig):
+class NetperfPlotConfig(PlotGridConfig):
     netperf_metrics: List[str] = config_field(lambda: ["throughput", "mean latency microseconds"],
                                               desc="Netperf metrics to plot")
 
@@ -83,7 +83,7 @@ class NetperfSummaryPlot(TVRSParamsMixin, PlotTask):
             self.config.hue: self.config.hue.capitalize(),
             "value": "Value"
         }).set_fixed(tile_row="metric")
-        with DisplayGrid(self.summary, median_df, grid_config) as grid:
+        with PlotGrid(self.summary, median_df, grid_config) as grid:
             grid.map(grid_barplot, x="scenario", y="value", err=["value_low", "value_high"])
             grid.add_legend()
 
@@ -93,6 +93,6 @@ class NetperfSummaryPlot(TVRSParamsMixin, PlotTask):
             self.config.hue: self.config.hue.capitalize(),
             "value": "% Overhead"
         }).set_fixed(tile_row="metric")
-        with DisplayGrid(self.overhead, overhead_df, grid_config) as grid:
+        with PlotGrid(self.overhead, overhead_df, grid_config) as grid:
             grid.map(grid_barplot, x="scenario", y="value", err=["value_low", "value_high"])
             grid.add_legend()

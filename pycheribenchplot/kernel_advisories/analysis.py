@@ -2,7 +2,6 @@ from dataclasses import dataclass
 from datetime import date
 
 import polars as pl
-import seaborn as sns
 from matplotlib.ticker import AutoMinorLocator
 
 from ..core.analysis import AnalysisTask
@@ -22,7 +21,7 @@ DEFAULT_EVENTS = {
 
 @dataclass
 class AdvisoryHistoryConfig(Config):
-    events: dict[date, str] = config_field(lambda: DEFAULT_EVENTS, help="Events to mark on the top X axis timeline")
+    events: dict[date, str] = config_field(lambda: DEFAULT_EVENTS, desc="Events to mark on the top X axis timeline")
 
 
 class CheriBSDAdvisoriesHistory(PlotTask):

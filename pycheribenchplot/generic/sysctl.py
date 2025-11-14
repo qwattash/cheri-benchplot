@@ -7,7 +7,7 @@ import polars.selectors as cs
 from ..core.artefact import PLDataFrameLoadTask, RemoteBenchmarkIterationTarget
 from ..core.config import Config, config_field
 from ..core.plot import PlotTarget, PlotTask, SlicePlotTask
-from ..core.plot_util import (DisplayGrid, DisplayGridConfig, grid_barplot, grid_pointplot)
+from ..core.plot_util import (PlotGrid, PlotGridConfig, grid_barplot, grid_pointplot)
 from ..core.task import ExecutionTask, dependency, output
 
 
@@ -76,7 +76,7 @@ class SysctlExecTask(ExecutionTask):
 
 
 @dataclass
-class SysctlPlotConfig(DisplayGridConfig):
+class SysctlPlotConfig(PlotGridConfig):
     """
     Base configuration for the SysctlPlotTask.
 
@@ -172,7 +172,7 @@ class SysctlSlicePlotTask(SlicePlotTask):
             name_mapping_defaults.update({self.config.hue: self.config.hue.capitalize()})
 
         grid_config = self.config.set_display_defaults(param_names=name_mapping_defaults)
-        with DisplayGrid(target, view_df, grid_config) as grid:
+        with PlotGrid(target, view_df, grid_config) as grid:
             grid.map(grid_barplot,
                      x=self.config.tile_xaxis,
                      y="sysctl_value",

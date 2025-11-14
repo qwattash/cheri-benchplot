@@ -6,13 +6,13 @@ import polars.selectors as cs
 from ..core.artefact import Target
 from ..core.config import Config, config_field
 from ..core.plot import PlotTarget, SlicePlotTask
-from ..core.plot_util import DisplayGrid, DisplayGridConfig, grid_barplot
+from ..core.plot_util import PlotGrid, PlotGridConfig, grid_barplot
 from ..core.task import dependency, output
 from .pmc_exec import IngestPMCCounters, PMCExec
 
 
 @dataclass
-class PMCPlotConfig(DisplayGridConfig):
+class PMCPlotConfig(PlotGridConfig):
     pmc_filter: list[str] | None = config_field(None, desc="Show only the given subset of counters")
     cpu_filter: list[int] | None = config_field(None, desc="Filter system-mode counters by CPU index")
     tile_xaxis: str = config_field(Config.REQUIRED, desc="Parameter to use for the X axis of each tile")
@@ -184,7 +184,7 @@ class PMCSliceSummary(SlicePlotTask):
                                                       tile_row="_counter",
                                                       tile_col="_metric_type")
         # Draw the barplot but adjust the Y label to reflect the tile metric type
-        with DisplayGrid(self.summary_combined, self.stats, grid_config) as grid:
+        with PlotGrid(self.summary_combined, self.stats, grid_config) as grid:
             grid.map(grid_barplot, x=self.config.tile_xaxis, y="value", err=["value_low", "value_high"])
 
             # XXX this seems useful, integrate it in the base plot grid
@@ -227,7 +227,7 @@ class PMCSliceAbsSummary(PMCSliceSummary):
             default_axis_names[self.config.hue] = self.config.hue.capitalize()
         grid_config = self.config.with_default_axis_rename(default_axis_names).with_config_default(tile_row="_counter")
 
-        with DisplayGrid(self.summary_plot, median_df, grid_config) as grid:
+        with PlotGrid(self.summary_plot, median_df, grid_config) as grid:
             grid.map(grid_barplot, x=self.config.tile_xaxis, y="value", err=["value_low", "value_high"])
             grid.add_legend()
 
@@ -259,7 +259,7 @@ class PMCSliceRelSummary(PMCSliceSummary):
             default_axis_names[self.config.hue] = self.config.hue.capitalize()
         grid_config = self.config.with_default_axis_rename(default_axis_names).with_config_default(tile_row="_counter")
 
-        with DisplayGrid(self.summary_delta_plot, delta_df, grid_config) as grid:
+        with PlotGrid(self.summary_delta_plot, delta_df, grid_config) as grid:
             grid.map(grid_barplot, x=self.config.tile_xaxis, y="value", err=["value_low", "value_high"])
             grid.add_legend()
 
@@ -292,6 +292,6 @@ class PMCSliceOverheadSummary(PMCSliceSummary):
             default_axis_names[self.config.hue] = self.config.hue.capitalize()
         grid_config = self.config.with_default_axis_rename(default_axis_names).with_config_default(tile_row="_counter")
 
-        with DisplayGrid(self.summary_ovh_plot, overhead_df, grid_config) as grid:
+        with PlotGrid(self.summary_ovh_plot, overhead_df, grid_config) as grid:
             grid.map(grid_barplot, x=self.config.tile_xaxis, y="value", err=["value_low", "value_high"])
             grid.add_legend()

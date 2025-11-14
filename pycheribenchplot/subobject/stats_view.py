@@ -7,7 +7,7 @@ from ..core.analysis import SliceAnalysisTask
 from ..core.artefact import Target
 from ..core.config import Config, config_field
 from ..core.plot import PlotTarget, SlicePlotTask
-from ..core.plot_util import DisplayGrid, DisplayGridConfig, grid_barplot
+from ..core.plot_util import PlotGrid, PlotGridConfig, grid_barplot
 from ..core.task import dependency, output
 from .scan_dwarf import AnnotateImpreciseSubobjectLayouts
 
@@ -75,7 +75,7 @@ class ImpreciseSubobjectReport(SliceAnalysisTask):
 
 
 @dataclass
-class ImpreciseSizeDistPlotConfig(DisplayGridConfig):
+class ImpreciseSizeDistPlotConfig(PlotGridConfig):
     pass
 
 
@@ -134,6 +134,6 @@ class ImpreciseSizeDistPlot(SlicePlotTask):
                 for n in bin_pow
             }})
 
-        with DisplayGrid(self.size_dist, hist, grid_config) as grid:
+        with PlotGrid(self.size_dist, hist, grid_config) as grid:
             grid.map(grid_barplot, x="hist_bin", y="hist_count")
             grid.add_legend()

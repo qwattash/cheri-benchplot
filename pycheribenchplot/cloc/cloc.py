@@ -11,7 +11,7 @@ import seaborn as sns
 from ..core.artefact import Target
 from ..core.config import Any, Config, ConfigPath, config_field
 from ..core.plot import PlotTarget, PlotTask
-from ..core.plot_util import (DisplayGrid, DisplayGridConfig, ParamWeight, WeightMode, grid_barplot)
+from ..core.plot_util import (ParamWeight, PlotGrid, PlotGridConfig, WeightMode, grid_barplot)
 from ..core.task import dependency, output
 from .cloc_exec import CheriBSDClocExecTask, ClocExecTask
 
@@ -38,7 +38,7 @@ class ComponentSpec(Config):
 
 
 @dataclass
-class ClocByComponentConfig(DisplayGridConfig):
+class ClocByComponentConfig(PlotGridConfig):
     """
     Configure component assignment and data filtering.
 
@@ -281,7 +281,7 @@ class ClocByComponent(PlotTask):
         df = head_agg_df.join(baseline_agg_df, on=group_cols, how="left").with_columns(pl.col("count").fill_null(0))
 
         # Now create the absolute and % difference data in long-form
-        # This is going to be used for the DisplayGrid.
+        # This is going to be used for the PlotGrid.
         df = df.with_columns(
             pl.lit("# of lines").alias("metric"),
             cs.by_name("added", "removed", "modified", "same").cast(pl.Float64))
@@ -320,7 +320,7 @@ class ClocByComponent(PlotTask):
                     })
                 })
 
-        with DisplayGrid(self.cloc_plot, view_df, grid_config) as grid:
+        with PlotGrid(self.cloc_plot, view_df, grid_config) as grid:
             # Dump the sorted tabular data using the ordering specified by the grid config
             dump_df = grid.get_grid_df().select(["component", "how", "metric", "count"])
             dump_df.write_csv(self.cloc_table.single_path())

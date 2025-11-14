@@ -4,13 +4,13 @@ import polars as pl
 
 from ..core.artefact import Target
 from ..core.plot import PlotTarget, SlicePlotTask
-from ..core.plot_util import (BarPlotConfig, DisplayGrid, DisplayGridConfig, grid_barplot)
+from ..core.plot_util import (BarPlotConfig, PlotGrid, PlotGridConfig, grid_barplot)
 from ..core.task import dependency, output
 from .c18n_trace import C18nKtraceExec
 
 
 @dataclass
-class C18nTransitionFrequencyConfig(DisplayGridConfig, BarPlotConfig):
+class C18nTransitionFrequencyConfig(PlotGridConfig, BarPlotConfig):
     """"""
     pass
 

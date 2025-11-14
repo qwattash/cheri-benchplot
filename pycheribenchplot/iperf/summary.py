@@ -8,14 +8,14 @@ from ..core.analysis import AnalysisTask
 from ..core.artefact import ValueTarget
 from ..core.config import Config, config_field
 from ..core.plot import PlotTarget, PlotTask
-from ..core.plot_util import DisplayGrid, DisplayGridConfig, boxplot
+from ..core.plot_util import PlotGrid, PlotGridConfig, boxplot
 from ..core.task import dependency, output
 from ..core.tvrs import TVRSParamsMixin, TVRSPlotConfig
 from .iperf_exec import IPerfExecTask
 
 
 @dataclass
-class IPerfSummaryConfig(DisplayGridConfig):
+class IPerfSummaryConfig(PlotGridConfig):
     def __post_init__(self):
         super().__post_init__()
         self.setdefault(tile_col="scenario", hue="variant")
@@ -93,7 +93,7 @@ class IPerfSummaryPlot(TVRSParamsMixin, PlotTask):
             self.config.hue: "Variant",
             "MiB_per_second": "Throughput (MiB/s)"
         })
-        with DisplayGrid(self.summary_plot, df, grid_config) as grid:
+        with PlotGrid(self.summary_plot, df, grid_config) as grid:
 
             def _doplot(tile, chunk):
                 sns.stripplot(chunk,

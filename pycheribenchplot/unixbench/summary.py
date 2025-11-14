@@ -8,14 +8,14 @@ from ..core.analysis import AnalysisTask
 from ..core.artefact import ValueTarget
 from ..core.config import config_field
 from ..core.plot import PlotTarget, PlotTask
-from ..core.plot_util import DisplayGrid, DisplayGridConfig, grid_pointplot
+from ..core.plot_util import PlotGrid, PlotGridConfig, grid_pointplot
 from ..core.task import dependency, output
 from ..core.tvrs import TVRSParamsMixin, TVRSPlotConfig
 from .unixbench_exec import UnixBenchExec
 
 
 @dataclass
-class UnixBenchSummaryConfig(DisplayGridConfig):
+class UnixBenchSummaryConfig(PlotGridConfig):
     def __post_init__(self):
         super().__post_init__()
         # Set defaults for display grid parameters
@@ -77,7 +77,7 @@ class UnixBenchSummaryPlot(TVRSParamsMixin, PlotTask):
         })
 
         median_df = stats.filter(_metric_type="absolute")
-        with DisplayGrid(self.summary, median_df, grid_config) as grid:
+        with PlotGrid(self.summary, median_df, grid_config) as grid:
             grid.map(grid_pointplot, x="scenario", y="times", err=["times_low", "times_high"])
             grid.add_legend()
 
@@ -87,6 +87,6 @@ class UnixBenchSummaryPlot(TVRSParamsMixin, PlotTask):
         })
 
         ovh_df = stats.filter(_metric_type="overhead")
-        with DisplayGrid(self.overhead, ovh_df, grid_config) as grid:
+        with PlotGrid(self.overhead, ovh_df, grid_config) as grid:
             grid.map(grid_pointplot, x="scenario", y="times", err=["times_low", "times_high"])
             grid.add_legend()
