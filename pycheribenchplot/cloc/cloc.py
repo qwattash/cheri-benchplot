@@ -11,7 +11,7 @@ import seaborn as sns
 from ..core.artefact import Target
 from ..core.config import Any, Config, ConfigPath, config_field
 from ..core.plot import PlotTarget, PlotTask
-from ..core.plot_util import (ParamWeight, PlotGrid, PlotGridConfig, WeightMode, grid_barplot)
+from ..core.plot_util import PlotGrid, PlotGridConfig, grid_barplot
 from ..core.task import dependency, output
 from .cloc_exec import CheriBSDClocExecTask, ClocExecTask
 
@@ -310,15 +310,7 @@ class ClocByComponent(PlotTask):
                 "added": cmap[2],  # green
                 "modified": cmap[1],  # orange
                 "removed": cmap[3]  # red
-            }).set_default(
-                param_sort_weight={
-                    "component": ParamWeight(mode=WeightMode.AscendingAsStr, base=0, step=10),
-                    "how": ParamWeight(mode=WeightMode.Custom, weights={
-                        "added": 0,
-                        "modified": 1,
-                        "removed": 2
-                    })
-                })
+            }).with_config_default(sort_order={"<how>": ["added", "modified", "removed"]})
 
         with PlotGrid(self.cloc_plot, view_df, grid_config) as grid:
             # Dump the sorted tabular data using the ordering specified by the grid config
