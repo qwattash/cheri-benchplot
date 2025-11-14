@@ -446,10 +446,35 @@ This is a generic timing plot that interoperates with the `analysis.dynamic` tas
 to produce a plot for a given _free axes_ cross section.
 
 Again, we can see what parameters are supported using
-`benchplot-cli info task timing.plot-slice`.
+`benchplot-cli info task timing.bar-plot-slice`.
 
 The plot is generated on a grid. The grid columns and rows can be tiled using
 values from one of the _free axes_.
+
+All plots use the base grid tiling configuration `PlotGridConfig`. This supports
+flexible columns transformations to produce data suitable for visualization.
+The grid configuration describes:
+    1. How to tile the data across plots. This assigns columns to the
+       grid row, column and hue dimensions. Some plots (e.g. bar plots) support
+       additional dimentions, such as stacking and twin axes that can increase the
+       data dimensionality displayed within each tile.
+    2. How to post-process data and metadata columns to produce human-readable
+       axis, grid and legend labels.
+    3. How to sort the data in order to have a stable and custom output ordering.
+    4. Any additional presentation aspects, such as custom matplotlib style
+       tunables.
+
+The tiling configuration fields accept `ColRef` (column reference) strings. These
+are symbolic column names in angular brackets, such as `<my_param>`. This allows to
+separate the configuration key (`<my_param>`) from the presentation value of the
+column, which may be re-mapped to the string "My Interesting Value (Bytes)" and further
+changed without altering the symbolic column reference within the configuration file.
+
+The post-processing is modeled with derived columns.
+The `PlotGridConfig.derived_columns` describes new columns (and corresponding
+`ColRef` keys) which allow to rename all metadata axes to change the plot
+presentation of grid, axes and legend labels.
+
 In this case, we use:
  - the "revocation" axis as the grid column ID,
  - the implicit "target" axis as the tile X axis, for all grid subplots
@@ -466,11 +491,11 @@ Finally, we tune the aspect-ratio of the tiles to a more pleasant shape.
         "handler": "analysis.dynamic",
         "task_options": {
             "broadcast": [{
-                "handler": "timing.plot-slice",
+                "handler": "timing.bar-plot-slice",
                 "task_options": {
-                    "tile_col": "revocation",
-                    "tile_xaxis": "target",
-                    "tile_aspect": 2.0
+                    "tile_aspect": 2.0,
+                    "tile_col": "<revocation>",
+                    "tile_xaxis": "<target>"
                 }
             }],
             "fixed_axes": []
