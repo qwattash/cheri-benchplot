@@ -258,6 +258,14 @@ class AnalysisTask(SessionTask):
         return [*self.param_columns, "iteration"]
 
     @property
+    def key_columns(self) -> list[str]:
+        """
+        Row ID columns, excluding the iteration.
+        This includes the parameterisation columns and the dataset ID column.
+        """
+        return ["dataset_id", *self.param_columns]
+
+    @property
     def key_columns_with_iter(self) -> list[str]:
         """
         Row ID columns including the iteration.
