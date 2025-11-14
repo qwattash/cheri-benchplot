@@ -5,7 +5,6 @@ from dataclasses import dataclass, replace
 from enum import Enum
 from functools import reduce
 from typing import Annotated, Any, Callable, Iterable, Self
-from warnings import deprecated
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -159,14 +158,6 @@ class PlotGridConfig(PlotConfigBase):
         defaults = {k: v for k, v in kwargs.items() if hasattr(self, k) and getattr(self, k) is None}
         config = replace(self, **defaults)
         return config
-
-    @deprecated("Use PlotGridConfig.with_config_default() instead")
-    def set_default(self, **kwargs):
-        return self.with_config_default(**kwargs)
-
-    @deprecated("Use PlotGridConfig.with_config_default() instead")
-    def setdefault(self, **kwargs):
-        return self.with_config_default(**kwargs)
 
     def set_fixed(self, **kwargs) -> Self:
         """
