@@ -53,20 +53,7 @@ class SessionSubCommand(SubCommand):
 
         sub_analyse = session_subparsers.add_parser("analyse", help="Process data and generate plots.")
         self._register_session_arg(sub_analyse)
-        sub_analyse.add_argument("-a",
-                                 "--analysis-config",
-                                 type=Path,
-                                 default=None,
-                                 help="Analysis configuration file.")
-        sub_analyse.add_argument("--set-default",
-                                 action="store_true",
-                                 help="Set the current analysis configuration as the default analysis configuration")
-        sub_analyse.add_argument("-t",
-                                 "--task",
-                                 type=str,
-                                 action="append",
-                                 help="Task names to run for the analysis. This is a convenience shorthand "
-                                 "for the full analysis configuration")
+        sub_analyse.add_argument("analysis_config", type=Path, help="Analysis configuration file.")
         sub_analyse.add_argument("--clean", action="store_true", help="Wipe analysis outputs before running.")
 
         sub_bundle = session_subparsers.add_parser("bundle",
@@ -149,14 +136,8 @@ class SessionSubCommand(SubCommand):
             session.clean_analysis()
 
         # Use the analysis configuration from the session by default
-        analysis_config = None
-        if args.analysis_config:
-            analysis_config = self._parse_config(args.analysis_config, AnalysisConfig)
-        elif args.task:
-            analysis_config = AnalysisConfig()
-            for task in args.task:
-                analysis_config.tasks.append(TaskTargetConfig(handler=task))
-        session.analyse(analysis_config, set_default=args.set_default)
+        analysis_config = self._parse_config(args.analysis_config, AnalysisConfig)
+        session.analyse(analysis_config)
 
     def handle_bundle(self, user_config, args):
         session = self._get_session(user_config, args)
