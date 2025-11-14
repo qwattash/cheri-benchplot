@@ -9,8 +9,6 @@ from typing import Annotated, Any, Callable, Iterable, Self
 import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
-import polars.selectors as cs
-import seaborn as sns
 from marshmallow import ValidationError
 from marshmallow import fields as mf
 from marshmallow import validate as mv
@@ -21,7 +19,6 @@ from ..analysis import ParamFilterConfig
 from ..artefact import Target
 from ..config import Config, config_field
 from ..error import ConfigurationError
-from ..util import bytes2int
 
 COLREF_PATTERN = r"^<[\w_-]+>$"
 #: Custom type that expresses column references.
@@ -478,10 +475,11 @@ class PlotGrid(AbstractContextManager):
         removes complexity on the plot implementations, because when grouping on
         the hue level(s) the group label is always going to be a tuple.
         """
+        color_cycle = plt.rcParams["axes.prop_cycle"].by_key()["color"]
         if self._config.hue is None:
             # Generate synthetic hue column with an uniform value
             self._df = self._df.with_columns(pl.lit(0).alias("_default_hue"))
-            self._color_palette = {0: plt.rcParams["axes.prop_cycle"].by_key()["color"][0]}
+            self._color_palette = {0: color_cycle[0]}
         else:
             # Keep the order so that the user has control on the mapping between
             # data points and hue colors even when not using explicit color mapping.
@@ -494,8 +492,7 @@ class PlotGrid(AbstractContextManager):
                     raise ConfigurationError("Configuration error")
                 self._color_palette = {h: self._config.hue_colors[h] for h in hue_keys}
             else:
-                colors = sns.color_palette(n_colors=ncolors)
-                self._color_palette = dict(zip(hue_keys, colors))
+                self._color_palette = dict(zip(hue_keys, color_cycle))
 
     def _set_titles(self, tile, chunk):
         """
