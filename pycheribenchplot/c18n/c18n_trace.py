@@ -35,6 +35,7 @@ class C18nKtraceLoader(DataFrameLoadTask):
             yield pl.DataFrame(chunk)
 
     def _load_one(self, path: "Path") -> pl.DataFrame:
+        self.logger.info("Loading c18n transition data for %s", self.benchmark)
         with open(path, "r") as src:
             df = pl.concat(self._load_chunks(src, chunk_size=100000))
         return df
