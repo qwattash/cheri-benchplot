@@ -278,11 +278,6 @@ class ValueTarget(Target):
         return self._value
 
 
-@deprecated("Use ValueTarget directly")
-class DataFrameTarget(ValueTarget):
-    pass
-
-
 class HTMLTemplateTarget(Target):
     """
     A target that identifies an HTML template that renders analysis data.
