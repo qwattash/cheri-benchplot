@@ -36,6 +36,15 @@ ColRef = Annotated[str,
 
 
 @dataclass
+class ColRefMap(Config):
+    """
+    Mapping using source values from a given column ref.
+    """
+    src: ColRef = config_field(Config.REQUIRED, desc="ColRef of source values.")
+    values: dict[str, Any] = config_field(Config.REQUIRED, desc="Values associated to each element in <src>.")
+
+
+@dataclass
 class PlotConfigBase(Config):
     """
     Base class for all plot configs.
@@ -93,8 +102,8 @@ class PlotGridConfig(PlotConfigBase):
     # General figure-level configuration
     title: str | None = config_field(None, desc="Override figure title.")
     size: tuple[float, float] | None = config_field(None, desc="Override figure size, in inches.")
-    plot_params: dict[str, Any] = config_field(
-        dict, desc="Plot appearance configuration for tweaking, see matplotlib rc_context documentation")
+    style: dict[str, Any] = config_field(
+        dict, desc="Plot appearance configuration for tweaking, see matplotlib rc_context documentation.")
 
     # Tiling configuration
     tile_row: ColRef | None = config_field(None, desc="Set column ref to use for grid rows.")
@@ -110,7 +119,8 @@ class PlotGridConfig(PlotConfigBase):
 
     # Tile sizing configuration
     tile_aspect: float = config_field(1.0, desc="Aspect ratio of each tile.")
-    tile_height_ratios: list[float] | None = config_field(None, desc="Height ratios for each row.")
+    tile_height_ratios: ColRefMap | ColRef | dict[str, float] | None = config_field(
+        None, desc="Height ratios for each row. A ColRef, or a mapping of <tile_row> values to a float.")
 
     # Per-tile configuration
     tile_x_margin: float | tuple[float, float] | None = config_field(
@@ -125,12 +135,10 @@ class PlotGridConfig(PlotConfigBase):
         None, desc="Optional map that forces a specific color for each value of the 'hue' configuration.")
 
     # Legend configuration
-    # This should be a separate object perhaps
     # Would be nice to support different strategies:
     # outer-top, outer-bottom, outer-left, outer-right and inner legend.
-    legend_position: str = config_field("outer", desc="Control legend positioning.")
-    legend_vspace: float = config_field(0.2, desc="Fraction of the vertical space reserved to legend and suptitle.")
     legend_hide: bool = config_field(False, desc="Disable the legend.")
+    legend_position: str = config_field("outer", desc="Control legend positioning.")
     legend_columns: int = config_field(
         4, desc="Number of columns in the legend, this affects the necessary vspace and tile_aspect.")
 
@@ -274,7 +282,7 @@ class PlotGrid(AbstractContextManager):
             fig_size = self._config.size
         else:
             fig_size = (ncols * self._height * self._config.tile_aspect, (nrows + 1) * self._height)
-        self._rc_context = plt.rc_context(rc=self._config.plot_params)
+        self._rc_context = plt.rc_context(rc=self._config.style)
         self._rc_context.__enter__()
 
         self._figure = plt.figure(figsize=fig_size, layout="constrained")
@@ -285,11 +293,23 @@ class PlotGrid(AbstractContextManager):
             "sharey": self._config.tile_sharey,
         }
 
-        if ratios := self._config.tile_height_ratios:
-            if len(ratios) != nrows:
-                self.logger.error("Invalid height ratios configuration, expected %d rows", nrows)
-                raise ConfigurationError("Invalid configuration")
-            kwargs["height_ratios"] = ratios
+        if height_spec := self._config.tile_height_ratios:
+            if isinstance(height_spec, str):
+                ratio_col = self.ref_to_col(ratios)
+                values = self._df[ratio_col].unique(maintain_order=True)
+            else:
+                if isinstance(height_spec, ColRefMap):
+                    ratio_col = self.ref_to_col(height_spec.src)
+                    ratio_map = height_spec.values
+                else:
+                    assert isinstance(height_spec, dict)
+                    ratio_col = self.tile_row
+                    ratio_map = height_spec
+                if len(ratio_map) < nrows:
+                    self.logger.error("Invalid height ratios mapping, expected %d values got %s", nrows, ratio_map)
+                    raise ConfigurationError("Invalid configuration")
+                values = self._df[ratio_col].unique(maintain_order=True).replace(ratio_map).cast(pl.Float32)
+            kwargs["height_ratios"] = values
 
         self._grid = self._figure.subplots(nrows, ncols, **kwargs)
 
