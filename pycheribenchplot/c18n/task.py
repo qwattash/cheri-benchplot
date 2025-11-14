@@ -48,59 +48,6 @@ class TransitionGraphConfig(Config):
     weight_edge_color: bool = True
 
 
-class C18NKtraceImport(DataGenTask):
-    """
-    Import a ktrace file for a c18n program run.
-
-    One trace must be available for every benchmark instance, this allows to
-    import parameterized data points for later aggregation.
-    """
-    public = True
-    task_namespace = "c18n"
-    task_name = "ktrace-import"
-    task_config_class = TraceImportConfig
-
-    def run(self):
-        self.logger.debug("Ingest c18n domain transition kdump: %s", self.config.kdump)
-
-        with gzopen(self.config.kdump, "r") as kdump:
-            df = self._parse(kdump)
-        df.to_csv(self.data_file.path)
-
-    @output
-    def data_file(self):
-        return Target(self, "trace", loader=make_dataframe_loader(C18NDomainTransitionTraceModel), ext="csv.gz")
-
-    def _parse(self, kdump: ty.IO) -> pd.DataFrame:
-        line_matcher = re.compile(
-            r"(?P<pid>[0-9]+) (?P<thread>[0-9]+)\s+(?P<binary>[\w.-]+).*RTLD: c18n: (?P<op>enter|leave) "
-            r"\[?(?P<callee_compartment>[\w./<>+-]+)\]? (?:from|to) \[?(?P<caller_compartment>[\w./<>+-]+)\]? "
-            r"at \[(?P<symbol_number>[0-9]+)\] (?P<symbol>[\w<>-]+)\s*\(?(?P<address>[\dxabcdef]*)\)?")
-        data = []
-        failed = 0
-        for line in kdump:
-            line = line.strip()
-            if not line:
-                continue
-            m = line_matcher.match(line)
-            if not m:
-                failed += 1
-                if self.session.user_config.verbose:
-                    self.logger.warn("Failed to process %s", line)
-                continue
-            data.append(m.groupdict())
-        if failed:
-            self.logger.warn("Failed to process %d records from %s", failed, self.config.kdump)
-        self.logger.info("Imported %d records from kdump %s", len(data), self.config.kdump)
-
-        df = pd.DataFrame(data)
-        # Normalize hex values
-        df["address"] = df["address"].map(lambda v: int(v, base=16) if v else None)
-        df.index.name = "sequence"
-        df["trace_source"] = self.config.kdump.name
-        return df
-
-
 class C18NTransitionsSummary(DatasetPlotTask):
     """
     Generate a simple histogram of the top 20 most frequent domain transitions.
