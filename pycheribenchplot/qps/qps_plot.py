@@ -8,14 +8,13 @@ from ..core.artefact import Target
 from ..core.config import config_field
 from ..core.error import ConfigurationError
 from ..core.plot import PlotTarget, SlicePlotTask
-from ..core.plot_util import (BarPlotConfig, DisplayGrid, DisplayGridConfig, LinePlotConfig, grid_barplot,
-                              grid_lineplot)
+from ..core.plot_util import (BarPlotConfig, LinePlotConfig, PlotGrid, PlotGridConfig, grid_barplot, grid_lineplot)
 from ..core.task import dependency, output
 from .qps_exec import QpsExecTask
 
 
 @dataclass
-class QpsPlotConfig(DisplayGridConfig):
+class QpsPlotConfig(PlotGridConfig):
     """
     Configuration for the QPS throughput plot.
     """
@@ -64,33 +63,19 @@ class QpsPlotTask(SlicePlotTask):
         df = pl.concat(all_df, how="vertical", rechunk=True)
         return df
 
-    def _error_metric_type_unused(self):
-        self.logger.error("The synthetic parameter _metric_type must be used, "
-                          "otherwise the plot will combine absolute and relative data."
-                          "See DisplayGridConfig::param_filter documentation.")
-        raise ConfigurationError("Floating _metric_type column")
-
     def run_plot(self):
         df = self._collect_data()
 
         self.logger.info("Compute QPS statistics")
         stats = self.compute_overhead(df, "qps", how="median", overhead_scale=100)
 
-        # Check that the configuration is either filtering or tiling on the metric
-        # type
-        if not self.config.uses_param("_metric_type"):
-            if (self.config.param_filter is None or "_metric_type" not in self.config.param_filter):
-                self._error_metric_type_unused()
-
-        # Drop the baseline measurement from relative metrics.
-        # This can make the plot cleaner, depending on tiling.
         if self.config.drop_relative_baseline:
             view_df = stats.filter((pl.col("_metric_type") == "absolute") | ~pl.col("_is_baseline"))
         else:
             view_df = stats
 
         self.logger.info("Generate QPS plot")
-        with DisplayGrid(self.qps_plot, view_df, self.config) as grid:
+        with PlotGrid(self.qps_plot, view_df, self.config) as grid:
             # Dump the sorted tabular data using the ordering specified by the grid config
             dump_df = grid.get_grid_df()
             dump_df.write_csv(self.qps_stats.single_path())
