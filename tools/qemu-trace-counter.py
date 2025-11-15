@@ -1,7 +1,6 @@
 #!/bin/python
 
 import argparse as ap
-import json
 import re
 import shutil
 import subprocess

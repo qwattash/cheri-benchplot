@@ -1,17 +1,10 @@
 #!/bin/python
 
 import argparse as ap
-import json
-import re
-import shutil
-import subprocess
-from collections import defaultdict
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import polars as pl
 import polars.selectors as cs
-import seaborn as sns
 
 DELTA = r"Delta "
 
@@ -46,7 +39,7 @@ def main():
     join_df = all_df.join(base_df, on="fn")
 
     diff_df = join_df.with_columns(*[(pl.col(c) - pl.col(f"{c}_baseline")).alias(f"{c}_diff") for c in data_cols])
-    diff_df_nobaseline = diff_df.filter(pl.col("name") != baseline)
+    _diff_df_nobaseline = diff_df.filter(pl.col("name") != baseline)
 
     base_diff_file = args.output.stem
     all_diff_csv = args.output.with_name(f"{base_diff_file}-raw.csv")
@@ -92,7 +85,7 @@ def main():
         pl.col("cheri_st_pair_diff").alias(f"{DELTA}store cap pair")).sort(by=["Symbol", "Target"])
     table_df.write_csv(table_csv)
 
-    diff_lf_df = diff_df.melt(value_vars=cs.ends_with("_diff"), id_vars=["fn", "name"], variable_name="group")
+    _diff_lf_df = diff_df.melt(value_vars=cs.ends_with("_diff"), id_vars=["fn", "name"], variable_name="group")
 
     # fig, ax = plt.subplots()
     # sns.set_theme()
