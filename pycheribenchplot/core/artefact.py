@@ -3,16 +3,15 @@ from functools import cached_property
 from itertools import product
 from pathlib import Path
 from typing import Callable, Iterator
-from warnings import deprecated
 
 import polars as pl
 import sqlalchemy as sqla
-from jinja2 import (Environment, PackageLoader, TemplateNotFound, select_autoescape)
+from jinja2 import Environment, PackageLoader, TemplateNotFound, select_autoescape
 from sqlalchemy.orm import Session as SqlSession
 from typing_extensions import Self
 
 from .borg import Borg
-from .task import DatasetTask, SessionTask, Task, output
+from .task import DatasetTask, ExecutionTask, SessionTask, Task, output
 
 
 class Target(Borg):
@@ -31,12 +30,15 @@ class Target(Borg):
     :param output_id: Unique name of the output within the task. The output_id
     is also used as the file path prefix.
     """
-    def __init__(self,
-                 task: Task,
-                 output_id: str,
-                 template: str | None = None,
-                 loader: Callable[[Self], Task] | None = None,
-                 **kwargs):
+
+    def __init__(
+        self,
+        task: Task,
+        output_id: str,
+        template: str | None = None,
+        loader: Callable[[Self], Task] | None = None,
+        **kwargs,
+    ):
         """
         A target is associated to a task and output_id, which can be used to
         produce the unique target identifier.
@@ -95,14 +97,14 @@ class Target(Borg):
         This defaults to the session or benchmark paths, depending on the
         task type.
         """
-        if self._task.is_session_task():
-            if self._task.is_exec_task():
+        if isinstance(self._task, SessionTask):
+            if isinstance(self._task, ExecutionTask):
                 return self._task.session.get_data_root_path()
             else:
                 return self._task.session.get_analysis_root_path()
         else:
-            # per-benchmark task
-            if self._task.is_exec_task():
+            assert isinstance(self._task, DatasetTask), "Expect DatasetTask"
+            if isinstance(self._task, ExecutionTask):
                 return self._task.benchmark.get_benchmark_data_path()
             else:
                 return self._task.benchmark.get_analysis_path()
@@ -113,8 +115,10 @@ class Target(Borg):
         """
         paths = self.paths()
         if len(paths) != 1:
-            self._task.logger.error("Associated target have invalid number of paths (%s), "
-                                    "expected 1.", len(paths))
+            self._task.logger.error(
+                "Associated target have invalid number of paths (%s), expected 1.",
+                len(paths),
+            )
             assert False, "single_path() invariant failed"
         return paths[0]
 
@@ -185,6 +189,7 @@ class RemoteTarget(Target):
     """
     Target with an associated remote file.
     """
+
     def iter_remote_paths(self, **kwargs) -> Iterator[Path]:
         """
         Iterate over parameterization key and remote path pairs.
@@ -219,8 +224,11 @@ class BenchmarkIterationTarget(Target):
     This introduces the "iteration" parameterization key for the target,
     which can be used in the paths() method.
     """
-    def __init__(self, task: Task, output_id: str, template: str | None = None, **kwargs):
-        assert task.is_dataset_task(), "Task must be a benchmark task"
+
+    def __init__(
+        self, task: DatasetTask, output_id: str, template: str | None = None, **kwargs
+    ):
+        assert isinstance(task, DatasetTask), "Task must be a DatasetTask"
         if not template:
             template = "{prefix}/{iteration}/{base}.{ext}"
         kwargs.setdefault("iteration", list(range(task.benchmark.config.iterations)))
@@ -232,6 +240,7 @@ class RemoteBenchmarkIterationTarget(BenchmarkIterationTarget, RemoteTarget):
     """
     Same as the :class:`BenchmarkIterationTarget` but has associated remote files.
     """
+
     def shell_path_builder(self, **kwargs) -> "Callable[str, str]":
         """
         Return a function that the script template can call with the current iteration
@@ -247,7 +256,9 @@ class RemoteBenchmarkIterationTarget(BenchmarkIterationTarget, RemoteTarget):
                 self.logger.warning(
                     "Suspect script template output path: the bash template "
                     "should only vary along the 'iteration' axis. "
-                    "Found combinations %s, arbitrarily taking the first.", params)
+                    "Found combinations %s, arbitrarily taking the first.",
+                    params,
+                )
             param_args = dict(zip(self._path_parameters.keys(), params[0]))
             path_template = Path(self._path_template.format(**param_args))
             if path_template.is_absolute():
@@ -261,7 +272,14 @@ class ValueTarget(Target):
     """
     Target with an associated in-memory object.
     """
-    def __init__(self, task: Task, output_id: str, validator: Callable[[any], any] | None = None, **kwargs):
+
+    def __init__(
+        self,
+        task: Task,
+        output_id: str,
+        validator: Callable[[any], any] | None = None,
+        **kwargs,
+    ):
         self._value = None
         self._validator = validator
         # Borg state initialization here
@@ -284,7 +302,11 @@ class HTMLTemplateTarget(Target):
 
     Note that the templates are located in pycheribenchplot/templates.
     """
-    env = Environment(loader=PackageLoader("pycheribenchplot", "templates/html"), autoescape=select_autoescape())
+
+    env = Environment(
+        loader=PackageLoader("pycheribenchplot", "templates/html"),
+        autoescape=select_autoescape(),
+    )
 
     def __init__(self, task: Task, template: str, output_id: str | None = None):
         self._template = template
@@ -296,7 +318,9 @@ class HTMLTemplateTarget(Target):
         try:
             tmpl = HTMLTemplateTarget.env.get_template(self._template)
         except TemplateNotFound:
-            self._task.logger.error("Can not find file template %s, target setup is wrong", self._template)
+            self._task.logger.error(
+                "Can not find file template %s, target setup is wrong", self._template
+            )
             raise RuntimeError("Target error")
         with open(self.single_path(), "w") as fd:
             fd.write(tmpl.render(**kwargs))
@@ -310,7 +334,10 @@ class SQLTarget(Target):
     Queries can be executed by obtaining an SQL session as a
     context manager.
     """
-    def __init__(self, task: Task, output_id: str, loader: Callable[[Self], Task] | None = None):
+
+    def __init__(
+        self, task: Task, output_id: str, loader: Callable[[Self], Task] | None = None
+    ):
         # Borg state initialization here
         super().__init__(task, output_id, ext="sqlite", loader=loader)
 
@@ -329,6 +356,7 @@ class DataFrameLoadTaskMixin:
     """
     Polars version of the dataframe load task.
     """
+
     def _load_one_csv(self, path: Path, **kwargs) -> pl.DataFrame:
         """
         Load a CSV file into a dataframe.
@@ -363,7 +391,9 @@ class DataFrameLoadTaskMixin:
         else:
             self.logger.error(
                 "Can not determine how to load %s, add extesion or override "
-                f"{self.__class__.__name__}._load_one()", path)
+                f"{self.__class__.__name__}._load_one()",
+                path,
+            )
             raise RuntimeError("Can not infer file type from extension")
         return df
 
@@ -376,11 +406,13 @@ class DataFrameLoadTaskMixin:
 
         :return: A list of key names for the index levels
         """
-        if self.is_dataset_task() and self.benchmark.config.parameters:
+        if isinstance(self, DatasetTask) and self.benchmark.config.parameters:
             return list(self.benchmark.config.parameters.keys())
         return []
 
-    def _prepare_standard_columns(self, target: Target, df: pl.DataFrame, iteration: int | None) -> pl.DataFrame:
+    def _prepare_standard_columns(
+        self, target: Target, df: pl.DataFrame, iteration: int | None
+    ) -> pl.DataFrame:
         """
         If the target gives us a model, automatically create the standard set of index
         levels if they are part of the model.
@@ -389,7 +421,7 @@ class DataFrameLoadTaskMixin:
         :param df: Input dataframe to transform.
         :return: A new dataframe with the additional index levels.
         """
-        if self.is_dataset_task():
+        if isinstance(self, DatasetTask):
             # Generate benchmark identifier columns
             new_cols = {}
             if "dataset_id" not in df.columns:
@@ -405,7 +437,9 @@ class DataFrameLoadTaskMixin:
             # Generate parameterization columns
             for name, value in self.benchmark.config.parameters.items():
                 if name in df.columns:
-                    self.logger.error("Parameterization key '%s' is already in the dataframe", name)
+                    self.logger.error(
+                        "Parameterization key '%s' is already in the dataframe", name
+                    )
                     raise RuntimeError("Invalid configuration")
                 new_cols[name] = pl.lit(value)
             df = df.with_columns(**new_cols)
@@ -446,12 +480,13 @@ class DataFrameLoadTask(DatasetTask, DataFrameLoadTaskMixin):
 
     This is the default loader task that loads data from file targets.
     """
+
     task_namespace = "internal"
     task_name = "pl-target-load"
 
     def __init__(self, target: Target):
         self.target = target
-        if target.task.is_session_task():
+        if isinstance(target.task, SessionTask):
             raise TypeError("Use DataFrameSessionLoadTask for session-wide targets")
 
         # Borg state initialization occurs here
@@ -473,12 +508,13 @@ class DataFrameSessionLoadTask(SessionTask, DataFrameLoadTaskMixin):
     """
     Internal task to load session-wide target data.
     """
+
     task_namespace = "internal"
     task_name = "target-session-load"
 
     def __init__(self, target: Target):
         self.target = target
-        if target.task.is_dataset_task():
+        if isinstance(target.task, DatasetTask):
             raise TypeError("Use DataFrameLoadTask for per-dataset targets")
 
         # Borg state initialization occurs here

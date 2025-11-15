@@ -11,7 +11,13 @@ import polars.selectors as cs
 import scipy.stats as scs
 
 from .benchmark import Benchmark
-from .config import (AnalysisConfig, Config, InstanceConfig, TaskTargetConfig, config_field)
+from .config import (
+    AnalysisConfig,
+    Config,
+    InstanceConfig,
+    TaskTargetConfig,
+    config_field,
+)
 from .error import ConfigurationError
 from .task import SessionTask, TaskRegistry, dependency
 
@@ -30,9 +36,15 @@ class AnalysisTask(SessionTask):
     more than once for each benchmark run UUID. If this is violated, we need to
     change the task ID generation.
     """
+
     task_namespace = "analysis"
 
-    def __init__(self, session: Session, analysis_config: AnalysisConfig, task_config: Config | None = None):
+    def __init__(
+        self,
+        session: Session,
+        analysis_config: AnalysisConfig,
+        task_config: Config | None = None,
+    ):
         super().__init__(session, task_config=task_config)
         # Analysis configuration for this invocation
         self.analysis_config = analysis_config
@@ -52,7 +64,9 @@ class AnalysisTask(SessionTask):
         Note that this returns data in long-form, see :meth:`AnalysisTask.compute_overhead`.
         """
         if len(df.select(cs.ends_with("_std", "_baseline"))):
-            self.logger.error("Can not compute mean overhead, conflicting columns with suffix '_std' or '_baseline'")
+            self.logger.error(
+                "Can not compute mean overhead, conflicting columns with suffix '_std' or '_baseline'"
+            )
             raise RuntimeError("Invalid column names")
 
         baseline_sel = self.baseline_selector()
@@ -63,11 +77,16 @@ class AnalysisTask(SessionTask):
             join_columns += extra_groupby
 
         # Generate mean and std values for each group
-        agg_selectors = [cs.by_name(metric).mean(), cs.by_name(metric).std().name.suffix("_std")]
+        agg_selectors = [
+            cs.by_name(metric).mean(),
+            cs.by_name(metric).std().name.suffix("_std"),
+        ]
         agg_rename = cs.ends_with("_std").name.suffix("_baseline")
         stats = df.group_by(param_columns).agg(*agg_selectors)
         # Find the baseline dataframe slice
-        bs = stats.filter(**baseline_sel).with_columns(cs.by_name(metric).name.suffix("_baseline"), agg_rename)
+        bs = stats.filter(**baseline_sel).with_columns(
+            cs.by_name(metric).name.suffix("_baseline"), agg_rename
+        )
 
         # Now we align the stats and bs frames to compute delta and overhead
         if join_columns:
@@ -80,8 +99,9 @@ class AnalysisTask(SessionTask):
             # parameter combination
             join_columns = list(baseline_sel.keys())
             _, right_df = pl.align_frames(stats, bs, on=join_columns)
-            aligned_bs = right_df.select(cs.by_name(param_columns)
-                                         | cs.ends_with("_baseline")).fill_null(strategy="forward")
+            aligned_bs = right_df.select(
+                cs.by_name(param_columns) | cs.ends_with("_baseline")
+            ).fill_null(strategy="forward")
             join_df = stats.join(aligned_bs, on=join_columns)
         assert join_df.shape[0] == stats.shape[0], "Unexpected join result"
 
@@ -91,34 +111,64 @@ class AnalysisTask(SessionTask):
         bs_std = f"{metric}_std_baseline"
         delta = join_df.with_columns(
             pl.lit(metric + "_delta").alias("_metric_type"),
-            pl.col(metric) - pl.col(bs_val), (pl.col(m_std).pow(2) + pl.col(bs_std).pow(2)).sqrt()).with_columns(
-                # Mask the baseline slice with NaN
-                pl.when(**baseline_sel).then(float("nan")).otherwise(pl.col(metric)).alias(metric),
-                pl.when(**baseline_sel).then(float("nan")).otherwise(pl.col(m_std)).alias(m_std))
+            pl.col(metric) - pl.col(bs_val),
+            (pl.col(m_std).pow(2) + pl.col(bs_std).pow(2)).sqrt(),
+        ).with_columns(
+            # Mask the baseline slice with NaN
+            pl.when(**baseline_sel)
+            .then(float("nan"))
+            .otherwise(pl.col(metric))
+            .alias(metric),
+            pl.when(**baseline_sel)
+            .then(float("nan"))
+            .otherwise(pl.col(m_std))
+            .alias(m_std),
+        )
 
         # Compute the % Overhead for each metric
-        rel_err_sum = (pl.col(m_std) / pl.col(metric)).pow(2) + (pl.col(bs_std) / pl.col(bs_val)).pow(2)
-        ovh = delta.with_columns(
-            pl.lit(metric + "_overhead").alias("_metric_type"),
-            (pl.col(metric) / pl.col(bs_val)).mul(overhead_scale),
-            rel_err_sum.alias("_tmp_sum_of_err_squared"),
-        ).with_columns((pl.col(metric).abs() * pl.col("_tmp_sum_of_err_squared").sqrt()).alias(m_std)).with_columns(
-            # Mask the baseline slice with NaN
-            pl.when(**baseline_sel).then(float("nan")).otherwise(pl.col(metric)).alias(metric),
-            pl.when(**baseline_sel).then(float("nan")).otherwise(pl.col(m_std)).alias(m_std))
+        rel_err_sum = (pl.col(m_std) / pl.col(metric)).pow(2) + (
+            pl.col(bs_std) / pl.col(bs_val)
+        ).pow(2)
+        ovh = (
+            delta.with_columns(
+                pl.lit(metric + "_overhead").alias("_metric_type"),
+                (pl.col(metric) / pl.col(bs_val)).mul(overhead_scale),
+                rel_err_sum.alias("_tmp_sum_of_err_squared"),
+            )
+            .with_columns(
+                (pl.col(metric).abs() * pl.col("_tmp_sum_of_err_squared").sqrt()).alias(
+                    m_std
+                )
+            )
+            .with_columns(
+                # Mask the baseline slice with NaN
+                pl.when(**baseline_sel)
+                .then(float("nan"))
+                .otherwise(pl.col(metric))
+                .alias(metric),
+                pl.when(**baseline_sel)
+                .then(float("nan"))
+                .otherwise(pl.col(m_std))
+                .alias(m_std),
+            )
+        )
 
         # Combine the stats, delta and ovh frame to have long-form data representation
         stats = stats.with_columns(pl.lit(metric).alias("_metric_type"))
-        lf_stats = pl.concat([
-            stats,
-            delta.select(cs.all().exclude("^.*_baseline$")),
-            ovh.select(cs.all().exclude("^.*_baseline$").exclude("^_tmp.*$"))
-        ],
-                             how="vertical",
-                             rechunk=True)
+        lf_stats = pl.concat(
+            [
+                stats,
+                delta.select(cs.all().exclude("^.*_baseline$")),
+                ovh.select(cs.all().exclude("^.*_baseline$").exclude("^_tmp.*$")),
+            ],
+            how="vertical",
+            rechunk=True,
+        )
 
         # Mark baseline rows with _baseline=True to aid filtering
-        lf_stats = lf_stats.with_columns(pl.when(**baseline_sel).then(True).otherwise(False).alias("_is_baseline"))
+        lf_stats = lf_stats.with_columns(
+            pl.when(**baseline_sel).then(True).otherwise(False).alias("_is_baseline")
+        )
 
         return lf_stats
 
@@ -143,7 +193,9 @@ class AnalysisTask(SessionTask):
             param_columns += extra_groupby
         join_columns = [*param_columns, "iteration"]
 
-        assert not [c for c in df.columns if c.endswith("_right")], "Columns may not have suffix '_right'"
+        assert not [c for c in df.columns if c.endswith("_right")], (
+            "Columns may not have suffix '_right'"
+        )
 
         # The baseline selector must specify a constraint on param_columns.
         # If the constraint does not fix every parameterization axis, we have a number of degrees of
@@ -153,14 +205,25 @@ class AnalysisTask(SessionTask):
         # In order to compute the degrees of freedom of the baseline, we filter-out all derived parameter
         # columns that do not vary within the baseline chunk.
         metric_b = f"{metric}_baseline"
-        baseline = df.filter(**baseline_sel).with_columns(pl.col(metric).alias(metric_b)).select(
-            metric_b, *join_columns)
+        baseline = (
+            df.filter(**baseline_sel)
+            .with_columns(pl.col(metric).alias(metric_b))
+            .select(metric_b, *join_columns)
+        )
         dof = list(
-            baseline.select(cs.by_name(join_columns).n_unique()).transpose(
-                include_header=True, header_name="column",
-                column_names=["n_values"]).filter(pl.col("n_values") > 1)["column"])
-        self.logger.debug("Bootstrap statistics with param=%s extra=%s baseline=%s dof=%s", self.param_columns,
-                          extra_groupby, baseline_sel, dof)
+            baseline.select(cs.by_name(join_columns).n_unique())
+            .transpose(
+                include_header=True, header_name="column", column_names=["n_values"]
+            )
+            .filter(pl.col("n_values") > 1)["column"]
+        )
+        self.logger.debug(
+            "Bootstrap statistics with param=%s extra=%s baseline=%s dof=%s",
+            self.param_columns,
+            extra_groupby,
+            baseline_sel,
+            dof,
+        )
         if dof:
             jdf = df.join(baseline, on=dof).select(~cs.ends_with("_right"))
             # Note that we expect the shape of the dataframe not to change
@@ -168,7 +231,9 @@ class AnalysisTask(SessionTask):
                 self.logger.fatal(
                     "Unexpected baseline join result. Your data may not be aligned on the "
                     "free baseline axes, consider checking that every parameterisation group "
-                    "has all the value combinations for %s", dof)
+                    "has all the value combinations for %s",
+                    dof,
+                )
                 raise RuntimeError("Data constraint violation")
         else:
             # No unconstrained param_columns on the baseline, this should be a single row
@@ -195,7 +260,10 @@ class AnalysisTask(SessionTask):
 
             if chunk.shape[0] > 1:
                 boot = scs.bootstrap(args, statistic_fn, vectorized=True, method="BCa")
-                ci_low, ci_high = boot.confidence_interval.low, boot.confidence_interval.high
+                ci_low, ci_high = (
+                    boot.confidence_interval.low,
+                    boot.confidence_interval.high,
+                )
             else:
                 # Do not generate error  bars, single iteration
                 ci_low = ci_high = None
@@ -204,7 +272,8 @@ class AnalysisTask(SessionTask):
                 cs.by_name(param_columns).first(),
                 pl.lit(s_value).alias(metric),
                 pl.lit(ci_low).alias(ci_low_col),
-                pl.lit(ci_high).alias(ci_high_col))
+                pl.lit(ci_high).alias(ci_high_col),
+            )
             return stats_chunk
 
         def _median_diff(left, right, axis=-1):
@@ -214,8 +283,13 @@ class AnalysisTask(SessionTask):
             # Note that we may have division by zero due to the right median being zero sometimes.
             # We don't care about it, but we need to propagate NaN in these cases.
             right_median = np.median(right, axis=axis)
-            ratio = np.where(right_median != 0,
-                             np.divide(np.median(left, axis=axis), right_median, where=(right_median != 0)), np.nan)
+            ratio = np.where(
+                right_median != 0,
+                np.divide(
+                    np.median(left, axis=axis), right_median, where=(right_median != 0)
+                ),
+                np.nan,
+            )
             return (ratio - 1) * overhead_scale
 
         grouped = df.group_by(*param_columns)
@@ -227,17 +301,23 @@ class AnalysisTask(SessionTask):
 
         # Bootstrap delta median from the baseline and each other group.
         # Note that we force the baseline to baseline delta to 0.
-        delta_stat = grouped.map_groups(lambda chunk: _bootstrap(chunk, [metric, metric_b], _median_diff))
+        delta_stat = grouped.map_groups(
+            lambda chunk: _bootstrap(chunk, [metric, metric_b], _median_diff)
+        )
         delta_stat = delta_stat.with_columns(pl.lit("delta").alias("_metric_type"))
 
         # Bootstrap the median overhead from the baseline and each other group.
         # Note that we force the baseline to baseline overhead to 0.
-        ovh_stat = grouped.map_groups(lambda chunk: _bootstrap(chunk, [metric, metric_b], _median_overhead))
+        ovh_stat = grouped.map_groups(
+            lambda chunk: _bootstrap(chunk, [metric, metric_b], _median_overhead)
+        )
         ovh_stat = ovh_stat.with_columns(pl.lit("overhead").alias("_metric_type"))
 
         out_df = pl.concat([stat, delta_stat, ovh_stat], how="vertical", rechunk=True)
         # Mark rows that belong to the baseline group for easy filtering
-        out_df = out_df.with_columns(pl.when(**baseline_sel).then(True).otherwise(False).alias("_is_baseline"))
+        out_df = out_df.with_columns(
+            pl.when(**baseline_sel).then(True).otherwise(False).alias("_is_baseline")
+        )
 
         return out_df
 
@@ -312,7 +392,9 @@ class AnalysisTask(SessionTask):
                         del baseline_sel["instance"]
                         break
                 else:
-                    self.logger.error("Invalid 'instance' value in baseline configuration")
+                    self.logger.error(
+                        "Invalid 'instance' value in baseline configuration"
+                    )
                     raise ValueError("Invalid configuration")
             selectors = dict(baseline_sel)
         else:
@@ -336,13 +418,15 @@ class AnalysisTask(SessionTask):
             raise ValueError("Invalid configuration")
         return baseline
 
-    def compute_overhead(self,
-                         df: pl.DataFrame,
-                         metric: str,
-                         inverted: bool = False,
-                         extra_groupby: list[str] | None = None,
-                         overhead_scale=1,
-                         how="median") -> pl.DataFrame:
+    def compute_overhead(
+        self,
+        df: pl.DataFrame,
+        metric: str,
+        inverted: bool = False,
+        extra_groupby: list[str] | None = None,
+        overhead_scale=1,
+        how="median",
+    ) -> pl.DataFrame:
         """
         Generate overhead vs the common baseline for long-form data. The result
         is returned as a new dataframe.
@@ -375,13 +459,15 @@ class AnalysisTask(SessionTask):
         else:
             return self._do_mean_overhead(df, metric, extra_groupby, overhead_scale)
 
-    def histogram(self,
-                  df: pl.DataFrame,
-                  value: str,
-                  bins: list[float] | None = None,
-                  bin_count: int = 100,
-                  prefix: str = "hist_",
-                  extra_groupby: list[str] | None = None) -> pl.DataFrame:
+    def histogram(
+        self,
+        df: pl.DataFrame,
+        value: str,
+        bins: list[float] | None = None,
+        bin_count: int = 100,
+        prefix: str = "hist_",
+        extra_groupby: list[str] | None = None,
+    ) -> pl.DataFrame:
         """
         Compute an histogram along the parameterization axes.
         This produces two columns:
@@ -410,10 +496,12 @@ class AnalysisTask(SessionTask):
         hdf = df.group_by(param_columns).agg(
             pl.col(value).hist(bins=bins, include_breakpoint=True).alias(hist_column),
             # Note: preserve the columns assuming the param_columns form a table key
-            cs.by_name(df.columns).exclude(param_columns).first())
+            cs.by_name(df.columns).exclude(param_columns).first(),
+        )
         hdf = hdf.explode(hist_column).with_columns(
             pl.col(hist_column).struct[0].alias(f"{prefix}bin"),
-            pl.col(hist_column).struct[1].alias(f"{prefix}count"))
+            pl.col(hist_column).struct[1].alias(f"{prefix}count"),
+        )
         return hdf.select(df.columns + [f"{prefix}bin", f"{prefix}count"])
 
 
@@ -424,35 +512,24 @@ class DatasetAnalysisTask(AnalysisTask):
     These generally used to perform per-dataset operations such as loading
     benchmark output data, pre-processing and preliminary aggregation.
     """
+
     task_namespace = "analysis.dataset"
 
-    def __init__(self, benchmark: Benchmark, analysis_config: AnalysisConfig, task_config: Config | None = None):
+    def __init__(
+        self,
+        benchmark: Benchmark,
+        analysis_config: AnalysisConfig,
+        task_config: Config | None = None,
+    ):
         #: The associated benchmark context
         self.benchmark = benchmark
 
         # Borg initialization occurs here
         super().__init__(benchmark.session, analysis_config, task_config=task_config)
 
-    @classmethod
-    def is_session_task(cls):
-        return False
-
-    @classmethod
-    def is_dataset_task(cls):
-        return True
-
-    @classmethod
-    @deprecated("is_benchmark_task has been renamed is_dataset_task")
-    def is_benchmark_task(cls):
-        return cls.is_dataset_task()
-
     @property
     def uuid(self):
         return self.benchmark.uuid
-
-    @property
-    def g_uuid(self):
-        return self.benchmark.g_uuid
 
     @property
     def task_id(self):
@@ -469,13 +546,16 @@ class DatasetAnalysisTaskGroup(AnalysisTask):
     """
     Synthetic target that schedules a per-dataset analysis task for each dataset in the session.
     """
+
     task_name = "sched-group"
 
-    def __init__(self,
-                 session: Session,
-                 task_class: Type[DatasetAnalysisTask],
-                 analysis_config: AnalysisConfig,
-                 task_config: Config | None = None):
+    def __init__(
+        self,
+        session: Session,
+        task_class: Type[DatasetAnalysisTask],
+        analysis_config: AnalysisConfig,
+        task_config: Config | None = None,
+    ):
         self._task_class = task_class
 
         # Borg initialization occurs here
@@ -507,6 +587,7 @@ class ParamSliceInfo:
     """
     Internal helper that identifies a parameterization slice
     """
+
     #: Map { param_name: param_value } that identifies this slice
     fixed_params: dict[str, any]
     #: Names of free-floating parameters in this slice
@@ -541,14 +622,17 @@ class SliceAnalysisTask(AnalysisTask):
     Session vs Dataset does not make sense here.
     I need to inherit AnalysisTask because I want to reuse the overhead computing.
     """
+
     #: Maximum number of `free_axes` supported
     max_degrees_of_freedom = 4
 
-    def __init__(self,
-                 session: Session,
-                 slice_info: ParamSliceInfo,
-                 analysis_config: AnalysisConfig,
-                 task_config: Config | None = None):
+    def __init__(
+        self,
+        session: Session,
+        slice_info: ParamSliceInfo,
+        analysis_config: AnalysisConfig,
+        task_config: Config | None = None,
+    ):
         self._slice_info = slice_info
         # Borg state initialization
         super().__init__(session, analysis_config, task_config)
@@ -570,7 +654,9 @@ class SliceAnalysisTask(AnalysisTask):
         descriptors for the current slice.
         """
         if self.slice_info.fixed_params:
-            sliced = self.session.parameterization_matrix.filter(**self.slice_info.fixed_params)
+            sliced = self.session.parameterization_matrix.filter(
+                **self.slice_info.fixed_params
+            )
         else:
             sliced = self.session.parameterization_matrix
         return sliced["descriptor"]
@@ -588,7 +674,10 @@ class ParamFilterRule(Config):
     """
     Parameter filter rule that matches a specific value along an axis.
     """
-    matches: dict[str, str | int] = config_field(Config.REQUIRED, desc="Mapping of parameter key/values to match")
+
+    matches: dict[str, str | int] = config_field(
+        Config.REQUIRED, desc="Mapping of parameter key/values to match"
+    )
 
 
 @dataclass
@@ -596,6 +685,7 @@ class ParamFilterConfig(Config):
     """
     Define filtering rules to exclude a subset of the data.
     """
+
     keep: list[ParamFilterRule] = config_field(list, desc="List of whitelist rules")
     drop: list[ParamFilterRule] = config_field(list, desc="List of blacklist rules")
 
@@ -611,26 +701,33 @@ class GenericAnalysisConfig(Config):
      2. The `free_axes` are the degrees of freedom available to the
         SliceAnalysisTask.
     """
+
     #: The handler that we broadcast each data slice to, must be a SliceAnalysisConfig.
     #: XXX I think I want to allow multiple task specs here
     #: We should have a special configuration type for SliceTargetConfig
     #: this would allow us to filter for slice targets at configuration time
-    broadcast: List[TaskTargetConfig] = config_field(MISSING,
-                                                     desc="Analysis task that is run for each fixed_axes grouping")
+    broadcast: List[TaskTargetConfig] = config_field(
+        MISSING, desc="Analysis task that is run for each fixed_axes grouping"
+    )
 
     #: Name of axes to keep fixed and broadcast. Note that the names are
     #: completely user-defined. We have a reserved set of axes that must
     #: always be present: ["target", "scenario"], but need not be fixed.
-    fixed_axes: List[str] = config_field(list, desc="Parameterisation axes to keep fixed")
+    fixed_axes: List[str] = config_field(
+        list, desc="Parameterisation axes to keep fixed"
+    )
 
     #: Filter the parameterization before ingestion, so that only a subset of the slices
     #: will be actually scheduled
     param_filter: ParamFilterConfig | None = config_field(
-        None, desc="Filter the parameterisation to process only a subset of the slices.")
+        None, desc="Filter the parameterisation to process only a subset of the slices."
+    )
 
     #: Override the baseline selector for this specific analysis
     baseline: Optional[dict] = config_field(
-        None, desc="Override baseline selector. This must uniquely identify a single benchmark run.")
+        None,
+        desc="Override baseline selector. This must uniquely identify a single benchmark run.",
+    )
 
 
 class GenericAnalysisTask(AnalysisTask):
@@ -660,17 +757,26 @@ class GenericAnalysisTask(AnalysisTask):
     When used directly, the analysis configuration permits the nested configuration of
     a specific SliceAnalysisTask.
     """
+
     task_namespace = "analysis"
     task_name = "dynamic"
     task_config_class = GenericAnalysisConfig
     public = True
 
-    def __init__(self, session: Session, analysis_config: AnalysisConfig, task_config: Config | None = None):
+    def __init__(
+        self,
+        session: Session,
+        analysis_config: AnalysisConfig,
+        task_config: Config | None = None,
+    ):
         super().__init__(session, analysis_config, task_config)
 
         if not set(self.param_columns).issuperset(self.config.fixed_axes):
-            self.logger.error("Invalid configuration: fixed_axes=%s must be a subset of parameterisation %s",
-                              self.config.fixed_axes, self.param_columns)
+            self.logger.error(
+                "Invalid configuration: fixed_axes=%s must be a subset of parameterisation %s",
+                self.config.fixed_axes,
+                self.param_columns,
+            )
             raise ConfigurationError(f"Invalid {self.task_config_class} configuration")
 
         self._free_axes = set(self.param_columns).difference(self.config.fixed_axes)
@@ -691,7 +797,12 @@ class GenericAnalysisTask(AnalysisTask):
         # XXX this is not true, need to do something more refined
         self._rank = len(self._free_axes)
 
-        self.logger.debug("Using axes fixed=%s free=%s (%d DOF)", self.config.fixed_axes, self._free_axes, self._rank)
+        self.logger.debug(
+            "Using axes fixed=%s free=%s (%d DOF)",
+            self.config.fixed_axes,
+            self._free_axes,
+            self._rank,
+        )
 
     @property
     def task_id(self):
@@ -752,8 +863,12 @@ class GenericAnalysisTask(AnalysisTask):
             for name, group_slice in groups:
                 group_options = copy.deepcopy(slice_config)
                 fixed_slice_params = dict(zip(self.config.fixed_axes, name))
-                slice_info = ParamSliceInfo(fixed_params=fixed_slice_params,
-                                            free_axes=list(self._free_axes),
-                                            rank=self._rank)
+                slice_info = ParamSliceInfo(
+                    fixed_params=fixed_slice_params,
+                    free_axes=list(self._free_axes),
+                    rank=self._rank,
+                )
                 # XXX check that the rank is not too large
-                yield slice_task(self.session, slice_info, self.analysis_config, group_options)
+                yield slice_task(
+                    self.session, slice_info, self.analysis_config, group_options
+                )

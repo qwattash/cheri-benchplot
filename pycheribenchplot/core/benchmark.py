@@ -1,23 +1,19 @@
-import shlex
-from collections import defaultdict
-from dataclasses import dataclass, field
-from enum import Enum
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Type
 
-import pandas as pd
-
 from .artefact import RemoteTarget
-from .config import (AnalysisConfig, CommandHookConfig, Config, ExecTargetConfig, config_field)
+from .config import CommandHookConfig, Config, ExecTargetConfig
 from .elf import AddressSpaceManager
 from .error import TaskNotFound
-from .instance import InstanceManager
 from .scheduler import TaskScheduler
 from .shellgen import ScriptContext, ScriptHook
-from .task import ExecutionTask, SessionExecutionTask, Task, TaskRegistry
-from .util import new_logger, timing
+from .task import ExecutionTask, Task, TaskRegistry
+from .util import new_logger
 
-AnyExecTask = ExecutionTask | SessionExecutionTask
+
+type Session = "Session"
+type BenchmarkRunConfig = "BenchmarkRunConfig"
 
 
 @dataclass
@@ -25,6 +21,7 @@ class ExecTaskConfig(Config):
     """
     Configuration object for :class:`BenchmarkExecTask`
     """
+
     pass
 
 
@@ -33,6 +30,7 @@ class BenchmarkExecTask(Task):
     Task that dynamically gathers dependencies for all the execution task required
     by a benchmark run instance.
     """
+
     task_namespace = "internal.exec"
     task_name = "benchmark-root"
 
@@ -41,9 +39,6 @@ class BenchmarkExecTask(Task):
         self.benchmark = benchmark
         #: Script template context for this benchmark context
         self.script = ScriptContext(benchmark)
-        #: Whether we need to request a VM instance, this becomes valid after
-        #: dependency scanning (deprecated)
-        self._need_instance = None
 
         # Borg initialization occurs here
         super().__init__(task_config=task_config)
@@ -51,16 +46,16 @@ class BenchmarkExecTask(Task):
     def _fetch_task(self, config: ExecTargetConfig) -> Task:
         task_klass = TaskRegistry.resolve_exec_task(config.handler)
         if task_klass is None:
-            self.logger.error("Invalid task name specification exec.%s", task_name)
+            self.logger.error(
+                "Invalid task name specification exec.%s", task_klass.task_name
+            )
             raise ValueError("Invalid task name")
-        if task_klass.require_instance:
-            self._need_instance = True
         if issubclass(task_klass, ExecutionTask):
-            return task_klass(self.benchmark, self.script, task_config=config.task_options)
-        elif issubclass(task_klass, SessionExecutionTask):
-            return task_klass(self.session, task_config=config.task_options)
+            return task_klass(
+                self.benchmark, self.script, task_config=config.task_options
+            )
         else:
-            self.logger.error("Invalid task %s, must be ExecutionTask or SessionExecutionTask", task_klass)
+            self.logger.error("Invalid task %s, must be ExecutionTask", task_klass)
             raise TypeError("Invalid task type")
 
     def _handle_command_hook(self, phase: str, hook_config: CommandHookConfig):
@@ -77,7 +72,9 @@ class BenchmarkExecTask(Task):
                 return
 
         match_str = " && ".join([f"{k}={v}" for k, v in hook_config.matches.items()])
-        hook = ScriptHook(name=f"User hook when {match_str}", commands=hook_config.commands)
+        hook = ScriptHook(
+            name=f"User hook when {match_str}", commands=hook_config.commands
+        )
         self.script.add_hook(phase, hook)
 
     def _handle_config_command_hooks(self):
@@ -97,7 +94,12 @@ class BenchmarkExecTask(Task):
             if not isinstance(output, RemoteTarget):
                 continue
             for remote_path, host_path in zip(output.remote_paths(), output.paths()):
-                self.logger.debug("Extract %s guest: %s => host: %s", output_key, remote_path, host_path)
+                self.logger.debug(
+                    "Extract %s guest: %s => host: %s",
+                    output_key,
+                    remote_path,
+                    host_path,
+                )
                 instance.extract_file(remote_path, host_path)
 
     @property
@@ -118,7 +120,6 @@ class BenchmarkExecTask(Task):
         # Note that dependencies are guaranteed to be scanned on schedule resolution,
         # so before resource requests are resolved. We can determine here how many deps
         # require an instance
-        self._need_instance = False
         for exec_target in self.benchmark.config.generators:
             yield self._fetch_task(exec_target)
 
@@ -126,17 +127,11 @@ class BenchmarkExecTask(Task):
         """
         Generate the per-benchmark execution scripts.
         """
-        assert self._need_instance is not None, "need_instance must have been set, did not scan dependencies?"
-
-        if not self._need_instance:
-            # We are done, nothing to run on a remote instance, any task to execute has been completed by deps
-            self.logger.info("Run %s completed", self.benchmark)
-            return
-
         self._handle_config_command_hooks()
         script_path = self.benchmark.get_run_script_path()
-        remote_script_path = Path(f"{self.benchmark.config.name}-{self.benchmark.uuid}.sh")
-        self.script.register_global("workload_done_file", self.session.workload_done_file)
+        self.script.register_global(
+            "workload_done_file", self.session.workload_done_file
+        )
         with open(script_path, "w+") as script_file:
             self.script.render(script_file)
         script_path.chmod(0o755)
@@ -149,7 +144,8 @@ class Benchmark:
     :param session: The parent session
     :param config: The benchmark run configuration allocated to this handler.
     """
-    def __init__(self, session: "Session", config: "BenchmarkRunConfig"):
+
+    def __init__(self, session: Session, config: BenchmarkRunConfig):
         self.session = session
         self.config = config
         self.logger = new_logger(f"{self.config.name}:{self.config.instance.name}")
@@ -198,9 +194,13 @@ class Benchmark:
 
     @property
     def cheribsd_rootfs_path(self):
-        rootfs_path = self.user_config.rootfs_path / f"rootfs-{self.config.instance.cheri_target}"
+        rootfs_path = (
+            self.user_config.rootfs_path / f"rootfs-{self.config.instance.cheri_target}"
+        )
         if not rootfs_path.exists() or not rootfs_path.is_dir():
-            raise ValueError(f"Invalid rootfs path {rootfs_path} for benchmark instance")
+            raise ValueError(
+                f"Invalid rootfs path {rootfs_path} for benchmark instance"
+            )
         return rootfs_path
 
     def _ensure_dir_tree(self):
@@ -232,7 +232,10 @@ class Benchmark:
         :return: Path for archiving binaries used in the run but belonging to the instance.
             This avoids duplication.
         """
-        return self.session.get_asset_root_path() / f"{self.config.instance.name}-{self.g_uuid}"
+        return (
+            self.session.get_asset_root_path()
+            / f"{self.config.instance.name}-{self.g_uuid}"
+        )
 
     def get_plot_path(self) -> Path:
         """
@@ -268,7 +271,9 @@ class Benchmark:
         exec_task = BenchmarkExecTask(self, task_config=exec_config)
         return exec_task
 
-    def find_exec_task(self, task_class: Type[AnyExecTask], include_subclass=False) -> AnyExecTask:
+    def find_exec_task(
+        self, task_class: Type[ExecutionTask], include_subclass=False
+    ) -> ExecutionTask:
         """
         Find the given execution task configured for the current benchmark context.
 
@@ -279,18 +284,28 @@ class Benchmark:
         main_task = self.build_exec_task(ExecTaskConfig())
         deps = list(main_task.dependencies())
         for task in deps:
-            if (task_class.task_namespace == task.task_namespace and task_class.task_name == task.task_name):
+            if (
+                task_class.task_namespace == task.task_namespace
+                and task_class.task_name == task.task_name
+            ):
                 if not isinstance(task, task_class):
-                    self.logger.error("Found generator for %s but it is not an instance of %s", task.task_id,
-                                      task_class)
+                    self.logger.error(
+                        "Found generator for %s but it is not an instance of %s",
+                        task.task_id,
+                        task_class,
+                    )
                     raise RuntimeError("Invalid exec task instance")
                 return task
             if include_subclass and isinstance(task, task_class):
                 return task
         # XXX Recursively look into dependencies
-        raise TaskNotFound("Task %s can not be found among the session generators", task_class)
+        raise TaskNotFound(
+            "Task %s can not be found among the session generators", task_class
+        )
 
-    def schedule_exec_tasks(self, scheduler: TaskScheduler, exec_config: ExecTaskConfig):
+    def schedule_exec_tasks(
+        self, scheduler: TaskScheduler, exec_config: ExecTaskConfig
+    ):
         """
         Generate the top-level benchmark execution task for this benchmark run and schedule it.
 

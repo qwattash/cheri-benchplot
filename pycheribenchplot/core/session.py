@@ -12,13 +12,20 @@ from typing_extensions import Self
 
 from .analysis import AnalysisTask, DatasetAnalysisTaskGroup
 from .benchmark import Benchmark, ExecTaskConfig
-from .config import (AnalysisConfig, AssetConfig, AssetImportAction,
-                     BenchplotUserConfig, ConfigContext, InstanceConfig,
-                     PipelineConfig, SessionRunConfig)
+from .config import (
+    AnalysisConfig,
+    AssetConfig,
+    AssetImportAction,
+    BenchplotUserConfig,
+    ConfigContext,
+    InstanceConfig,
+    PipelineConfig,
+    SessionRunConfig,
+)
 from .instance import InstanceManager
 from .scheduler import TaskScheduler
 from .shellgen import TemplateContextBase
-from .task import ExecutionTask, SessionExecutionTask, TaskRegistry
+from .task import DatasetTask, ExecutionTask, SessionTask, TaskRegistry
 from .util import new_logger
 
 #: Constant, name of the generated session configuration file
@@ -39,8 +46,14 @@ class Session:
     main benchplot configuration. This instructs the session about the components
     to run and how.
     """
+
     @classmethod
-    def make_new(cls, user_config: BenchplotUserConfig, config: PipelineConfig, session_path: Path) -> Self:
+    def make_new(
+        cls,
+        user_config: BenchplotUserConfig,
+        config: PipelineConfig,
+        session_path: Path,
+    ) -> Self:
         """
         Create a new session and initialize the directory hierarchy
 
@@ -50,7 +63,9 @@ class Session:
         :return: A new session instance
         """
         if session_path.exists():
-            benchplot_logger.error("Session directory already exists for session %s", session_path)
+            benchplot_logger.error(
+                "Session directory already exists for session %s", session_path
+            )
             raise ValueError("New session path already exists")
         run_config = SessionRunConfig.generate(user_config, config)
         run_config.name = session_path.name
@@ -95,7 +110,12 @@ class Session:
         benchplot_logger.debug("Resolved session %s => %s", path, session)
         return session
 
-    def __init__(self, user_config: BenchplotUserConfig, config: SessionRunConfig, session_path: Path = None):
+    def __init__(
+        self,
+        user_config: BenchplotUserConfig,
+        config: SessionRunConfig,
+        session_path: Path = None,
+    ):
         super().__init__()
         # Pre-initialization logger
         self.logger = new_logger("session-init")
@@ -120,8 +140,10 @@ class Session:
 
         # Before using the workers configuration, check if we are overriding it
         if self.user_config.concurrent_workers:
-            self.logger.debug("Overriding maximum workers count from user configuration (max=%d)",
-                              self.user_config.concurrent_workers)
+            self.logger.debug(
+                "Overriding maximum workers count from user configuration (max=%d)",
+                self.user_config.concurrent_workers,
+            )
             self.config.concurrent_workers = self.user_config.concurrent_workers
 
         #: Task scheduler
@@ -165,7 +187,9 @@ class Session:
         dataset_axes = {k: [] for k in all_parameters}
         for name in RESERVED_PARAMETER_NAMES:
             if name in dataset_axes:
-                self.logger.error("Invalid parameterization axis: '%s', reserved name.", name)
+                self.logger.error(
+                    "Invalid parameterization axis: '%s', reserved name.", name
+                )
                 raise RuntimeError("Configuration error")
         # Instance identifier column
         instance_axis = []
@@ -180,8 +204,12 @@ class Session:
         for dataset_config in self.config.configurations:
             descriptor_axes = set(dataset_config.parameters.keys())
             if diff := descriptor_axes.symmetric_difference(all_parameters):
-                self.logger.error("Data parameterization for '%s' is incomplete: "
-                                  "missing values for axes: %s", dataset_config.name, ",".join(diff))
+                self.logger.error(
+                    "Data parameterization for '%s' is incomplete: "
+                    "missing values for axes: %s",
+                    dataset_config.name,
+                    ",".join(diff),
+                )
                 raise RuntimeError("Configuration error")
             # Add one row to the table skeleton
             descriptor = Benchmark(self, dataset_config)
@@ -234,7 +262,11 @@ class Session:
         """
         The set of parameter keys that index the rows of the benchmark matrix.
         """
-        return [col for col in self.parameterization_matrix.columns if col not in RESERVED_PARAMETER_NAMES]
+        return [
+            col
+            for col in self.parameterization_matrix.columns
+            if col not in RESERVED_PARAMETER_NAMES
+        ]
 
     def get_public_tasks(self) -> list[Type[AnalysisTask]]:
         """
@@ -269,7 +301,9 @@ class Session:
             self.logger.info("Import asset %s", name)
             if import_config.dst:
                 if import_config.dst.is_absolute():
-                    self.logger.warning("Asset destination is absolute path %s", import_config.dst)
+                    self.logger.warning(
+                        "Asset destination is absolute path %s", import_config.dst
+                    )
                     import_config.dst = import_config.dst.relative_to("/")
                 dst = self.get_asset_root_path() / import_config.dst
             else:
@@ -279,7 +313,10 @@ class Session:
                 case AssetImportAction.COPY:
                     shutil.copytree(import_config.src, dst, dirs_exist_ok=True)
                 case _:
-                    self.logger.error("Unexpected import action %s, asset ignored", import_config.action)
+                    self.logger.error(
+                        "Unexpected import action %s, asset ignored",
+                        import_config.action,
+                    )
 
     def bundle(self, path: Path | None = None, include_raw_data: bool = True) -> Path:
         """
@@ -287,7 +324,9 @@ class Session:
         """
         bundle_path = path if path else self.session_root_path.parent
         if bundle_path.exists() and bundle_path.is_dir():
-            bundle_file = bundle_path / self.session_root_path.with_suffix(".tar.gz").name
+            bundle_file = (
+                bundle_path / self.session_root_path.with_suffix(".tar.gz").name
+            )
         else:
             if bundle_path.name.endswith(".tar.gz"):
                 bundle_file = bundle_path
@@ -302,7 +341,18 @@ class Session:
         else:
             archive_src = self.get_plot_root_path()
 
-        result = subprocess.run(["tar", "-z", "-c", "-C", archive_src, "-f", bundle_file, self.session_root_path.name])
+        result = subprocess.run(
+            [
+                "tar",
+                "-z",
+                "-c",
+                "-C",
+                archive_src,
+                "-f",
+                bundle_file,
+                self.session_root_path.name,
+            ]
+        )
         if result.returncode:
             self.logger.fatal("Failed to produce bundle")
             raise RuntimeError("Failed to bundle session")
@@ -336,13 +386,21 @@ class Session:
         srcs = {}
         for src_session in other:
             if src_session.uuid != self.uuid:
-                self.logger.error("Can not merge sessions with mismatching UUIDs: %s", src_session.session_root_path)
+                self.logger.error(
+                    "Can not merge sessions with mismatching UUIDs: %s",
+                    src_session.session_root_path,
+                )
                 raise RuntimeError("Session UUID mismatch")
             if src_session.session_root_path == self.session_root_path:
-                self.logger.warning("Skipping merge into self: %s", src_session.session_root_path)
+                self.logger.warning(
+                    "Skipping merge into self: %s", src_session.session_root_path
+                )
                 continue
             if src_session.session_root_path in srcs:
-                self.logger.warning("Skipping duplicate session to merge: %s", src_session.session_root_path)
+                self.logger.warning(
+                    "Skipping duplicate session to merge: %s",
+                    src_session.session_root_path,
+                )
                 continue
             srcs[src_session.session_root_path] = src_session
 
@@ -458,17 +516,22 @@ class Session:
         # These are generated according to :attr:`PipelineBenchmarkConfig.system`
         # specification.
         data_root = self.get_data_root_path()
-        for (target, ), section in self.parameterization_matrix.group_by("target"):
-            workdirs = [bench.get_benchmark_data_path().relative_to(data_root) for bench in section["descriptor"]]
+        for (target,), section in self.parameterization_matrix.group_by("target"):
+            workdirs = [
+                bench.get_benchmark_data_path().relative_to(data_root)
+                for bench in section["descriptor"]
+            ]
             ctx = TemplateContextBase(self.logger)
             ctx.set_template("run-target.sh.jinja")
-            ctx.extend_context({
-                "target": target,
-                "workload_run_script": self.workload_run_script,
-                "workload_workdirs": workdirs,
-                "workload_done_file": self.workload_done_file,
-                "bundle_results": self.config.bundle_results
-            })
+            ctx.extend_context(
+                {
+                    "target": target,
+                    "workload_run_script": self.workload_run_script,
+                    "workload_workdirs": workdirs,
+                    "workload_done_file": self.workload_done_file,
+                    "bundle_results": self.config.bundle_results,
+                }
+            )
             run_target = re.sub(r"[\s/]", "-", target)
             script_path = self.get_data_root_path() / f"run-target-{run_target}.sh"
             with open(script_path, "w+") as script_file:
@@ -517,7 +580,9 @@ class Session:
         self.logger.info("Session %s execution completed", self.name)
         self.scheduler.report_failures(self.logger)
 
-    def analyse(self, analysis_config: AnalysisConfig | None, set_default: bool = False):
+    def analyse(
+        self, analysis_config: AnalysisConfig | None, set_default: bool = False
+    ):
         """
         Run the session analysis tasks requested.
         The analysis pipeline is slighly different from the execution pipeline.
@@ -544,43 +609,45 @@ class Session:
         for task_spec in analysis_config.tasks:
             resolved = TaskRegistry.resolve_task(task_spec.handler)
             if not resolved:
-                self.logger.error("Invalid task name specification %s", task_spec.handler)
+                self.logger.error(
+                    "Invalid task name specification %s", task_spec.handler
+                )
                 raise ValueError("Invalid task name")
             for task_klass in resolved:
                 if not issubclass(task_klass, AnalysisTask):
-                    self.logger.warning("Analysis step only supports scheduling of AnalysisTasks, skipping %s",
-                                        task_klass)
-                if task_klass.task_config_class and isinstance(task_spec.task_options, dict):
-                    options = task_klass.task_config_class.schema().load(task_spec.task_options)
+                    self.logger.warning(
+                        "Analysis step only supports scheduling of AnalysisTasks, skipping %s",
+                        task_klass,
+                    )
+                if task_klass.task_config_class and isinstance(
+                    task_spec.task_options, dict
+                ):
+                    options = task_klass.task_config_class.schema().load(
+                        task_spec.task_options
+                    )
                 else:
                     options = task_spec.task_options
 
                 # If the task is a session-wide task, just schedule it.
                 # If the task is per-dataset, schedule one instance for each dataset.
-                if task_klass.is_session_task():
+                if issubclass(task_klass, SessionTask):
                     task = task_klass(self, analysis_config, task_config=options)
-                elif task_klass.is_dataset_task():
-                    task = DatasetAnalysisTaskGroup(self, task_klass, analysis_config, task_config=options)
-                self.logger.debug("Schedule analysis task %s with opts %s", task, options)
+                elif issubclass(task_klass, DatasetTask):
+                    task = DatasetAnalysisTaskGroup(
+                        self, task_klass, analysis_config, task_config=options
+                    )
+                self.logger.debug(
+                    "Schedule analysis task %s with opts %s", task, options
+                )
                 self.scheduler.add_task(task)
         self.logger.info("Session %s start analysis", self.name)
         self.scheduler.run()
         self.logger.info("Session %s analysis finished", self.name)
         self.scheduler.report_failures(self.logger)
 
-    def find_exec_task(self, task_class: Type[SessionExecutionTask]) -> SessionExecutionTask:
-        """
-        Find a session-wide execution task and return a task instance.
-
-        This can be used by analysis tasks to load generator dependencies.
-        """
-        task = self.all_benchmarks()[0].find_exec_task(task_class)
-        if not task.is_session_task() or not task.is_exec_task():
-            self.logger.error("The task %s is not a SessionExecutionTask", task_class)
-            raise TypeError("Invalid task type")
-        return task
-
-    def find_all_exec_tasks(self, task_class: Type[ExecutionTask]) -> list[ExecutionTask]:
+    def find_all_exec_tasks(
+        self, task_class: Type[ExecutionTask]
+    ) -> list[ExecutionTask]:
         """
         Find all execution tasks of a given type and return them as a list.
 
@@ -589,7 +656,7 @@ class Session:
         tasks = []
         for bench in self.all_benchmarks():
             task = bench.find_exec_task(task_class)
-            if not task.is_dataset_task() or not task.is_exec_task():
+            if not isinstance(task, ExecutionTask):
                 self.logger.error("The task %s is not an ExecutionTask", task_class)
                 raise TypeError("Invalid task type")
             tasks.append(task)

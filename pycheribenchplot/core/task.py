@@ -1,18 +1,11 @@
 import dataclasses as dc
-import multiprocessing as mp
 import re
 from collections import defaultdict
-from collections.abc import Iterable
-from contextlib import ExitStack, contextmanager
 from io import StringIO
-from queue import Queue
 from textwrap import indent
-from threading import Condition, Event, Lock, Semaphore, Thread
-from typing import (Any, Callable, ContextManager, Hashable, Iterable, Self,
-                    Type)
-from warnings import warn
+from threading import Event
+from typing import Callable, Generator, Hashable, Iterable, Self, Type
 
-import networkx as nx
 import polars as pl
 
 from .borg import Borg
@@ -20,12 +13,14 @@ from .config import Config
 from .error import MissingDependency, TaskNotFound
 from .util import new_logger
 
-
-class WorkerShutdown(Exception):
-    """
-    Special exception that triggers the worker thread loop shutdown.
-    """
-    pass
+type Session = "Session"
+type Benchmark = "Benchmark"
+type TaskFwd = "Task"
+type TaskType = Type[TaskFwd]
+type TaskTypeSequence = Generator[TaskType]
+type Target = "Target"
+type ScriptContext = "ScriptContext"
+type ResourceRequest = "ResourceRequest"
 
 
 @dc.dataclass
@@ -48,6 +43,7 @@ class TaskRegistry(type):
     :attribute public_tasks: Map task_namespace -> { task_name -> Task } for publicly name-able tasks
     :attribute all_tasks: Map task_namespace -> { task_name -> Task } for all tasks
     """
+
     public_tasks = defaultdict(dict)
     all_tasks = defaultdict(dict)
 
@@ -67,11 +63,17 @@ class TaskRegistry(type):
             # Skip, this is an abstract task
             return
         if self.task_config_class:
-            assert dc.is_dataclass(self.task_config_class), "Task configuration must be a dataclass"
-            assert issubclass(self.task_config_class, Config), "Task configuration must inherit Config"
+            assert dc.is_dataclass(self.task_config_class), (
+                "Task configuration must be a dataclass"
+            )
+            assert issubclass(self.task_config_class, Config), (
+                "Task configuration must inherit Config"
+            )
         ns = TaskRegistry.all_tasks[self.task_namespace]
         if self.task_name in ns:
-            raise ValueError(f"Multiple tasks with the same name: {self}, {ns[self.task_name]}")
+            raise ValueError(
+                f"Multiple tasks with the same name: {self}, {ns[self.task_name]}"
+            )
         ns[self.task_name] = self
         if self.public:
             ns = TaskRegistry.public_tasks[self.task_namespace]
@@ -92,7 +94,7 @@ class TaskRegistry(type):
         cls._output_registry[ref.name] = ref.attr
 
     @classmethod
-    def resolve_exec_task(cls, task_spec: str) -> Type["Task"] | None:
+    def resolve_exec_task(cls, task_spec: str) -> TaskType | None:
         """
         Find the exec task named by the given task specifier.
 
@@ -115,7 +117,7 @@ class TaskRegistry(type):
         return task
 
     @classmethod
-    def resolve_task(cls, task_spec: str) -> list[Type["Task"]]:
+    def resolve_task(cls, task_spec: str) -> list[TaskType]:
         """
         Find the task named by the given task specifier.
 
@@ -136,7 +138,7 @@ class TaskRegistry(type):
         return []
 
     @classmethod
-    def iter_public(cls) -> "Generator[Type[Task]]":
+    def iter_public(cls) -> TaskTypeSequence:
         for ns, tasks in cls.public_tasks.items():
             for key, t in tasks.items():
                 yield t
@@ -178,6 +180,7 @@ class Task(Borg, metaclass=TaskRegistry):
         data generation context. This essentially means that there is a per-dataset task
         for each parameterization in the session datagen matrix.
     """
+
     #: Mark the task as a top-level target, which can be named in configuration files and from CLI commands.
     public = False
     #: Human-readable task namespace, used for task identification
@@ -188,10 +191,15 @@ class Task(Borg, metaclass=TaskRegistry):
     task_config_class: Type[Config] = None
 
     def __init__(self, task_config: Config = None):
-        assert self.task_name is not None, f"Attempted to use task with uninitialized name {self.__class__.__name__}"
+        assert self.task_name is not None, (
+            f"Attempted to use task with uninitialized name {self.__class__.__name__}"
+        )
         assert self.task_namespace is None or TASK_NAME_REGEX.match(
-            self.task_namespace), f"Invalid task namespace '{self.task_namespace}'"
-        assert TASK_NAME_REGEX.match(self.task_name), f"Invalid task name '{self.task_name}'"
+            self.task_namespace
+        ), f"Invalid task namespace '{self.task_namespace}'"
+        assert TASK_NAME_REGEX.match(self.task_name), (
+            f"Invalid task name '{self.task_name}'"
+        )
 
         #: task-specific configuration options, if any
         self.config = task_config
@@ -264,33 +272,6 @@ class Task(Borg, metaclass=TaskRegistry):
         else:
             return None
 
-    @classmethod
-    def is_exec_task(cls):
-        return False
-
-    @classmethod
-    def is_session_task(cls) -> bool:
-        """
-        Helper to determine whether a Task should be treated like a :class:`SessionTask`.
-        """
-        return False
-
-    @classmethod
-    def is_dataset_task(cls) -> bool:
-        """
-        Helper to determine whether a Task should be treated like a :class:`BenchmarkTask`.
-        """
-        return False
-
-    @classmethod
-    def is_benchmark_task(cls) -> bool:
-        warn(f"{cls.__name__}.is_benchmark_task has been renamed is_dataset_task", DeprecationWarning, 2)
-        return cls.is_dataset_task()
-
-    @property
-    def session(self) -> "Session":
-        raise NotImplementedError("Subclasses should override")
-
     @property
     def task_id(self) -> Hashable:
         """
@@ -312,7 +293,7 @@ class Task(Borg, metaclass=TaskRegistry):
         return self._completed.is_set()
 
     @property
-    def output_map(self) -> dict[str, "Target"]:
+    def output_map(self) -> dict[str, Target]:
         """
         Return the output descriptors for the task.
         See note on :attr:`Task.collected_outputs`.
@@ -346,7 +327,7 @@ class Task(Borg, metaclass=TaskRegistry):
         self.failure = err
         self._completed.set()
 
-    def resources(self) -> Iterable["ResourceManager.ResourceRequest"]:
+    def resources(self) -> Iterable[ResourceRequest]:
         """
         Produce a set of resources that are consumed by this task.
         Once the resources are available, they will be reserved and
@@ -355,7 +336,7 @@ class Task(Borg, metaclass=TaskRegistry):
         """
         yield from []
 
-    def dependencies(self) -> Iterable["Task"]:
+    def dependencies(self) -> Iterable[TaskFwd]:
         """
         Produce the set of :class:`Task` objects that this task depends upon.
 
@@ -367,7 +348,7 @@ class Task(Borg, metaclass=TaskRegistry):
                 deps = [deps]
             yield from filter(lambda d: d is not None, deps)
 
-    def outputs(self) -> Iterable[tuple[str, "Target"]]:
+    def outputs(self) -> Iterable[tuple[str, Target]]:
         """
         Produce the set of :class:`Target` objects that describe the outputs
         that are produced by this task.
@@ -384,7 +365,9 @@ class Task(Borg, metaclass=TaskRegistry):
         responsible for producing the output data and setting it to the
         output_map, if needed.
         """
-        registered = {key: getattr(self, attr) for key, attr in self._output_registry.items()}
+        registered = {
+            key: getattr(self, attr) for key, attr in self._output_registry.items()
+        }
         yield from registered.items()
 
     def execute(self) -> Self:
@@ -426,6 +409,7 @@ class dependency:
     with the same ID, regardless of how many times the dependency property
     is accessed, therefore there is no need to cache here a single instance.
     """
+
     def __init__(self, fn: Callable | None = None, optional: bool = False):
         self._fn = fn
         self._optional = optional
@@ -435,8 +419,9 @@ class dependency:
         """
         Register this descriptor as a dependency generator of this :class:`Task`
         """
-        assert issubclass(owner, Task), ("@dependency decorator may be used "
-                                         "only within Task classes")
+        assert issubclass(owner, Task), (
+            "@dependency decorator may be used only within Task classes"
+        )
         owner.register_dependency(name)
         self._dependency_name = name
 
@@ -452,8 +437,10 @@ class dependency:
             result = None
 
         if not self._optional and not result:
-            instance.logger.error("Missing required dependency %s", self._dependency_name)
-            raise MissingDependency(f"Failed to resolve dependency")
+            instance.logger.error(
+                "Missing required dependency %s", self._dependency_name
+            )
+            raise MissingDependency("Failed to resolve dependency")
         return result
 
     def __call__(self, fn):
@@ -477,6 +464,7 @@ class output:
     further references to it may be obtained from the :class:`Task` class for
     convenience.
     """
+
     def __init__(self, fn: Callable | None = None, name: str | None = None):
         """
         :param name: Override the name of the output, the name of the decorated
@@ -489,8 +477,9 @@ class output:
         """
         Register this descriptor as an output of this :class:`Task`
         """
-        assert issubclass(owner, Task), ("@output decorator may be used only "
-                                         "within Task classes")
+        assert issubclass(owner, Task), (
+            "@output decorator may be used only within Task classes"
+        )
         assert self._fn is not None
         if self._key is None:
             self._key = name
@@ -504,7 +493,11 @@ class output:
         from .artefact import Target
 
         # Normalize generators and iterables to a list
-        if not isinstance(result, Target) and isinstance(result, Iterable) and not isinstance(result, list):
+        if (
+            not isinstance(result, Target)
+            and isinstance(result, Iterable)
+            and not isinstance(result, list)
+        ):
             result = list(result)
         return result
 
@@ -522,7 +515,8 @@ class SessionTask(Task):
 
     These tasks do not reference a specific benchmark ID or benchmark group ID.
     """
-    def __init__(self, session: "Session", task_config: Config = None):
+
+    def __init__(self, session: Session, task_config: Config = None):
         self._session = session
 
         # Borg initialization occurs here
@@ -530,10 +524,6 @@ class SessionTask(Task):
 
         #: Task logger is a child of the session logger
         self.logger = new_logger(f"{self.task_name}", parent=session.logger)
-
-    @classmethod
-    def is_session_task(cls):
-        return True
 
     @property
     def session(self):
@@ -546,23 +536,20 @@ class SessionTask(Task):
 
 class DatasetTask(Task):
     """
-    Base class for all tasks that are unique within a session.
+    Base class for all tasks that are unique for each parameterised dataset.
 
-    These tasks do not reference a specific benchmark ID or benchmark group ID.
+    These tasks reference a specific benchmark parameterisation.
     """
-    def __init__(self, context: "Benchmark", task_config: Config = None):
-        #: Associated benchmark context
-        self.benchmark = context
+
+    def __init__(self, desc: Benchmark, task_config: Config = None):
+        #: Associated benchmark descriptor
+        self.benchmark = desc
 
         # Borg initialization occurs here
         super().__init__(task_config=task_config)
 
         #: Task logger is a child of the benchmark logger
         self.logger = new_logger(f"{self.task_name}", parent=self.benchmark.logger)
-
-    @classmethod
-    def is_dataset_task(cls) -> bool:
-        return True
 
     @property
     def session(self):
@@ -585,97 +572,37 @@ class DatasetTask(Task):
         df = df.with_columns(
             pl.lit(self.benchmark.uuid).alias("dataset_id"),
             pl.lit(self.benchmark.g_uuid).alias("dataset_gid"),
-            *(pl.lit(v).alias(k) for k, v in self.benchmark.parameters.items()))
+            *(pl.lit(v).alias(k) for k, v in self.benchmark.parameters.items()),
+        )
         return df
-
-
-class BenchmarkTask(DatasetTask):
-    """
-    This is an alias for the DatasetTask.
-    """
-    def __init_subclass__(self):
-        warn("BenchmarkTask has been renamed DatasetTask", DeprecationWarning, 3)
-
-    @classmethod
-    def is_benchmark_task(cls):
-        warn(f"{cls.__name__}.is_benchmark_task has been renamed is_dataset_task", DeprecationWarning, 2)
-        return cls.is_dataset_task()
 
 
 class ExecutionTask(DatasetTask):
     """
-    Base class for tasks that are scheduled as dependencies of the main internal benchmark
-    run task.
-    These are intended to generate the benchmark run script and perform any instance or benchmark
-    configuration before the actual benchmark instance runs.
-    Note that these tasks are dynamically resolved by the benchmark context and attached as dependencies
-    of the top-level execution tasks :class:`BenchmarkExecTask`.
-    Each execution task is associated with an unique benchmark context and a corresponding script builder
-    that will generate the script for the associated benchmark.
+    Execution tasks are per-dataset tasks that are scheduled as part of the generation phase.
 
-    The run() method for ExecutionTasks is a good place to perform any of the following:
-    1. Extract any static information from benchmark binary files.
-    2. Configure the benchmark instance via platform_options.
-    3. Add commands to the benchmark run hooks.
+    These tasks define how the run scripts are generated for each benchmark parameterisation
+    and are scheduled as dependencies of the root benchmark execution generator task
+    (see :class:`BenchmarkExecTask`).
 
-    Note that the task_id generation currently assumes that tasks with the same name are
-    not issued more than once for each benchmark run UUID. If this is violated, we need to
-    change the task ID generation.
+    The :meth:`ExecutionTask.run()` method is generally used for the following:
+    1. Override the default runner script template.
+    2. Extend the script context with additional configuration options.
+    3. Add hooks to different benchmark run phases.
+
+    Invariant: tasks with the same name are not issued more than once for each benchmark
+    descriptor UUID, this is a requirement for the Borg task_id.
     """
-    task_name = "exec"
-    #: Whether the task requires a running VM instance or not. Instead of changing this use :class:`DataGenTask`.
-    require_instance = True
 
-    def __init__(self, benchmark: "Benchmark", script: "ScriptContext", task_config: Config = None):
+    task_name = "exec"
+
+    def __init__(
+        self, benchmark: Benchmark, script: ScriptContext, task_config: Config = None
+    ):
         super().__init__(benchmark, task_config=task_config)
         #: Script builder associated to the current benchmark context.
         self.script = script
 
-    @classmethod
-    def is_exec_task(cls):
-        return True
-
     @property
     def uuid(self):
         return self.benchmark.uuid
-
-    @property
-    def g_uuid(self):
-        return self.benchmark.g_uuid
-
-
-class SessionExecutionTask(SessionTask):
-    """
-    Execution task that only exists as a single instance within a session.
-    This can be used for data generation that is independent from the benchmark
-    configurations.
-    """
-    @classmethod
-    def is_exec_task(cls):
-        return True
-
-    @property
-    def uuid(self):
-        raise TypeError("Task.uuid is invalid on SessionExecutionTask")
-
-    @property
-    def g_uuid(self):
-        raise TypeError("Task.g_uuid is invalid on SessionExecutionTask")
-
-
-class DataGenTask(ExecutionTask):
-    """
-    A special type of execution task that does not require a running instance.
-    The distinction is made so that the root benchmark execution task knows whether
-    to request an instance or not.
-    DataGenTasks should not depend on execution tasks, this is to avoid scanning the whole dependency tree
-    to determine whether we need to request an instance or not, however the reverse is allowed.
-    """
-    require_instance = False
-
-
-class SessionDataGenTask(SessionExecutionTask):
-    """
-    Same as a DataGenTask, but is unique within a session.
-    """
-    require_instance = False

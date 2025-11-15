@@ -1,22 +1,23 @@
 import shutil
-from dataclasses import MISSING, dataclass
-
-import polars as pl
+from dataclasses import dataclass
 
 from ..core.artefact import PLDataFrameSessionLoadTask, Target
 from ..core.config import Config, ConfigPath, config_field
-from ..core.task import SessionDataGenTask, dependency, output
+from ..core.task import ExecutionTask, output
 
 
 @dataclass
 class IngestAdvisoriesConfig(Config):
-    data_path: ConfigPath = config_field(MISSING, desc="Path to the input data file")
+    data_path: ConfigPath = config_field(
+        Config.REQUIRED, desc="Path to the input data file"
+    )
 
 
-class IngestAdvisoriesTask(SessionDataGenTask):
+class IngestAdvisoriesTask(ExecutionTask):
     """
     Freeze the advisories file in the session for later processing.
     """
+
     public = True
     task_namespace = "kernel-advisories"
     task_name = "ingest"
@@ -27,4 +28,5 @@ class IngestAdvisoriesTask(SessionDataGenTask):
         return Target(self, "advisories", loader=PLDataFrameSessionLoadTask, ext="json")
 
     def run(self):
+        raise NotImplementedError("TODO: Needs to be ported to new system")
         shutil.copyfile(self.config.data_path, self.advisories.single_path())

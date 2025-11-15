@@ -3,15 +3,17 @@ import dataclasses as dc
 import multiprocessing as mp
 from collections import deque
 from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager
+from threading import Semaphore
 from typing import Any, ContextManager, Hashable
 
 import networkx as nx
 
-from .task import Task
+from .task import DatasetTask, Task
 from .util import new_logger
 
-type SessionFwd = "Session"
+type Session = "Session"
+
 
 class ResourceManager:
     """
@@ -21,6 +23,7 @@ class ResourceManager:
     Resource managers are identified by the resource name, so concrete managers must set
     a resource_name class property and collisions are not allowed.
     """
+
     resource_name: str = None
 
     @dc.dataclass
@@ -29,6 +32,7 @@ class ResourceManager:
         Private object representing a request for this resource.
         This is sortable and comparable.
         """
+
         name: str
         pool: Hashable | None
         acquire_args: dict[str, Any]
@@ -38,7 +42,11 @@ class ResourceManager:
             return self.name < other.name
 
         def __eq__(self, other):
-            return self.name == other.name and self.pool == other.pool and self.acquire_args == other.acquire_args
+            return (
+                self.name == other.name
+                and self.pool == other.pool
+                and self.acquire_args == other.acquire_args
+            )
 
         def set_resource(self, r):
             """
@@ -62,15 +70,20 @@ class ResourceManager:
         assert cls.resource_name is not None, f"{cls} is missing resource name?"
         return cls.ResourceRequest(cls.resource_name, pool, kwargs)
 
-    def __init__(self, session: "Session", limit: int | None):
-        assert self.resource_name is not None, f"{self.__class__} is missing resource name?"
+    def __init__(self, session: Session, limit: int | None):
+        assert self.resource_name is not None, (
+            f"{self.__class__} is missing resource name?"
+        )
         self.session = session
         self.logger = new_logger(f"rman-{self.resource_name}")
         self.limit = limit
         if not self.is_unlimited:
             self._limit_guard = Semaphore(self.limit)
-        self.logger.debug("Initialized resource manager %s with limit %s", self.resource_name, self.limit
-                          or "<unlimited>")
+        self.logger.debug(
+            "Initialized resource manager %s with limit %s",
+            self.resource_name,
+            self.limit or "<unlimited>",
+        )
 
     def __str__(self):
         return f"{self.__class__.__name__}[{self.resource_name}]"
@@ -124,7 +137,9 @@ class ResourceManager:
             r = self._get_resource(req)
             req.set_resource(r)
         except:
-            self.logger.error("Failed to produce %s from pool %s", self.resource_name, req.pool)
+            self.logger.error(
+                "Failed to produce %s from pool %s", self.resource_name, req.pool
+            )
             raise
         finally:
             self._release(req.pool)
@@ -136,7 +151,9 @@ class ResourceManager:
             try:
                 self._put_resource(r, req)
             except:
-                self.logger.error("Failed to return %s to pool %s", self.resource_name, req.pool)
+                self.logger.error(
+                    "Failed to return %s to pool %s", self.resource_name, req.pool
+                )
                 raise
             finally:
                 self._release(req.pool)
@@ -160,7 +177,8 @@ class TaskScheduler:
     have been registered, the scheduler resolves dependencies and submits
     them in order to the thread pool.
     """
-    def __init__(self, session: SessionFwd):
+
+    def __init__(self, session: Session):
         """
         :param session: The session for which we are scheduling tasks.
         """
@@ -198,8 +216,12 @@ class TaskScheduler:
 
     def register_resource(self, rman: ResourceManager):
         if rman.resource_name in self._rman:
-            self.logger.error("Duplicate resource manager %s: given %s found %s",
-                              rman.resource_name, rman, self._rman[rman.resource_name])
+            self.logger.error(
+                "Duplicate resource manager %s: given %s found %s",
+                rman.resource_name,
+                rman,
+                self._rman[rman.resource_name],
+            )
             raise ValueError("Duplicate resource manager")
         self._rman[rman.resource_name] = rman
 
@@ -210,12 +232,16 @@ class TaskScheduler:
         try:
             sched = list(nx.topological_sort(self._task_graph))
             tasks = [self._task_graph.nodes[t]["task"] for t in reversed(sched)]
-            self.logger.debug("Resolved benchmark schedule:\n%s", "\n".join(map(str, tasks)))
+            self.logger.debug(
+                "Resolved benchmark schedule:\n%s", "\n".join(map(str, tasks))
+            )
             return tasks
         except nx.NetworkXUnfeasible:
             for cycle in nx.simple_cycles(self._task_graph):
                 cycle_str = [str(self._task_graph.nodes[c]["task"]) for c in cycle]
-                self.logger.error("Impossible task schedule: cyclic dependency %s", cycle_str)
+                self.logger.error(
+                    "Impossible task schedule: cyclic dependency %s", cycle_str
+                )
             raise RuntimeError("Impossible to create a task schedule")
 
     def report_failures(self, logger):
@@ -224,11 +250,18 @@ class TaskScheduler:
         """
         for failed in self.failed_tasks:
             task_details = []
-            if failed.is_dataset_task():
+            if isinstance(failed, DatasetTask):
                 iconf = failed.benchmark.config.instance
-                task_details.append(f"on {iconf.platform}-{iconf.cheri_target}-{iconf.kernel}")
+                task_details.append(
+                    f"on {iconf.platform}-{iconf.cheri_target}-{iconf.kernel}"
+                )
                 task_details.append(f"params: {failed.benchmark.parameters}")
-            logger.error("Task %s.%s failed %s", failed.task_namespace, failed.task_name, " ".join(task_details))
+            logger.error(
+                "Task %s.%s failed %s",
+                failed.task_namespace,
+                failed.task_name,
+                " ".join(task_details),
+            )
 
     def run(self):
         """
@@ -244,8 +277,12 @@ class TaskScheduler:
                 while schedule:
                     peek_next = schedule[0]
                     self.logger.debug("Peek next task %s", peek_next)
-                    deps_done = (dep.completed for dep in peek_next.resolved_dependencies)
-                    deps_failed = (dep.failure for dep in peek_next.resolved_dependencies)
+                    deps_done = (
+                        dep.completed for dep in peek_next.resolved_dependencies
+                    )
+                    deps_failed = (
+                        dep.failure for dep in peek_next.resolved_dependencies
+                    )
                     if any(deps_failed):
                         self.logger.error("Detected failed dependency")
                         break
@@ -260,12 +297,16 @@ class TaskScheduler:
                         break
                 assert len(self.active_set), "active set drained but nothing scheduled"
                 # Wait for the next completion
-                done, _ = cf.wait(self.active_set.keys(), return_when=cf.FIRST_COMPLETED)
+                done, _ = cf.wait(
+                    self.active_set.keys(), return_when=cf.FIRST_COMPLETED
+                )
                 for fut in done:
                     done_task = self.active_set.pop(fut)
                     try:
                         res = fut.result()
-                        self.logger.debug("Task %s completed with result: %s", done_task, res)
+                        self.logger.debug(
+                            "Task %s completed with result: %s", done_task, res
+                        )
                     except CancelledError:
                         self.logger.debug("Task cancelled %s", done_task)
                     except Exception as err:
@@ -275,4 +316,3 @@ class TaskScheduler:
                         schedule.clear()
                         pool.shutdown(wait=False, cancel_futures=True)
         self.logger.debug("Task schedule completed")
-
