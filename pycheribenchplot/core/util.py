@@ -6,7 +6,6 @@ import subprocess
 import time
 import typing
 from contextlib import contextmanager
-from enum import Enum
 from pathlib import Path
 from threading import Lock, Thread
 
@@ -19,7 +18,7 @@ class LogColorFormatter(logging.Formatter):
         logging.INFO: "blue",
         logging.WARNING: "yellow",
         logging.ERROR: "red",
-        logging.CRITICAL: "red"
+        logging.CRITICAL: "red",
     }
 
     def __init__(self, *args, use_colors=True, **kwargs):
@@ -34,9 +33,10 @@ class LogColorFormatter(logging.Formatter):
         return msg
 
 
-def setup_logging(verbose: bool = False, logfile: Path = None, debug_config: bool = False):
+def setup_logging(
+    verbose: bool = False, logfile: Path = None, debug_config: bool = False
+):
     log_fmt = "[%(levelname)s] %(name)s: %(message)s"
-    date_fmt = None
     default_level = logging.INFO
     if verbose:
         default_level = logging.DEBUG
@@ -131,7 +131,16 @@ def bytes2int(value: str | int) -> int:
     Upper-case suffixes indicate power of 2 values, lower-case suffixes indicate
     power of 10 values.
     """
-    SUFFIXES = {"K": 2**10, "M": 2**20, "G": 2**30, "T": 2**40, "k": 10**3, "m": 10**6, "g": 10**9, "t": 10**12}
+    SUFFIXES = {
+        "K": 2**10,
+        "M": 2**20,
+        "G": 2**30,
+        "T": 2**40,
+        "k": 10**3,
+        "m": 10**6,
+        "g": 10**9,
+        "t": 10**12,
+    }
     try:
         return int(value)
     except ValueError:
@@ -149,7 +158,14 @@ class SubprocessHelper:
 
     XXX This can probably be consolidated with the instance command runners.
     """
-    def __init__(self, executable: Path, args: list, env: dict = None, logger: logging.Logger = None):
+
+    def __init__(
+        self,
+        executable: Path,
+        args: list,
+        env: dict = None,
+        logger: logging.Logger = None,
+    ):
         """
         :param executable: Path to the executable command
         :param args: Arguments list
@@ -182,7 +198,9 @@ class SubprocessHelper:
                 return False
             return self._subprocess.returncode == 0
 
-    def _do_io(self, pipe: typing.IO[bytes], observers: list[typing.Callable[[str], None]]):
+    def _do_io(
+        self, pipe: typing.IO[bytes], observers: list[typing.Callable[[str], None]]
+    ):
         self.logger.debug("Subcommand %s I/O loop", self.executable)
         try:
             for raw_line in pipe:
@@ -196,7 +214,7 @@ class SubprocessHelper:
             self._subprocess.kill()
         self._subprocess.wait()
         with self._lock:
-            self._failed = (self._subprocess.returncode != 0)
+            self._failed = self._subprocess.returncode != 0
         self.logger.debug("Subcommand %s I/O loop done", self.executable)
 
     @property
@@ -235,23 +253,35 @@ class SubprocessHelper:
         self.start(**popen_kwargs)
         self.wait()
         if self._subprocess.returncode != 0:
-            self.logger.error("Failed to run %s: %d", self.executable, self._subprocess.returncode)
+            self.logger.error(
+                "Failed to run %s: %d", self.executable, self._subprocess.returncode
+            )
             raise RuntimeError("Subprocess failed")
 
     def start(self, **popen_kwargs):
         assert self._subprocess is None, "multiple start()"
-        self.logger.debug("Subcommand: %s %s", self.executable, " ".join(map(str, self.args)))
-        self._subprocess = subprocess.Popen([self.executable] + self.args,
-                                            env=self.env,
-                                            stdin=subprocess.PIPE,
-                                            stdout=subprocess.PIPE,
-                                            stderr=subprocess.PIPE,
-                                            **popen_kwargs)
+        self.logger.debug(
+            "Subcommand: %s %s", self.executable, " ".join(map(str, self.args))
+        )
+        self._subprocess = subprocess.Popen(
+            [self.executable] + self.args,
+            env=self.env,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            **popen_kwargs,
+        )
         self._out_observers.append(lambda line: self.logger.debug(line.strip()))
-        self._err_observers.append(lambda line: self.logger.log(self._stderr_loglevel, line.strip()))
-        self._out_worker = Thread(target=self._do_io, args=(self._subprocess.stdout, self._out_observers))
+        self._err_observers.append(
+            lambda line: self.logger.log(self._stderr_loglevel, line.strip())
+        )
+        self._out_worker = Thread(
+            target=self._do_io, args=(self._subprocess.stdout, self._out_observers)
+        )
         self._out_worker.start()
-        self._err_worker = Thread(target=self._do_io, args=(self._subprocess.stderr, self._err_observers))
+        self._err_worker = Thread(
+            target=self._do_io, args=(self._subprocess.stderr, self._err_observers)
+        )
         self._err_worker.start()
 
     def stop(self):
