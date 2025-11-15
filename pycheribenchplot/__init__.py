@@ -3,5 +3,5 @@ import matplotlib
 
 matplotlib.use("pdf")
 
-from . import (c18n, cloc, compile_db, generic, iperf, kernel_advisories, kernel_build, netperf, nginx, pmc, qps,
-               subobject, unixbench)
+# compile_db, iperf, kernel_build, netperf, nginx, unixbench
+from . import (c18n, cloc, generic, kernel_advisories, pmc, qps, subobject)
