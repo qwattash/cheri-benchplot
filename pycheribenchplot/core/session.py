@@ -12,11 +12,13 @@ from typing_extensions import Self
 
 from .analysis import AnalysisTask, DatasetAnalysisTaskGroup
 from .benchmark import Benchmark, ExecTaskConfig
-from .config import (AnalysisConfig, AssetConfig, AssetImportAction, BenchplotUserConfig, ConfigContext, InstanceConfig,
+from .config import (AnalysisConfig, AssetConfig, AssetImportAction,
+                     BenchplotUserConfig, ConfigContext, InstanceConfig,
                      PipelineConfig, SessionRunConfig)
 from .instance import InstanceManager
+from .scheduler import TaskScheduler
 from .shellgen import TemplateContextBase
-from .task import (ExecutionTask, SessionExecutionTask, TaskRegistry, TaskScheduler)
+from .task import ExecutionTask, SessionExecutionTask, TaskRegistry
 from .util import new_logger
 
 #: Constant, name of the generated session configuration file

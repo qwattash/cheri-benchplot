@@ -9,10 +9,11 @@ import pytest
 
 from pycheribenchplot.core.analysis import ParamSliceInfo, SliceAnalysisTask
 from pycheribenchplot.core.artefact import Target
-from pycheribenchplot.core.config import (AnalysisConfig, BenchplotUserConfig, Config, SessionRunConfig)
+from pycheribenchplot.core.config import (AnalysisConfig, BenchplotUserConfig,
+                                          Config, SessionRunConfig)
 from pycheribenchplot.core.session import Session
 from pycheribenchplot.core.shellgen import ScriptContext
-from pycheribenchplot.core.task import SessionTask, Task
+from pycheribenchplot.core.task import DatasetTask, SessionTask, Task
 
 
 class TaskFactory:
@@ -26,10 +27,8 @@ class TaskFactory:
 
         self._session_root = session_root
         self._unrolled_config = {
-            "uuid":
-            str(session_id),
-            "name":
-            "test-session",
+            "uuid": str(session_id),
+            "name": "test-session",
             "configurations": [{
                 "name": "test-configuration",
                 "iterations": 1,
@@ -38,7 +37,6 @@ class TaskFactory:
                 },
                 "generators": [],
                 "uuid": str(dataset_id),
-                "g_uuid": None,  # Deprecated, should be removed
                 "instance": {
                     "kernel": "TEST-KERNEL-CONFIG",
                     "name": "test-target-instance",
@@ -49,6 +47,10 @@ class TaskFactory:
             }]
         }
         self._session = None
+
+    def get_session(self) -> Session:
+        assert self._session is not None
+        return self._session
 
     def add_gen_task(self, task_type: typing.Type[Task], task_config: Config = None):
         handler = task_type.task_namespace + "." + task_type.task_name
@@ -96,12 +98,15 @@ class TaskFactory:
                 return task_type(self._session, script=None, task_config=config)
             else:
                 return task_type(self._session, analysis_config, task_config=config)
-        else:
+        elif issubclass(task_type, DatasetTask):
             context = self._session.all_benchmarks()[0]
             if task_type.is_exec_task():
                 return task_type(context, script=ScriptContext(context), task_config=config)
             else:
                 return task_type(context, analysis_config, task_config=config)
+        else:
+            # Plain task
+            return task_type(task_config=config)
 
 
 @pytest.fixture

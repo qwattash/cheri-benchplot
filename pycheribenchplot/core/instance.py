@@ -19,7 +19,7 @@ from uuid import UUID, uuid4
 from paramiko.client import SSHClient, SSHException, WarningPolicy
 
 from .config import (InstanceCheriBSD, InstanceConfig, InstanceKernelABI, InstancePlatform)
-from .task import ResourceManager
+from .scheduler import ResourceManager
 from .util import new_logger
 
 

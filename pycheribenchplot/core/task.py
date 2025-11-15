@@ -8,7 +8,8 @@ from io import StringIO
 from queue import Queue
 from textwrap import indent
 from threading import Condition, Event, Lock, Semaphore, Thread
-from typing import Any, Callable, ContextManager, Hashable, Iterable, Type
+from typing import (Any, Callable, ContextManager, Hashable, Iterable, Self,
+                    Type)
 from warnings import warn
 
 import networkx as nx
@@ -147,9 +148,9 @@ TASK_NAME_REGEX = re.compile(r"[\S.-]+")
 
 class Task(Borg, metaclass=TaskRegistry):
     """
-    Abstract base class for dataset operations.
+    Abstract base class for scheduled operations.
 
-    This can be a task to run some data-generation process or perform an analysis step.
+    This can be a task to drive data generation or perform an analysis step.
     Tasks in the pipeline have determined inputs and outputs that are derived
     from the session that creates the tasks.
 
@@ -198,9 +199,13 @@ class Task(Borg, metaclass=TaskRegistry):
         self.logger = new_logger(f"{self.task_namespace}.{self.task_name}")
         #: notify when task is completed
         self._completed = Event()
-        #: if the task run() fails, the scheduler will set this to the exception raised by the task
-        self.failed = None
-        #: set of tasks we resolved that we depend upon, this is filled by the scheduler
+        #: if the task run() fails, the scheduler will set this to the exception raised
+        #: by the task.
+        #: This field can not be read concurrently unless the :attr:`_completed` event
+        #: is set, notifying that the task relinquishes write access to the failure data.
+        self.failure = None
+        #: set of tasks we resolved that we depend upon, this is filled by the scheduler.
+        #: Read-only during the execution of :meth:`Task.execute()`.
         self.resolved_dependencies = set()
         #: This currently caches the results from output_map().
         #: Ideally, however, this should be filled either by the scheduler or
@@ -321,11 +326,11 @@ class Task(Borg, metaclass=TaskRegistry):
             self.collected_outputs = dict(self.outputs())
         return self.collected_outputs
 
-    def wait(self):
+    def wait(self, timeout=None):
         """
         Wait for the task to complete.
         """
-        self._completed.wait()
+        self._completed.wait(timeout)
 
     def notify_done(self):
         """
@@ -334,11 +339,11 @@ class Task(Borg, metaclass=TaskRegistry):
         """
         self._completed.set()
 
-    def notify_failed(self, ex: Exception):
+    def notify_failed(self, err: Exception):
         """
         Notify that the task is done but failed.
         """
-        self.failed = ex
+        self.failure = err
         self._completed.set()
 
     def resources(self) -> Iterable["ResourceManager.ResourceRequest"]:
@@ -381,6 +386,29 @@ class Task(Borg, metaclass=TaskRegistry):
         """
         registered = {key: getattr(self, attr) for key, attr in self._output_registry.items()}
         yield from registered.items()
+
+    def execute(self) -> Self:
+        """
+        Main entry point for the executor thread pool.
+
+        This ensures that dependencies are satisfied and acquires resources
+        before running the task body :meth:`Task.run`.
+
+        :return: The completed task itself.
+        """
+        try:
+            self.logger.debug("Executing task %s", self)
+            for dep in self.resolved_dependencies:
+                assert dep.completed, f"Invalid execution, pending dependency {dep}"
+                if dep.failure:
+                    self.logger.debug("Cascade failure from dependency %s", dep)
+                    raise RuntimeError("Cascade failure")
+            self.run()
+            self.notify_done()
+            self.logger.debug("Done task %s", self)
+        except Exception as err:
+            self.notify_failed(err)
+            raise err
 
     def run(self):
         pass
@@ -651,399 +679,3 @@ class SessionDataGenTask(SessionExecutionTask):
     Same as a DataGenTask, but is unique within a session.
     """
     require_instance = False
-
-
-class ResourceManager:
-    """
-    Base class to abstract resource limits on tasks.
-    Resouce managers must be registered with the task scheduler before running or adding
-    any tasks to the scheduler.
-    Resource managers are identified by the resource name, so concrete managers must set
-    a resource_name class property and collisions are not allowed.
-    """
-    resource_name: str = None
-
-    @dc.dataclass
-    class ResourceRequest:
-        """
-        Private object representing a request for this resource.
-        This is sortable and comparable.
-        """
-        name: str
-        pool: Hashable | None
-        acquire_args: dict[str, Any]
-        _resource: Any = dc.field(init=False, default=None)
-
-        def __lt__(self, other):
-            return self.name < other.name
-
-        def __eq__(self, other):
-            return self.name == other.name and self.pool == other.pool and self.acquire_args == other.acquire_args
-
-        def set_resource(self, r):
-            """
-            Internal interface to notify that a resource was given in response to the request
-            """
-            self._resource = r
-
-        def clear_resource(self):
-            """
-            Internal interface to notify that a resource is no longer assigned to this request
-            """
-            self._resource = None
-
-        def get(self):
-            if self._resource is None:
-                raise RuntimeError(f"Access resource {self.name} but it is not ready")
-            return self._resource
-
-    @classmethod
-    def request(cls, pool: Hashable = None, **kwargs) -> ResourceRequest:
-        assert cls.resource_name is not None, f"{cls} is missing resource name?"
-        return cls.ResourceRequest(cls.resource_name, pool, kwargs)
-
-    def __init__(self, session: "Session", limit: int | None):
-        assert self.resource_name is not None, f"{self.__class__} is missing resource name?"
-        self.session = session
-        self.logger = new_logger(f"rman-{self.resource_name}")
-        self.limit = limit
-        if not self.is_unlimited:
-            self._limit_guard = Semaphore(self.limit)
-        self.logger.debug("Initialized resource manager %s with limit %s", self.resource_name, self.limit
-                          or "<unlimited>")
-
-    def __str__(self):
-        return f"{self.__class__.__name__}[{self.resource_name}]"
-
-    def _acquire(self, pool: Hashable):
-        """
-        Reserve an item slot in the underlying resource pool
-        """
-        if self.is_unlimited:
-            return
-        self._limit_guard.acquire()
-
-    def _release(self, pool: Hashable):
-        """
-        Release an item slot to the underlying resource pool
-        """
-        if self.is_unlimited:
-            return
-        self._limit_guard.release()
-
-    def _get_resource(self, req: ResourceRequest) -> Any:
-        """
-        Produce a resource item after a slot is acquired.
-        """
-        raise NotImplementedError("Must override")
-
-    def _put_resource(self, r: Any, req: ResourceRequest):
-        """
-        Return a resource item to the manager after the client is done with it
-        """
-        raise NotImplementedError("Must override")
-
-    @property
-    def is_unlimited(self) -> bool:
-        return self.limit is None or self.limit == 0
-
-    @contextmanager
-    def acquire(self, req: ResourceRequest) -> ContextManager[Any]:
-        """
-        Acquire a resource, optionally specifying an internal pool that
-        may be used to improve allocation.
-        Resource managers may also require extra arguments to perform the
-        resource allocation, there are passed via the ResourceRequest helper
-        object.
-        """
-        self.logger.debug("Waiting for %s", self.resource_name)
-        self._acquire(req.pool)
-        self.logger.debug("Acquired %s", self.resource_name)
-        # Produce the resource
-        try:
-            r = self._get_resource(req)
-            req.set_resource(r)
-        except:
-            self.logger.error("Failed to produce %s from pool %s", self.resource_name, req.pool)
-            raise
-        finally:
-            self._release(req.pool)
-        # Wait for somebody to do something with it
-        try:
-            yield r
-        finally:
-            req.clear_resource()
-            try:
-                self._put_resource(r, req)
-            except:
-                self.logger.error("Failed to return %s to pool %s", self.resource_name, req.pool)
-                raise
-            finally:
-                self._release(req.pool)
-        self.logger.debug("Released %s", self.resource_name)
-
-    def sched_shutdown(self):
-        """
-        The scheduler is shutting down and all activity should
-        be moped up. If we need to wait for something to complete cleanup we can
-        block here.
-        """
-        pass
-
-
-class TaskScheduler:
-    """
-    Schedule running tasks into workers, handling task dependencies.
-    """
-    def __init__(self, session: "Session"):
-        """
-        :param session: The parent session
-        """
-        #: parent session
-        self.session = session
-        #: task graph, nodes are Task.task_id, each node has the attribute task, containing the task instance to run.
-        self._task_graph = nx.DiGraph()
-        #: scheduler logger
-        self.logger = new_logger("task-scheduler", self.session.logger)
-        #: task runner threads
-        self._worker_threads = []
-        #: worker wakeup lock, used by the worker wakeup condition
-        self._worker_lock = Lock()
-        #: worker wakeup event
-        self._worker_wakeup = Condition(self._worker_lock)
-        #: worker shutdown request
-        self._worker_shutdown = False
-        #: task queue, this is not a synchronized queue as it shares the lock with _worker_wakeup.
-        self._task_queue = []
-        #: active tasks set, this contains the set of tasks the workers are currently working on.
-        #: Protected by the _worker_wakeup lock.
-        self._active_tasks = []
-        #: Failed tasks, this does not include tasks that were cancelled as a result of a failure.
-        #: Records failed tasks, shares the _worker_wakeup lock.
-        self._failed_tasks = []
-        #: Records completed tasks by task_id, shares the _worker_wakup lock.
-        self._completed_tasks = {}
-        # XXX should this share the lock with worker_wakeup?
-        #: pending tasks count, protected by _pending_tasks_cv
-        self._pending_tasks = 0
-        #: task completion barrier
-        self._pending_tasks_cv = Condition()
-        #: number of worker threads to run
-        self.num_workers = session.config.concurrent_workers or mp.cpu_count()
-        #: resource managers
-        self._rman = {}
-
-    def _handle_failure(self, failed_task: Task):
-        """
-        Handle a task failure.
-        Depending on the configuration policy, we either cancel every task or only cancel the subgraph
-        linked to the failed task.
-
-        :param failed_task: The task that failed, note that this may already have been cleaned up
-        by a previous call to _handle_failure()
-        """
-        if self.session.config.abort_on_failure:
-            # Kill all tasks and signal workers stop
-            with self._worker_wakeup:
-                self._failed_tasks.append(failed_task)
-                for t in self._task_queue:
-                    t.notify_failed("cancelled")
-                if self._task_queue:
-                    self.logger.warning("Cancelling all pending tasks")
-                    self._task_queue.clear()
-                # XXX Find a nice way to propagate the early-stop request to current tasks.
-                # for task in self._active_tasks:
-                #     task.cancel()
-                self._worker_shutdown = True
-                self._worker_wakeup.notify_all()
-            # Should this share the lock with worker_wakeup?
-            with self._pending_tasks_cv:
-                self._pending_tasks = 0
-                self._pending_tasks_cv.notify_all()
-        else:
-            # Find out which tasks we have to kill and unschedule them
-            raise NotImplementedError("TODO")
-
-    def _next_task(self) -> Task:
-        """
-        Pull the next task to work on from the queue.
-        If the worker has been asked to shut down we also take this opportunity to bail out.
-        """
-        with self._worker_wakeup:
-            self._worker_wakeup.wait_for(lambda: self._worker_shutdown or len(self._task_queue) > 0)
-            if self._worker_shutdown:
-                raise WorkerShutdown()
-            return self._task_queue.pop(0)
-
-    def _worker_thread(self, worker_index: int):
-        self.logger.debug("Start worker[%d]", worker_index)
-        try:
-            while True:
-                self._worker_loop_one(worker_index)
-        except WorkerShutdown:
-            self.logger.debug("Caught worker shutdown signal, exit worker loop")
-        except Exception as ex:
-            # This should never happen, everything should be caught within the worker loop
-            self.logger.critical("Critical error in worker thread, scheduler state is undefined: %s", ex)
-        self.logger.debug("Shutdown worker[%d]", worker_index)
-
-    def _worker_loop_one(self, worker_index: int):
-        """
-        Main worker loop. This pulls tasks from the task_queue and handles them when their dependencies
-        have completed. If the schedule is well-formed, we are guaranteed not to deadlock.
-
-        :param worker_index: The sequential index of the worker in the worker list.
-        """
-        task = self._next_task()
-        self.logger.debug("worker[%d] received task: %s", worker_index, task)
-        try:
-            # Wait for all dependencies to be done
-            for dep_id in self._task_graph.successors(task.task_id):
-                dep = self._task_graph.nodes[dep_id]["task"]
-                dep.wait()
-                assert dep.completed, f"Dependency wait() returned but task is not completed {dep}"
-                # If a dependency failed, we need to do some scheduling changes, the exception triggers it
-                if dep.failed:
-                    self.logger.error("Dependency %s failed, bail out from %s", dep, task)
-                    raise RuntimeError("Task dependency failed")
-                # Before continuing, we should check whether somebody notified worker shutdown
-                with self._worker_wakeup:
-                    if self._worker_shutdown:
-                        raise WorkerShutdown()
-            # Grab all resources
-            with ExitStack() as resource_stack:
-                resources = {}
-                for req in sorted(task.resources()):
-                    resources[req.name] = resource_stack.enter_context(self._rman[req.name].acquire(req))
-                # Now we can run the task
-                task.run()
-            # We have finished with the task, if we reach this point the task completed successfully
-            # and its resources have been released
-            task.notify_done()
-            with self._worker_lock:
-                self._completed_tasks[task.task_id] = task
-            with self._pending_tasks_cv:
-                self._pending_tasks -= 1
-                self._pending_tasks_cv.notify_all()
-        except WorkerShutdown:
-            # Just pass it through
-            raise
-        except Exception as ex:
-            self.logger.exception("Error in worker[%d] handling task %s", worker_index, task)
-            # Notify other workers that may be waiting on this dependency that they should bail out.
-            task.notify_failed(ex)
-            # Now we need to cancel some tasks
-            self._handle_failure(task)
-
-    @property
-    def failed_tasks(self) -> list[Task]:
-        """
-        Verify whether there were failed tasks during the execution.
-        This returns a copy of the internal failed tasks list.
-        """
-        with self._worker_lock:
-            return list(self._failed_tasks)
-
-    @property
-    def completed_tasks(self) -> dict[str, Task]:
-        """
-        Maps task-id to completed tasks.
-        This is useful to retreive a specific task by ID although generally
-        it should not be used by the task pipeline as the task outputs from the task
-        instances issued as dependencies can be referenced directly.
-        Note that this will not include failed tasks.
-        """
-        with self._worker_lock:
-            return dict(self._completed_tasks)
-
-    def add_task(self, task: Task):
-        self.logger.debug("Schedule task %s", task.task_id)
-        if task.task_id in self._task_graph:
-            # Assume that we can not have tasks with duplicate IDs
-            # If a task is already scheduled just skip this, duplicate
-            # dependencies are allowed.
-            return
-        self._task_graph.add_node(task.task_id, task=task)
-        for dep in task.dependencies():
-            task.resolved_dependencies.add(dep)
-            self.add_task(dep)
-            self._task_graph.add_edge(task.task_id, dep.task_id)
-
-    def resolve_schedule(self):
-        """
-        Produce a schedule for the tasks. Note that we use lexicographic sort by g_uuid in
-        order to help the instance manager maximise reuse of instances when this is enabled.
-        """
-        try:
-            if self.session.config.reuse_instances:
-                sched = nx.lexicographical_topological_sort(self._task_graph,
-                                                            key=lambda t: self._task_graph[t]["task"].g_uuid)
-            else:
-                sched = nx.topological_sort(self._task_graph)
-            run_sched = [self._task_graph.nodes[t]["task"] for t in reversed(list(sched))]
-            self.logger.debug("Resolved benchmark schedule:\n%s", "\n".join(map(str, run_sched)))
-            return run_sched
-        except nx.NetworkXUnfeasible:
-            for cycle in nx.simple_cycles(self._task_graph):
-                cycle_str = [str(self._task_graph.nodes[c]["task"]) for c in cycle]
-                self.logger.error("Impossible task schedule: cyclic dependency %s", cycle_str)
-            raise RuntimeError("Impossible to create a task schedule")
-
-    def register_resource(self, rman: ResourceManager):
-        if rman.resource_name in self._rman:
-            self.logger.error("Duplicate resource manager registration %s: given %s found %s", rman.resource_name, rman,
-                              self._rman[rman.resource_name])
-            raise ValueError("Resource manager with the same name is already registered")
-        self._rman[rman.resource_name] = rman
-
-    def run(self):
-        """
-        Spawn worker threads and run the tasks in the schedule.
-        Once all tasks are done, the workers are cleaned up.
-        """
-        self._worker_shutdown = False
-        schedule = self.resolve_schedule()
-        try:
-            # No need to synchronize this as the workers have not started yet
-            self._task_queue.extend(schedule)
-            self._pending_tasks = len(self._task_queue)
-            self.logger.debug("Queued tasks: pending=%d", self._pending_tasks)
-            # only start working if we actually have work
-            if self._pending_tasks == 0:
-                return
-            for i in range(self.num_workers):
-                worker = Thread(target=self._worker_thread, args=[i])
-                self._worker_threads.append(worker)
-                worker.start()
-            # notify that we have work
-            with self._worker_wakeup:
-                self._worker_wakeup.notify_all()
-            # wait for all tasks to complete
-            with self._pending_tasks_cv:
-                self._pending_tasks_cv.wait_for(lambda: self._pending_tasks == 0)
-        finally:
-            # shutdown all workers
-            self.logger.debug("Shutting down workers")
-            with self._worker_wakeup:
-                self._worker_shutdown = True
-                self._worker_wakeup.notify_all()
-            for i, worker in enumerate(self._worker_threads):
-                self.logger.debug("Wait for worker[%d] shutdown", i)
-                worker.join()
-            self._worker_threads.clear()
-            for name, rman in self._rman.items():
-                self.logger.debug("Shutting down resource manager %s", name)
-                rman.sched_shutdown()
-            self._rman.clear()
-
-    def report_failures(self, logger):
-        """
-        Report task failures to the given logger
-        """
-        for failed in self.failed_tasks:
-            task_details = []
-            if failed.is_dataset_task():
-                iconf = failed.benchmark.config.instance
-                task_details.append(f"on {iconf.platform}-{iconf.cheri_target}-{iconf.kernel}")
-                task_details.append(f"params: {failed.benchmark.parameters}")
-            logger.error("Task %s.%s failed %s", failed.task_namespace, failed.task_name, " ".join(task_details))

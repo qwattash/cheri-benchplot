@@ -12,8 +12,9 @@ from .config import (AnalysisConfig, CommandHookConfig, Config, ExecTargetConfig
 from .elf import AddressSpaceManager
 from .error import TaskNotFound
 from .instance import InstanceManager
+from .scheduler import TaskScheduler
 from .shellgen import ScriptContext, ScriptHook
-from .task import (ExecutionTask, SessionExecutionTask, Task, TaskRegistry, TaskScheduler)
+from .task import ExecutionTask, SessionExecutionTask, Task, TaskRegistry
 from .util import new_logger, timing
 
 AnyExecTask = ExecutionTask | SessionExecutionTask
