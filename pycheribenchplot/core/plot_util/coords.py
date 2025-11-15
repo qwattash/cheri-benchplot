@@ -1,10 +1,14 @@
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-import numpy as np
 import polars as pl
 
 from ..config import Config, config_field
 
+if TYPE_CHECKING:
+    import matplotlib
+
+type Axes = "matplotlib.axes.Axes"
 
 @dataclass
 class CoordGenTunables(Config):
@@ -48,7 +52,7 @@ class CoordGenConfig(CoordGenTunables):
 
 
 class CoordGenerator:
-    def __init__(self, ax: "Axes", orient="x"):
+    def __init__(self, ax: Axes, orient="x"):
         """
         Helper to create axis coordinates from a dataframe
 
@@ -88,7 +92,7 @@ class CoordGenerator:
         if config is None:
             config = CoordGenConfig()
         # Axis corresponding to the selected orientation in numpy
-        orient_axis = 0 if self.orient == "x" else 1
+        _orient_axis = 0 if self.orient == "x" else 1
 
         # Add a row index to maintain stable sorting of the output
         # This allows us to re-sort the dataframe freely
@@ -96,7 +100,6 @@ class CoordGenerator:
 
         # Note that we require the dataframe to be aligned on shift_by and stack_by columns.
         # This means that every shift_by and stack_by group must have the same number of elements.
-        tmp_col = f"{prefix}_tmp"
         if config.shift_by:
             shift_groups = df.group_by(config.shift_by).len(name="__len")
             if shift_groups.n_unique("__len") != 1:
@@ -108,9 +111,9 @@ class CoordGenerator:
             stack_groups = df.group_by(config.stack_by).len(name="__len")
             if stack_groups.n_unique("__len") != 1:
                 raise ValueError("The input dataframe is not aligned at the stack_by level")
-            nstacks = len(stack_groups)
+            _nstacks = len(stack_groups)
         else:
-            nstacks = 1
+            _nstacks = 1
         nmetrics = len(dependent_vars)
         if nmetrics == 0:
             raise ValueError("At least one dependent_var column must be given")

@@ -1,12 +1,11 @@
 from dataclasses import dataclass
 
-import matplotlib.pyplot as plt
 import polars as pl
 from marshmallow import ValidationError, validates
 
 from ..config import Config, config_field
 from .coords import CoordGenConfig, CoordGenerator
-from .plot_grid import ColRef, PlotConfigBase
+from .plot_grid import ColRef, PlotConfigBase, PlotTile
 
 
 @dataclass
@@ -29,7 +28,7 @@ class BarPlotConfig(PlotConfigBase):
         return (super().uses_param(name) or self.tile_xaxis == ref or self.stack_by == ref or self.shift_by == ref)
 
 
-def grid_barplot(tile: "PlotTile",
+def grid_barplot(tile: PlotTile,
                  chunk: pl.DataFrame,
                  config: BarPlotConfig,
                  x: str,
@@ -99,7 +98,7 @@ def grid_barplot(tile: "PlotTile",
             err_low = (hue_group[d_var] - hue_group[lower]).abs()
             err_high = (hue_group[upper] - hue_group[d_var]).abs()
             error_kwargs.update({f"{orthogonal_orient}err": (err_low, err_high), "capsize": 4})
-        coord = hue_group["__gen_coord"] + hue_group[f"__gen_offset"]
+        coord = hue_group["__gen_coord"] + hue_group["__gen_offset"]
         bar_plot(coord,
                  hue_group[d_var],
                  hue_group["__gen_width"],

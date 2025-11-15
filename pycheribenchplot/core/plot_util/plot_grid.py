@@ -4,21 +4,26 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass, replace
 from enum import Enum
 from functools import reduce
-from typing import Annotated, Any, Callable, Iterable, Self
+from logging import Logger
+from typing import Annotated, Any, Callable, Iterable, Self, TYPE_CHECKING
 
 import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
-from marshmallow import ValidationError
 from marshmallow import fields as mf
 from marshmallow import validate as mv
-from marshmallow import validates_schema
-from matplotlib.patches import Patch
+# from matplotlib.patches import Patch
 
 from ..analysis import ParamFilterConfig
 from ..artefact import Target
 from ..config import Config, config_field
 from ..error import ConfigurationError
+
+if TYPE_CHECKING:
+    from matplotlib.axes import Axes
+
+type AnalysisTask = "AnalysisTask"
+type MplAxes = "Axes"
 
 COLREF_PATTERN = r"^<[\w_-]+>$"
 #: Custom type that expresses column references.
@@ -73,13 +78,8 @@ class DerivedColumnConfig(Config):
                                               by_value=True,
                                               desc="How to generate transformed column.")
     src: str | list[str] = config_field(Config.REQUIRED, desc="Source column or columns. This must be a <ref>.")
-    name: str | None = config_field(None, desc="Human readable name for the column, defaults to the ref identifier.")
+    name: str | None = config_field(None, desc="Human readable name for the column.")
     args: dict[str, Any] = config_field(dict, desc="Transformation arguments.")
-
-    def __post_init__(self):
-        super().__post_init__()
-        if self.name is None:
-            self.name = ref
 
 
 @dataclass
@@ -169,7 +169,7 @@ class PlotGridConfig(PlotConfigBase):
 
 
 class PlotTile:
-    def __init__(self, grid: "PlotGrid", ax: "Axes", hue: str | None, palette: list | None, coords: tuple[int, int],
+    def __init__(self, grid: "PlotGrid", ax: MplAxes, hue: str | None, palette: list | None, coords: tuple[int, int],
                  loc: tuple[any, any]):
         self.grid = grid
         self.ax = ax
@@ -209,7 +209,7 @@ class DataFrameInfo:
         self.columns = desc
 
     @classmethod
-    def from_session_params(cls, task: "AnalysisTask", **extra_columns) -> Self:
+    def from_session_params(cls, task: AnalysisTask, **extra_columns) -> Self:
         desc = {}
         for param in task.param_columns:
             desc[param] = f"User-defined parameterization axis '{param}'"
@@ -218,7 +218,7 @@ class DataFrameInfo:
 
     @classmethod
     def from_dataframe(cls, df: pl.DataFrame) -> Self:
-        desc = {c: f"Unknown column" for c in df.columns}
+        desc = {c: "Unknown column" for c in df.columns}
         return cls(desc)
 
 
@@ -283,7 +283,7 @@ class PlotGrid(AbstractContextManager):
 
         if height_spec := self._config.tile_height_ratios:
             if isinstance(height_spec, str):
-                ratio_col = self.ref_to_col(ratios)
+                ratio_col = self.ref_to_col(height_spec)
                 values = self._df[ratio_col].unique(maintain_order=True)
             else:
                 if isinstance(height_spec, ColRefMap):
@@ -540,7 +540,7 @@ class PlotGrid(AbstractContextManager):
             label = _sanitize_label_override(label_ref)
             tile.ax.set_ylabel(label)
 
-    def _make_tile(self, ax: "Axes", ri: int, ci: int, row_value: str, col_value: str):
+    def _make_tile(self, ax: MplAxes, ri: int, ci: int, row_value: str, col_value: str):
         return PlotTile(grid=self,
                         ax=ax,
                         hue=self.tile_hue,
@@ -560,16 +560,20 @@ class PlotGrid(AbstractContextManager):
                 case "x":
                     get_lim_fn = tile.ax.get_xlim
                     set_lim_fn = tile.ax.set_xlim
-                    to_axes_space = lambda x: axes_space_tf.transform([x, 0])[0]
-                    to_data_space = lambda x: data_space_tf.transform([x, 0])[0]
+                    def to_axes_space(x):
+                        return axes_space_tf.transform([x, 0])[0]
+                    def to_data_space(x):
+                        return data_space_tf.transform([x, 0])[0]
                     # We manage margins manually, so reset the margin here
                     # this should be redundant
                     tile.ax.set_xmargin(0)
                 case "y":
                     get_lim_fn = tile.ax.get_ylim
                     set_lim_fn = tile.ax.set_ylim
-                    to_axes_space = lambda y: axes_space_tf.transform([0, y])[1]
-                    to_data_space = lambda y: data_space_tf.transform([0, y])[1]
+                    def to_axes_space(y):
+                        return axes_space_tf.transform([0, y])[1]
+                    def to_data_space(y):
+                        return data_space_tf.transform([0, y])[1]
                     tile.ax.set_ymargin(0)
                 case _:
                     assert False, "Invalid margins axis name"
@@ -617,17 +621,17 @@ class PlotGrid(AbstractContextManager):
         if self._config.legend_position == "inner":
             self.map(lambda tile, chunk: tile.ax.legend())
         elif self._config.legend_position == "outer":
-            hue_keys = self._df[self.tile_hue].unique(maintain_order=True)
-            labels = self._df[self.tile_hue].unique(maintain_order=True)
-            patches = [Patch(color=self._color_palette[hue_key]) for hue_key in hue_keys]
+            # hue_keys = self._df[self.tile_hue].unique(maintain_order=True)
+            # labels = self._df[self.tile_hue].unique(maintain_order=True)
+            # patches = [Patch(color=self._color_palette[hue_key]) for hue_key in hue_keys]
 
             legend_handles = {}
 
             def _merge_legend_handles(tile, _chunk):
                 handles, labels = tile.ax.get_legend_handles_labels()
-                for h, l in zip(handles, labels):
-                    if l not in legend_handles:
-                        legend_handles[l] = h
+                for handle, label in zip(handles, labels):
+                    if label not in legend_handles:
+                        legend_handles[label] = handle
 
             self.map(_merge_legend_handles)
 
@@ -698,7 +702,7 @@ class PlotGrid(AbstractContextManager):
         self._legend_kwargs = kwargs
 
 
-def grid_debug(tile: PlotTile, chunk: pl.DataFrame, x: str, y: str, logger: "Logger"):
+def grid_debug(tile: PlotTile, chunk: pl.DataFrame, x: str, y: str, logger: Logger):
     """
     Helper for debugging plot generation.
 
