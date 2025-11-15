@@ -6,8 +6,14 @@ from marshmallow import ValidationError
 from marshmallow import fields as mf
 from marshmallow import validate as mv
 
-from pycheribenchplot.core.config import *
-from pycheribenchplot.core.error import (ConfigTemplateBindError, ConfigurationError)
+from pycheribenchplot.core.config import (
+    Config,
+    ConfigAny,
+    ConfigContext,
+    ConfigTemplateSpec,
+    config_field,
+)
+from pycheribenchplot.core.error import ConfigTemplateBindError
 
 
 @dataclass
@@ -63,59 +69,67 @@ def test_config_required():
         DemoConfigRequired.schema().load({})
 
     with pytest.raises(ValidationError) as e:
-        DemoConfigRequired.schema().load({"int_val": 100, "list_val": ["a"], "dict_val": {"x": "y"}})
+        DemoConfigRequired.schema().load(
+            {"int_val": 100, "list_val": ["a"], "dict_val": {"x": "y"}}
+        )
     errs = e.value.normalized_messages()
     assert "str_val" in errs
 
     with pytest.raises(ValidationError) as e:
-        DemoConfigRequired.schema().load({"str_val": "my_string", "list_val": ["a"], "dict_val": {"x": "y"}})
+        DemoConfigRequired.schema().load(
+            {"str_val": "my_string", "list_val": ["a"], "dict_val": {"x": "y"}}
+        )
     errs = e.value.normalized_messages()
     assert "int_val" in errs
 
     with pytest.raises(ValidationError) as e:
-        DemoConfigRequired.schema().load({"str_val": "my_string", "int_val": 100, "dict_val": {"x": "y"}})
+        DemoConfigRequired.schema().load(
+            {"str_val": "my_string", "int_val": 100, "dict_val": {"x": "y"}}
+        )
     errs = e.value.normalized_messages()
     assert "list_val" in errs
 
     with pytest.raises(ValidationError) as e:
-        DemoConfigRequired.schema().load({"str_val": "my_string", "int_val": 100, "list_val": ["a"]})
+        DemoConfigRequired.schema().load(
+            {"str_val": "my_string", "int_val": 100, "list_val": ["a"]}
+        )
     errs = e.value.normalized_messages()
     assert "dict_val" in errs
 
 
 def test_type_validation():
     with pytest.raises(ValidationError) as e:
-        config = DemoConfigDefault.schema().load({"str_val": 10})
+        _config = DemoConfigDefault.schema().load({"str_val": 10})
     errs = e.value.normalized_messages()
     assert "str_val" in errs
 
     with pytest.raises(ValidationError) as e:
-        config = DemoConfigDefault.schema().load({"int_val": "ten"})
+        _config = DemoConfigDefault.schema().load({"int_val": "ten"})
     errs = e.value.normalized_messages()
     assert "int_val" in errs
 
     with pytest.raises(ValidationError) as e:
-        config = DemoConfigDefault.schema().load({"list_val": 10})
+        _config = DemoConfigDefault.schema().load({"list_val": 10})
     errs = e.value.normalized_messages()
     assert "list_val" in errs
 
     with pytest.raises(ValidationError) as e:
-        config = DemoConfigDefault.schema().load({"list_val": [10]})
+        _config = DemoConfigDefault.schema().load({"list_val": [10]})
     errs = e.value.normalized_messages()
     assert "list_val" in errs
 
     with pytest.raises(ValidationError) as e:
-        config = DemoConfigDefault.schema().load({"dict_val": 10})
+        _config = DemoConfigDefault.schema().load({"dict_val": 10})
     errs = e.value.normalized_messages()
     assert "dict_val" in errs
 
     with pytest.raises(ValidationError) as e:
-        config = DemoConfigDefault.schema().load({"dict_val": {"x": 10}})
+        _config = DemoConfigDefault.schema().load({"dict_val": {"x": 10}})
     errs = e.value.normalized_messages()
     assert "dict_val" in errs
 
     with pytest.raises(ValidationError) as e:
-        config = DemoConfigDefault.schema().load({"dict_val": {10: "x"}})
+        _config = DemoConfigDefault.schema().load({"dict_val": {10: "x"}})
     errs = e.value.normalized_messages()
     assert "dict_val" in errs
 
@@ -124,10 +138,7 @@ def test_config_simple_template():
     data = {
         "str_val": "{param0}",
         "list_val": ["a", "b", "c", "{param1}"],
-        "dict_val": {
-            "a": "{param2}",
-            "{param3}": "c"
-        }
+        "dict_val": {"a": "{param2}", "{param3}": "c"},
     }
     cc = ConfigContext()
     cc.add_values(param0="foo", param1="bar", param2="baz", param3="key")
@@ -145,9 +156,7 @@ def test_config_template_dtype_substitution():
         "int_val": "{param0}",
         "float_val": "{param1}",
         "list_val": [1, 2, 3, "{param2}"],
-        "dict_val": {
-            "a": "{param3}"
-        }
+        "dict_val": {"a": "{param3}"},
     }
     cc = ConfigContext()
     cc.add_values(param0=100, param1=10.1, param2=300, param3=400)
@@ -163,7 +172,12 @@ def test_config_template_dtype_substitution():
 
 def test_config_template_dtype_cast_validation():
     cc = ConfigContext()
-    cc.add_values(param0="invalid_int", param1="invalid_float", param2="invalid_int", param3="invalid_int")
+    cc.add_values(
+        param0="invalid_int",
+        param1="invalid_float",
+        param2="invalid_int",
+        param3="invalid_int",
+    )
 
     data = {"int_val": "{param0}"}
     config = DemoConfigNonString.schema().load(data)
@@ -222,10 +236,7 @@ def test_config_incomplete_template_dump():
         "str_val": "{param_later}",
         "int_val": "{param1}",
         "list_val": ["{param0}", "c", "{param_later}"],
-        "dict_val": {
-            "a": "{param0}",
-            "b": "{param_later}"
-        }
+        "dict_val": {"a": "{param0}", "b": "{param_later}"},
     }
     config = DemoConfigRequired.schema().load(data)
     bound = config.bind(cc)
@@ -248,10 +259,7 @@ def test_config_template_multi_pass():
         "str_val": "{param_later}",
         "int_val": "{param1}",
         "list_val": ["{param0}", "c", "{param_later}"],
-        "dict_val": {
-            "a": "{param0}",
-            "b": "{param_later}"
-        }
+        "dict_val": {"a": "{param0}", "b": "{param_later}"},
     }
     config = DemoConfigRequired.schema().load(data)
     bound = config.bind(cc)
@@ -273,20 +281,21 @@ def test_config_template_multi_pass():
 
 
 def test_nested_config():
-    config = DemoNested.schema().load({"str_val": "foo_outer", "nested_val": {"str_val": "foo_inner"}})
+    config = DemoNested.schema().load(
+        {"str_val": "foo_outer", "nested_val": {"str_val": "foo_inner"}}
+    )
 
     assert config.str_val == "foo_outer"
     assert config.nested_val.str_val == "foo_inner"
 
 
 def test_nested_template():
-    config = DemoNested.schema().load({
-        "str_val": "{param0}",
-        "nested_val": {
-            "str_val": "{param1}",
-            "int_val": "{param2}"
+    config = DemoNested.schema().load(
+        {
+            "str_val": "{param0}",
+            "nested_val": {"str_val": "{param1}", "int_val": "{param2}"},
         }
-    })
+    )
 
     cc = ConfigContext()
     cc.add_values(param0="foo", param1="bar", param2=100)
@@ -303,7 +312,9 @@ def test_config_dtype_any_template():
         simple_any: ConfigAny = config_field(None)
         nested_any: dict[str, ConfigAny] = config_field(dict)
 
-    config = TestConfig.schema().load({"simple_any": "{param0}", "nested_any": {"a": "foo", "b": "{param1}"}})
+    config = TestConfig.schema().load(
+        {"simple_any": "{param0}", "nested_any": {"a": "foo", "b": "{param1}"}}
+    )
     cc = ConfigContext()
     cc.add_values(param0=100, param1="bar")
     bound = config.bind(cc)
@@ -321,12 +332,14 @@ def test_config_template_explicit_dtype_cast():
         any_val_one: ConfigAny = config_field(None)
         any_val_two: ConfigAny = config_field(None)
 
-    config = TestConfig.schema().load({
-        "union_val_one": "{param0:d}",
-        "union_val_two": "{param0:s}",
-        "any_val_one": "{param1:d}",
-        "any_val_two": "{param1:f}",
-    })
+    config = TestConfig.schema().load(
+        {
+            "union_val_one": "{param0:d}",
+            "union_val_two": "{param0:s}",
+            "any_val_one": "{param1:d}",
+            "any_val_two": "{param1:f}",
+        }
+    )
 
     cc = ConfigContext()
     cc.add_values(param0="100", param1="200")
@@ -348,12 +361,14 @@ def test_validate_annotated_field():
         opt: CustomType | None = config_field(None)
 
     with pytest.raises(ValidationError):
-        config = TestConfig.schema().load({
-            "custom": "abc",
-        })
+        _config = TestConfig.schema().load(
+            {
+                "custom": "abc",
+            }
+        )
 
     with pytest.raises(ValidationError):
-        config = TestConfig.schema().load({"custom": "0123", "opt": "abc"})
+        _config = TestConfig.schema().load({"custom": "0123", "opt": "abc"})
 
-    config = TestConfig.schema().load({"custom": "123"})
-    config = TestConfig.schema().load({"custom": "123", "opt": "987"})
+    _config = TestConfig.schema().load({"custom": "123"})
+    _config = TestConfig.schema().load({"custom": "123", "opt": "987"})

@@ -1,13 +1,13 @@
 import random
 import time
-from concurrent.futures import ThreadPoolExecutor, wait
 
 import pytest
 
-from pycheribenchplot.core.scheduler import ResourceManager, TaskScheduler
-from pycheribenchplot.core.task import Task, dependency, output
+from pycheribenchplot.core.scheduler import TaskScheduler
+from pycheribenchplot.core.task import Task, dependency
 
-from .util.session import *
+# ruff: ignore
+from .util.session import task_factory
 
 
 @pytest.fixture
@@ -186,7 +186,7 @@ def test_task_cancellation(task_factory):
     sched.run()
     assert failing.completed
     assert failing.failure is not None
-    assert to_cancel.completed == False
+    assert not to_cancel.completed
     assert to_cancel.failure is None
 
 
