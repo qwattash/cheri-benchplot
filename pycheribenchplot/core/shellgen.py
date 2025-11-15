@@ -1,4 +1,5 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from logging import Logger
 from pathlib import Path
 from threading import Lock
 from typing import IO
@@ -7,6 +8,7 @@ from jinja2 import (Environment, PackageLoader, TemplateNotFound, select_autoesc
 
 from .config import InstanceCheriBSD, InstanceKernelABI, InstanceUserABI
 
+type Benchmark = "Benchmark"
 
 @dataclass
 class ScriptHook:
@@ -61,7 +63,7 @@ class TemplateContextBase:
     """
     DEFAULT_TEMPLATE = "must-be-set-explicitly"
 
-    def __init__(self, logger: "Logger"):
+    def __init__(self, logger: Logger):
         self.logger = logger
         #: Script context lock
         self._lock = Lock()
@@ -127,7 +129,7 @@ class ScriptContext(TemplateContextBase):
     """
     DEFAULT_TEMPLATE = "runner-script.sh.jinja"
 
-    def __init__(self, benchmark: "Benchmark"):
+    def __init__(self, benchmark: Benchmark):
         super().__init__(benchmark.logger)
         #: Template context
         self._context = {

@@ -4,7 +4,7 @@ import logging
 from json.decoder import JSONDecodeError
 from pathlib import Path
 from traceback import print_exception
-from typing import Callable, Type
+from typing import Type
 
 from marshmallow.exceptions import ValidationError
 from typing_extensions import Self

@@ -1,9 +1,5 @@
-import logging
 import typing
 from pathlib import Path
-
-import numpy as np
-import pandas as pd
 
 from .config import DatasetArtefact
 from .csv import CSVDataSetContainer
@@ -56,7 +52,7 @@ class ProcstatDataset(CSVDataSetContainer):
     def output_file(self):
         return super().output_file().with_suffix(".csv")
 
-    def _gen_run_procstat(self, script, proc_handle: "VariableRef", header=True):
+    def _gen_run_procstat(self, script, proc_handle, header=True):
         """
         This should be used in subclasses to implement gen_pre_benchmark().
         Running procstat requires knowledge of the way to stop the benchmark at the correct time,

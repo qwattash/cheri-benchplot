@@ -1,9 +1,8 @@
 from threading import Lock
-from warnings import deprecated
 
 import matplotlib as mpl
 
-from .analysis import AnalysisTask, DatasetAnalysisTask, SliceAnalysisTask
+from .analysis import AnalysisTask, SliceAnalysisTask
 from .artefact import Target
 from .plot_util.theme import default_theme
 from .task import Task
