@@ -1,13 +1,14 @@
-from dataclasses import MISSING, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import polars as pl
 import polars.selectors as cs
 from git import Repo
-from git.exc import BadName, InvalidGitRepositoryError
+from git.exc import BadName
+from marshmallow import ValidationError
 
-from ..core.artefact import PLDataFrameLoadTask, Target
+from ..core.artefact import DataFrameLoadTask, Target
 from ..core.config import Config, ConfigPath, config_field
 from ..core.error import ConfigurationError
 from ..core.task import ExecutionTask, output
@@ -15,15 +16,22 @@ from ..core.task import ExecutionTask, output
 
 @dataclass
 class ClocRepoConfig(Config):
-    repo_path: ConfigPath = config_field(MISSING, desc="Target repository path")
-    baseline_ref: str = config_field(MISSING, desc="Baseline git ref")
-    name: str | None = config_field(None, desc="Human-readable name of the cloc data, defaults to the repo path")
+    repo_path: ConfigPath = config_field(Config.REQUIRED, desc="Target repository path")
+    baseline_ref: str = config_field(Config.REQUIRED, desc="Baseline git ref")
+    name: str | None = config_field(
+        None, desc="Human-readable name of the cloc data, defaults to the repo path"
+    )
     head_ref: str = config_field("HEAD", desc="Repository head ref")
     baseline_path: ConfigPath | None = config_field(
-        None, desc="Baseline repository path if the baseline is from another subtree")
+        None, desc="Baseline repository path if the baseline is from another subtree"
+    )
     accept_ext: list[str] = config_field(list, desc="Extensions to accept e.g. 'c'")
-    accept_filter: str | None = config_field(None, desc="Filter the directory to diff within the repository")
-    reject_filter: str | None = config_field(None, desc="Filter out specified directory within the repository")
+    accept_filter: str | None = config_field(
+        None, desc="Filter the directory to diff within the repository"
+    )
+    reject_filter: str | None = config_field(
+        None, desc="Filter out specified directory within the repository"
+    )
     reject_filter: list[str] = config_field(list, desc="")
     cloc_args: list[str] = config_field(list, desc="Extra arguments for cloc")
 
@@ -32,7 +40,9 @@ class ClocRepoConfig(Config):
             repo = Repo(repo_path)
             return repo.commit(ref).hexsha
         except BadName:
-            raise ValidationError("Invalid configuration: commit REF %s is not valid", ref)
+            raise ValidationError(
+                "Invalid configuration: commit REF %s is not valid", ref
+            )
 
     def resolve_refs(self, user_config):
         if not self.repo_path.is_absolute():
@@ -50,15 +60,18 @@ class ClocRepoConfig(Config):
             self.name = str(self.repo_path)
 
 
-class LoadClocFile(PLDataFrameLoadTask):
+class LoadClocFile(DataFrameLoadTask):
     """
     Loader for cloc output data
     """
+
     task_namespace = "cloc"
     task_name = "load-cloc"
 
     def _unnest_column(self, df, col):
-        unwrapped = df.select(col).unnest(col).unpivot(variable_name="file", value_name=col)
+        unwrapped = (
+            df.select(col).unnest(col).unpivot(variable_name="file", value_name=col)
+        )
         count = unwrapped.with_columns(pl.col(col).struct.field("code").alias(col))
         return count
 
@@ -82,7 +95,11 @@ class LoadClocFile(PLDataFrameLoadTask):
         assert added.shape == same.shape
 
         # now join everything together on the file column
-        df = added.join(modified, on="file").join(removed, on="file").join(same, on="file")
+        df = (
+            added.join(modified, on="file")
+            .join(removed, on="file")
+            .join(same, on="file")
+        )
         return df
 
     def _load_count_file(self, df):
@@ -98,6 +115,7 @@ class ClocExecTask(ExecutionTask):
 
     The extraction parameters are determined by the scenario.
     """
+
     task_namespace = "cloc"
     task_name = "extract"
     public = True
@@ -123,20 +141,25 @@ class ClocExecTask(ExecutionTask):
         cli_args = []
 
         self.script.exec_iteration("cloc", template="cloc.hook.jinja")
-        self.script.extend_context({
-            "cloc_config": self.repo_config(),
-            "cloc_output": self.cloc_output.single_path(),
-            "cloc_baseline": self.cloc_baseline.single_path(),
-            "cloc_args": cli_args
-        })
+        self.script.extend_context(
+            {
+                "cloc_config": self.repo_config(),
+                "cloc_output": self.cloc_output.single_path(),
+                "cloc_baseline": self.cloc_baseline.single_path(),
+                "cloc_args": cli_args,
+            }
+        )
 
 
 @dataclass
 class ClocRepoSpec(Config):
-    matches: dict[str,
-                  Any] = config_field(Config.REQUIRED,
-                                      desc="Use this repo spec when all parameterisation keys match the given value.")
-    repo_config: ClocRepoConfig = config_field(Config.REQUIRED, desc="Cloc configuration.")
+    matches: dict[str, Any] = config_field(
+        Config.REQUIRED,
+        desc="Use this repo spec when all parameterisation keys match the given value.",
+    )
+    repo_config: ClocRepoConfig = config_field(
+        Config.REQUIRED, desc="Cloc configuration."
+    )
 
     def check_matches(self, params: dict[str, Any]) -> bool:
         """
@@ -156,10 +179,12 @@ class ClocMultiRepoConfig(Config):
     Each repository defines a ClocRepoConfig, which is enabled using
     parameterisation matchers.
     """
+
     repos: list[ClocRepoSpec] = config_field(
         list,
         desc="Per-repository configurations. Each benchmark run selects one configuration "
-        "based on the matcher, note that the match must be unique.")
+        "based on the matcher, note that the match must be unique.",
+    )
 
     def resolve_refs(self, user_config):
         for repo_spec in self.repos:
@@ -170,6 +195,7 @@ class ClocMultiRepoExecTask(ClocExecTask):
     """
     Select the cloc configuration based on the parameterisation.
     """
+
     task_namespace = "cloc"
     task_name = "multi-extract"
     public = True
@@ -181,8 +207,10 @@ class ClocMultiRepoExecTask(ClocExecTask):
             if not repo_spec.check_matches(self.benchmark.parameters):
                 continue
             if selected is not None:
-                self.logger.error("Can not select unique cloc RepoConfig, multiple matches for parameterisation %s",
-                                  self.benchmark.parameters)
+                self.logger.error(
+                    "Can not select unique cloc RepoConfig, multiple matches for parameterisation %s",
+                    self.benchmark.parameters,
+                )
                 raise ConfigurationError("Multiple matching repo configs")
             selected = repo_spec.repo_config
         return selected
@@ -193,9 +221,16 @@ class CheriBSDClocConfig(ClocMultiRepoConfig):
     """
     Configuration with explicit repos related to CheriBSD LoC extraction.
     """
-    cheribsd: ClocRepoSpec = config_field(Config.REQUIRED, desc="CheriBSD main source tree cloc matcher and config.")
-    drm: ClocRepoSpec | None = config_field(None, desc="CheriBSD DRM subtree cloc matcher and config.")
-    zfs: ClocRepoSpec | None = config_field(None, desc="CheriBSD ZFS subtree cloc matcher and config.")
+
+    cheribsd: ClocRepoSpec = config_field(
+        Config.REQUIRED, desc="CheriBSD main source tree cloc matcher and config."
+    )
+    drm: ClocRepoSpec | None = config_field(
+        None, desc="CheriBSD DRM subtree cloc matcher and config."
+    )
+    zfs: ClocRepoSpec | None = config_field(
+        None, desc="CheriBSD ZFS subtree cloc matcher and config."
+    )
 
     def resolve_refs(self, user_config):
         self.cheribsd.repo_config.resolve_refs(user_config)
@@ -220,6 +255,7 @@ class CheriBSDClocExecTask(ClocMultiRepoExecTask):
      - drm: https://github.com/evadot/drm-subtree
      - zfs: https://github.com/CTSRD-CHERI/zfs.git
     """
+
     task_namespace = "cloc"
     task_name = "extract-cheribsd"
     public = True
@@ -236,11 +272,15 @@ class CheriBSDClocExecTask(ClocMultiRepoExecTask):
             bsd_config = self.config.cheribsd.repo_config
             self.logger.info("Using CheriBSD baseline REF %s", bsd_config.baseline_ref)
             if not bsd_config.accept_ext:
-                self.logger.info("Using default CheriBSD file ext filter: '%s'", default_ext)
+                self.logger.info(
+                    "Using default CheriBSD file ext filter: '%s'", default_ext
+                )
                 bsd_config.accept_ext = default_ext
             if not bsd_config.accept_filter:
                 default_accept = "sys/"
-                self.logger.info("Using default CheriBSD accept filter: '%s'", default_accept)
+                self.logger.info(
+                    "Using default CheriBSD accept filter: '%s'", default_accept
+                )
                 bsd_config.accept_filter = default_accept
             return bsd_config
 
@@ -255,7 +295,9 @@ class CheriBSDClocExecTask(ClocMultiRepoExecTask):
                 drm_config.accept_ext = default_ext
             if not drm_config.accept_filter:
                 default_accept = "sys/dev/drm/"
-                self.logger.info("Using default DRM accept filter: '%s'", default_accept)
+                self.logger.info(
+                    "Using default DRM accept filter: '%s'", default_accept
+                )
                 drm_config.accept_filter = default_accept
             return drm_config
 

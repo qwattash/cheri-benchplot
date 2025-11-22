@@ -1,5 +1,5 @@
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Optional
@@ -8,7 +8,7 @@ import polars as pl
 import polars.selectors as cs
 from marshmallow.validate import Regexp
 
-from ..core.artefact import PLDataFrameLoadTask, RemoteBenchmarkIterationTarget
+from ..core.artefact import DataFrameLoadTask, RemoteBenchmarkIterationTarget
 from ..core.config import Config, ConfigPath, config_field
 from ..core.task import output
 from ..core.tvrs import TVRSExecConfig, TVRSExecTask
@@ -55,6 +55,7 @@ class IPerfScenario(Config):
     The CPU affinity is a comma-separated tuple of core IDs (0 to MAXCPU) that determine
     the sender/receiver affinity. This sets both the client and server affinity.
     """
+
     # yapf: disable
     protocol: IPerfProtocol = config_field(IPerfProtocol.TCP, desc="Protocol to use")
     transfer_mode: IPerfTransferLimit = config_field(
@@ -96,16 +97,21 @@ class IPerfConfig(TVRSExecConfig):
     """
     IPerf benchmark configuration.
     """
+
     iperf_path: Optional[ConfigPath] = config_field(
-        None, desc="Path of iperf executable in the remote host, appended to PATH")
+        None, desc="Path of iperf executable in the remote host, appended to PATH"
+    )
     use_localhost_server: bool = config_field(
-        True, desc="Spawn server on localhost, if False, the scenario must specify a remote_host")
+        True,
+        desc="Spawn server on localhost, if False, the scenario must specify a remote_host",
+    )
 
 
-class IngestIPerfStats(PLDataFrameLoadTask):
+class IngestIPerfStats(DataFrameLoadTask):
     """
     Loader for stats data that produces a standard polars dataframe.
     """
+
     task_namespace = "iperf"
     task_name = "ingest-stats"
 
@@ -120,15 +126,20 @@ class IngestIPerfStats(PLDataFrameLoadTask):
         data = json.load(open(path, "r"))
         end_info = data["end"]
 
-        snd = pl.DataFrame(end_info["sum_sent"]).with_columns(cs.numeric().exclude("packets").cast(pl.Float64))
-        rcv = pl.DataFrame(end_info["sum_received"]).with_columns(cs.numeric().exclude("packets").cast(pl.Float64))
+        snd = pl.DataFrame(end_info["sum_sent"]).with_columns(
+            cs.numeric().exclude("packets").cast(pl.Float64)
+        )
+        rcv = pl.DataFrame(end_info["sum_received"]).with_columns(
+            cs.numeric().exclude("packets").cast(pl.Float64)
+        )
         df = pl.concat([snd, rcv], how="vertical", rechunk=True)
 
         test_info = data["start"]["test_start"]
         df = df.with_columns(
             pl.lit(data["start"]["sndbuf_actual"]).alias("sndbuf_bytes"),
             pl.lit(data["start"]["rcvbuf_actual"]).alias("rcvbuf_bytes"),
-            pl.lit(test_info["blksize"]).alias("block_size_bytes"))
+            pl.lit(test_info["blksize"]).alias("block_size_bytes"),
+        )
         return df
 
 
@@ -140,6 +151,7 @@ class IPerfExecTask(TVRSExecTask):
     This is done to reduce the amount of state that carries over from one iteration to
     the other. This is particularly relevent when temporal safety is used.
     """
+
     task_namespace = "iperf"
     task_name = "exec"
     task_config_class = IPerfConfig
@@ -150,14 +162,18 @@ class IPerfExecTask(TVRSExecTask):
     @output
     def stats(self):
         """IPerf json output"""
-        return RemoteBenchmarkIterationTarget(self, "stats", ext="json", loader=IngestIPerfStats)
+        return RemoteBenchmarkIterationTarget(
+            self, "stats", ext="json", loader=IngestIPerfStats
+        )
 
     def run(self):
         super().run()
-        self.script.extend_context({
-            "iperf_config": self.config,
-            "iperf_gen_output_path": self.stats.shell_path_builder()
-        })
+        self.script.extend_context(
+            {
+                "iperf_config": self.config,
+                "iperf_gen_output_path": self.stats.shell_path_builder(),
+            }
+        )
         self.script.register_global("IPerfProtocol", IPerfProtocol)
         self.script.register_global("IPerfMode", IPerfMode)
         self.script.register_global("IPerfTransferLimit", IPerfTransferLimit)

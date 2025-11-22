@@ -2,9 +2,10 @@ import re
 import json
 from dataclasses import dataclass
 
-from ..core.artefact import BenchmarkIterationTarget, PLDataFrameLoadTask
-from ..core.config import Config, ConfigPath, InstanceCheriBSD
+from ..core.artefact import BenchmarkIterationTarget, DataFrameLoadTask
+from ..core.config import Config, ConfigPath
 from ..core.task import DataGenTask, output
+
 
 @dataclass
 class IngestWRKConfig(Config):
@@ -29,15 +30,17 @@ class IngestWRKData(DataGenTask):
     scenario: name of the WRK file being fetched
     iteration: iteration number
     """
-    task_config_class= IngestWRKConfig
+
+    task_config_class = IngestWRKConfig
     task_namespace = "wrk"
     task_name = "ingest"
     public = True
 
     @output
     def data(self):
-        return BenchmarkIterationTarget(self, "summary", ext="json",
-                                        loader=PLDataFrameLoadTask)
+        return BenchmarkIterationTarget(
+            self, "summary", ext="json", loader=DataFrameLoadTask
+        )
 
     def run(self):
         user_abi = self.benchmark.config.instance.cheri_target
@@ -75,7 +78,12 @@ class IngestWRKData(DataGenTask):
         for i in range(self.benchmark.config.iterations):
             dst = summary_paths[i]
             # Note that we expect iteration # to be 1-based here
-            data_file = self.config.path / f"{self.config.jail_prefix}{abi}-{variant}" / runtime / f"result_{scenario}.{i + 1}.json"
+            data_file = (
+                self.config.path
+                / f"{self.config.jail_prefix}{abi}-{variant}"
+                / runtime
+                / f"result_{scenario}.{i + 1}.json"
+            )
             self.logger.debug("Ingest %s => %s", data_file, dst)
             with open(data_file, "r") as fp:
                 data = json.load(fp)
@@ -93,7 +101,7 @@ class IngestWRKData(DataGenTask):
                 "latency_pct90": data["latency"]["percentile90"],
                 "latency_pct95": data["latency"]["percentile95"],
                 "latency_pct99": data["latency"]["percentile99"],
-                "latency_pct999": data["latency"]["percentile999"]
+                "latency_pct999": data["latency"]["percentile999"],
             }
             with open(dst, "w+") as fp:
                 json.dump(summary, fp)

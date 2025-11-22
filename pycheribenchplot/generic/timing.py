@@ -4,10 +4,10 @@ from pathlib import Path
 
 import polars as pl
 
-from ..core.artefact import PLDataFrameLoadTask, RemoteBenchmarkIterationTarget
+from ..core.artefact import DataFrameLoadTask, RemoteBenchmarkIterationTarget
 from ..core.config import Config, config_field
-from ..core.plot import PlotTarget, PlotTask, SlicePlotTask
-from ..core.plot_util import (BarPlotConfig, PlotGrid, PlotGridConfig, grid_barplot)
+from ..core.plot import PlotTarget, SlicePlotTask
+from ..core.plot_util import BarPlotConfig, PlotGrid, PlotGridConfig, grid_barplot
 from ..core.task import ExecutionTask, dependency, output
 
 
@@ -22,13 +22,16 @@ class TimingTool(Enum):
 
 @dataclass
 class TimingConfig(Config):
-    timing_mode: TimingTool = config_field(TimingTool.HYPERFINE, desc="Timing tool to use")
+    timing_mode: TimingTool = config_field(
+        TimingTool.HYPERFINE, desc="Timing tool to use"
+    )
 
 
-class IngestTimingStats(PLDataFrameLoadTask):
+class IngestTimingStats(DataFrameLoadTask):
     """
     Loader for stats data that produces a standard polars dataframe.
     """
+
     task_namespace = "timing"
     task_name = "ingest-stats"
 
@@ -63,18 +66,25 @@ class IngestTimingStats(PLDataFrameLoadTask):
     def _load_hyperfine_sample(self, path: Path) -> pl.DataFrame:
         in_df = pl.read_json(path).with_columns(
             pl.col("results").list.first().struct.field("times"),
-            pl.col("results").list.first().struct.field("exit_codes"))
+            pl.col("results").list.first().struct.field("exit_codes"),
+        )
         df = in_df.select(
             pl.col("results").list.first().struct.field("user"),
             pl.col("results").list.first().struct.field("system"),
             pl.col("times").list.first(),
             pl.col("times").list.len().alias("check_ntimes"),
-            pl.col("exit_codes").list.eval(pl.element() != 0).list.any().alias("check_errs"))
+            pl.col("exit_codes")
+            .list.eval(pl.element() != 0)
+            .list.any()
+            .alias("check_errs"),
+        )
         if (df["check_ntimes"] > 1).any():
             self.logger.error("Unexpected number of hyperfine iterations")
             raise RuntimeError("Input data error")
         if df["check_errs"].any():
-            self.logger.error("Found non-zero exit codes for %s at %s", self.benchmark, path)
+            self.logger.error(
+                "Found non-zero exit codes for %s at %s", self.benchmark, path
+            )
             raise RuntimeError("Input data error")
         return df.select("user", "system", "times")
 
@@ -84,20 +94,25 @@ class TimingExecTask(ExecutionTask):
     This task can either be used as a base task by inheriting both the configuration and the
     task, or as a separate generator in the same was as PMC.
     """
+
     @property
     def timing_config(self):
         return self.config
 
     @output
     def timing(self):
-        return RemoteBenchmarkIterationTarget(self, "timing", loader=IngestTimingStats, ext="txt")
+        return RemoteBenchmarkIterationTarget(
+            self, "timing", loader=IngestTimingStats, ext="txt"
+        )
 
     def run(self):
         super().run()
-        self.script.extend_context({
-            "timing_config": self.timing_config,
-            "timing_gen_output_path": self.timing.shell_path_builder()
-        })
+        self.script.extend_context(
+            {
+                "timing_config": self.timing_config,
+                "timing_gen_output_path": self.timing.shell_path_builder(),
+            }
+        )
         self.script.register_global("TimingTool", TimingTool)
 
 
@@ -106,6 +121,7 @@ class TimingPlotConfig(PlotGridConfig, BarPlotConfig):
     """
     Base configuration for the TimingPlotTask.
     """
+
     pass
 
 
@@ -113,6 +129,7 @@ class TimingSlicePlotTask(SlicePlotTask):
     """
     Simple overview of the collected timing data from a generic.exec task run.
     """
+
     task_namespace = "timing"
     task_name = "bar-plot-slice"
     public = True
@@ -152,11 +169,20 @@ class TimingSlicePlotTask(SlicePlotTask):
     def _do_plot(self, target, view_df, default_display_name):
         name_mapping_defaults = {"times": default_display_name}
         if self.config.hue:
-            name_defaults.update({self.config.hue: self.config.hue.capitalize()})
+            name_mapping_defaults.update(
+                {self.config.hue: self.config.hue.capitalize()}
+            )
 
-        grid_config = self.config.set_display_defaults(param_names=name_mapping_defaults)
+        grid_config = self.config.set_display_defaults(
+            param_names=name_mapping_defaults
+        )
         with PlotGrid(target, view_df, grid_config) as grid:
-            grid.map(grid_barplot, x=self.config.tile_xaxis, y="times", err=["times_low", "times_high"])
+            grid.map(
+                grid_barplot,
+                x=self.config.tile_xaxis,
+                y="times",
+                err=["times_low", "times_high"],
+            )
             grid.add_legend()
 
     def run_plot(self):
@@ -166,12 +192,18 @@ class TimingSlicePlotTask(SlicePlotTask):
         stats = self.compute_overhead(df, "times", how="median", overhead_scale=100)
 
         self.logger.info("Plot absolute time measurements")
-        self._do_plot(self.absolute_time, stats.filter(_metric_type="absolute"), "Time (s)")
+        self._do_plot(
+            self.absolute_time, stats.filter(_metric_type="absolute"), "Time (s)"
+        )
 
         self.logger.info("Plot relative time measurements")
-        delta_stats = stats.filter((pl.col("_metric_type") == "delta") & ~pl.col("_is_baseline"))
+        delta_stats = stats.filter(
+            (pl.col("_metric_type") == "delta") & ~pl.col("_is_baseline")
+        )
         self._do_plot(self.relative_time, delta_stats, "∆ Time (s)")
 
         self.logger.info("Plot time overhead measurements")
-        ovh_stats = stats.filter((pl.col("_metric_type") == "overhead") & ~pl.col("_is_baseline"))
+        ovh_stats = stats.filter(
+            (pl.col("_metric_type") == "overhead") & ~pl.col("_is_baseline")
+        )
         self._do_plot(self.time_overhead, ovh_stats, "% Overhead")

@@ -1,13 +1,12 @@
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
 from typing import Optional
 
-from marshmallow import ValidationError, validates
+from marshmallow import ValidationError
 from marshmallow.validate import Regexp
 
-from ..core.artefact import PLDataFrameLoadTask, RemoteBenchmarkIterationTarget
+from ..core.artefact import DataFrameLoadTask, RemoteBenchmarkIterationTarget
 from ..core.config import Config, ConfigPath, config_field
 from ..core.task import output
 from ..core.tvrs import TVRSExecConfig, TVRSExecTask
@@ -27,7 +26,7 @@ class NetPerfMode(Enum):
 suffix_value = {"K": 2**10, "M": 2**20, "G": 2**30}
 
 
-class NetperfLoader(PLDataFrameLoadTask):
+class NetperfLoader(DataFrameLoadTask):
     task_namespace = "netperf"
     task_name = "loader"
 
@@ -43,24 +42,40 @@ class NetperfScenario(Config):
 
     This encodes netperf and netserver parameters.
     """
-    protocol: NetPerfProtocol = config_field(NetPerfProtocol.TCP, desc="Protocol to use")
-    transfer_mode: NetPerfTransferLimit = config_field(NetPerfTransferLimit.BYTES,
-                                                       desc="How the transfer limit is interpreted")
+
+    protocol: NetPerfProtocol = config_field(
+        NetPerfProtocol.TCP, desc="Protocol to use"
+    )
+    transfer_mode: NetPerfTransferLimit = config_field(
+        NetPerfTransferLimit.BYTES, desc="How the transfer limit is interpreted"
+    )
     mode: NetPerfMode = config_field(NetPerfMode.STREAM, desc="Test mode")
-    transfer_limit: int | str = config_field("1G", desc="Transfer limit, format depends on 'transfer_mode'")
-    remote_host: str = config_field("localhost",
-                                    desc="Hostname of the server. By default we operate on localhost. "
-                                    "When this is set to anything other than localhost, the server setup "
-                                    "is expected to be done manually")
+    transfer_limit: int | str = config_field(
+        "1G", desc="Transfer limit, format depends on 'transfer_mode'"
+    )
+    remote_host: str = config_field(
+        "localhost",
+        desc="Hostname of the server. By default we operate on localhost. "
+        "When this is set to anything other than localhost, the server setup "
+        "is expected to be done manually",
+    )
     use_ipv4: bool = config_field(True, desc="Force use of IPv4 vs IPv6")
-    cpu_affinity: Optional[str] = config_field(None,
-                                               desc="CPU Affinity for send/receive sides",
-                                               validate=Regexp(r"[0-9]+(,[0-9+])?",
-                                                               error="CPU Affinty must be of the form 'N[,M]'"))
-    buffer_size: int | str = config_field("128K", desc="Size of the send/recv buffer (bytes)")
-    window_size: Optional[int | str] = config_field(None,
-                                                    desc="Set socket buffer size (bytes) (indirectly the TCP window)")
-    nodelay: bool = config_field(False, desc="Disable Nagle algorithm to send small packets immediately")
+    cpu_affinity: Optional[str] = config_field(
+        None,
+        desc="CPU Affinity for send/receive sides",
+        validate=Regexp(
+            r"[0-9]+(,[0-9+])?", error="CPU Affinty must be of the form 'N[,M]'"
+        ),
+    )
+    buffer_size: int | str = config_field(
+        "128K", desc="Size of the send/recv buffer (bytes)"
+    )
+    window_size: Optional[int | str] = config_field(
+        None, desc="Set socket buffer size (bytes) (indirectly the TCP window)"
+    )
+    nodelay: bool = config_field(
+        False, desc="Disable Nagle algorithm to send small packets immediately"
+    )
 
     def __post_init__(self):
         super().__post_init__()
@@ -80,10 +95,15 @@ class NetperfRunConfig(TVRSExecConfig):
     """
     Configuration for a netperf benchmark instantiation.
     """
+
     netperf_path: Optional[ConfigPath] = config_field(
-        None, desc="Path of netserver/netperf executables in the remote host, appended to PATH")
+        None,
+        desc="Path of netserver/netperf executables in the remote host, appended to PATH",
+    )
     use_localhost_server: bool = config_field(
-        True, desc="Spawn netserver on localhost. If False, the scenario msut specify a remote host")
+        True,
+        desc="Spawn netserver on localhost. If False, the scenario msut specify a remote host",
+    )
 
 
 class NetperfExecTask(TVRSExecTask):
@@ -93,6 +113,7 @@ class NetperfExecTask(TVRSExecTask):
     Not that this assumes that the netperf and netserver executables are available
     on the remote host.
     """
+
     task_namespace = "netperf"
     task_name = "exec"
     task_config_class = NetperfRunConfig
@@ -102,14 +123,18 @@ class NetperfExecTask(TVRSExecTask):
 
     @output
     def results(self):
-        return RemoteBenchmarkIterationTarget(self, "stats", ext="csv", loader=NetperfLoader)
+        return RemoteBenchmarkIterationTarget(
+            self, "stats", ext="csv", loader=NetperfLoader
+        )
 
     def run(self):
         super().run()
-        self.script.extend_context({
-            "netperf_config": self.config,
-            "netperf_gen_output_path": self.results.shell_path_builder()
-        })
+        self.script.extend_context(
+            {
+                "netperf_config": self.config,
+                "netperf_gen_output_path": self.results.shell_path_builder(),
+            }
+        )
         self.script.register_global("NetPerfProtocol", NetPerfProtocol)
         self.script.register_global("NetPerfMode", NetPerfMode)
         self.script.register_global("NetPerfTransferLimit", NetPerfTransferLimit)

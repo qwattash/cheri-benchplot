@@ -1,7 +1,7 @@
 import shutil
 from dataclasses import dataclass
 
-from ..core.artefact import PLDataFrameSessionLoadTask, Target
+from ..core.artefact import DataFrameSessionLoadTask, Target
 from ..core.config import Config, ConfigPath, config_field
 from ..core.task import ExecutionTask, output
 
@@ -25,7 +25,7 @@ class IngestAdvisoriesTask(ExecutionTask):
 
     @output
     def advisories(self):
-        return Target(self, "advisories", loader=PLDataFrameSessionLoadTask, ext="json")
+        return Target(self, "advisories", loader=DataFrameSessionLoadTask, ext="json")
 
     def run(self):
         raise NotImplementedError("TODO: Needs to be ported to new system")

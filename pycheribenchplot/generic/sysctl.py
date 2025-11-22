@@ -4,10 +4,10 @@ from pathlib import Path
 import polars as pl
 import polars.selectors as cs
 
-from ..core.artefact import PLDataFrameLoadTask, RemoteBenchmarkIterationTarget
+from ..core.artefact import DataFrameLoadTask, RemoteBenchmarkIterationTarget
 from ..core.config import Config, config_field
-from ..core.plot import PlotTarget, PlotTask, SlicePlotTask
-from ..core.plot_util import (PlotGrid, PlotGridConfig, grid_barplot, grid_pointplot)
+from ..core.plot import PlotTarget, SlicePlotTask
+from ..core.plot_util import PlotGrid, PlotGridConfig, grid_barplot
 from ..core.task import ExecutionTask, dependency, output
 
 
@@ -16,7 +16,7 @@ class SysctlConfig(Config):
     names: list[str] = config_field(list, desc="List of sysctl names to collect")
 
 
-class IngestSysctl(PLDataFrameLoadTask):
+class IngestSysctl(DataFrameLoadTask):
     task_namespace = "sysctl"
     task_name = "sysctl-ingest"
 
@@ -34,13 +34,12 @@ class IngestSysctl(PLDataFrameLoadTask):
         predict the type of each sysctl. We also don't want to preclude sampling
         of non-numeric sysctls in case further processing is done downstream.
         """
-        df = pl.read_csv(path,
-                         has_header=False,
-                         separator="=",
-                         schema={
-                             "sysctl_name": pl.String,
-                             "sysctl_value": pl.String
-                         })
+        df = pl.read_csv(
+            path,
+            has_header=False,
+            separator="=",
+            schema={"sysctl_name": pl.String, "sysctl_value": pl.String},
+        )
         return df
 
 
@@ -52,27 +51,34 @@ class SysctlExecTask(ExecutionTask):
     This can either be used as a base class to inherit the sysctl sampling or
     as an auxiliary generator in the pipelien configuration.
     """
+
     task_namespace = "generic"
     task_name = "sysctl"
     public = True
 
     @output
     def sample_before(self):
-        return RemoteBenchmarkIterationTarget(self, "before", loader=IngestSysctl, ext="txt")
+        return RemoteBenchmarkIterationTarget(
+            self, "before", loader=IngestSysctl, ext="txt"
+        )
 
     @output
     def sample_after(self):
-        return RemoteBenchmarkIterationTarget(self, "after", loader=IngestSysctl, ext="txt")
+        return RemoteBenchmarkIterationTarget(
+            self, "after", loader=IngestSysctl, ext="txt"
+        )
 
     def run(self):
         super().run()
         self.script.setup_iteration("sysctl", template="sysctl.hook.jinja")
         self.script.teardown_iteration("sysctl", template="sysctl.hook.jinja")
-        self.script.extend_context({
-            "sysctl_config": self.config,
-            "sysctl_gen_out_before": self.sample_before.shell_path_builder(),
-            "sysctl_gen_out_after": self.sample_after.shell_path_builder(),
-        })
+        self.script.extend_context(
+            {
+                "sysctl_config": self.config,
+                "sysctl_gen_out_before": self.sample_before.shell_path_builder(),
+                "sysctl_gen_out_after": self.sample_after.shell_path_builder(),
+            }
+        )
 
 
 @dataclass
@@ -82,19 +88,26 @@ class SysctlPlotConfig(PlotGridConfig):
 
     Configure plotting of data sampled via sysctl.
     """
-    tile_xaxis: str = config_field("target", desc="Parameter to use for the X axis of each tile")
-    sysctl_filter: list[str] = config_field(list, desc="Display only the given sysctl prefixes")
+
+    tile_xaxis: str = config_field(
+        "target", desc="Parameter to use for the X axis of each tile"
+    )
+    sysctl_filter: list[str] = config_field(
+        list, desc="Display only the given sysctl prefixes"
+    )
     suppress_baseline_relative_metrics: bool = config_field(
         False,
         desc="Drop baseline data from relative plots, so that it does not appear "
         "in the plot. Note that depending on the grid configuration, this may result in "
-        "a non-aligned dataframe and cause errors.")
+        "a non-aligned dataframe and cause errors.",
+    )
 
 
 class SysctlSlicePlotTask(SlicePlotTask):
     """
     Display a barplot of sampled sysctl data.
     """
+
     task_namespace = "sysctl"
     task_name = "plot-slice"
     public = True
@@ -143,11 +156,20 @@ class SysctlSlicePlotTask(SlicePlotTask):
         relative sysctl value for each iteration.
         """
         iteration_key = [*self.param_columns_with_iter, "sysctl_name"]
-        df_before = pl.concat((t.df.get() for t in self.sysctl_before_data), how="vertical")
-        df_after = pl.concat((t.df.get() for t in self.sysctl_after_data), how="vertical")
-        df = (df_after.join(df_before, on=iteration_key, suffix="_before").with_columns(
-            pl.col("sysctl_value").cast(pl.Int64) - pl.col("sysctl_value_before").cast(pl.Int64)).select(
-                cs.exclude("sysctl_value_before")))
+        df_before = pl.concat(
+            (t.df.get() for t in self.sysctl_before_data), how="vertical"
+        )
+        df_after = pl.concat(
+            (t.df.get() for t in self.sysctl_after_data), how="vertical"
+        )
+        df = (
+            df_after.join(df_before, on=iteration_key, suffix="_before")
+            .with_columns(
+                pl.col("sysctl_value").cast(pl.Int64)
+                - pl.col("sysctl_value_before").cast(pl.Int64)
+            )
+            .select(cs.exclude("sysctl_value_before"))
+        )
 
         # Note that at this point the dataframe may not be aligned on the
         # sysctl_name column, meaning that some runs may have a different set of
@@ -169,28 +191,38 @@ class SysctlSlicePlotTask(SlicePlotTask):
     def _do_plot(self, target, view_df, default_display_name):
         name_mapping_defaults = {"sysctl_value": default_display_name}
         if self.config.hue:
-            name_mapping_defaults.update({self.config.hue: self.config.hue.capitalize()})
+            name_mapping_defaults.update(
+                {self.config.hue: self.config.hue.capitalize()}
+            )
 
-        grid_config = self.config.set_display_defaults(param_names=name_mapping_defaults)
+        grid_config = self.config.set_display_defaults(
+            param_names=name_mapping_defaults
+        )
         with PlotGrid(target, view_df, grid_config) as grid:
-            grid.map(grid_barplot,
-                     x=self.config.tile_xaxis,
-                     y="sysctl_value",
-                     err=["sysctl_value_low", "sysctl_value_high"])
+            grid.map(
+                grid_barplot,
+                x=self.config.tile_xaxis,
+                y="sysctl_value",
+                err=["sysctl_value_low", "sysctl_value_high"],
+            )
             grid.add_legend()
 
     def run_plot(self):
         df = self._collect_sysctl_data()
 
         self.logger.info("Compute sysctl statistics")
-        stats = self.compute_overhead(df,
-                                      "sysctl_value",
-                                      how="median",
-                                      extra_groupby=["sysctl_name"],
-                                      overhead_scale=100)
+        stats = self.compute_overhead(
+            df,
+            "sysctl_value",
+            how="median",
+            extra_groupby=["sysctl_name"],
+            overhead_scale=100,
+        )
 
         self.logger.info("Plot absolute sysctl measurements")
-        self._do_plot(self.sysctl_absolute, stats.filter(_metric_type="absolute"), "Value")
+        self._do_plot(
+            self.sysctl_absolute, stats.filter(_metric_type="absolute"), "Value"
+        )
 
         self.logger.info("Plot relative sysctl measurements")
         delta_stats = stats.filter((pl.col("_metric_type") == "delta"))

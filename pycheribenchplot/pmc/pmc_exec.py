@@ -16,6 +16,7 @@ class PMCType(Enum):
     """
     The interface to access PMC counters.
     """
+
     HWPMC = "hwpmc"
     STATCOUNTERS = "statcounters"
 
@@ -24,6 +25,7 @@ class PMCSet(Enum):
     """
     Pre-defined sets of counters
     """
+
     Instr = "instr"
     CheriInstr = "cheri-instr"
     L1Cache = "l1cache"
@@ -37,41 +39,107 @@ class PMCSet(Enum):
 
 PMC_SET_COUNTERS = {
     PMCSet.Instr: [
-        "CPU_CYCLES", "INST_RETIRED", "INST_SPEC", "LD_SPEC", "ST_SPEC", "EXC_SVC", "EXC_IRQ", "EXC_TRAP_IRQ",
-        "STALL_FRONTEND", "STALL_BACKEND"
+        "CPU_CYCLES",
+        "INST_RETIRED",
+        "INST_SPEC",
+        "LD_SPEC",
+        "ST_SPEC",
+        "EXC_SVC",
+        "EXC_IRQ",
+        "EXC_TRAP_IRQ",
+        "STALL_FRONTEND",
+        "STALL_BACKEND",
     ],
     PMCSet.CheriInstr: [
-        "CPU_CYCLES", "INST_RETIRED", "INST_SPEC", "EXECUTIVE_ENTRY", "EXECUTIVE_EXIT", "INST_SPEC_RESTRICTED",
-        "CAP_LD_SPEC", "CAP_ST_SPEC", "BR_MIS_PRED", "BR_MIS_PRED_RS"
+        "CPU_CYCLES",
+        "INST_RETIRED",
+        "INST_SPEC",
+        "EXECUTIVE_ENTRY",
+        "EXECUTIVE_EXIT",
+        "INST_SPEC_RESTRICTED",
+        "CAP_LD_SPEC",
+        "CAP_ST_SPEC",
+        "BR_MIS_PRED",
+        "BR_MIS_PRED_RS",
     ],
     PMCSet.L1Cache: [
-        "CPU_CYCLES", "INST_RETIRED", "L1D_CACHE_REFILL", "L1D_CACHE", "L1D_CACHE_WB_VICTIM", "L1I_CACHE",
-        "L1I_CACHE_REFILL", "L1D_CACHE_RD", "L1D_CACHE_WR"
+        "CPU_CYCLES",
+        "INST_RETIRED",
+        "L1D_CACHE_REFILL",
+        "L1D_CACHE",
+        "L1D_CACHE_WB_VICTIM",
+        "L1I_CACHE",
+        "L1I_CACHE_REFILL",
+        "L1D_CACHE_RD",
+        "L1D_CACHE_WR",
     ],
     PMCSet.L2Cache: [
-        "CPU_CYCLES", "INST_RETIRED", "L2D_CACHE_REFILL", "L2D_CACHE", "L2D_CACHE_WB_VICTIM", "L2D_CACHE_INVAL",
-        "L2D_CACHE_RD", "L2D_CACHE_WR", "BUS_ACCESS"
+        "CPU_CYCLES",
+        "INST_RETIRED",
+        "L2D_CACHE_REFILL",
+        "L2D_CACHE",
+        "L2D_CACHE_WB_VICTIM",
+        "L2D_CACHE_INVAL",
+        "L2D_CACHE_RD",
+        "L2D_CACHE_WR",
+        "BUS_ACCESS",
     ],
     PMCSet.L3Cache: [
-        "CPU_CYCLES", "INST_RETIRED", "L3D_CACHE", "L3D_CACHE_REFILL", "L3_CACHE_RD", "BUS_ACCESS_RD", "BUS_ACCESS_WR",
-        "MEM_ACCESS_RD", "MEM_ACCESS_WR"
+        "CPU_CYCLES",
+        "INST_RETIRED",
+        "L3D_CACHE",
+        "L3D_CACHE_REFILL",
+        "L3_CACHE_RD",
+        "BUS_ACCESS_RD",
+        "BUS_ACCESS_WR",
+        "MEM_ACCESS_RD",
+        "MEM_ACCESS_WR",
     ],
     PMCSet.Branch: [
-        "CPU_CYCLES", "INST_RETIRED", "BR_MIS_PRED", "BR_PRED", "BR_MIS_PRED_RS", "BR_RETIRED", "BR_MIS_PRED_RETIRED",
-        "BR_RETURN_SPEC"
+        "CPU_CYCLES",
+        "INST_RETIRED",
+        "BR_MIS_PRED",
+        "BR_PRED",
+        "BR_MIS_PRED_RS",
+        "BR_RETIRED",
+        "BR_MIS_PRED_RETIRED",
+        "BR_RETURN_SPEC",
     ],
     PMCSet.TLB: [
-        "CPU_CYCLES", "INST_RETIRED", "L1I_TLB_REFILL", "L1D_TLB_REFILL", "L1I_TLB", "L1D_TLB", "L2D_TLB_REFILL",
-        "L2D_TLB", "ITLB_WALK", "DTLB_WALK"
+        "CPU_CYCLES",
+        "INST_RETIRED",
+        "L1I_TLB_REFILL",
+        "L1D_TLB_REFILL",
+        "L1I_TLB",
+        "L1D_TLB",
+        "L2D_TLB_REFILL",
+        "L2D_TLB",
+        "ITLB_WALK",
+        "DTLB_WALK",
     ],
     PMCSet.Stall: [
-        "CPU_CYCLES", "INST_RETIRED", "STALL", "STALL_FRONTEND", "STALL_BACKEND", "STALL_SLOT", "STALL_SLOT_FRONTEND",
-        "STALL_SLOT_BACKEND", "STALL_BACKEND_MEM"
+        "CPU_CYCLES",
+        "INST_RETIRED",
+        "STALL",
+        "STALL_FRONTEND",
+        "STALL_BACKEND",
+        "STALL_SLOT",
+        "STALL_SLOT_FRONTEND",
+        "STALL_SLOT_BACKEND",
+        "STALL_BACKEND_MEM",
     ],
     PMCSet.Revocation: [
-        "CPU_CYCLES", "INST_RETIRED", "INST_SPEC", "L1D_CACHE_REFILL", "L1D_CACHE", "BUS_ACCESS", "L1D_TLB_REFILL",
-        "L1D_TLB", "L2D_TLB_REFILL", "DTLB_WALK"
-    ]
+        "CPU_CYCLES",
+        "INST_RETIRED",
+        "INST_SPEC",
+        "L1D_CACHE_REFILL",
+        "L1D_CACHE",
+        "BUS_ACCESS",
+        "L1D_TLB_REFILL",
+        "L1D_TLB",
+        "L2D_TLB_REFILL",
+        "DTLB_WALK",
+    ],
 }
 
 
@@ -80,12 +148,17 @@ class PMCExecConfig(Config):
     """
     HWPMC configuration.
     """
+
     pmc_type: PMCType = config_field(PMCType.HWPMC, desc="PMC interface type")
     system_mode: bool = config_field(False, desc="Use system mode counters")
     sampling_mode: bool = config_field(False, desc="Use sampling vs counting mode")
-    sampling_rate: int = config_field(97553, desc="Counter sampling rate, only relevant in sampling mode")
+    sampling_rate: int = config_field(
+        97553, desc="Counter sampling rate, only relevant in sampling mode"
+    )
     counters: list[str] = config_field(list, desc="List of PMC counters to use")
-    group: str | None = config_field(None, desc="Pre-defined group of counters, overrides 'counters' option")
+    group: str | None = config_field(
+        None, desc="Pre-defined group of counters, overrides 'counters' option"
+    )
     follow_fork: bool = config_field(False, desc="Trace children on fork")
 
     @validates_schema
@@ -99,10 +172,12 @@ class PMCExecConfig(Config):
                 raise ValidationError("follow_fork is not supported for this pmc_type")
             if data["counters"]:
                 self.logger.warning(
-                    "Specified set of counters but libstatcounters does not allow configuration, ignored")
+                    "Specified set of counters but libstatcounters does not allow configuration, ignored"
+                )
             if data["group"]:
                 self.logger.warning(
-                    "Specified counters group but libstatcounters does not allow configuration, ignored")
+                    "Specified counters group but libstatcounters does not allow configuration, ignored"
+                )
 
     @property
     def pmc_counters(self):
@@ -126,12 +201,13 @@ class IngestPMCCounters(DataFrameLoadTask):
 
     This produces a dataframe with the following schema:
     - <parameter columns>: Depends on configured parameterisation
-    - <default ID columns>: See :class:`PLDataFrameLoadTask`
+    - <default ID columns>: See :class:`DataFrameLoadTask`
     - _counter_group: Identifier of the counter group which was sampled at the same time.
     - _cpu: Only relevant for system-mode counters, CPU id of the hw counters measurement.
     - <metrics>: Variable number of columns with the counter values, depending on selected
       set of counters.
     """
+
     task_namespace = "pmc"
     task_name = "cnt-ingest"
 
@@ -166,7 +242,9 @@ class IngestPMCCounters(DataFrameLoadTask):
             matches = re.findall(r"[ps]/(?P<col>[a-zA-Z0-9_/-]+)", header)
             cols = [c.lower() for c in matches]
         # XXX can we ditch pandas here?
-        df = pl.from_pandas(pd.read_csv(path, sep=r"\s+", header=0, names=cols, index_col=False))
+        df = pl.from_pandas(
+            pd.read_csv(path, sep=r"\s+", header=0, names=cols, index_col=False)
+        )
         # Assume we have all numeric columns and the counters are incremental
         df = df.sum()
         # Default counter group to identify multiple pmcstat configurations
@@ -174,11 +252,20 @@ class IngestPMCCounters(DataFrameLoadTask):
         # If these are system-mode counters we have to distinguish between CPUs
         if self.system_mode:
             # The columns are in the format <N>/<counter> where <N> is the CPU index
-            tmp_df = df.unpivot(index=["_counter_group"], variable_name="_counter", value_name="_value")
+            tmp_df = df.unpivot(
+                index=["_counter_group"], variable_name="_counter", value_name="_value"
+            )
             tmp_df = tmp_df.with_columns(
-                pl.col("_counter").str.split(by="/").list.first().cast(pl.Int32).alias("_cpu"),
-                pl.col("_counter").str.split(by="/").list.last().alias("_counter"))
-            df = tmp_df.pivot(on="_counter", index=["_counter_group", "_cpu"], values="_value")
+                pl.col("_counter")
+                .str.split(by="/")
+                .list.first()
+                .cast(pl.Int32)
+                .alias("_cpu"),
+                pl.col("_counter").str.split(by="/").list.last().alias("_counter"),
+            )
+            df = tmp_df.pivot(
+                on="_counter", index=["_counter_group", "_cpu"], values="_value"
+            )
         else:
             df = df.with_columns(pl.lit(0).alias("_cpu"))
         return df
@@ -191,6 +278,7 @@ class PMCExec(ExecutionTask):
     If the benchmark does not support hwpmc, the script context will be ignored
     and the data ingest phase will fail.
     """
+
     task_namespace = "pmc"
     task_name = "exec"
     task_config_class = PMCExecConfig
@@ -214,9 +302,11 @@ class PMCExec(ExecutionTask):
         return IngestPMCCounters(self.pmc_data)
 
     def run(self):
-        self.script.extend_context({
-            "hwpmc_config": self.config,
-            "hwpmc_counters": self.config.pmc_counters,
-            "hwpmc_gen_output": self.pmc_data.shell_path_builder()
-        })
+        self.script.extend_context(
+            {
+                "hwpmc_config": self.config,
+                "hwpmc_counters": self.config.pmc_counters,
+                "hwpmc_gen_output": self.pmc_data.shell_path_builder(),
+            }
+        )
         self.script.register_global("PMCType", PMCType)

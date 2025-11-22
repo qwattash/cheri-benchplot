@@ -530,8 +530,3 @@ class DataFrameSessionLoadTask(SessionTask, DataFrameLoadTaskMixin):
     @output
     def df(self):
         return ValueTarget(self, output_id=f"loaded-df-for-{super().task_id}")
-
-
-# Just alias the old names
-PLDataFrameSessionLoadTask = DataFrameSessionLoadTask
-PLDataFrameLoadTask = DataFrameLoadTask

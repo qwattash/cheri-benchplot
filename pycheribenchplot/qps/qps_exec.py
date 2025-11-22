@@ -7,8 +7,8 @@ from typing import Any
 import polars as pl
 from marshmallow import ValidationError, validates
 
-from ..core.artefact import PLDataFrameLoadTask, RemoteBenchmarkIterationTarget
-from ..core.config import Config, ConfigAny, ConfigPath, config_field
+from ..core.artefact import DataFrameLoadTask, RemoteBenchmarkIterationTarget
+from ..core.config import Config, ConfigPath, config_field
 from ..core.task import ExecutionTask, output
 
 
@@ -19,10 +19,11 @@ def to_snake_case(name):
     return re.sub(r"(?<=[a-z])(?=[A-Z])", "_", name).lower()
 
 
-class LoadQpsData(PLDataFrameLoadTask):
+class LoadQpsData(DataFrameLoadTask):
     """
     Load and merge data from QPS runs.
     """
+
     task_namespace = "qps"
     task_name = "ingest"
 
@@ -102,20 +103,33 @@ class QpsExecConfig(Config):
     """
     Configure the QPS benchmark.
     """
+
     scenario_file: ConfigPath = config_field(
         Config.REQUIRED,
         desc="Scenario configuration to run. Note that this must be imported into assets first, "
-        "as the path is assumed to be relative to the assets directory.")
+        "as the path is assumed to be relative to the assets directory.",
+    )
     qps_path: ConfigPath = config_field(None, desc="Path of grpc qps binaries.")
-    client_procctl_args: list[str] = config_field(list, desc="proccontrol arguments for the client worker.")
-    client_cpu: list[int] = config_field(list, desc="Restrict client worker to the given CPUs.")
-    server_procctl_args: list[str] = config_field(list, desc="proccontrol arguments for the server worker.")
-    server_cpu: list[int] = config_field(list, desc="Restrict server worker to the given CPUs.")
-    driver_cpu: list[int] = config_field(list, desc="Restrict driver to the given CPUs.")
+    client_procctl_args: list[str] = config_field(
+        list, desc="proccontrol arguments for the client worker."
+    )
+    client_cpu: list[int] = config_field(
+        list, desc="Restrict client worker to the given CPUs."
+    )
+    server_procctl_args: list[str] = config_field(
+        list, desc="proccontrol arguments for the server worker."
+    )
+    server_cpu: list[int] = config_field(
+        list, desc="Restrict server worker to the given CPUs."
+    )
+    driver_cpu: list[int] = config_field(
+        list, desc="Restrict driver to the given CPUs."
+    )
     server_env: list[str] = config_field(list, desc="Server env variables.")
     client_env: list[str] = config_field(list, desc="Client env variables.")
-    scenario_template_context: dict[str, Any] = config_field(dict,
-                                                             desc="Additional key/values for the scenario template.")
+    scenario_template_context: dict[str, Any] = config_field(
+        dict, desc="Additional key/values for the scenario template."
+    )
 
     @validates("scenario_file")
     def check_scenario(self, data, **kwargs):
@@ -137,6 +151,7 @@ class QpsExecTask(ExecutionTask):
     The scenario supports templating. The :attr:`QpsExecConfig.scenario_file` is loaded and
     parameterization values are substituted according to Python :func:`format()`.
     """
+
     task_namespace = "qps"
     task_name = "exec"
     public = True
@@ -144,7 +159,9 @@ class QpsExecTask(ExecutionTask):
 
     @output
     def qps_driver_output(self):
-        return RemoteBenchmarkIterationTarget(self, "qps", ext="json", loader=LoadQpsData)
+        return RemoteBenchmarkIterationTarget(
+            self, "qps", ext="json", loader=LoadQpsData
+        )
 
     def _coerce(self, fmt_spec, value):
         try:
@@ -189,16 +206,20 @@ class QpsExecTask(ExecutionTask):
     def run(self):
         scenario_name = "qps_scenario.json"
         self.script.set_template("grpc.sh.jinja")
-        self.script.extend_context({
-            "qps_config": self.config,
-            "qps_gen_output": self.qps_driver_output.shell_path_builder(),
-            "qps_scenario": scenario_name
-        })
+        self.script.extend_context(
+            {
+                "qps_config": self.config,
+                "qps_gen_output": self.qps_driver_output.shell_path_builder(),
+                "qps_scenario": scenario_name,
+            }
+        )
 
         # Generate the scenario configuration. Note that this goes in the current
         # data output directory, alongside the runner script.
         scenario_file = self.benchmark.get_benchmark_data_path() / scenario_name
-        with open(self.session.get_asset_root_path() / self.config.scenario_file) as src:
+        with open(
+            self.session.get_asset_root_path() / self.config.scenario_file
+        ) as src:
             scenario_template = json.load(src)
         scenario = self._bind_scenario(scenario_template)
         with open(scenario_file, "w+") as dst:
