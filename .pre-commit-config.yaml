@@ -21,7 +21,7 @@ repos:
   - repo: local
     hooks:
       - id: benchplot-pytest
-        name: cheri-benchplot pytest
+        name: benchplot pytest
         entry: sh -c 'python3 -m pytest -q . >&2'
         language: system
         always_run: true

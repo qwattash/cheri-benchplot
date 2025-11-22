@@ -55,3 +55,11 @@ dev = [
 
 [project.scripts]
 benchplot-cli = "pycheribenchplot.benchplot_cli:main"
+
+[tool.pytest]
+minversion = "9.0"
+addopts = ["-ra"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["old-tests"]
