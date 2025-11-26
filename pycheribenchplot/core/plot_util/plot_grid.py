@@ -12,7 +12,6 @@ import numpy as np
 import polars as pl
 from marshmallow import fields as mf
 from marshmallow import validate as mv
-# from matplotlib.patches import Patch
 
 from ..analysis import ParamFilterConfig
 from ..artefact import Target
@@ -32,8 +31,14 @@ COLREF_PATTERN = r"^<[\w_-]+>$"
 #: These are used to sanitize the use dataframe columns in the plot
 #: configurations, and provide a way to reference a column independently
 #: of any rename / remap.
-ColRef = Annotated[str,
-                   mf.String(validate=mv.Regexp(COLREF_PATTERN, error="Invalid column ref {input}, must be '<ref>'"))]
+ColRef = Annotated[
+    str,
+    mf.String(
+        validate=mv.Regexp(
+            COLREF_PATTERN, error="Invalid column ref {input}, must be '<ref>'"
+        )
+    ),
+]
 
 
 @dataclass
@@ -41,8 +46,11 @@ class ColRefMap(Config):
     """
     Mapping using source values from a given column ref.
     """
+
     src: ColRef = config_field(Config.REQUIRED, desc="ColRef of source values.")
-    values: dict[str, Any] = config_field(Config.REQUIRED, desc="Values associated to each element in <src>.")
+    values: dict[str, Any] = config_field(
+        Config.REQUIRED, desc="Values associated to each element in <src>."
+    )
 
 
 @dataclass
@@ -50,6 +58,7 @@ class PlotConfigBase(Config):
     """
     Base class for all plot configs.
     """
+
     pass
 
 
@@ -74,10 +83,13 @@ class DerivedColumnConfig(Config):
     Note the following conventions:
      - names starting with _ are reserved for internal use and for task-specific auxiliary columns.
     """
-    transform: ColumnTransform = config_field(Config.REQUIRED,
-                                              by_value=True,
-                                              desc="How to generate transformed column.")
-    src: str | list[str] = config_field(Config.REQUIRED, desc="Source column or columns. This must be a <ref>.")
+
+    transform: ColumnTransform = config_field(
+        Config.REQUIRED, by_value=True, desc="How to generate transformed column."
+    )
+    src: str | list[str] = config_field(
+        Config.REQUIRED, desc="Source column or columns. This must be a <ref>."
+    )
     name: str | None = config_field(None, desc="Human readable name for the column.")
     args: dict[str, Any] = config_field(dict, desc="Transformation arguments.")
 
@@ -88,26 +100,47 @@ class PlotGridConfig(PlotConfigBase):
     derived_columns: dict[str, DerivedColumnConfig] = config_field(
         dict,
         desc="Auxiliary columns. These can be used to arbitrarily rename headers and data, which then are "
-        "used as part of the plot. The dictionary is keyed on the resulting derived column ColRef name.")
-    sort_descending: bool = config_field(False, desc="Sort the grid data in ascending or descending order.")
-    sort_by: list[ColRef] = config_field(list, desc="Define sort keys for the grid data.")
-    sort_order: dict[ColRef, list[Any]] = config_field(dict, desc="Custom categorical ordering for specific columns.")
+        "used as part of the plot. The dictionary is keyed on the resulting derived column ColRef name.",
+    )
+    sort_descending: bool = config_field(
+        False, desc="Sort the grid data in ascending or descending order."
+    )
+    sort_by: list[ColRef] = config_field(
+        list, desc="Define sort keys for the grid data."
+    )
+    sort_order: dict[ColRef, list[Any]] = config_field(
+        dict, desc="Custom categorical ordering for specific columns."
+    )
     data_filter: ParamFilterConfig | None = config_field(
-        None, desc="Further filter the data for the given set of parameters. Note that this expects ColRef keys.")
+        None,
+        desc="Further filter the data for the given set of parameters. Note that this expects ColRef keys.",
+    )
 
     # General figure-level configuration
     title: str | None = config_field(None, desc="Override figure title.")
-    size: tuple[float, float] | None = config_field(None, desc="Override figure size, in inches.")
+    size: tuple[float, float] | None = config_field(
+        None, desc="Override figure size, in inches."
+    )
     style: dict[str, Any] = config_field(
-        dict, desc="Plot appearance configuration for tweaking, see matplotlib rc_context documentation.")
+        dict,
+        desc="Plot appearance configuration for tweaking, see matplotlib rc_context documentation.",
+    )
 
     # Tiling configuration
-    tile_row: ColRef | None = config_field(None, desc="Set column ref to use for grid rows.")
-    tile_col: ColRef | None = config_field(None, desc="Set column ref to use for grid cols.")
+    tile_row: ColRef | None = config_field(
+        None, desc="Set column ref to use for grid rows."
+    )
+    tile_col: ColRef | None = config_field(
+        None, desc="Set column ref to use for grid cols."
+    )
     tile_xlabel: ColRef | None = config_field(
-        None, desc="Set column ref to use for X axis labels. Defaults to X data column name.")
+        None,
+        desc="Set column ref to use for X axis labels. Defaults to X data column name.",
+    )
     tile_ylabel: ColRef | None = config_field(
-        None, desc="Set column ref to use for Y axis labels. Defaults to Y data column name.")
+        None,
+        desc="Set column ref to use for Y axis labels. Defaults to Y data column name.",
+    )
     tile_row_show_title: bool = config_field(True, desc="Show the row tiling title.")
     tile_col_show_title: bool = config_field(True, desc="Show the column tiling title.")
     tile_sharex: str | bool = config_field("col", desc="Override X axis sharing.")
@@ -116,19 +149,28 @@ class PlotGridConfig(PlotConfigBase):
     # Tile sizing configuration
     tile_aspect: float = config_field(1.0, desc="Aspect ratio of each tile.")
     tile_height_ratios: ColRefMap | ColRef | dict[str, float] | None = config_field(
-        None, desc="Height ratios for each row. A ColRef, or a mapping of <tile_row> values to a float.")
+        None,
+        desc="Height ratios for each row. A ColRef, or a mapping of <tile_row> values to a float.",
+    )
 
     # Per-tile configuration
     tile_x_margin: float | tuple[float, float] | None = config_field(
-        None, desc="X-axis margin within each tile, in normalised interval units range [0, 1].")
+        None,
+        desc="X-axis margin within each tile, in normalised interval units range [0, 1].",
+    )
     tile_y_margin: float | tuple[float, float] | None = config_field(
-        None, desc="Y-axis margin within each tile, in normalised interval untis range [0, 1].")
+        None,
+        desc="Y-axis margin within each tile, in normalised interval untis range [0, 1].",
+    )
     hue: ColRef | list[ColRef] = config_field(
         None,
         desc="Set ColRef to use for the hue. If multiple levels are needed, consider creating a derived column. "
-        "When no hue is given, the color is controlled by the plot_param axes.prop_cycle (See matplotlib rcParams).")
+        "When no hue is given, the color is controlled by the plot_param axes.prop_cycle (See matplotlib rcParams).",
+    )
     hue_colors: dict[str | tuple[str, ...], str] | None = config_field(
-        None, desc="Optional map that forces a specific color for each value of the 'hue' configuration.")
+        None,
+        desc="Optional map that forces a specific color for each value of the 'hue' configuration.",
+    )
 
     # Legend configuration
     # Would be nice to support different strategies:
@@ -136,7 +178,9 @@ class PlotGridConfig(PlotConfigBase):
     legend_hide: bool = config_field(False, desc="Disable the legend.")
     legend_position: str = config_field("outer", desc="Control legend positioning.")
     legend_columns: int = config_field(
-        4, desc="Number of columns in the legend, this affects the necessary vspace and tile_aspect.")
+        4,
+        desc="Number of columns in the legend, this affects the necessary vspace and tile_aspect.",
+    )
 
     @property
     def hue_levels(self):
@@ -152,7 +196,11 @@ class PlotGridConfig(PlotConfigBase):
         """
         Clone the configuration with the given default values.
         """
-        defaults = {k: v for k, v in kwargs.items() if hasattr(self, k) and getattr(self, k) is None}
+        defaults = {
+            k: v
+            for k, v in kwargs.items()
+            if hasattr(self, k) and getattr(self, k) is None
+        }
         config = replace(self, **defaults)
         return config
 
@@ -163,14 +211,25 @@ class PlotGridConfig(PlotConfigBase):
         """
         for key, value in kwargs.items():
             if getattr(self, key) is not None:
-                self.logger.warning("Configuration %s is disabled in this task, forced to %s", key, value)
+                self.logger.warning(
+                    "Configuration %s is disabled in this task, forced to %s",
+                    key,
+                    value,
+                )
         config = replace(self, **kwargs)
         return config
 
 
 class PlotTile:
-    def __init__(self, grid: "PlotGrid", ax: MplAxes, hue: str | None, palette: list | None, coords: tuple[int, int],
-                 loc: tuple[any, any]):
+    def __init__(
+        self,
+        grid: "PlotGrid",
+        ax: MplAxes,
+        hue: str | None,
+        palette: list | None,
+        coords: tuple[int, int],
+        loc: tuple[any, any],
+    ):
         self.grid = grid
         self.ax = ax
         self.hue = hue
@@ -205,6 +264,7 @@ class DataFrameInfo:
 
     XXX separate data and metadata columns
     """
+
     def __init__(self, desc: dict[str, str]):
         self.columns = desc
 
@@ -229,7 +289,14 @@ class PlotGrid(AbstractContextManager):
     This aims to have some similarity to seaborn FacetGrid while being more
     efficient with polars dataframes.
     """
-    def __init__(self, target: Target, data: pl.DataFrame, config: PlotGridConfig, info: DataFrameInfo = None):
+
+    def __init__(
+        self,
+        target: Target,
+        data: pl.DataFrame,
+        config: PlotGridConfig,
+        info: DataFrameInfo = None,
+    ):
         assert isinstance(config, PlotGridConfig)
         self._target = target
         self._df = data
@@ -269,7 +336,10 @@ class PlotGrid(AbstractContextManager):
         if self._config.size:
             fig_size = self._config.size
         else:
-            fig_size = (ncols * self._height * self._config.tile_aspect, (nrows + 1) * self._height)
+            fig_size = (
+                ncols * self._height * self._config.tile_aspect,
+                (nrows + 1) * self._height,
+            )
         self._rc_context = plt.rc_context(rc=self._config.style)
         self._rc_context.__enter__()
 
@@ -294,9 +364,18 @@ class PlotGrid(AbstractContextManager):
                     ratio_col = self.tile_row
                     ratio_map = height_spec
                 if len(ratio_map) < nrows:
-                    self.logger.error("Invalid height ratios mapping, expected %d values got %s", nrows, ratio_map)
+                    self.logger.error(
+                        "Invalid height ratios mapping, expected %d values got %s",
+                        nrows,
+                        ratio_map,
+                    )
                     raise ConfigurationError("Invalid configuration")
-                values = self._df[ratio_col].unique(maintain_order=True).replace(ratio_map).cast(pl.Float32)
+                values = (
+                    self._df[ratio_col]
+                    .unique(maintain_order=True)
+                    .replace(ratio_map)
+                    .cast(pl.Float32)
+                )
             kwargs["height_ratios"] = values
 
         self._grid = self._figure.subplots(nrows, ncols, **kwargs)
@@ -324,14 +403,14 @@ class PlotGrid(AbstractContextManager):
 
     def _grid_rows(self, df: pl.DataFrame) -> Iterable[tuple[any, pl.DataFrame]]:
         if row_param := self.tile_row:
-            for (name, ), chunk in df.group_by(row_param, maintain_order=True):
+            for (name,), chunk in df.group_by(row_param, maintain_order=True):
                 yield (name, chunk)
         else:
             yield (None, df)
 
     def _grid_cols(self, df: pl.DataFrame) -> Iterable[tuple[any, pl.DataFrame]]:
         if col_param := self.tile_col:
-            for (name, ), chunk in df.group_by(col_param, maintain_order=True):
+            for (name,), chunk in df.group_by(col_param, maintain_order=True):
                 yield (name, chunk)
         else:
             yield (None, df)
@@ -355,7 +434,9 @@ class PlotGrid(AbstractContextManager):
         src = self.ref_to_col(spec.src)
         dtypes = {type(v) for v in spec.args.values()}
         if len(dtypes) > 1:
-            self.logger.error("Derived column %s map to inconsistent dtypes", spec.name, dtypes)
+            self.logger.error(
+                "Derived column %s map to inconsistent dtypes", spec.name, dtypes
+            )
             raise ConfigurationError("Invalid configuration")
         dtype = dtypes.pop()
         if dtype is str:
@@ -368,7 +449,9 @@ class PlotGrid(AbstractContextManager):
     def _gen_derived_concat(self, ref: str, spec: DerivedColumnConfig):
         src = [self.ref_to_col(src_ref) for src_ref in spec.src]
         sep = spec.args.get("separator", ",")
-        self._df = self._df.with_columns(pl.concat_str(src, separator=sep).alias(spec.name))
+        self._df = self._df.with_columns(
+            pl.concat_str(src, separator=sep).alias(spec.name)
+        )
         self._register_ref(ref, spec.name)
 
     def _gen_derived_columns(self):
@@ -379,7 +462,9 @@ class PlotGrid(AbstractContextManager):
         """
         for ref, spec in self._config.derived_columns.items():
             if spec.name in self._df.columns:
-                self.logger.error("Invalid name %s for target column, column exists", spec.name)
+                self.logger.error(
+                    "Invalid name %s for target column, column exists", spec.name
+                )
                 raise ConfigurationError("Invalid configuration")
             match spec.transform:
                 case ColumnTransform.Identity:
@@ -397,7 +482,9 @@ class PlotGrid(AbstractContextManager):
         Sort the dataframe according to the configuration.
         """
         if not self._config.sort_by:
-            self.logger.warning("Sorting is not configured, use grid tiling order, this may not be stable.")
+            self.logger.warning(
+                "Sorting is not configured, use grid tiling order, this may not be stable."
+            )
             sort_by = [self._config.tile_row, self._config.tile_col, self._config.hue]
             sort_by = [v for v in sort_by if v is not None]
         else:
@@ -408,10 +495,15 @@ class PlotGrid(AbstractContextManager):
         # we can just sort the frame and rely on the internal dtype ordering support.
         # otherwise, create a custom weight column.
         if not self._config.sort_order:
-            self._df = self._df.sort(by=sort_by, descending=self._config.sort_descending)
+            self._df = self._df.sort(
+                by=sort_by, descending=self._config.sort_descending
+            )
             return
 
-        sort_order = {self.ref_to_col(ref): order for ref, order in self._config.sort_order.items()}
+        sort_order = {
+            self.ref_to_col(ref): order
+            for ref, order in self._config.sort_order.items()
+        }
         df = self._df.with_columns(pl.lit(0.0).alias("_sort_weight"))
         weight_base = 0
         for col in reversed(sort_by):
@@ -424,13 +516,22 @@ class PlotGrid(AbstractContextManager):
                 # Verify that the data order is a superset of the data
                 # in the column.
                 if not set(data_values).issubset(data_order):
-                    self.logger.error("Invalid sort weights mapping for %s, requires %s", col, data_values)
+                    self.logger.error(
+                        "Invalid sort weights mapping for %s, requires %s",
+                        col,
+                        data_values,
+                    )
                     raise ConfigurationError("Invalid sort_order configuration")
             n_weights = max(len(data_order), n_weights)
             weights = weight_base + np.arange(n_weights)
-            self.logger.debug("Assign weights to column %s: %s", col, list(zip(data_order, weights)))
+            self.logger.debug(
+                "Assign weights to column %s: %s", col, list(zip(data_order, weights))
+            )
             for value, weight in zip(data_order, weights):
-                df = df.with_columns(pl.col("_sort_weight") + pl.when(pl.col(col) == value).then(weight).otherwise(0))
+                df = df.with_columns(
+                    pl.col("_sort_weight")
+                    + pl.when(pl.col(col) == value).then(weight).otherwise(0)
+                )
             weight_base += n_weights
         self._df = df.sort(by="_sort_weight", descending=self._config.sort_descending)
 
@@ -444,7 +545,9 @@ class PlotGrid(AbstractContextManager):
         if rules := self._config.data_filter.keep:
             conditions = []
             for rule in rules:
-                cond = [pl.col(self.ref_to_col(k)) == v for k, v in rule.matches.items()]
+                cond = [
+                    pl.col(self.ref_to_col(k)) == v for k, v in rule.matches.items()
+                ]
                 conditions.append(reduce(operator.and_, cond))
             cond = reduce(operator.or_, conditions)
             self._df = self._df.filter(cond)
@@ -452,7 +555,9 @@ class PlotGrid(AbstractContextManager):
         if rules := self._config.data_filter.drop:
             conditions = []
             for rule in rules:
-                cond = [pl.col(self.ref_to_col(k)) == v for k, v in rule.matches.items()]
+                cond = [
+                    pl.col(self.ref_to_col(k)) == v for k, v in rule.matches.items()
+                ]
                 conditions.append(reduce(operator.and_, cond))
             cond = reduce(operator.or_, conditions)
             self._df = self._df.filter(~cond)
@@ -487,8 +592,12 @@ class PlotGrid(AbstractContextManager):
             ncolors = len(hue_keys)
             if self._config.hue_colors is not None:
                 if len(self._config.hue_colors) != ncolors:
-                    self.logger.error("Hue level %s: invalid number of colors in configuration: expected %d, found %d",
-                                      self._config.hue, ncolors, len(self._config.hue_colors))
+                    self.logger.error(
+                        "Hue level %s: invalid number of colors in configuration: expected %d, found %d",
+                        self._config.hue,
+                        ncolors,
+                        len(self._config.hue_colors),
+                    )
                     raise ConfigurationError("Configuration error")
                 self._color_palette = {h: self._config.hue_colors[h] for h in hue_keys}
             else:
@@ -511,12 +620,14 @@ class PlotGrid(AbstractContextManager):
                 tile.ax.set_ylabel(None).set_visible(False)
             # Annotate the row group at the end of the row
             if tile.col_index == ncols - 1 and self._config.tile_row_show_title:
-                text = tile.ax.annotate(f"{row_param} = {tile.row}",
-                                        xy=(1.02, .5),
-                                        xycoords="axes fraction",
-                                        rotation=270,
-                                        ha="left",
-                                        va="center")
+                text = tile.ax.annotate(
+                    f"{row_param} = {tile.row}",
+                    xy=(1.02, 0.5),
+                    xycoords="axes fraction",
+                    rotation=270,
+                    ha="left",
+                    va="center",
+                )
                 self._margin_titles.append(text)
 
         # Handle X and Y labels override
@@ -524,8 +635,11 @@ class PlotGrid(AbstractContextManager):
             label_col = self.ref_to_col(label_ref)
             if chunk[label_col].n_unique() > 1:
                 self.logger.warning(
-                    "Can not determine Y axis label for tile (%s, %s) from %s; non-unique label in chunk", tile.row,
-                    tile.col, label_ref)
+                    "Can not determine Y axis label for tile (%s, %s) from %s; non-unique label in chunk",
+                    tile.row,
+                    tile.col,
+                    label_ref,
+                )
                 return "unknown"
             return chunk[label_col].first()
 
@@ -541,16 +655,20 @@ class PlotGrid(AbstractContextManager):
             tile.ax.set_ylabel(label)
 
     def _make_tile(self, ax: MplAxes, ri: int, ci: int, row_value: str, col_value: str):
-        return PlotTile(grid=self,
-                        ax=ax,
-                        hue=self.tile_hue,
-                        palette=self._color_palette,
-                        coords=(ri, ci),
-                        loc=(row_value, col_value))
+        return PlotTile(
+            grid=self,
+            ax=ax,
+            hue=self.tile_hue,
+            palette=self._color_palette,
+            coords=(ri, ci),
+            loc=(row_value, col_value),
+        )
 
     def _finalize_margins(self):
         # Helper internal function to set margin along an axis
-        def _set_margins(tile, _, margins: tuple[float, float] = None, dimension: str = None):
+        def _set_margins(
+            tile, _, margins: tuple[float, float] = None, dimension: str = None
+        ):
             # Note we conver from data to display coordinates and from display to axes.
             # Axes coordinates are in the space [0, 1] x [0, 1].
             axes_space_tf = tile.ax.transData + tile.ax.transAxes.inverted()
@@ -560,20 +678,26 @@ class PlotGrid(AbstractContextManager):
                 case "x":
                     get_lim_fn = tile.ax.get_xlim
                     set_lim_fn = tile.ax.set_xlim
+
                     def to_axes_space(x):
                         return axes_space_tf.transform([x, 0])[0]
+
                     def to_data_space(x):
                         return data_space_tf.transform([x, 0])[0]
+
                     # We manage margins manually, so reset the margin here
                     # this should be redundant
                     tile.ax.set_xmargin(0)
                 case "y":
                     get_lim_fn = tile.ax.get_ylim
                     set_lim_fn = tile.ax.set_ylim
+
                     def to_axes_space(y):
                         return axes_space_tf.transform([0, y])[1]
+
                     def to_data_space(y):
                         return data_space_tf.transform([0, y])[1]
+
                     tile.ax.set_ymargin(0)
                 case _:
                     assert False, "Invalid margins axis name"
@@ -639,13 +763,17 @@ class PlotGrid(AbstractContextManager):
             # reserved_y_fraction = 1 - self._config.legend_vspace
             # self._figure.subplots_adjust(top=reserved_y_fraction, bottom=self._config.legend_vspace)
             # legend_anchor = (0., reserved_y_fraction, 1., self._config.legend_vspace)
-            self._figure.legend(legend_handles.values(),
-                                legend_handles.keys(),
-                                ncols=self._config.legend_columns,
-                                loc="outside upper center",
-                                **self._legend_kwargs)
+            self._figure.legend(
+                legend_handles.values(),
+                legend_handles.keys(),
+                ncols=self._config.legend_columns,
+                loc="outside upper center",
+                **self._legend_kwargs,
+            )
         else:
-            raise RuntimeError(f"Invalid legend_position='{self._config.legend_position}'")
+            raise RuntimeError(
+                f"Invalid legend_position='{self._config.legend_position}'"
+            )
 
     @property
     def tile_row(self) -> str | None:
@@ -683,11 +811,22 @@ class PlotGrid(AbstractContextManager):
             return self.ref_to_col(ref)
         return ref
 
-    def map(self, tile_plotter: Callable[[PlotTile, pl.DataFrame], None], *args, **kwargs):
-        for i, (ax_stride, (row_param, row_chunk)) in enumerate(zip(self._grid, self._grid_rows(self._df))):
-            for j, (ax, (col_param, chunk)) in enumerate(zip(ax_stride, self._grid_cols(row_chunk))):
+    def map(
+        self, tile_plotter: Callable[[PlotTile, pl.DataFrame], None], *args, **kwargs
+    ):
+        for i, (ax_stride, (row_param, row_chunk)) in enumerate(
+            zip(self._grid, self._grid_rows(self._df))
+        ):
+            for j, (ax, (col_param, chunk)) in enumerate(
+                zip(ax_stride, self._grid_cols(row_chunk))
+            ):
                 tile = self._make_tile(ax, i, j, row_param, col_param)
-                self.logger.debug("PlotGrid: tile callback (row=%s, col=%s) %s", row_param, col_param, chunk)
+                self.logger.debug(
+                    "PlotGrid: tile callback (row=%s, col=%s) %s",
+                    row_param,
+                    col_param,
+                    chunk,
+                )
                 tile_plotter(tile, chunk, *args, **kwargs)
 
     def get_grid_df(self) -> pl.DataFrame:

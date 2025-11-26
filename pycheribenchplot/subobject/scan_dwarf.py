@@ -17,9 +17,14 @@ class PathMatchSpec(Config):
     Path match specifier used to filter ELF objects that should be
     scanned for DWARF information.
     """
-    path: ConfigPath = config_field(Config.REQUIRED, desc="Base path interpreted as the command `find {path}`")
 
-    matcher: str | None = config_field(None, desc="Path match regex interpreted as a grep extended regular expression")
+    path: ConfigPath = config_field(
+        Config.REQUIRED, desc="Base path interpreted as the command `find {path}`"
+    )
+
+    matcher: str | None = config_field(
+        None, desc="Path match regex interpreted as a grep extended regular expression"
+    )
 
 
 @dataclass
@@ -27,19 +32,27 @@ class ExtractImpreciseConfig(Config):
     """
     Configure the imprecise sub-object extractor.
     """
-    dwarf_scraper: ConfigPath | None = config_field(
-        None, desc="Optional path to the dwarf_scraper tool. Otherwise, assume that the tool is in $PATH")
 
-    verbose_scraper: bool = config_field(False, desc="Enable verbose output from dwarf_scraper")
+    dwarf_scraper: ConfigPath | None = config_field(
+        None,
+        desc="Optional path to the dwarf_scraper tool. Otherwise, assume that the tool is in $PATH",
+    )
+
+    verbose_scraper: bool = config_field(
+        False, desc="Enable verbose output from dwarf_scraper"
+    )
 
     dwarf_data_sources: list[PathMatchSpec] = config_field(
         Config.REQUIRED,
         desc="List of paths that are used to extract DWARF information. "
         "Note that multiple paths will be considered as belonging to the same 'object', "
         "if multiple objects are being compared, we should use parameterization. "
-        "Relative paths will be interpreted as relative paths into a cheribuild rootfs.")
+        "Relative paths will be interpreted as relative paths into a cheribuild rootfs.",
+    )
 
-    src_prefix: str | None = config_field(None, desc="Optional path prefix to strip from source file paths")
+    src_prefix: str | None = config_field(
+        None, desc="Optional path prefix to strip from source file paths"
+    )
 
 
 class ExtractImpreciseSubobject(ExecutionTask):
@@ -49,6 +62,7 @@ class ExtractImpreciseSubobject(ExecutionTask):
     The dwarf_scraper tool must be in $PATH or passed as a task configuration
     parameter.
     """
+
     public = True
     task_namespace = "subobject"
     task_name = "extract-imprecise"
@@ -61,17 +75,20 @@ class ExtractImpreciseSubobject(ExecutionTask):
     def run(self):
         super().run()
         self.script.set_template("dwarf-scraper.sh.jinja")
-        self.script.extend_context({
-            "dws_config": self.config,
-            # XXX this should be relative to the benchmark run dir
-            "dws_database": self.struct_layout_db.single_path()
-        })
+        self.script.extend_context(
+            {
+                "dws_config": self.config,
+                # XXX this should be relative to the benchmark run dir
+                "dws_database": self.struct_layout_db.single_path(),
+            }
+        )
 
 
 class TypeLayoutLoader(DataFrameLoadTask):
     """
     Load flattened layouts from the database into a polars dataframe.
     """
+
     task_name = "type-layout-loader"
 
     def __init__(self, target, query):
@@ -88,6 +105,7 @@ class LoadStructLayouts(SliceAnalysisTask):
     Load imprecise subobject data into an unified dataframe
     for futher aggregation.
     """
+
     task_namespace = "subobject"
     task_name = "load-struct-layouts"
 
@@ -129,12 +147,12 @@ class AnnotateImpreciseSubobjectLayouts(SliceAnalysisTask):
       Marks imprecise members for which the capability aliases another
       pointer member.
     """
+
     task_namespace = "subobject"
     task_name = "annotate-imprecise-subobjects"
 
     @dependency
     def layouts(self):
-        # yapf: disable
         has_imprecise = (
             select(TypeLayout.id)
             .join(LayoutMember.owner_entry)
@@ -167,8 +185,9 @@ class AnnotateImpreciseSubobjectLayouts(SliceAnalysisTask):
             .join(LayoutMember.owner_entry)
             .where(TypeLayout.id.in_(has_imprecise))
         )
-        # yapf: enable
-        return LoadStructLayouts(self.session, self.slice_info, self.analysis_config, query=q)
+        return LoadStructLayouts(
+            self.session, self.slice_info, self.analysis_config, query=q
+        )
 
     @output
     def imprecise_layouts(self):
@@ -196,37 +215,127 @@ class AnnotateImpreciseSubobjectLayouts(SliceAnalysisTask):
         # base and top of imprecise members
 
         imprecise = df.filter(is_imprecise=True).with_row_index("_alias_color")
-        tmp_df = df.join(imprecise, on=STRUCT_MEMBER_ID_COLS, how="left", suffix="__r").select(~cs.ends_with("__r"))
+        tmp_df = df.join(
+            imprecise, on=STRUCT_MEMBER_ID_COLS, how="left", suffix="__r"
+        ).select(~cs.ends_with("__r"))
 
         # For each structure layout, join each member with the imprecise members
         # within that layout.
-        tmp_df = tmp_df.join(imprecise, suffix="__r", on=STRUCT_LAYOUT_ID_COLS, how="left")
+        tmp_df = tmp_df.join(
+            imprecise, suffix="__r", on=STRUCT_LAYOUT_ID_COLS, how="left"
+        )
 
         # We then mark the members that fall within the base/top of imprecise members.
-        top = pl.col("byte_offset") + pl.col("byte_size") + ((pl.col("bit_offset") + pl.col("bit_size")) / 8).ceil()
-        have_overlap = ((pl.col("byte_offset") < pl.col("top__r")) & (pl.col("base__r") < top) &
-                        # Do not consider overlapping members that are known children of the imprecise member
-                        ~pl.col("member_name").str.starts_with(pl.col("member_name__r") + "::") &
-                        # Do not consider overlapping members that are known parents of the imprecise member
-                        ~pl.col("member_name__r").str.starts_with(pl.col("member_name") + "::") &
-                        # Can't overlap with yourself
-                        (pl.col("member_name__r") != pl.col("member_name")))
+        top = (
+            pl.col("byte_offset")
+            + pl.col("byte_size")
+            + ((pl.col("bit_offset") + pl.col("bit_size")) / 8).ceil()
+        )
+        have_overlap = (
+            (pl.col("byte_offset") < pl.col("top__r"))
+            & (pl.col("base__r") < top)
+            &
+            # Do not consider overlapping members that are known children of the imprecise member
+            ~pl.col("member_name").str.starts_with(pl.col("member_name__r") + "::")
+            &
+            # Do not consider overlapping members that are known parents of the imprecise member
+            ~pl.col("member_name__r").str.starts_with(pl.col("member_name") + "::")
+            &
+            # Can't overlap with yourself
+            (pl.col("member_name__r") != pl.col("member_name"))
+        )
         tmp_df = tmp_df.with_columns(
-            pl.when(have_overlap).then(pl.col("_alias_color__r")).otherwise(pl.lit(None)).alias("_aliased_by"))
+            pl.when(have_overlap)
+            .then(pl.col("_alias_color__r"))
+            .otherwise(pl.lit(None))
+            .alias("_aliased_by")
+        )
 
         # Collect all imprecise members that alias at least a pointer/function pointer
-        imprecise = tmp_df.filter(~pl.col("_aliased_by").is_null()).group_by(IMPRECISE_MEMBER_ID_COLS).agg(
-            pl.col("is_pointer").any().alias("_alias_pointer_member"))
+        imprecise = (
+            tmp_df.filter(~pl.col("_aliased_by").is_null())
+            .group_by(IMPRECISE_MEMBER_ID_COLS)
+            .agg(pl.col("is_pointer").any().alias("_alias_pointer_member"))
+        )
 
         # Finally, coalesce _aliased_by color lists, keeping all left columns unchanged
-        tmp_df = tmp_df.group_by(STRUCT_MEMBER_ID_COLS).agg((~cs.ends_with("__r") & cs.exclude("_aliased_by")).first(),
-                                                            pl.col("_aliased_by").drop_nulls())
+        tmp_df = tmp_df.group_by(STRUCT_MEMBER_ID_COLS).agg(
+            (~cs.ends_with("__r") & cs.exclude("_aliased_by")).first(),
+            pl.col("_aliased_by").drop_nulls(),
+        )
 
         assert len(tmp_df) == len(df)
         assert set(tmp_df.columns) == set(df.columns + ["_aliased_by", "_alias_color"])
-        df = tmp_df.join(imprecise,
-                         left_on=STRUCT_MEMBER_ID_COLS,
-                         right_on=IMPRECISE_MEMBER_ID_COLS,
-                         suffix="__r",
-                         how="left").select(~cs.ends_with("__r"))
+        df = tmp_df.join(
+            imprecise,
+            left_on=STRUCT_MEMBER_ID_COLS,
+            right_on=IMPRECISE_MEMBER_ID_COLS,
+            suffix="__r",
+            how="left",
+        ).select(~cs.ends_with("__r"))
         self.imprecise_layouts.assign(df)
+
+
+class VLAAnnotationConfig(Config):
+    """
+    Configure VLA detection.
+    """
+
+    pre_c99_vla: bool = config_field(False, desc="Mark size 0 and 1 arrays as VLA.")
+
+
+class AnnotateLayoutsWithVLA(SliceAnalysisTask):
+    """
+    Load imprecise subobject data and annotate structures with VLA.
+
+    We detect Variable Length Arrays using two heuristics:
+    - zero-sized arrays at the end of a structure
+    - 1-sized arrays at the end of a structure, this is tunable.
+
+    """
+
+    task_namespace = "subobject"
+    task_name = "annotate-vla"
+    task_config_class = VLAAnnotationConfig
+
+    @dependency
+    def layouts(self):
+        q = (
+            select(
+                TypeLayout.id,
+                TypeLayout.file,
+                TypeLayout.line,
+                TypeLayout.name,
+                TypeLayout.is_union,
+                TypeLayout.size.label("total_size"),
+                LayoutMember.id.label("member_id"),
+                LayoutMember.name.label("member_name"),
+                LayoutMember.type_name.label("member_type"),
+                LayoutMember.byte_offset,
+                LayoutMember.byte_size,
+            )
+            .join(LayoutMember.owner_entry)
+            .where(LayoutMember.array_items <= 1)
+        )
+        return LoadStructLayouts(
+            self.session, self.slice_info, self.analysis_config, query=q
+        )
+
+    @output
+    def layouts_with_vla(self):
+        return ValueTarget(self, "layouts-with-vla")
+
+    def run(self):
+        """
+        Construct a dataframe with annotated variable-length arrays.
+        """
+        df = self.layouts.struct_layouts.get()
+        if len(df) == 0:
+            # Did not find any VLA members, return an empty frame
+            self.layouts_with_vla.assign(df)
+            return
+
+        # Determine whether some of these are false-positives if the
+        # member is not the last member
+        df = df.filter(pl.col("byte_offset") + 1 >= pl.col("total_size"))
+        self.layouts_with_vla.assign(df)
