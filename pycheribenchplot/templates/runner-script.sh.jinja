@@ -13,7 +13,7 @@ set -e
 {% endmacro -%}
 
 echo "Run benchmark configuration ID={{ dataset_id }} with {{ iterations }} iterations."
-echo "Instance '{{ instance.name }}' ID={{ dataset_gid }}."
+echo "Instance '{{ instance.name }}'"
 echo "Parameters:"
 {% for pkey, pval in parameters.items() -%}
     echo -e "\t{{ pkey }}='{{ pval }}'"
@@ -98,6 +98,7 @@ echo "Parameters:"
   echo "Post process hooks"
   for ITERATION in $(seq 0 {{ iterations - 1 }}); do
       {% block post_process_iteration scoped %}
+        :
       {% endblock %}
   done
 {% endblock %}

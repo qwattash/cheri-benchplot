@@ -35,11 +35,11 @@
   echo "Extract DWARF information to {{ dws_database }}"
   mkdir -p {{ dws_database | path_parent }}
   {% for src in dws_config.dwarf_data_sources %}
-    find "{{ src.path }}" | grep -E "{{ src.matcher }}" >> /tmp/dwarf-scraper-src.txt
+    find "{{ src.path }}" | grep -E "{{ src.matcher }}" >> /tmp/{{ dataset_id }}-dwarf-scraper-src.txt
   {% endfor %}
 
-  {{ _scraper() }} {{ _verbose() }} {{ _prefix() }} --read-input /tmp/dwarf-scraper-src.txt \
+  {{ _scraper() }} {{ _verbose() }} {{ _prefix() }} --clean --read-input /tmp/{{ dataset_id }}-dwarf-scraper-src.txt \
     --database {{ dws_database }} flat-layout
 
-  rm -f /tmp/dwarf-scraper-src.txt
+  rm -f /tmp/{{ dataset_id }}-dwarf-scraper-src.txt
 {% endblock %}
