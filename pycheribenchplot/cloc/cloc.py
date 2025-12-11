@@ -11,17 +11,20 @@ import seaborn as sns
 from ..core.artefact import Target
 from ..core.config import Any, Config, ConfigPath, config_field
 from ..core.plot import PlotTarget, PlotTask
-from ..core.plot_util import PlotGrid, PlotGridConfig, grid_barplot
+from ..core.plot_util import BarPlotConfig, PlotGrid, PlotGridConfig, grid_barplot
 from ..core.task import dependency, output
 from .cloc_exec import CheriBSDClocExecTask, ClocExecTask
 
 
 @dataclass
 class FilterConfig(Config):
-    when: dict[str, Any] = config_field(Config.REQUIRED,
-                                        desc="Key/value parameterisation matcher to enable the filter.")
+    when: dict[str, Any] = config_field(
+        Config.REQUIRED, desc="Key/value parameterisation matcher to enable the filter."
+    )
     accept: list[str] = config_field(list, desc="Accept filter regex list")
-    reject: list[str] = config_field(list, desc="Reject filter regex list, run after accept")
+    reject: list[str] = config_field(
+        list, desc="Reject filter regex list, run after accept"
+    )
 
 
 @dataclass
@@ -32,13 +35,16 @@ class ComponentSpec(Config):
     The component name can be assigned by matching a regex on the files, or by using
     a combination of the parameterisation axes.
     """
+
     name: str = config_field(Config.REQUIRED, desc="Component name to assign.")
-    when: dict[str, Any] = config_field(dict, desc="Match a key/value parameterisation.")
+    when: dict[str, Any] = config_field(
+        dict, desc="Match a key/value parameterisation."
+    )
     regex: str | None = config_field(None, desc="Regular expression to match.")
 
 
 @dataclass
-class ClocByComponentConfig(PlotGridConfig):
+class ClocByComponentConfig(PlotGridConfig, BarPlotConfig):
     """
     Configure component assignment and data filtering.
 
@@ -48,17 +54,25 @@ class ClocByComponentConfig(PlotGridConfig):
     The :att:`ClocByComponentConfig.cdb` can be used to reference an external
     compilation DB listing the files to include.
     """
-    components: list[ComponentSpec] = config_field(Config.REQUIRED, desc="List of component assignment configurations.")
 
-    cdb: ConfigPath | None = config_field(None, desc="Compilation database to filter relevant files")
+    components: list[ComponentSpec] = config_field(
+        Config.REQUIRED, desc="List of component assignment configurations."
+    )
+
+    cdb: ConfigPath | None = config_field(
+        None, desc="Compilation database to filter relevant files"
+    )
 
     # This is used map components from a repository to the
     # correct path in the compilation database
     cdb_prefix: dict[str, str] = config_field(
-        dict, desc="Optional mappings to prefix the paths for cross repo changes for each scenario")
+        dict,
+        desc="Optional mappings to prefix the paths for cross repo changes for each scenario",
+    )
 
-    filters: list[FilterConfig] = config_field(list,
-                                               desc="Additional filter specifications for selected parameterisations.")
+    filters: list[FilterConfig] = config_field(
+        list, desc="Additional filter specifications for selected parameterisations."
+    )
 
 
 class ClocByComponent(PlotTask):
@@ -78,6 +92,7 @@ class ClocByComponent(PlotTask):
     - metric: Identifies the meaning of the count column, this is the 'delta' count or
       'overhead' count.
     """
+
     task_namespace = "cloc"
     task_name = "cloc-by-component"
     task_config_class = ClocByComponentConfig
@@ -136,6 +151,13 @@ class ClocByComponent(PlotTask):
         """
         return Target(self, "table", ext="csv")
 
+    @output
+    def cloc_summary(self):
+        """
+        Output csv with summarized changes.
+        """
+        return Target(self, "summary", ext="csv")
+
     @cached_property
     def compilation_db(self):
         """
@@ -144,7 +166,9 @@ class ClocByComponent(PlotTask):
         if self.config.cdb is None:
             return None
         df = pl.read_csv(self.config.cdb).unique("file")
-        df = df.with_columns(pl.col("file").map_elements(lambda p: os.path.normpath(p), return_dtype=str))
+        df = df.with_columns(
+            pl.col("file").map_elements(lambda p: os.path.normpath(p), return_dtype=str)
+        )
         return df
 
     def _filter_by_cdb(self, df) -> pl.DataFrame:
@@ -167,11 +191,17 @@ class ClocByComponent(PlotTask):
         when_stmts = [pl.col(pkey) == pval for pkey, pval in fc.when.items()]
         when_expr = reduce(operator.or_, when_stmts, False)
         if fc.accept:
-            accept_fn = lambda path: any([re.match(p, path) is not None for p in fc.accept])
+
+            def accept_fn(path):
+                return any([re.match(p, path) is not None for p in fc.accept])
+
             is_accept = pl.col("file").map_elements(accept_fn, return_dtype=pl.Boolean)
             df = df.filter(~when_expr | is_accept)
         if fc.reject:
-            reject_fn = lambda path: any([re.match(p, path) is not None for p in fc.reject])
+
+            def reject_fn(path):
+                return any([re.match(p, path) is not None for p in fc.reject])
+
             is_reject = pl.col("file").map_elements(reject_fn, return_dtype=pl.Boolean)
             df = df.filter(~when_expr | ~is_reject)
         return df
@@ -187,8 +217,15 @@ class ClocByComponent(PlotTask):
 
         for key, prefix in self.config.cdb_prefix.items():
             patch = pl.concat_str([pl.lit(prefix + "/"), pl.col("file")])
-            df = df.with_columns(pl.when(pl.col("scenario") == key).then(patch).otherwise(pl.col("file")).alias("file"))
-        df = df.with_columns(pl.col("file").map_elements(lambda p: os.path.normpath(p), return_dtype=str))
+            df = df.with_columns(
+                pl.when(pl.col("scenario") == key)
+                .then(patch)
+                .otherwise(pl.col("file"))
+                .alias("file")
+            )
+        df = df.with_columns(
+            pl.col("file").map_elements(lambda p: os.path.normpath(p), return_dtype=str)
+        )
         return df
 
     def _assign_component(self, df) -> pl.DataFrame:
@@ -211,14 +248,23 @@ class ClocByComponent(PlotTask):
             if spec.regex:
                 # It would be nice to do this, but Rust regex does not support lookarounds
                 # regex_expr = pl.col("file").str.find(spec.regex).is_not_null()
-                match_fn = lambda path: re.match(spec.regex, path) is not None
-                regex_expr = pl.col("file").map_elements(match_fn, return_dtype=pl.Boolean)
+                def match_fn(path):
+                    return re.match(spec.regex, path) is not None
+
+                regex_expr = pl.col("file").map_elements(
+                    match_fn, return_dtype=pl.Boolean
+                )
             else:
                 regex_expr = true_expr
 
             component = pl.lit(spec.name)
             existing = pl.col("component")
-            df = df.with_columns(pl.when(when_expr & regex_expr).then(component).otherwise(existing).alias("component"))
+            df = df.with_columns(
+                pl.when(when_expr & regex_expr)
+                .then(component)
+                .otherwise(existing)
+                .alias("component")
+            )
 
         return df
 
@@ -244,7 +290,9 @@ class ClocByComponent(PlotTask):
         # files that have been counted or excluded during generation
         # manual audit is required.
         if self.compilation_db is not None:
-            self.logger.info("Generate CDB audit file %s", self.cdb_extra_audit.single_path())
+            self.logger.info(
+                "Generate CDB audit file %s", self.cdb_extra_audit.single_path()
+            )
             # keep rows in cdb that are not in baseline
             extra = self.compilation_db.join(df, on="file", how="anti")
             extra.write_csv(self.cdb_extra_audit.single_path())
@@ -265,52 +313,80 @@ class ClocByComponent(PlotTask):
         baseline_df = self._assign_component(baseline_df)
 
         # Dump absolute diff data sorted by # of changes
-        dump_df = head_df.sort("component",
-                               pl.col("added") + pl.col("modified") + pl.col("removed")).select(
-                                   "component", "file", "added", "modified", "removed")
+        dump_df = head_df.sort(
+            "component", pl.col("added") + pl.col("modified") + pl.col("removed")
+        ).select("component", "file", "added", "modified", "removed")
         dump_df.write_csv(self.diff_audit.single_path())
 
         # Create per-component baseline counts
         group_cols = [*self.param_columns, "component"]
-        baseline_agg_df = baseline_df.group_by(group_cols).agg(pl.col("count").sum())
+        baseline_agg_df = baseline_df.group_by(group_cols).agg(
+            pl.col("count").sum(), pl.col("file").n_unique().alias("file_count")
+        )
         head_agg_df = head_df.group_by(group_cols).agg(
             pl.col("added").sum(),
             pl.col("removed").sum(),
             pl.col("modified").sum(),
-            pl.col("same").sum())
-        df = head_agg_df.join(baseline_agg_df, on=group_cols, how="left").with_columns(pl.col("count").fill_null(0))
+            pl.col("same").sum(),
+            pl.col("file").n_unique(),
+        )
+        df = head_agg_df.join(baseline_agg_df, on=group_cols, how="left").with_columns(
+            pl.col("count").fill_null(0), pl.col("file").fill_null(0)
+        )
 
         # Now create the absolute and % difference data in long-form
         # This is going to be used for the PlotGrid.
         df = df.with_columns(
             pl.lit("# of lines").alias("metric"),
-            cs.by_name("added", "removed", "modified", "same").cast(pl.Float64))
+            cs.by_name("added", "removed", "modified", "same", "file").cast(pl.Float64),
+        )
         rel_delta_df = df.with_columns(
             pl.col("added") * 100 / pl.col("count"),
             pl.col("removed") * 100 / pl.col("count"),
             pl.col("modified") * 100 / pl.col("count"),
             pl.col("same") * 100 / pl.col("count"),
-            pl.lit("% of lines").alias("metric"))
-        view_df = pl.concat([df, rel_delta_df], how="vertical").select(cs.exclude("count"))
-        how = ["added", "modified", "removed"]
-        view_df = view_df.unpivot(on=how,
-                                  index=[*self.param_columns, "component", "metric"],
-                                  variable_name="how",
-                                  value_name="count")
+            pl.col("file") * 100 / pl.col("count"),
+            pl.lit("% of lines").alias("metric"),
+        )
+        view_df = pl.concat([df, rel_delta_df], how="vertical").select(
+            cs.exclude("count")
+        )
+        how = ["added", "modified", "removed", "file"]
+        view_df = view_df.unpivot(
+            on=how,
+            index=[*self.param_columns, "component", "metric"],
+            variable_name="how",
+            value_name="count",
+        )
+
+        # Summary data that collapses all the components
+        dump_df = (
+            view_df.filter(metric="# of lines")
+            .group_by(["how", "metric"], maintain_order=True)
+            .agg(pl.col("count").sum())
+        )
+        dump_df.write_csv(self.cloc_summary.single_path())
+
+        view_df = view_df.filter(pl.col("how") != "file")
 
         # Grab the color palette as a matplotlib cmap
         cmap = sns.color_palette(as_cmap=True)
 
         grid_config = self.config.set_fixed(
-            tile_col="metric",
-            tile_col_as_xlabel=True,
+            orient="y",
+            stack_by="<how>",
+            coordgen={"pad_ratio": 0.5},
+            tile_col="<metric>",
+            tile_xlabel="<metric>",
             tile_sharey=True,
-            hue="how",
+            tile_xaxis="<count>",
+            hue="<how>",
             hue_colors={
                 "added": cmap[2],  # green
                 "modified": cmap[1],  # orange
-                "removed": cmap[3]  # red
-            }).with_config_default(sort_order={"<how>": ["added", "modified", "removed"]})
+                "removed": cmap[3],  # red
+            },
+        ).with_config_default(sort_order={"<how>": ["added", "modified", "removed"]})
 
         with PlotGrid(self.cloc_plot, view_df, grid_config) as grid:
             # Dump the sorted tabular data using the ordering specified by the grid config
@@ -318,8 +394,15 @@ class ClocByComponent(PlotTask):
             dump_df.write_csv(self.cloc_table.single_path())
 
             # Generate the grid plot
-            grid.map(grid_barplot, x="count", y="component", orient="y", stack=True, coordgen_kwargs={"pad_ratio": 0.5})
-            grid.map(lambda tile, chunk: tile.ax.tick_params(axis="y", labelsize="x-small"))
+            grid.map(
+                grid_barplot,
+                x=grid_config.tile_xaxis,
+                y="component",
+                config=grid_config,
+            )
+            grid.map(
+                lambda tile, chunk: tile.ax.tick_params(axis="y", labelsize="x-small")
+            )
 
             # Generate text annotations for the Absolute SLoC
             # if self.config.show_text_annotations:
