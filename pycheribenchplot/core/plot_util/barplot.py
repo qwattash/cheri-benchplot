@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Any
 
 import polars as pl
 from marshmallow import ValidationError, validates
@@ -13,10 +14,20 @@ class BarPlotConfig(PlotConfigBase):
     """
     Display grid configuration extension specific to bar plots.
     """
-    tile_xaxis: ColRef = config_field(Config.REQUIRED, desc="Column ref to use for the tile X axis.")
-    stack_by: ColRef | None = config_field(None, desc="Stack bars along the given column ref.")
-    shift_by: ColRef | None = config_field(None, desc="Shift bars along the given column ref.")
+
+    tile_xaxis: ColRef = config_field(
+        Config.REQUIRED, desc="Column ref to use for the tile X axis."
+    )
+    stack_by: ColRef | None = config_field(
+        None, desc="Stack bars along the given column ref."
+    )
+    shift_by: ColRef | None = config_field(
+        None, desc="Shift bars along the given column ref."
+    )
     orient: str = config_field("x", desc="Plot orientation (x or y).")
+    coordgen: dict[str, Any] = config_field(
+        dict, desc="Coordinate generator extra arguments. (internal)"
+    )
 
     @validates("orient")
     def check_orientation(self, data, **kwargs):
@@ -25,15 +36,22 @@ class BarPlotConfig(PlotConfigBase):
 
     def uses_param(self, name: str) -> bool:
         ref = f"<{name}>"
-        return (super().uses_param(name) or self.tile_xaxis == ref or self.stack_by == ref or self.shift_by == ref)
+        return (
+            super().uses_param(name)
+            or self.tile_xaxis == ref
+            or self.stack_by == ref
+            or self.shift_by == ref
+        )
 
 
-def grid_barplot(tile: PlotTile,
-                 chunk: pl.DataFrame,
-                 config: BarPlotConfig,
-                 x: str,
-                 y: str,
-                 err: tuple[str, str] | None = None):
+def grid_barplot(
+    tile: PlotTile,
+    chunk: pl.DataFrame,
+    config: BarPlotConfig,
+    x: str,
+    y: str,
+    err: tuple[str, str] | None = None,
+):
     """
     Produce a grouped bar plot on the given plot grid tile.
     # XXX add stacked + shifted version
@@ -84,25 +102,31 @@ def grid_barplot(tile: PlotTile,
         coordgen_kwargs["shift_by"] = tile.hue
 
     cgen_config = CoordGenConfig(**coordgen_kwargs)
-    view = cgen.compute_coordinates(chunk, independent_var=i_var, dependent_vars=[d_var], config=cgen_config)
+    view = cgen.compute_coordinates(
+        chunk, independent_var=i_var, dependent_vars=[d_var], config=cgen_config
+    )
 
     # Assign categorical axis ticks and labels
     ticks = view.select("__gen_coord", i_var).unique(maintain_order=True)
     set_ticks(ticks=ticks["__gen_coord"], labels=ticks[i_var])
     # Draw the plot
-    for (hue_label, ), hue_group in view.group_by(tile.hue, maintain_order=True):
+    for (hue_label,), hue_group in view.group_by(tile.hue, maintain_order=True):
         color = tile.palette[hue_label]
         error_kwargs = {}
         if err:
             lower, upper = err
             err_low = (hue_group[d_var] - hue_group[lower]).abs()
             err_high = (hue_group[upper] - hue_group[d_var]).abs()
-            error_kwargs.update({f"{orthogonal_orient}err": (err_low, err_high), "capsize": 4})
+            error_kwargs.update(
+                {f"{orthogonal_orient}err": (err_low, err_high), "capsize": 4}
+            )
         coord = hue_group["__gen_coord"] + hue_group["__gen_offset"]
-        bar_plot(coord,
-                 hue_group[d_var],
-                 hue_group["__gen_width"],
-                 hue_group["__gen_stack"],
-                 color=color,
-                 label=hue_label,
-                 **error_kwargs)
+        bar_plot(
+            coord,
+            hue_group[d_var],
+            hue_group["__gen_width"],
+            hue_group["__gen_stack"],
+            color=color,
+            label=hue_label,
+            **error_kwargs,
+        )
