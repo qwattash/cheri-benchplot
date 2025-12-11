@@ -17,6 +17,10 @@ class ReportConfig(Config):
     show_parameters: list[str] | None = config_field(
         None, desc="Only include these parameter axes in the output tables."
     )
+    ignore_files: list[str] | None = config_field(
+        None,
+        desc="Files matching patterns in this list are not included in the report.",
+    )
 
 
 class ImpreciseSubobjectReport(SliceAnalysisTask):
@@ -52,6 +56,10 @@ class ImpreciseSubobjectReport(SliceAnalysisTask):
     def run(self):
         df = self.layouts.imprecise_layouts.get()
 
+        if self.config.ignore_files:
+            for pattern in self.config.ignore_files:
+                df = df.filter(~pl.col("file").str.contains(pattern))
+
         if self.config.show_parameters:
             table_cols = [
                 p for p in self.param_columns if p in self.config.show_parameters
@@ -59,7 +67,9 @@ class ImpreciseSubobjectReport(SliceAnalysisTask):
         else:
             table_cols = self.param_columns
 
-        self.logger.info("Generate imprecise sub-object fields report")
+        self.logger.info(
+            "Generate imprecise sub-object fields report: %s", self.slice_info
+        )
         data_cols = [
             "member_name",
             "file",
@@ -78,7 +88,9 @@ class ImpreciseSubobjectReport(SliceAnalysisTask):
         table = table.sort([*table_cols, "member_name", "file", "line"])
         table.write_csv(self.fields.single_path())
 
-        self.logger.info("Generate imprecise sub-object summary report")
+        self.logger.info(
+            "Generate imprecise sub-object summary report: %s", self.slice_info
+        )
         summary = table.group_by(table_cols).agg(
             pl.col("member_name").count(),
             pl.col("is_array").sum(),
@@ -118,6 +130,11 @@ class VLASubobjectReport(SliceAnalysisTask):
 
     def run(self):
         df = self.vla_fields.layouts_with_vla.get()
+        df = df.filter(pl.col("is_vla"))
+
+        if self.config.ignore_files:
+            for pattern in self.config.ignore_files:
+                df = df.filter(~pl.col("file").str.contains(pattern))
 
         if self.config.show_parameters:
             table_cols = [
@@ -126,12 +143,12 @@ class VLASubobjectReport(SliceAnalysisTask):
         else:
             table_cols = self.param_columns
 
-        self.logger.info("Generate VLA fields report")
+        self.logger.info("Generate VLA fields report: %s", self.slice_info)
         data_cols = ["member_name", "file", "line", "byte_offset"]
         table = df.select(table_cols + data_cols).sort(table_cols + data_cols)
         table.write_csv(self.fields.single_path())
 
-        self.logger.info("Generate VLA summary report")
+        self.logger.info("Generate VLA summary report: %s", self.slice_info)
         summary = table.group_by(table_cols).agg(pl.col("member_name").count())
         summary.write_csv(self.summary.single_path())
 

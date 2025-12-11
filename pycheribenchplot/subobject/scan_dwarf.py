@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import hashlib
 
 import polars as pl
 import polars.selectors as cs
@@ -92,8 +93,15 @@ class TypeLayoutLoader(DataFrameLoadTask):
     task_name = "type-layout-loader"
 
     def __init__(self, target, query):
-        super().__init__(target)
         self._query = query
+        hashed = hashlib.sha1(str(self._query).encode("utf8"), usedforsecurity=False)
+        self._query_id = hashed.hexdigest()
+        super().__init__(target)
+
+    @property
+    def task_id(self):
+        tid = super().task_id
+        return f"{tid}-Q{self._query_id}"
 
     def _load_one(self, path):
         df = pl.read_database(self._query, self.target.sql_engine)
@@ -110,10 +118,17 @@ class LoadStructLayouts(SliceAnalysisTask):
     task_name = "load-struct-layouts"
 
     def __init__(self, session, slice_info, analysis_config, query=None, **kwargs):
-        super().__init__(session, slice_info, analysis_config, **kwargs)
         if query is None:
             query = select(TypeLayout, LayoutMember).join(LayoutMember.owner_entry)
         self._query = query
+        hashed = hashlib.sha1(str(self._query).encode("utf8"), usedforsecurity=False)
+        self._query_id = hashed.hexdigest()
+        super().__init__(session, slice_info, analysis_config, **kwargs)
+
+    @property
+    def task_id(self):
+        tid = super().task_id
+        return f"{tid}-Q{self._query_id}"
 
     @output
     def struct_layouts(self):
@@ -307,15 +322,17 @@ class AnnotateLayoutsWithVLA(SliceAnalysisTask):
                 TypeLayout.line,
                 TypeLayout.name,
                 TypeLayout.is_union,
+                TypeLayout.has_vla,
                 TypeLayout.size.label("total_size"),
                 LayoutMember.id.label("member_id"),
                 LayoutMember.name.label("member_name"),
                 LayoutMember.type_name.label("member_type"),
                 LayoutMember.byte_offset,
                 LayoutMember.byte_size,
+                LayoutMember.is_vla,
             )
             .join(LayoutMember.owner_entry)
-            .where(LayoutMember.array_items <= 1)
+            .where(TypeLayout.has_vla)
         )
         return LoadStructLayouts(
             self.session, self.slice_info, self.analysis_config, query=q
@@ -330,12 +347,4 @@ class AnnotateLayoutsWithVLA(SliceAnalysisTask):
         Construct a dataframe with annotated variable-length arrays.
         """
         df = self.layouts.struct_layouts.get()
-        if len(df) == 0:
-            # Did not find any VLA members, return an empty frame
-            self.layouts_with_vla.assign(df)
-            return
-
-        # Determine whether some of these are false-positives if the
-        # member is not the last member
-        df = df.filter(pl.col("byte_offset") + 1 >= pl.col("total_size"))
         self.layouts_with_vla.assign(df)
