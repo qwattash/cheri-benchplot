@@ -542,9 +542,9 @@ class Session:
         for descriptor in self.parameterization_matrix["descriptor"]:
             descriptor.schedule_exec_tasks(self.scheduler, ExecTaskConfig())
 
-        self.logger.info("Session %s generate execution plan", self.name)
+        self.logger.info("Session %s generate exec scripts", self.name)
         self.scheduler.run()
-        self.logger.info("Session %s execution plan ready", self.name)
+        self.logger.info("Session %s scripts ready", self.name)
         self.scheduler.report_failures(self.logger)
 
     def run(self, driver_config, clean: bool = True):

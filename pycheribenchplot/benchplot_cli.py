@@ -7,7 +7,13 @@ import tarfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from pycheribenchplot.core.config import (AnalysisConfig, BenchplotUserConfig, PipelineConfig, TaskTargetConfig)
+import polars as pl
+
+from pycheribenchplot.core.config import (
+    AnalysisConfig,
+    BenchplotUserConfig,
+    PipelineConfig,
+)
 from pycheribenchplot.core.error import ToolArgparseError
 from pycheribenchplot.core.session import Session
 from pycheribenchplot.core.task import TaskRegistry
@@ -18,6 +24,7 @@ class SessionSubCommand(SubCommand):
     """
     Manage and ispect sessions.
     """
+
     name = "session"
 
     def register_options(self, parser):
@@ -25,13 +32,21 @@ class SessionSubCommand(SubCommand):
 
         session_subparsers = parser.add_subparsers(help="Action", dest="session_action")
 
-        sub_create = session_subparsers.add_parser("create", help="Create a new session from the given configuration.")
-        sub_create.add_argument("pipeline_config", type=Path, help="Path to the pipeline configuration file.")
+        sub_create = session_subparsers.add_parser(
+            "create", help="Create a new session from the given configuration."
+        )
+        sub_create.add_argument(
+            "pipeline_config",
+            type=Path,
+            help="Path to the pipeline configuration file.",
+        )
         self._register_session_arg(sub_create)
-        sub_create.add_argument("-f",
-                                "--force",
-                                action="store_true",
-                                help="Force re-create the session if it already exists. Use with caution.")
+        sub_create.add_argument(
+            "-f",
+            "--force",
+            action="store_true",
+            help="Force re-create the session if it already exists. Use with caution.",
+        )
 
         sub_gen = session_subparsers.add_parser("generate", help="Generate run scripts")
         self._register_session_arg(sub_gen)
@@ -39,41 +54,63 @@ class SessionSubCommand(SubCommand):
         sub_run = session_subparsers.add_parser("run", help="Run the benchmark session")
         self._register_session_arg(sub_run)
 
-        sub_merge = session_subparsers.add_parser("merge", help="Merge partial results into a session")
+        sub_merge = session_subparsers.add_parser(
+            "merge", help="Merge partial results into a session"
+        )
         self._register_session_arg(sub_merge, required=True)
         sub_merge.add_argument(
             "-d",
             "--decode",
             action="store_true",
-            help="Interpret sources as base64-encoded tarballs which only contain the run directory.")
-        sub_merge.add_argument("partials", type=Path, nargs="+", help="Partial runs to merge")
+            help="Interpret sources as base64-encoded tarballs which only contain the run directory.",
+        )
+        sub_merge.add_argument(
+            "partials", type=Path, nargs="+", help="Partial runs to merge"
+        )
 
-        sub_clean = session_subparsers.add_parser("clean", help="Clean session data and plots.")
+        sub_clean = session_subparsers.add_parser(
+            "clean", help="Clean session data and plots."
+        )
         self._register_session_arg(sub_clean)
 
-        sub_analyse = session_subparsers.add_parser("analyse", help="Process data and generate plots.")
+        sub_analyse = session_subparsers.add_parser(
+            "analyse", help="Process data and generate plots."
+        )
         self._register_session_arg(sub_analyse)
-        sub_analyse.add_argument("analysis_config", type=Path, help="Analysis configuration file.")
-        sub_analyse.add_argument("--clean", action="store_true", help="Wipe analysis outputs before running.")
+        sub_analyse.add_argument(
+            "analysis_config", type=Path, help="Analysis configuration file."
+        )
+        sub_analyse.add_argument(
+            "--clean", action="store_true", help="Wipe analysis outputs before running."
+        )
 
-        sub_bundle = session_subparsers.add_parser("bundle",
-                                                   help="Create a session archive with all the generated content.")
-        sub_bundle.add_argument("-o",
-                                "--output",
-                                default=None,
-                                type=Path,
-                                help="Output directory, defaults to the directory containing the session")
+        sub_bundle = session_subparsers.add_parser(
+            "bundle", help="Create a session archive with all the generated content."
+        )
+        sub_bundle.add_argument(
+            "-o",
+            "--output",
+            default=None,
+            type=Path,
+            help="Output directory, defaults to the directory containing the session",
+        )
         self._register_session_arg(sub_bundle)
 
-        sub_push = session_subparsers.add_parser("push", help="Push the session to a remote location as a bundle")
-        sub_push.add_argument("host",
-                              type=str,
-                              help="SCP destination location, a .tar.gz containing the session will be copied there")
-        sub_push.add_argument("-o",
-                              "--output",
-                              default=None,
-                              type=Path,
-                              help="Output bundle directory, see `benchplot-cli session bundle`")
+        sub_push = session_subparsers.add_parser(
+            "push", help="Push the session to a remote location as a bundle"
+        )
+        sub_push.add_argument(
+            "host",
+            type=str,
+            help="SCP destination location, a .tar.gz containing the session will be copied there",
+        )
+        sub_push.add_argument(
+            "-o",
+            "--output",
+            default=None,
+            type=Path,
+            help="Output bundle directory, see `benchplot-cli session bundle`",
+        )
         self._register_session_arg(sub_push)
 
     def handle_create(self, user_config, args):
@@ -182,6 +219,7 @@ class TaskInfoSubCommand(SubCommand):
     """
     Display information about tasks.
     """
+
     name = "info"
 
     def register_options(self, parser):
@@ -189,32 +227,52 @@ class TaskInfoSubCommand(SubCommand):
 
         info_subparsers = parser.add_subparsers(help="Action", dest="info_action")
 
-        sub_session = info_subparsers.add_parser("session", help="Display information about an existing session")
+        sub_session = info_subparsers.add_parser(
+            "session", help="Display information about an existing session"
+        )
         self._register_session_arg(sub_session)
-        sub_session.add_argument("-a",
-                                 "--show-analysis-tasks",
-                                 action="store_true",
-                                 default=False,
-                                 help="Show compatible analysis tasks")
+        sub_session.add_argument(
+            "-a",
+            "--show-analysis-tasks",
+            action="store_true",
+            default=False,
+            help="Show compatible analysis tasks",
+        )
+        sub_session.add_argument(
+            "-m",
+            action="store_true",
+            default=False,
+            help="Show parameterisation matrix in tabular form",
+        )
 
-        sub_task = info_subparsers.add_parser("task", help="Display information about a task")
-        sub_task.add_argument("task_spec", nargs="+", help="Name(s) of task(s) to describe")
+        sub_task = info_subparsers.add_parser(
+            "task", help="Display information about a task"
+        )
+        sub_task.add_argument(
+            "task_spec", nargs="+", help="Name(s) of task(s) to describe"
+        )
 
-        sub_config = info_subparsers.add_parser("config", help="Display configuration information")
-        sub_config.add_argument("-g",
-                                "--generate",
-                                type=str,
-                                required=False,
-                                default=None,
-                                choices=("user", "pipeline", "analysis"),
-                                help="Generate a default configuration to stdout")
+        sub_config = info_subparsers.add_parser(
+            "config", help="Display configuration information"
+        )
+        sub_config.add_argument(
+            "-g",
+            "--generate",
+            type=str,
+            required=False,
+            default=None,
+            choices=("user", "pipeline", "analysis"),
+            help="Generate a default configuration to stdout",
+        )
 
-        sub_config.add_argument("-d",
-                                "--desc",
-                                required=False,
-                                default=None,
-                                choices=("user", "pipeline", "analysis"),
-                                help="Describe a configuration object")
+        sub_config.add_argument(
+            "-d",
+            "--desc",
+            required=False,
+            default=None,
+            choices=("user", "pipeline", "analysis"),
+            help="Describe a configuration object",
+        )
 
     def handle_session(self, user_config, args):
         """
@@ -222,14 +280,22 @@ class TaskInfoSubCommand(SubCommand):
         """
         session = self._get_session(user_config, args)
         print(f"Session {session.config.name} ({session.config.uuid}):")
-        for c in session.config.configurations:
-            print(f"\t{c.name} ({c.uuid}) on {c.instance}")
-            print("\t\tParameterization:")
-            for pk, pv in c.parameters.items():
-                print(f"\t\t - {pk} = {pv}")
-            print("\t\tGenerators:")
-            for g in c.generators:
-                print(f"\t\t - {g.handler}")
+
+        if args.m:
+            with pl.Config(fmt_str_lengths=150, tbl_rows=-1, tbl_cols=-1):
+                tbl = session.parameterization_matrix.with_columns(
+                    pl.col("descriptor").map_elements(lambda d: d.uuid)
+                )
+                print(tbl)
+        else:
+            for c in session.config.configurations:
+                print(f"\t{c.name} ({c.uuid}) on {c.instance}")
+                print("\t\tParameterization:")
+                for pk, pv in c.parameters.items():
+                    print(f"\t\t - {pk} = {pv}")
+                print("\t\tGenerators:")
+                for g in c.generators:
+                    print(f"\t\t - {g.handler}")
 
         if args.show_analysis_tasks:
             print("\tAvailable analysis tasks:\n")
@@ -244,7 +310,9 @@ class TaskInfoSubCommand(SubCommand):
         for task_class in TaskRegistry.iter_public():
             match = False
             for matcher in args.task_spec:
-                match = re.match(matcher, f"{task_class.task_namespace}.{task_class.task_name}")
+                match = re.match(
+                    matcher, f"{task_class.task_namespace}.{task_class.task_name}"
+                )
                 if match:
                     break
             if not match:
