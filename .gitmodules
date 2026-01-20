@@ -1,3 +1,6 @@
 [submodule "pycheribenchplot/ext/cheri-compressed-cap"]
 	path = tools/cheri-compressed-cap
 	url = https://github.com/CTSRD-CHERI/cheri-compressed-cap
+[submodule "tools/dwarf-scanner"]
+	path = tools/dwarf-scanner
+	url = https://github.com/qwattash/cheri-dwarf-scanner.git

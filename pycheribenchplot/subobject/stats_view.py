@@ -130,7 +130,7 @@ class VLASubobjectReport(SliceAnalysisTask):
 
     def run(self):
         df = self.vla_fields.layouts_with_vla.get()
-        df = df.filter(pl.col("is_vla"))
+        df = df.filter(pl.col("max_vla_size").is_not_null())
 
         if self.config.ignore_files:
             for pattern in self.config.ignore_files:
@@ -144,7 +144,7 @@ class VLASubobjectReport(SliceAnalysisTask):
             table_cols = self.param_columns
 
         self.logger.info("Generate VLA fields report: %s", self.slice_info)
-        data_cols = ["member_name", "file", "line", "byte_offset"]
+        data_cols = ["member_name", "file", "line", "byte_offset", "max_vla_size"]
         table = df.select(table_cols + data_cols).sort(table_cols + data_cols)
         table.write_csv(self.fields.single_path())
 

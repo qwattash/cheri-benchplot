@@ -54,12 +54,12 @@ class LayoutMember(SqlBase):
     base: Mapped[Optional[int]]
     top: Mapped[Optional[int]]
     required_precision: Mapped[Optional[int]]
+    max_vla_size: Mapped[Optional[int]]
     is_pointer: Mapped[bool] = mapped_column(nullable=False, default=False)
     is_function: Mapped[bool] = mapped_column(nullable=False, default=False)
     is_anon: Mapped[bool] = mapped_column(nullable=False, default=False)
     is_union: Mapped[bool] = mapped_column(nullable=False, default=False)
     is_imprecise: Mapped[bool] = mapped_column(nullable=False, default=False)
-    is_vla: Mapped[bool] = mapped_column(nullable=False, default=False)
 
     owner_entry: Mapped["TypeLayout"] = relationship(
         foreign_keys=owner, back_populates="members"

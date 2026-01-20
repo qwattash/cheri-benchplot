@@ -63,3 +63,6 @@ addopts = ["-ra"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 norecursedirs = ["old-tests"]
+
+[tool.ruff.lint.extend-per-file-ignores]
+"tests/**/test_*.py" = ["F401", "F811"]

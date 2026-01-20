@@ -15,14 +15,14 @@ help:
 apidoc:
 	@sphinx-apidoc -f -o "$(SOURCEDIR)" "pycheribenchplot"
 
-tools: dwarf_scraper
+tools: dwarf_scanner
 
-dwarf_scraper: tools/dwarf-scraper/CMakeLists.txt
+dwarf_scanner: tools/dwarf-scanner/CMakeLists.txt
 	mkdir -p build
-	cmake -B build/dwarf-scraper -S tools/dwarf-scraper -GNinja -DCHERISDK=${CHERISDK}
-	ninja -C build/dwarf-scraper
+	cmake -B build/dwarf-scanner -S tools/dwarf-scanner -GNinja -DCHERISDK=${CHERISDK}
+	ninja -C build/dwarf-scanner
 
-.PHONY: apidoc help tools dwarf_scraper Makefile
+.PHONY: apidoc help tools dwarf_scanner Makefile
 
 # Catch-all target: route all unknown targets to Sphinx using the new
 # "make mode" option.  $(O) is meant as a shortcut for $(SPHINXOPTS).

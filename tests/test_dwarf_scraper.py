@@ -30,7 +30,7 @@ def check_row(row, row_expect):
 
 @pytest.fixture(scope="session")
 def find_scraper() -> Path:
-    scraper = Path("build/dwarf-scraper/dwarf_scraper").resolve()
+    scraper = Path("build/dwarf-scanner/src/dwarf_scraper").resolve()
     assert scraper.exists()
     return scraper
 
