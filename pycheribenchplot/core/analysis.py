@@ -643,7 +643,9 @@ class SliceAnalysisTask(AnalysisTask):
         Note that this depends on the inner slice task, so we can define multiple
         generic analysis passes within the same analysis configuration.
         """
-        param_pairs = map("=".join, self._slice_info.fixed_params.items())
+        param_pairs = map(
+            lambda kv: f"{kv[0]}={kv[1]}", self._slice_info.fixed_params.items()
+        )
         slice_id = "-".join(param_pairs) or "nofixed"
         return f"{super().task_id}-slice-{slice_id}"
 
