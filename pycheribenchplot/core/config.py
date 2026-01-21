@@ -13,7 +13,7 @@ from uuid import UUID, uuid4
 
 import marshmallow.fields as mfields
 from git import Repo
-from marshmallow import Schema, ValidationError, validates, validates_schema
+from marshmallow import Schema, ValidationError, validates
 from marshmallow.validate import And, ContainsOnly, OneOf, Predicate
 from marshmallow_dataclass import class_schema
 from typing_extensions import Self
@@ -1067,90 +1067,19 @@ class ProfileConfig(Config):
     )
 
 
-class InstancePlatform(Enum):
+class PlatformArch(Enum):
     """
-    Describe the platform where to run benchmarks.
-
-    XXX-AM: This is a remnant of the old infrastructure and should be cleaned up.
+    Describe the CPU platform where the benchmarks run.
     """
 
-    QEMU = "qemu"
-    VCU118 = "vcu118"
-    NATIVE = "native"
-
-    def __str__(self):
-        return self.value
-
-    def is_fpga(self):
-        return self == InstancePlatform.VCU118
-
-
-class InstanceCheriBSD(Enum):
-    """
-    Describe the platform OS where the benchmarks run.
-
-    XXX-AM: This is a remnant of the old infrastructure and should be cleaned up.
-    """
-
-    NATIVE = "native"
-    RISCV64_PURECAP = "riscv64-purecap"
-    RISCV64_HYBRID = "riscv64-hybrid"
-    MORELLO_PURECAP = "morello-purecap"
-    MORELLO_HYBRID = "morello-hybrid"
-    MORELLO_BENCHMARK = "morello-benchmark"
-
-    def is_riscv(self):
-        return (
-            self == InstanceCheriBSD.RISCV64_PURECAP
-            or self == InstanceCheriBSD.RISCV64_HYBRID
-        )
-
-    def is_morello(self):
-        return (
-            self == InstanceCheriBSD.MORELLO_PURECAP
-            or self == InstanceCheriBSD.MORELLO_HYBRID
-            or self == InstanceCheriBSD.MORELLO_BENCHMARK
-        )
-
-    def is_hybrid_abi(self):
-        return (
-            self == InstanceCheriBSD.RISCV64_HYBRID
-            or self == InstanceCheriBSD.MORELLO_HYBRID
-        )
-
-    def is_purecap_abi(self):
-        return (
-            self == InstanceCheriBSD.RISCV64_PURECAP
-            or self == InstanceCheriBSD.MORELLO_PURECAP
-        )
-
-    def is_benchmark_abi(self):
-        return self == InstanceCheriBSD.MORELLO_BENCHMARK
-
-    def freebsd_kconf_dir(self):
-        if self.is_riscv():
-            arch = "riscv"
-        elif self.is_morello():
-            arch = "arm64"
-        else:
-            assert False, "Unknown arch"
-        return Path("sys") / arch / "conf"
+    RISCV64 = "riscv64"
+    ARM64 = "arm64"
 
     def __str__(self):
         return self.value
 
 
-class InstanceKernelABI(Enum):
-    NOCHERI = "nocheri"
-    HYBRID = "hybrid"
-    PURECAP = "purecap"
-    BENCHMARK = "benchmark"
-
-    def __str__(self):
-        return self.value
-
-
-class InstanceUserABI(Enum):
+class PlatformABI(Enum):
     NOCHERI = "nocheri"
     HYBRID = "hybrid"
     PURECAP = "purecap"
@@ -1164,9 +1093,6 @@ class InstanceUserABI(Enum):
 class InstanceConfig(Config):
     """
     Configuration for a CheriBSD instance to run benchmarks on.
-    XXX-AM May need a custom __eq__() if iterable members are added
-
-    XXX-AM: This is a remnant of the old infrastructure and should be reworked.
     """
 
     kernel: str = config_field(
@@ -1178,99 +1104,15 @@ class InstanceConfig(Config):
         "This is used to populate the reserved `target` parameterisation axis.",
     )
 
-    platform: InstancePlatform = config_field(
-        InstancePlatform.QEMU,
-        desc="Platform identifier, this affects the strategy used to run execution tasks.",
+    arch: PlatformArch = config_field(PlatformArch.RISCV64, desc="CPU Architecture.")
+
+    kernelabi: PlatformABI = config_field(
+        PlatformABI.PURECAP, desc="Kernel ABI identifier."
     )
 
-    cheri_target: InstanceCheriBSD = config_field(
-        InstanceCheriBSD.RISCV64_PURECAP, desc="Userspace ABI identifier."
+    userabi: PlatformABI = config_field(
+        PlatformABI.PURECAP, desc="User ABI identifier."
     )
-
-    kernelabi: InstanceKernelABI = config_field(
-        InstanceKernelABI.PURECAP, desc="Kernel ABI identifier."
-    )
-
-    userabi: InstanceUserABI = config_field(
-        InstanceUserABI.PURECAP, desc="User ABI identifier."
-    )
-
-    cheribuild_kernel: bool = config_field(
-        True,
-        desc="True if the kernel config name is managed by cheribuild. "
-        "False if it is specified via --cheribsd/extra-kernel-configs",
-    )
-
-    #: Internal fields, should not appear in the config file and are missing by default
-    #: These are a remnant of the old infrastructure and should go away.
-    platform_options: PlatformOptions = config_field(
-        PlatformOptions, desc="Internal use only."
-    )
-
-    @classmethod
-    def native(cls):
-        """
-        Native instance configuration, which is used to indicate that we do not
-        care where the analysis runs.
-        E.g. this is used for static analysis and cross builds.
-        """
-        conf = cls(
-            name="native",
-            kernel="unknown",
-            platform=InstancePlatform.NATIVE,
-            cheri_target=InstanceCheriBSD.NATIVE,
-            kernelabi=InstanceKernelABI.NOCHERI,
-            userabi=InstanceUserABI.NOCHERI,
-            cheribuild_kernel=False,
-        )
-        return conf
-
-    @property
-    def user_pointer_size(self):
-        if (
-            self.cheri_target == InstanceCheriBSD.RISCV64_PURECAP
-            or self.cheri_target == InstanceCheriBSD.MORELLO_PURECAP
-        ):
-            return 16
-        elif (
-            self.cheri_target == InstanceCheriBSD.RISCV64_HYBRID
-            or self.cheri_target == InstanceCheriBSD.MORELLO_HYBRID
-        ):
-            return 8
-        assert False, "Not reached"
-
-    @property
-    def kernel_pointer_size(self):
-        if (
-            self.cheri_target == InstanceCheriBSD.RISCV64_PURECAP
-            or self.cheri_target == InstanceCheriBSD.MORELLO_PURECAP
-        ):
-            if self.kernelabi == InstanceKernelABI.PURECAP:
-                return self.user_pointer_size
-            else:
-                return 8
-        elif (
-            self.cheri_target == InstanceCheriBSD.RISCV64_HYBRID
-            or self.cheri_target == InstanceCheriBSD.MORELLO_HYBRID
-        ):
-            if self.kernelabi == InstanceKernelABI.PURECAP:
-                return 16
-            else:
-                return self.user_pointer_size
-        assert False, "Not reached"
-
-    def __post_init__(self):
-        super().__post_init__()
-        if self.userabi is None:
-            # Infer user ABI from the cheri_target
-            if self.cheri_target.is_hybrid_abi():
-                self.userabi = InstanceUserABI.HYBRID
-            elif self.cheri_target.is_purecap_abi():
-                self.userabi = InstanceUserABI.PURECAP
-            elif self.cheri_target.is_benchmark_abi():
-                self.userabi = InstanceUserABI.BENCHMARK
-            else:
-                self.userabi = InstanceUserABI.NOCHERI
 
     def __str__(self):
         return f"{self.name}"
@@ -1712,17 +1554,6 @@ class SessionRunConfig(CommonSessionConfig):
         super().__post_init__()
         if self.name is None:
             self.name = str(self.uuid)
-
-    @validates_schema
-    def validate_configuration(self, data, **kwargs):
-        # Check that the concurrent instances configuration is compatible with the platform
-        if data["concurrent_instances"] != 1:
-            for bench_config in data["configurations"]:
-                if bench_config.instance.platform == InstancePlatform.VCU118:
-                    raise ValidationError(
-                        "Running on VCU118 instances requires concurrent_instances=1",
-                        "concurrent_instances",
-                    )
 
     @classmethod
     def _resolve_template(cls, session_config: Self) -> Self:

@@ -4,11 +4,12 @@ from pathlib import Path
 from threading import Lock
 from typing import IO
 
-from jinja2 import (Environment, PackageLoader, TemplateNotFound, select_autoescape)
+from jinja2 import Environment, PackageLoader, TemplateNotFound, select_autoescape
 
-from .config import InstanceCheriBSD, InstanceKernelABI, InstanceUserABI
+from .config import PlatformArch, PlatformABI
 
 type Benchmark = "Benchmark"
+
 
 @dataclass
 class ScriptHook:
@@ -20,10 +21,12 @@ class ScriptHook:
     commands: list[str] | None = None
 
 
-ENV = Environment(loader=PackageLoader("pycheribenchplot", "templates"),
-                  autoescape=select_autoescape(),
-                  trim_blocks=True,
-                  lstrip_blocks=True)
+ENV = Environment(
+    loader=PackageLoader("pycheribenchplot", "templates"),
+    autoescape=select_autoescape(),
+    trim_blocks=True,
+    lstrip_blocks=True,
+)
 
 
 def script_filter(fn):
@@ -61,6 +64,7 @@ class TemplateContextBase:
 
     The context maintains the set of parameters passed to the template.
     """
+
     DEFAULT_TEMPLATE = "must-be-set-explicitly"
 
     def __init__(self, logger: Logger):
@@ -75,8 +79,10 @@ class TemplateContextBase:
     def set_template(self, new_template: str):
         with self._lock:
             if self._template != self.DEFAULT_TEMPLATE:
-                self.logger.warning("Multiple changes to the default script template "
-                                    "script, this may result in unexpected behaviour.")
+                self.logger.warning(
+                    "Multiple changes to the default script template "
+                    "script, this may result in unexpected behaviour."
+                )
             self._template = new_template
 
     def register_global(self, name, obj):
@@ -90,7 +96,9 @@ class TemplateContextBase:
             for name, value in ctxdict.items():
                 existing = self._context.get(name)
                 if existing:
-                    self.logger.warning("Preventing override of %s with value %s", name, existing)
+                    self.logger.warning(
+                        "Preventing override of %s with value %s", name, existing
+                    )
                     continue
                 self._context[name] = value
 
@@ -102,7 +110,9 @@ class TemplateContextBase:
         try:
             tmpl = ENV.get_template(self._template)
         except TemplateNotFound:
-            self.logger.error("Can not find file template %s, target setup is wrong", self._template)
+            self.logger.error(
+                "Can not find file template %s, target setup is wrong", self._template
+            )
             raise RuntimeError("Target error")
 
         script = tmpl.render(**self._context)
@@ -127,6 +137,7 @@ class ScriptContext(TemplateContextBase):
     The main template is designed to be extended by benchmark-specific templates that
     determine how to run the benchmark.
     """
+
     DEFAULT_TEMPLATE = "runner-script.sh.jinja"
 
     def __init__(self, benchmark: Benchmark):
@@ -145,9 +156,8 @@ class ScriptContext(TemplateContextBase):
         }
 
         # Add config enum types to the context
-        self.register_global("InstanceUserABI", InstanceUserABI)
-        self.register_global("InstanceKernelABI", InstanceKernelABI)
-        self.register_global("InstanceCheriBSD", InstanceCheriBSD)
+        self.register_global("PlatformABI", PlatformABI)
+        self.register_global("PlatformArch", PlatformArch)
 
     def add_hook(self, phase: str, hook: ScriptHook):
         with self._lock:
@@ -159,16 +169,24 @@ class ScriptContext(TemplateContextBase):
 
     def teardown(self, name, *, commands: str = None, template: Path = None):
         assert commands is None or template is None
-        self.add_hook("teardown", ScriptHook(name, template=template, commands=commands))
+        self.add_hook(
+            "teardown", ScriptHook(name, template=template, commands=commands)
+        )
 
     def setup_iteration(self, name, *, commands: str = None, template: Path = None):
         assert commands is None or template is None
-        self.add_hook("iter_setup", ScriptHook(name, template=template, commands=commands))
+        self.add_hook(
+            "iter_setup", ScriptHook(name, template=template, commands=commands)
+        )
 
     def teardown_iteration(self, name, *, commands: str = None, template: Path = None):
         assert commands is None or template is None
-        self.add_hook("iter_teardown", ScriptHook(name, template=template, commands=commands))
+        self.add_hook(
+            "iter_teardown", ScriptHook(name, template=template, commands=commands)
+        )
 
     def exec_iteration(self, name, *, commands: str = None, template: Path = None):
         assert commands is None or template is None
-        self.add_hook("iter_exec", ScriptHook(name, template=template, commands=commands))
+        self.add_hook(
+            "iter_exec", ScriptHook(name, template=template, commands=commands)
+        )

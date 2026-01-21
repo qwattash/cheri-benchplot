@@ -1,4 +1,3 @@
-import copy
 import os
 import re
 import shlex
@@ -8,17 +7,16 @@ import time
 import typing
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum, IntEnum
 from pathlib import Path
 from queue import Queue
-from threading import Condition, Event, Lock, Semaphore, Thread
+from threading import Condition, Lock, Semaphore, Thread
 from uuid import UUID, uuid4
 
 from paramiko.client import SSHClient, SSHException, WarningPolicy
 
-from .config import (InstanceCheriBSD, InstanceConfig, InstanceKernelABI, InstancePlatform)
+from .config import InstanceConfig
 from .scheduler import ResourceManager
 from .util import new_logger
 
@@ -27,6 +25,7 @@ class TimeoutError(RuntimeError):
     """
     Special exception type to signal timeouts.
     """
+
     pass
 
 
@@ -39,6 +38,7 @@ class InstanceState(IntEnum):
     SHUTDOWN: shutdown in process
     DEAD: shutdown completed or killed because of error
     """
+
     DORMANT = 0
     BOOTING = 1
     SETUP = 2
@@ -65,12 +65,17 @@ class Msg:
     """
     Helper message enqueued by command runners into an instance watch thread
     """
+
     msgtype: MsgType
     origin: str
     data: str
 
     def __eq__(self, other):
-        return self.msgtype == other.msgtype and self.origin == other.origin and self.data == other.data
+        return (
+            self.msgtype == other.msgtype
+            and self.origin == other.origin
+            and self.data == other.data
+        )
 
     def __post_init__(self):
         # Ensure that the lines are decoded in stream messages
@@ -89,6 +94,7 @@ class CommandRunner(ABC):
     is enqueued to the instance message queue.
     Using multiple threads is annoying but we can't always poll() so we may just as well never do that.
     """
+
     def __init__(self, logger, msg_queue):
         self.logger = logger
         #: Target output message queue
@@ -103,17 +109,26 @@ class CommandRunner(ABC):
         try:
             self._watch_loop(stream, msgtype)
         except Exception as ex:
-            self.logger.error("Command %s watch thread %s died: %s", self._cmd_name, msgtype, ex)
+            self.logger.error(
+                "Command %s watch thread %s died: %s", self._cmd_name, msgtype, ex
+            )
             self._queue.put(Msg(MsgType.FAILED, self._cmd_name, ex))
             raise
 
     def _watch_loop(self, stream, msgtype):
-        assert self._cmd_name is not None, "The run method should have set self._cmd_name"
+        assert self._cmd_name is not None, (
+            "The run method should have set self._cmd_name"
+        )
         for line in stream:
             self._queue.put(Msg(msgtype, self._cmd_name, line))
         # Wait to ensure an exit code
         self._ensure_exited()
-        self.logger.debug("Command %s exited %s watch thread with %s", self._cmd_name, msgtype, self._check_exited())
+        self.logger.debug(
+            "Command %s exited %s watch thread with %s",
+            self._cmd_name,
+            msgtype,
+            self._check_exited(),
+        )
         # Only emit the EXITED event from one of the watch loops,
         # assuming the other will also exit soon
         if msgtype == MsgType.OUT:
@@ -127,7 +142,13 @@ class CommandRunner(ABC):
         """
         ...
 
-    def run(self, cmd: str | Path, args: list[str] = None, env: dict[str, str] = None, cmd_id: str | None = None):
+    def run(
+        self,
+        cmd: str | Path,
+        args: list[str] = None,
+        env: dict[str, str] = None,
+        cmd_id: str | None = None,
+    ):
         """
         Run the command and schedule the watch thread.
         This is responsible for starting the watch thread and passing the required arguments.
@@ -162,13 +183,16 @@ class CommandRunner(ABC):
         self._stdout_thread.join(timeout=timeout)
         self._stderr_thread.join(timeout=timeout)
         if self._stdout_thread.is_alive() or self._stderr_thread.is_alive():
-            raise TimeoutError(f"Timed out waiting for command {self._cmd_name} to complete")
+            raise TimeoutError(
+                f"Timed out waiting for command {self._cmd_name} to complete"
+            )
 
 
 class HostCommandRunner(CommandRunner):
     """
     Helper to execute a command locally and react to I/O.
     """
+
     def __init__(self, logger, msg_queue):
         super().__init__(logger, msg_queue)
         self.logger = new_logger("hostcmd", parent=logger)
@@ -197,14 +221,22 @@ class HostCommandRunner(CommandRunner):
         if env:
             full_env.update(env)
         self.logger.debug("Exec local: %s %s", cmd, args)
-        self._subp = subprocess.Popen([str(cmd)] + args,
-                                      env=full_env,
-                                      stdin=subprocess.PIPE,
-                                      stdout=subprocess.PIPE,
-                                      stderr=subprocess.PIPE)
-        self.logger.debug("Spawned %s pid=%d pgid=%d", cmd, self._subp.pid, os.getpgid(self._subp.pid))
-        self._stdout_thread = Thread(target=self._watch_thread, args=(self._subp.stdout, MsgType.OUT))
-        self._stderr_thread = Thread(target=self._watch_thread, args=(self._subp.stderr, MsgType.ERR))
+        self._subp = subprocess.Popen(
+            [str(cmd)] + args,
+            env=full_env,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        self.logger.debug(
+            "Spawned %s pid=%d pgid=%d", cmd, self._subp.pid, os.getpgid(self._subp.pid)
+        )
+        self._stdout_thread = Thread(
+            target=self._watch_thread, args=(self._subp.stdout, MsgType.OUT)
+        )
+        self._stderr_thread = Thread(
+            target=self._watch_thread, args=(self._subp.stderr, MsgType.ERR)
+        )
         self._stdout_thread.start()
         self._stderr_thread.start()
 
@@ -216,7 +248,11 @@ class HostCommandRunner(CommandRunner):
             self.logger.error("stop() called on command that is not running")
             return
         if self._subp.returncode is not None:
-            self.logger.debug("Command %s already exited with %s", self._cmd_name, self._subp.returncode)
+            self.logger.debug(
+                "Command %s already exited with %s",
+                self._cmd_name,
+                self._subp.returncode,
+            )
             return
         self.logger.debug("Stopping %s with %s", self._cmd_name, how)
         self._subp.send_signal(how)
@@ -228,6 +264,7 @@ class SSHCommandRunner(CommandRunner):
     """
     Execute a remote command via SSH and watch the output.
     """
+
     def __init__(self, logger, conn, msg_queue):
         super().__init__(logger, msg_queue)
         self.logger = new_logger("sshcmd", parent=logger)
@@ -256,8 +293,12 @@ class SSHCommandRunner(CommandRunner):
         self._stdin = stdin
         self._stdout = stdout
         self._stderr = stderr
-        self._stdout_thread = Thread(target=self._watch_thread, args=(stdout, MsgType.OUT))
-        self._stderr_thread = Thread(target=self._watch_thread, args=(stderr, MsgType.ERR))
+        self._stdout_thread = Thread(
+            target=self._watch_thread, args=(stdout, MsgType.OUT)
+        )
+        self._stderr_thread = Thread(
+            target=self._watch_thread, args=(stderr, MsgType.ERR)
+        )
         self._stdout_thread.start()
         self._stderr_thread.start()
 
@@ -268,7 +309,7 @@ class SSHCommandRunner(CommandRunner):
         if not self._thread.is_alive():
             self.logger.error("stop() called on command that is not running")
             return
-        self.logger.debug("Stopping %s with %s", self._cmd_name, how)
+        self.logger.debug("Stopping %s with %s", self._cmd_name)
         self._stdin.send(b"\x03")  # ctrl-c in lack of a better way
         self.wait()
         self.logger.debug("Command %s cleanup done", self._cmd_name)
@@ -279,11 +320,13 @@ class Instance(ABC):
     Base instance implementation.
     Manages a virtual machine/FPGA or other guest OS connectable via SSH.
     """
+
     @dataclass
     class Observer:
         """
         Message loop observers
         """
+
         msgtype: MsgType
         origin: str | None
         predicate: typing.Callable[bool, any]
@@ -324,8 +367,10 @@ class Instance(ABC):
         self._thread.start()
 
     def __str__(self):
-        return (f"Instance {self.config.name}({self.uuid}) {self.config.platform}-{self.config.cheri_target}-" +
-                f"{self.config.kernel}")
+        return (
+            f"Instance {self.config.name}({self.uuid}) {self.config.platform}-{self.config.cheri_target}-"
+            + f"{self.config.kernel}"
+        )
 
     def _instance_loop(self):
         """
@@ -349,7 +394,9 @@ class Instance(ABC):
                         if msg.data in self._active_commands:
                             self._active_commands.remove(msg.data)
                         else:
-                            self.logger.warning("Multiple %s messages for %s", msg.msgtype, msg.origin)
+                            self.logger.warning(
+                                "Multiple %s messages for %s", msg.msgtype, msg.origin
+                            )
                 else:
                     self.logger.error("Unknown message type %s", msg.msgtype)
                 self._msg_queue.task_done()
@@ -400,12 +447,14 @@ class Instance(ABC):
             for obs in remove:
                 self._msg_observers.remove(obs)
 
-    def _attach_msg_observer(self,
-                             msgtype: MsgType,
-                             origin: str,
-                             predicate: typing.Callable[bool, any],
-                             callback: typing.Callable,
-                             oneshot=True):
+    def _attach_msg_observer(
+        self,
+        msgtype: MsgType,
+        origin: str,
+        predicate: typing.Callable[bool, any],
+        callback: typing.Callable,
+        oneshot=True,
+    ):
         """
         Attach an observer to the message loop.
         This can be used to trigger state transitions based on messages.
@@ -441,7 +490,9 @@ class Instance(ABC):
         """
         with self._state_changed:
             if next_state < self._state:
-                self.logger.error("Forbidden state transition %s -> %s", self._state, next_state)
+                self.logger.error(
+                    "Forbidden state transition %s -> %s", self._state, next_state
+                )
                 raise RuntimeError("Forbidden instance state transition")
             if next_state == self._state:
                 return
@@ -457,10 +508,14 @@ class Instance(ABC):
         self.logger.debug("Wait %s", target_state)
         with self._state_changed:
             if self._state > target_state:
-                self.logger.warning("Waiting for %s, but the instance is %s", target_state, self._state)
+                self.logger.warning(
+                    "Waiting for %s, but the instance is %s", target_state, self._state
+                )
                 raise RuntimeError("Can not reach waited state")
 
-            self._state_changed.wait_for(lambda: self._state == target_state or self._state == InstanceState.DEAD)
+            self._state_changed.wait_for(
+                lambda: self._state == target_state or self._state == InstanceState.DEAD
+            )
             if self._state != target_state and self._state == InstanceState.DEAD:
                 self.logger.warning("Instance died while waiting for %s", target_state)
                 raise RuntimeError("instance died")
@@ -489,19 +544,23 @@ class Instance(ABC):
                 try:
                     retry -= 1
                     keyfile_path = self.session.config.ssh_key.expanduser()
-                    self._ssh_conn.connect(host, key_filename=str(keyfile_path), passphrase="", **kwargs)
+                    self._ssh_conn.connect(
+                        host, key_filename=str(keyfile_path), passphrase="", **kwargs
+                    )
                     break
                 except SSHException as ex:
                     if retry <= 0:
                         raise ex
                     time.sleep(5)
             self._sftp_conn = self._ssh_conn.open_sftp()
-        except Exception as ex:
+        except Exception:
             self.logger.exception("Failed to connect to the instance, trigger cleanup")
             self._ssh_conn = None
             raise
 
-    def _exec_host(self, path: str | Path, args: list, cmd_id=None) -> HostCommandRunner:
+    def _exec_host(
+        self, path: str | Path, args: list, cmd_id=None
+    ) -> HostCommandRunner:
         """
         Run a command on the host machine and initiate an I/O thread that inspects the
         subprocess I/O.
@@ -514,7 +573,9 @@ class Instance(ABC):
         cmd.run(path, args, cmd_id=cmd_id)
         return cmd
 
-    def _exec_guest(self, path: str | Path, args: list[str] = None, env: dict = None, sync=True):
+    def _exec_guest(
+        self, path: str | Path, args: list[str] = None, env: dict = None, sync=True
+    ):
         """
         Run a command on the guest machine and initiate an I/O thread that inspects
         the subprocess I/O if the sync flag is not set.
@@ -553,7 +614,9 @@ class Instance(ABC):
         """
         with self._state_lock:
             if self._state != InstanceState.DORMANT:
-                self.logger.error("Attempted to signal boot but state is %s", self._state)
+                self.logger.error(
+                    "Attempted to signal boot but state is %s", self._state
+                )
                 raise RuntimeError("Can not boot")
         self._signal_state(InstanceState.BOOTING)
 
@@ -564,7 +627,9 @@ class Instance(ABC):
         """
         with self._state_lock:
             if self._state > InstanceState.READY:
-                self.logger.error("Attempted to signal shutdown but state is %s", self._state)
+                self.logger.error(
+                    "Attempted to signal shutdown but state is %s", self._state
+                )
                 raise RuntimeError("Can not shutdown")
         self._signal_state(InstanceState.SHUTDOWN)
 
@@ -617,6 +682,7 @@ class QEMUInstance(Instance):
     """
     A virtual machine instance managed by cheribuild.
     """
+
     def __init__(self, manager, config):
         super().__init__(manager, config)
         self.cheribuild = self.user_config.cheribuild_path / "cheribuild.py"
@@ -651,27 +717,41 @@ class QEMUInstance(Instance):
             self._cheribsd_option("build-alternate-abi-kernels"),
             self._cheribsd_option("build-fett-kernels"),
             self._cheribsd_option("build-bench-kernels"),
-            self._cheribsd_option("build-fpga-kernels")
+            self._cheribsd_option("build-fpga-kernels"),
         ]
         if not self.config.cheribuild_kernel:
             # If the kernel specified is not a cheribuild-managed kernel we have to tell
             # cheribuild that it exists
-            run_cmd += [self._cheribsd_option("extra-kernel-configs"), self.config.kernel]
+            run_cmd += [
+                self._cheribsd_option("extra-kernel-configs"),
+                self.config.kernel,
+            ]
         # Extra qemu options and tracing tags?
         if self.config.platform_options.qemu_trace == "perfetto":
             qemu_options = [
-                "--cheri-trace-backend", "perfetto", "--cheri-trace-perfetto-logfile",
-                str(self._get_qemu_trace_sink()), "--cheri-trace-perfetto-categories",
-                ",".join(self.config.platform_options.qemu_trace_categories), "-icount", "shift=5,align=off"
+                "--cheri-trace-backend",
+                "perfetto",
+                "--cheri-trace-perfetto-logfile",
+                str(self._get_qemu_trace_sink()),
+                "--cheri-trace-perfetto-categories",
+                ",".join(self.config.platform_options.qemu_trace_categories),
+                "-icount",
+                "shift=5,align=off",
             ]
             run_cmd += [self._run_option("extra-options"), " ".join(qemu_options)]
         elif self.config.platform_options.qemu_trace == "perfetto-dynamorio":
             qemu_options = [
-                "--cheri-trace-backend", "perfetto", "--cheri-trace-perfetto-logfile",
-                str(self._get_qemu_trace_sink().with_suffix(".pb")), "--cheri-trace-perfetto-enable-interceptor",
+                "--cheri-trace-backend",
+                "perfetto",
+                "--cheri-trace-perfetto-logfile",
+                str(self._get_qemu_trace_sink().with_suffix(".pb")),
+                "--cheri-trace-perfetto-enable-interceptor",
                 "--cheri-trace-perfetto-interceptor-logfile",
-                str(self._get_qemu_interceptor_sink()), "--cheri-trace-perfetto-categories",
-                ",".join(self.config.platform_options.qemu_trace_categories), "-icount", "shift=5,align=off"
+                str(self._get_qemu_interceptor_sink()),
+                "--cheri-trace-perfetto-categories",
+                ",".join(self.config.platform_options.qemu_trace_categories),
+                "-icount",
+                "shift=5,align=off",
             ]
             run_cmd += [self._run_option("extra-options"), " ".join(qemu_options)]
         else:
@@ -679,13 +759,27 @@ class QEMUInstance(Instance):
 
         # Attach the observers before running the command to avoid potential races
         sshd_pattern = re.compile(r"Starting sshd\.")
-        self._attach_msg_observer(MsgType.OUT, "cheribuild", lambda v: sshd_pattern.match(v),
-                                  lambda: self._signal_state(InstanceState.SETUP))
-        self._attach_msg_observer(MsgType.EXITED, "cheribuild", None,
-                                  lambda: self._signal_state(InstanceState.SHUTDOWN))
-        self._attach_msg_observer(MsgType.FAILED, "cheribuild", None,
-                                  lambda: self._signal_state(InstanceState.SHUTDOWN))
-        self._cheribuild_runner = self._exec_host(self.cheribuild, run_cmd, "cheribuild")
+        self._attach_msg_observer(
+            MsgType.OUT,
+            "cheribuild",
+            lambda v: sshd_pattern.match(v),
+            lambda: self._signal_state(InstanceState.SETUP),
+        )
+        self._attach_msg_observer(
+            MsgType.EXITED,
+            "cheribuild",
+            None,
+            lambda: self._signal_state(InstanceState.SHUTDOWN),
+        )
+        self._attach_msg_observer(
+            MsgType.FAILED,
+            "cheribuild",
+            None,
+            lambda: self._signal_state(InstanceState.SHUTDOWN),
+        )
+        self._cheribuild_runner = self._exec_host(
+            self.cheribuild, run_cmd, "cheribuild"
+        )
 
     def _try_clean_shutdown(self):
         """
@@ -707,7 +801,7 @@ class QEMUInstance(Instance):
         is triggered via the instance_loop or msg_observers.
         """
         with self._state_lock:
-            need_stop = (self._cheribuild_runner in self._active_commands)
+            need_stop = self._cheribuild_runner in self._active_commands
         if need_stop:
             self._active_commands.remove(self._cheribuild_runner)
 
@@ -732,8 +826,11 @@ class QEMUInstance(Instance):
                         cmd.stop()
             # Not sure if we want to do this whole thing while holding the lock, to prevent
             # anybody else from sending work? Given the current structure this is technically unnecessary.
-            if self._ssh_conn is not None and self._ssh_conn.get_transport(
-            ) is not None and self._ssh_conn.get_transport().is_active():
+            if (
+                self._ssh_conn is not None
+                and self._ssh_conn.get_transport() is not None
+                and self._ssh_conn.get_transport().is_active()
+            ):
                 self._try_clean_shutdown()
             else:
                 self._hard_shutdown()
@@ -754,6 +851,7 @@ class VCU118Instance(Instance):
     FPGA instance managed by cheribuild scripts.
     This is highly tied to the internal Cambridge computer laboratory setup.
     """
+
     def __init__(self, manager, config):
         super().__init__(manager, config)
         # Always use port 22
@@ -767,7 +865,13 @@ class VCU118Instance(Instance):
         if self.config.platform_options.vcu118_bios:
             return self.config.platform_options.vcu118_bios
         else:
-            return self.user_config.sdk_path / "sdk" / "bbl-gfe" / str(self.config.cheri_target) / "bbl"
+            return (
+                self.user_config.sdk_path
+                / "sdk"
+                / "bbl-gfe"
+                / str(self.config.cheri_target)
+                / "bbl"
+            )
 
     def _get_fpga_kernel(self):
         sdk = self.user_config.sdk_path
@@ -801,27 +905,47 @@ class VCU118Instance(Instance):
         # vcu118-run --bitfile design.bit --ltxfile design.ltx --bios bbl-gfe-riscv64-purecap --kernel kernel --gdb gdb --openocd /usr/bin/openocd --num-cores N --benchmark-config
         run_cmd = [
             "--bios",
-            self._get_fpga_bios(), "--kernel",
-            self._get_fpga_kernel(), "--gdb",
-            self._get_fpga_gdb(), "--openocd", self.user_config.openocd_path, "--num-cores",
-            self._get_fpga_cores(), "--benchmark-config"
+            self._get_fpga_bios(),
+            "--kernel",
+            self._get_fpga_kernel(),
+            "--gdb",
+            self._get_fpga_gdb(),
+            "--openocd",
+            self.user_config.openocd_path,
+            "--num-cores",
+            self._get_fpga_cores(),
+            "--benchmark-config",
         ]
         ip_addr = self.config.platform_options.vcu118_ip
         run_cmd += [f"--test-command=ifconfig xae0 {ip_addr} netmask 255.255.255.0 up"]
         run_cmd += ["--test-command=mkdir -p /root/.ssh"]
         pubkey = self._get_fpga_pubkey()
-        run_cmd += [f"--test-command=printf \'%s\' \'{pubkey}\' > /root/.ssh/authorized_keys"]
+        run_cmd += [
+            f"--test-command=printf '%s' '{pubkey}' > /root/.ssh/authorized_keys"
+        ]
         run_cmd += ["--test-command=echo Instance startup done"]
         run_cmd = [str(arg) for arg in run_cmd]
 
         # Attach observers to switch instance state
         wait_pattern = re.compile(r"Instance startup done")
-        self._attach_msg_observer(MsgType.OUT, self.runner_script, lambda v: wait_pattern.match(v),
-                                  lambda: self._signal_state(InstanceState.SETUP))
-        self._attach_msg_observer(MsgType.EXITED, self.runner_script, None,
-                                  lambda: self._signal_state(InstanceState.DEAD))
-        self._attach_msg_observer(MsgType.FAILED, self.runner_script, None,
-                                  lambda: self._signal_state(InstanceState.DEAD))
+        self._attach_msg_observer(
+            MsgType.OUT,
+            self.runner_script,
+            lambda v: wait_pattern.match(v),
+            lambda: self._signal_state(InstanceState.SETUP),
+        )
+        self._attach_msg_observer(
+            MsgType.EXITED,
+            self.runner_script,
+            None,
+            lambda: self._signal_state(InstanceState.DEAD),
+        )
+        self._attach_msg_observer(
+            MsgType.FAILED,
+            self.runner_script,
+            None,
+            lambda: self._signal_state(InstanceState.DEAD),
+        )
         self._vcu118_runner = self._exec_host(self.runner_script, run_cmd)
 
     def _shutdown(self):
@@ -855,6 +979,7 @@ class InstanceManager(ResourceManager):
 
     The ResourceRequest pool is interpreted as the instance configuration UUID (e.g. the g_uuid).
     """
+
     resource_name = "instance-resource"
 
     def __init__(self, session, limit=None):
@@ -881,28 +1006,42 @@ class InstanceManager(ResourceManager):
 
     def _validate_request(self, req):
         if req.pool not in self.session.parameterization_matrix["instance"]:
-            self.logger.error("Invalid resource request: pool %s does not correspond to any g_uuid", req.pool)
+            self.logger.error(
+                "Invalid resource request: pool %s does not correspond to any g_uuid",
+                req.pool,
+            )
             raise ValueError("Invalid resource request")
         if "instance_config" not in req.acquire_args:
-            self.logger.error("Invalid resource request: missing instance_config kwargs")
+            self.logger.error(
+                "Invalid resource request: missing instance_config kwargs"
+            )
             raise ValueError("Invalid resource request")
 
-    def _find_instance_type(self, instance_config: InstanceConfig) -> typing.Type[Instance]:
+    def _find_instance_type(
+        self, instance_config: InstanceConfig
+    ) -> typing.Type[Instance]:
         """
         Resolve the instance type for a given instance configuration.
         This is mostly decoupled to help mocking in tests.
         """
-        if instance_config.platform == InstancePlatform.QEMU:
-            return QEMUInstance
-        elif instance_config.platform == InstancePlatform.VCU118:
-            return VCU118Instance
-        else:
-            self.logger.error("Unknown instance %s platform %s", instance_config.name, instance_config.platform)
-            raise TypeError("Unknown instance platform")
+        return QEMUInstance
+        # if instance_config.platform == InstancePlatform.QEMU:
+        #     return QEMUInstance
+        # elif instance_config.platform == InstancePlatform.VCU118:
+        #     return VCU118Instance
+        # else:
+        #     self.logger.error(
+        #         "Unknown instance %s platform %s",
+        #         instance_config.name,
+        #         instance_config.platform,
+        #     )
+        #     raise TypeError("Unknown instance platform")
         # elif instance_config.platform == InstancePlatform.MORELLO:
         #     return MorelloInstance
 
-    def _create_instance(self, g_uuid: UUID, instance_config: InstanceConfig) -> Instance:
+    def _create_instance(
+        self, g_uuid: UUID, instance_config: InstanceConfig
+    ) -> Instance:
         """
         Allocate a new instance and boot it. Assume that the instance limit has been acquired
         and we are able to allocate the instance. Once booted we return the instance.
@@ -922,7 +1061,9 @@ class InstanceManager(ResourceManager):
             self._active_instances[g_uuid].append(instance)
         return instance
 
-    def _try_create_instance(self, g_uuid: UUID, instance_config: InstanceConfig) -> Instance | None:
+    def _try_create_instance(
+        self, g_uuid: UUID, instance_config: InstanceConfig
+    ) -> Instance | None:
         """
         Try to reserve the space for a new instance and boot it. If we fail, we immediately return.
         """
@@ -951,16 +1092,26 @@ class InstanceManager(ResourceManager):
         with self._manager_lock:
             idle_pool = self._idle_instances[req.pool]
             if idle_pool:
-                instace = idle_pool.pop()
+                instance = idle_pool.pop()
                 self._active_instances[req.pool].append(instance)
         if instance:
-            self.logger.debug("Reuse idle instance %s(%s) id=%s", instance_config.name, req.pool, instance.uuid)
+            self.logger.debug(
+                "Reuse idle instance %s(%s) id=%s",
+                instance_config.name,
+                req.pool,
+                instance.uuid,
+            )
             return instance
 
         # If no matching idle instance is found we need to create a new instance.
         instance = self._try_create_instance(req.pool, instance_config)
         if instance:
-            self.logger.debug("New instance %s(%s) id=%s", instance_config.name, req.pool, instance.uuid)
+            self.logger.debug(
+                "New instance %s(%s) id=%s",
+                instance_config.name,
+                req.pool,
+                instance.uuid,
+            )
             return instance
         assert self.limit, "Should not be reached without a limit set"
         # If we could not create one quickly we need to wait for one to finish,
@@ -977,8 +1128,10 @@ class InstanceManager(ResourceManager):
                 target.signal_shutdown()
         # Now we wait for an instance slot to release
         self._total_instances_guard.acquire()
-        instance = self._create_instance(g_uuid, instance_config)
-        self.logger.debug("New instance %s(%s) id=%s", instance_config.name, req.pool, instance.uuid)
+        instance = self._create_instance(instance.uuid, instance_config)
+        self.logger.debug(
+            "New instance %s(%s) id=%s", instance_config.name, req.pool, instance.uuid
+        )
         return instance
 
     def _put_resource(self, instance: Instance, req):
@@ -990,10 +1143,15 @@ class InstanceManager(ResourceManager):
             active_pool = self._active_instances[req.pool]
             active_pool.remove(instance)
             if self.session.config.reuse_instances:
-                self.logger.debug("Append instance %s to idle pool %s", instance.uuid, req.pool)
+                self.logger.debug(
+                    "Append instance %s to idle pool %s", instance.uuid, req.pool
+                )
                 self._idle_instances[req.pool].append(instance)
             else:
-                self.logger.debug("Instance reuse disabled, trigger instance %s shutdown", instance.uuid)
+                self.logger.debug(
+                    "Instance reuse disabled, trigger instance %s shutdown",
+                    instance.uuid,
+                )
                 self._shutdown_instances.append(instance)
                 instance.signal_shutdown()
 

@@ -46,7 +46,7 @@ class TaskFactory:
                     "instance": {
                         "kernel": "TEST-KERNEL-CONFIG",
                         "name": "test-target-instance",
-                        "cheri_target": "morello-purecap",
+                        "arch": "arm64",
                         "kernelabi": "purecap",
                         "userabi": "purecap",
                     },
