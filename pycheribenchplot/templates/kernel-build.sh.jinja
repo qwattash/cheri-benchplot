@@ -9,36 +9,58 @@
 {% import "timing.inc.jinja" as timing with context %}
 {% import "hwpmc.inc.jinja" as hwpmc with context %}
 
+{% block functions %}
+  {{ super() }}
+  {% if kbuild_config.toolchain %}
+  export X_COMPILER_TYPE=clang \
+         XCXX={{ kbuild_config.toolchain }}/clang++ \
+         XCPP={{ kbuild_config.toolchain }}/clang-cpp \
+         XLD={{ kbuild_config.toolchain }}/ld.lld \
+         XCC={{ kbuild_config.toolchain }}/clang \
+         XAR={{ kbuild_config.toolchain }}/llvm-ar \
+         XNM={{ kbuild_config.toolchain }}/llvm-nm \
+         XSIZE={{ kbuild_config.toolchain }}/llvm-size \
+         XSTRIPBIN={{ kbuild_config.toolchain }}/llvm-strip \
+         XSTRINGS={{ kbuild_config.toolchain }}/llvm-strings \
+         XOBJCOPY={{ kbuild_config.toolchain }}/llvm-objcopy \
+         XRANLIB={{ kbuild_config.toolchain }}/llvm-ranlib \
+         XLLVM_LINK={{ kbuild_config.toolchain }}/llvm-link
+  {% endif %}
+{% endblock %}
+
 {% macro _kernel_build_command(iter) %}
-  {{ hwpmc.pmcstat(iter) }} make -s -C {{ scenario_config.kernel_src_path }} -j {{ scenario_config.make_jobs }} {{ scenario_config.make_target.target_string }} KERNCONF={{ scenario_config.kernel_config}} {{ scenario_config.args | join(' ') }}
+  {{ hwpmc.pmcstat(iter) }} make -s -C {{ kbuild_config.kernel_src_path }} -j {{ kbuild_config.make_jobs }} {{ kbuild_config.make_target.target_string }} KERNCONF={{ kbuild_config.kernel_config}} {{ kbuild_config.args | join(' ') }}
 {% endmacro %}
 
 {% block global_setup %}
   {{ super() }}
-  if [ ! -d "{{ kernel_build_config.objdir_prefix }}" ]; then
-      mkdir -p "{{ kernel_build_config.objdir_prefix }}"
+  if [ ! -d "{{ kbuild_config.objdir_prefix }}" ]; then
+      mkdir -p "{{ kbuild_config.objdir_prefix }}"
   fi
 
   echo "Build kernel toolchain dependencies (pre-benchmark)"
-  export MAKEOBJDIRPREFIX="{{ kernel_build_config.objdir_prefix }}"
-  make -s -C {{ scenario_config.kernel_src_path }} -j 4 kernel-toolchain KERNCONF={{ scenario_config.kernel_config }} 2>&1 > /dev/null
+  export MAKEOBJDIRPREFIX="{{ kbuild_config.objdir_prefix }}"
+  make -s -C {{ kbuild_config.kernel_src_path }} -j 4 kernel-toolchain KERNCONF={{ kbuild_config.kernel_config }} 2>&1 > /dev/null
 {% endblock %}
 
 {% block iteration_exec %}
   {% call() timing.timeit(current_iteration) -%}
     {{ _kernel_build_command(current_iteration) | trim }}
   {%- endcall %}
+{% endblock %}
 
-  # Technically, this is iteration teardown
-  find /home/freebsd/build -name '{{ scenario_config.kernel_config }}' -exec rm -r {} \;
+{% block iteration_teardown %}
+  {{ super() }}
+  # Remove kernel build dir to consistently clean build across iterations
+  find '{{ kbuild_config.objdir_prefix }}' -name '{{ kbuild_config.kernel_config }}' | xargs rm -r
 {% endblock %}
 
 {% block global_teardown %}
   {{ super() }}
-  {% for i in range(iterations) %}
+  {% for i in range(iterations) -%}
     {{ hwpmc.pmcstat_postprocess(i) }}
-  {% endfor %}
+  {%- endfor %}
 
   # Wipe the build directory
-  rm -r "{{ kernel_build_config.objdir_prefix }}/*"
+  rm -r "{{ kbuild_config.objdir_prefix }}"
 {% endblock global_teardown %}

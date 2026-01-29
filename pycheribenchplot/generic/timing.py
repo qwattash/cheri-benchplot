@@ -146,7 +146,7 @@ class TimingSlicePlotTask(SlicePlotTask):
 
     @dependency
     def timing(self):
-        for b in self.slice_benchmarks():
+        for b in self.slice_benchmarks:
             task = b.find_exec_task(self.exec_task_class, include_subclass=True)
             yield task.timing.get_loader()
 
@@ -166,21 +166,15 @@ class TimingSlicePlotTask(SlicePlotTask):
         df = pl.concat((t.df.get() for t in self.timing), how="vertical", rechunk=True)
         return df
 
-    def _do_plot(self, target, view_df, default_display_name):
-        name_mapping_defaults = {"times": default_display_name}
-        if self.config.hue:
-            name_mapping_defaults.update(
-                {self.config.hue: self.config.hue.capitalize()}
-            )
+    def _do_plot(self, target, view_df, y_display_name):
+        view_df = view_df.rename({"times": y_display_name})
 
-        grid_config = self.config.set_display_defaults(
-            param_names=name_mapping_defaults
-        )
-        with PlotGrid(target, view_df, grid_config) as grid:
+        with PlotGrid(target, view_df, self.config) as grid:
             grid.map(
                 grid_barplot,
+                self.config,
                 x=self.config.tile_xaxis,
-                y="times",
+                y=y_display_name,
                 err=["times_low", "times_high"],
             )
             grid.add_legend()
