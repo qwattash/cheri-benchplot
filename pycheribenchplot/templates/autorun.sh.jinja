@@ -1,0 +1,137 @@
+#!/bin/sh
+
+set -e
+
+usage() {
+    echo "Run session across multiple targets on this machine"
+    echo "-s Prepare the machine for autorun"
+    echo "-t Cleaup the autorun init.d"
+    echo "Usage: $0"
+}
+
+OPT_CRON_SETUP=
+OPT_CRON_TEARDOWN=
+
+SESSION_WORKDIR="$(pwd)"
+AUTORUN_PATH="${SESSION_WORKDIR}/$(basename '$0')"
+AUTORUN_RC="/usr/local/etc/rc.d/benchplot"
+SETTLE_TIME="1m"
+
+while [ "$#" -gt 0 ]; do
+    case $1 in
+        -h)
+            usage
+            exit
+            ;;
+        -s)
+            OPT_RC_SETUP=1
+            ;;
+        -t)
+            OPT_RC_TEARDOWN=1
+            ;;
+        *)
+            usage
+            exit
+            ;;
+    esac
+
+    shift
+done
+
+ARCH="$(uname -m)"
+KERNEL="$(uname -i)"
+
+echo "##############################################"
+echo "Benchplot auto-run: $0"
+echo "User: $(whoami)"
+echo "Workdir: ${SESSION_WORKDIR}"
+echo "Settle time: ${SETTLE_TIME}"
+echo "Arch: ${ARCH}"
+echo "Kernel: ${KERNEL}"
+echo "##############################################"
+
+# boot_kernel <kernel_name>
+boot_kernel() {
+    nextboot {% if single_user %}-o "-s"{% endif %} -k "kernel.${1}"
+}
+
+if [ -n "${OPT_RC_SETUP}" ]; then
+    echo "Install autorun rc hook... "
+    cp "${SESSION_WORKDIR}/rc-autorun.sh" "${AUTORUN_RC}"
+    sysrc benchplot_enable="YES"
+    sysrc benchplot_session="${SESSION_WORKDIR}"
+    echo "done"
+
+    echo "Prepare kernel to boot..."
+    case "${ARCH}" in
+        {% for arch, run_info in autorun_info.items() %}
+        {{ arch }})
+            NEXT_KERNEL="{{ run_info[0]['instance'].kernel }}"
+            ;;
+        {% endfor %}
+        *)
+            echo "Unexpected architecture ${ARCH}"
+            exit 1
+            ;;
+    esac
+    boot_kernel "${NEXT_KERNEL}"
+    echo "done -- Reboot now to trigger auto-run sequence"
+    exit 0
+fi
+
+if [ -n "${OPT_RC_TEARDOWN}" ]; then
+    echo -n "Teardown autorun rc hook... "
+    if [ -f "${AUTORUN_RC}" ]; then
+        rm "${AUTORUN_RC}"
+        sysrc -x benchplot_enable
+        sysrc -x benchplot_session
+        echo "ok"
+    else
+        echo "not found"
+    fi
+    exit 0
+fi
+
+# Determine next kernel to run and current workload run script
+NEXT_KERNEL=
+WORKLOAD_SCRIPT=
+case "${ARCH}" in
+    {% for arch, run_info in autorun_info.items() %}
+    {{ arch }})
+    case "${KERNEL}" in
+        {% for info in run_info %}
+        {{ info['instance'].kernel }})
+            WORKLOAD_SCRIPT="{{ info['run_script'] }}"
+            {% if run_info|length < loop.index %}
+            NEXT_KERNEL="{{ run_info[loop.index0 + 1] }}"
+            {% endif %}
+            ;;
+        {% endfor %}
+        *)
+            # Undexpected kernel
+            echo "Unexpected kernel encountered ${KERNEL}"
+            exit 1
+            ;;
+    esac
+    ;;
+    {% endfor %}
+    *)
+        echo "Unexpected architecture ${ARCH}"
+        exit 1
+        ;;
+esac
+
+if [ -n "$WORKLOAD_SCRIPT" ]; then
+    echo "Auto-run sequence ({{ session }}): workload ${WORKLOAD_SCRIPT}"
+    echo "Waiting for system to settle"
+    sleep 1m
+    echo "Run!"
+    ${SESSION_WORKDIR}/${WORKLOAD_SCRIPT}
+fi
+
+if [ -n "${NEXT_KERNEL}" ]; then
+    echo "Prepare kernel to boot..."
+    boot_kernel "${NEXT_KERNEL}"
+    echo "reboot"
+    reboot
+fi

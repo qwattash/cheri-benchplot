@@ -1,0 +1,42 @@
+#!/bin/sh
+
+# PROVIDE: benchplot
+# REQUIRE: DAEMON
+# KEYWORD: nojail shutdown
+
+. /etc/rc.subr
+
+name="benchplot"
+rcvar=benchplot_enable
+
+load_rc_config $name
+: ${benchplot_enable:="NO"}
+: ${benchplot_session:=""}
+: ${benchplot_user:="root"}
+
+pidfile="/var/run/${name}.pid"
+autorun_script="${benchplot_session}/auto-run.sh"
+
+# Use daemon(8) to handle backgrounding and logging safely
+command="/usr/sbin/daemon"
+# -f: run in background
+# -o: output log file (stdout and stderr)
+# -P: pidfile
+command_args="-f -o ${benchplot_session}/auto-run.log -p ${pidfile} -u ${benchplot_user} /bin/sh -c 'cd ${benchplot_session} && exec ${autorun_script}'"
+
+start_precmd=benchplot_precmd
+
+benchplot_precmd()
+{
+	if [ ! -d "${benchplot_session}" ]; then
+		err 1 "${benchplot_session} is not a directory."
+	fi
+
+	if [ ! -x "${autorun_script}" ]; then
+		err 1 "Autorun script '${autorun_script}' not found or not executable."
+	fi
+
+    info "Autorun benchplot session at ${benchplot_session}"
+}
+
+run_rc_command "$1"

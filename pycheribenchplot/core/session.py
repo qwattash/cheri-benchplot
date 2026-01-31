@@ -516,6 +516,7 @@ class Session:
         # These are generated according to :attr:`PipelineBenchmarkConfig.system`
         # specification.
         data_root = self.get_data_root_path()
+        autorun_info_by_arch = defaultdict(list)
         for (target,), section in self.parameterization_matrix.group_by("target"):
             workdirs = [
                 bench.get_benchmark_data_path().relative_to(data_root)
@@ -537,6 +538,41 @@ class Session:
             with open(script_path, "w+") as script_file:
                 ctx.render(script_file)
             script_path.chmod(0o755)
+
+            # Remember this target-wide runner script associated to its arch
+            # Note: all descriptors for a target should run on the same host
+            # machine arch. This is the entire point of the `target` axis.
+            desc = section["descriptor"].first()
+            arch = desc.config.instance.arch
+            assert all([d.config.instance.arch == arch for d in section["descriptor"]])
+            autorun_info_by_arch[arch].append(
+                {
+                    "instance": desc.config.instance,
+                    "run_script": script_path.relative_to(data_root),
+                }
+            )
+
+        ctx = TemplateContextBase(self.logger)
+        ctx.set_template("autorun.sh.jinja")
+        ctx.extend_context(
+            {
+                "autorun_info": autorun_info_by_arch,
+                "session": self.config.name,
+                "single_user": False,
+            }
+        )
+        autorun_path = data_root / "auto-run.sh"
+        with open(autorun_path, "w+") as script_file:
+            ctx.render(script_file)
+        autorun_path.chmod(0o755)
+
+        ctx = TemplateContextBase(self.logger)
+        ctx.set_template("rc-autorun.sh.jinja")
+        ctx.extend_context({"session": self.config.name})
+        autorun_rc_path = data_root / "rc-autorun.sh"
+        with open(autorun_rc_path, "w+") as script_file:
+            ctx.render(script_file)
+        autorun_rc_path.chmod(0o755)
 
         # Schedule generators according to the collected descriptors
         for descriptor in self.parameterization_matrix["descriptor"]:
