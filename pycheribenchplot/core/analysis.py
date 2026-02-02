@@ -286,7 +286,10 @@ class AnalysisTask(SessionTask):
             ratio = np.where(
                 right_median != 0,
                 np.divide(
-                    np.median(left, axis=axis), right_median, where=(right_median != 0)
+                    np.median(left, axis=axis),
+                    right_median,
+                    where=(right_median != 0),
+                    out=np.full(right_median.shape, np.nan),
                 ),
                 np.nan,
             )
