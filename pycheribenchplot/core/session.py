@@ -322,7 +322,7 @@ class Session:
         """
         Produce a compressed archive with all the session output.
         """
-        bundle_path = path if path else self.session_root_path.parent
+        bundle_path = path if path else Path("/tmp")
         if bundle_path.exists() and bundle_path.is_dir():
             bundle_file = (
                 bundle_path / self.session_root_path.with_suffix(".tar.gz").name
