@@ -102,8 +102,8 @@ case "${ARCH}" in
         {% for info in run_info %}
         {{ info['instance'].kernel }})
             WORKLOAD_SCRIPT="{{ info['run_script'] }}"
-            {% if run_info|length < loop.index %}
-            NEXT_KERNEL="{{ run_info[loop.index0 + 1] }}"
+            {% if loop.index < run_info|length %}
+            NEXT_KERNEL="{{ run_info[loop.index]['instance'].kernel }}"
             {% endif %}
             ;;
         {% endfor %}
