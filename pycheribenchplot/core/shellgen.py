@@ -117,13 +117,14 @@ class TemplateContextBase:
 
         script = tmpl.render(**self._context)
 
-        def lstrip_spaces(line):
-            # Keep anything that starts with a tab
-            if line.startswith(" "):
-                line = line.lstrip(" ")
-            return line + "\n"
+        # def lstrip_spaces(line):
+        #     # Keep anything that starts with a tab
+        #     if line.startswith(" "):
+        #         line = line.lstrip(" ")
+        #     return line + "\n"
 
-        fd.writelines(map(lstrip_spaces, script.splitlines()))
+        # fd.writelines(map(lstrip_spaces, script.splitlines()))
+        fd.write(script)
 
 
 class ScriptContext(TemplateContextBase):
