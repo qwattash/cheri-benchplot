@@ -67,8 +67,26 @@ class ColumnTransform(Enum):
     Identity = "identity"
     #: Map values from the column to a new value, non exhaustive.
     Map = "map"
+    #: Map values to byte size (with suffix)
+    MapToBytes = "map2bytes"
     #: Concatenate columns (as strings)
     StrCat = "concat"
+
+
+def int2bytes(value: int) -> str:
+    """
+    Coerce bytes value into a string with optional K/M/G/T suffix corresponding
+    to the bytes size.
+    """
+    SUFFIXES = ["B", "KiB", "MiB", "GiB", "TiB"]
+
+    idx = 0
+    while value >= 2**10:
+        idx += 1
+        value /= 2**10
+    if idx >= len(SUFFIXES):
+        return f"{int(value)} 2^{10 * idx}"
+    return f"{int(value)}{SUFFIXES[idx]}"
 
 
 @dataclass
@@ -446,6 +464,15 @@ class PlotGrid(AbstractContextManager):
         self._df = self._df.with_columns(src_expr.replace(spec.args).alias(spec.name))
         self._register_ref(ref, spec.name)
 
+    def _gen_derived_map_fn(
+        self, ref: str, spec: DerivedColumnConfig, fn: Callable[str, [Any]]
+    ):
+        src = self.ref_to_col(spec.src)
+        self._df = self._df.with_columns(
+            pl.col(src).map_elements(fn, return_dtype=str).alias(spec.name)
+        )
+        self._register_ref(ref, spec.name)
+
     def _gen_derived_concat(self, ref: str, spec: DerivedColumnConfig):
         src = [self.ref_to_col(src_ref) for src_ref in spec.src]
         sep = spec.args.get("separator", ",")
@@ -471,6 +498,8 @@ class PlotGrid(AbstractContextManager):
                     self._gen_derived_identity(ref, spec)
                 case ColumnTransform.Map:
                     self._gen_derived_map(ref, spec)
+                case ColumnTransform.MapToBytes:
+                    self._gen_derived_map_fn(ref, spec, int2bytes)
                 case ColumnTransform.StrCat:
                     self._gen_derived_concat(ref, spec)
                 case _:
