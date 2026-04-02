@@ -1,8 +1,8 @@
 
 {%- if c18n_utrace_config is defined -%}
-  {% set enabled = c18n_utrace_config.c18n_utrace_enable %}
+  {% set ktr_enabled = c18n_utrace_config.c18n_utrace_enable %}
 {%- else -%}
-  {% set enabled = false %}
+  {% set ktr_enabled = False %}
 {%- endif -%}
 
 {% macro c18n_utrace_dump(iteration) -%}
@@ -13,20 +13,19 @@
   {{ c18n_utrace_dump(iteration) }}.out
 {%- endmacro %}
 
-{% macro morello_utrace_env() %}
-{% endmacro %}
-
 {% macro c18n_utrace_env() -%}
-  {%- if instance.cheri_target.is_morello() -%}
-    {%- if instance.userabi == InstanceUserABI.PURECAP -%}
+  {%- if instance.arch == PlatformArch.ARM64 -%}
+    {%- if instance.userabi == PlatformABI.PURECAP -%}
       env LD_64C_UTRACE_COMPARTMENT=1
-    {%- elif instance.userabi == InstanceUserABI.BENCHMARK -%}
+    {%- elif instance.userabi == PlatformABI.BENCHMARK -%}
       env LD_64CB_UTRACE_COMPARTMENT=1
     {%- else -%}
       env LD_UTRACE_COMPARTMENT=1
     {%- endif -%}
-  {%- elif instance.cheri_target.is_riscv() -%}
+  {%- elif instance.arch == PlatformArch.RISCV64 -%}
     env LD_UTRACE_COMPARTMENT=1
+  {%- else -%}
+    "INVALID arch {{ instance.arch }}"
   {%- endif -%}
 {%- endmacro %}
 
@@ -35,7 +34,7 @@
  # enable c18n utrace probes.
  #}
 {% macro c18n_utrace(iteration) %}
-  {% if enabled -%}
+  {% if ktr_enabled -%}
     {{ c18n_utrace_env() }} ktrace -i -t u -f {{ c18n_utrace_out(iteration) }}
   {%- endif %}
 {% endmacro %}
@@ -45,7 +44,7 @@
  # This should be placed in the corresponding block.
  #}
 {% macro post_process_iteration(iteration) %}
-  {% if enabled -%}
+  {% if ktr_enabled -%}
     kdump -f {{ c18n_utrace_out(iteration) }} > {{ c18n_utrace_dump(iteration) }}
   {%- endif %}
 {% endmacro %}

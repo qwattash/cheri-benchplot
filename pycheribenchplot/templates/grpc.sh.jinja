@@ -26,7 +26,7 @@ __server_exec()
 {% if qps_config.server_env %}
 	env {{ qps_config.server_env | join(" ") }} \
 {% endif %}
-{% if c18nktr.enabled %}
+{% if c18nktr.ktr_enabled %}
 	{{ c18nktr.c18n_utrace(current_iteration) }} \
 {% endif %}
 	grpc_qps_worker --driver_port 10000 --server_port=10001 &
