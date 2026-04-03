@@ -1,11 +1,48 @@
 from typing import List, Optional
 
-from sqlalchemy import ForeignKey, UniqueConstraint
+from sqlalchemy import ForeignKey, UniqueConstraint, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.types import TypeDecorator
+
+
+class UInt64(TypeDecorator):
+    """
+    We encode uint64 as a string, because it can't fit sqlite INT type.
+    """
+
+    impl = Text
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is not None:
+            return str(value)
+        return None
+
+    def process_result_value(self, value, dialect):
+        if value is not None:
+            return int(value)
+        return None
 
 
 class SqlBase(DeclarativeBase):
     pass
+
+
+class Binary(SqlBase):
+    """
+    File from which the metadata is extracted
+    """
+
+    __tablename__ = "binary"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    file: Mapped[str] = mapped_column(nullable=False)
+
+    layouts: Mapped[List["TypeLayout"]] = relationship(
+        back_populates="binary",
+        foreign_keys="TypeLayout.binary_id",
+        cascade="all, delete-orphan",
+    )
 
 
 class TypeLayout(SqlBase):
@@ -23,6 +60,18 @@ class TypeLayout(SqlBase):
     size: Mapped[int] = mapped_column(nullable=False)
     is_union: Mapped[bool] = mapped_column(nullable=False)
     has_vla: Mapped[bool] = mapped_column(nullable=False)
+
+    total_padding: Mapped[int] = mapped_column(nullable=False)
+    tail_padding: Mapped[int] = mapped_column(nullable=False)
+    holes: Mapped[int] = mapped_column(nullable=False)
+    nested_padding: Mapped[int] = mapped_column(nullable=False)
+    nested_holes: Mapped[int] = mapped_column(nullable=False)
+    has_extra_padding: Mapped[bool] = mapped_column(nullable=False)
+
+    binary_id: Mapped[int] = mapped_column(ForeignKey("binary.id"))
+    binary: Mapped["Binary"] = relationship(
+        foreign_keys=binary_id, back_populates="layouts"
+    )
 
     members: Mapped[List["LayoutMember"]] = relationship(
         back_populates="owner_entry",
@@ -50,11 +99,12 @@ class LayoutMember(SqlBase):
     bit_size: Mapped[int] = mapped_column(nullable=False)
     byte_offset: Mapped[int] = mapped_column(nullable=False)
     bit_offset: Mapped[int] = mapped_column(nullable=False)
+    alignment: Mapped[int] = mapped_column(nullable=False)
     array_items: Mapped[Optional[int]]
-    base: Mapped[Optional[int]]
-    top: Mapped[Optional[int]]
+    base: Mapped[Optional[int]] = mapped_column(UInt64(), nullable=True)
+    top: Mapped[Optional[int]] = mapped_column(UInt64(), nullable=True)
     required_precision: Mapped[Optional[int]]
-    max_vla_size: Mapped[Optional[int]]
+    max_vla_size: Mapped[Optional[int]] = mapped_column(UInt64(), nullable=True)
     is_pointer: Mapped[bool] = mapped_column(nullable=False, default=False)
     is_function: Mapped[bool] = mapped_column(nullable=False, default=False)
     is_anon: Mapped[bool] = mapped_column(nullable=False, default=False)

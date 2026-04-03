@@ -92,10 +92,11 @@ class TypeLayoutLoader(DataFrameLoadTask):
 
     task_name = "type-layout-loader"
 
-    def __init__(self, target, query):
+    def __init__(self, target, query, query_params: dict = None):
         self._query = query
         hashed = hashlib.sha1(str(self._query).encode("utf8"), usedforsecurity=False)
         self._query_id = hashed.hexdigest()
+        self._query_params = query_params
         super().__init__(target)
 
     @property
@@ -104,7 +105,10 @@ class TypeLayoutLoader(DataFrameLoadTask):
         return f"{tid}-Q{self._query_id}"
 
     def _load_one(self, path):
-        df = pl.read_database(self._query, self.target.sql_engine)
+        query_kwargs = {}
+        if self._query_params:
+            query_kwargs.update(self._query_params)
+        df = pl.read_database(self._query, self.target.sql_engine, **query_kwargs)
         return df
 
 
@@ -117,13 +121,26 @@ class LoadStructLayouts(SliceAnalysisTask):
     task_namespace = "subobject"
     task_name = "load-struct-layouts"
 
-    def __init__(self, session, slice_info, analysis_config, query=None, **kwargs):
+    def __init__(
+        self,
+        session,
+        slice_info,
+        analysis_config,
+        query=None,
+        query_params: dict = None,
+        **kwargs,
+    ):
         if query is None:
             query = select(TypeLayout, LayoutMember).join(LayoutMember.owner_entry)
         self._query = query
         hashed = hashlib.sha1(str(self._query).encode("utf8"), usedforsecurity=False)
         self._query_id = hashed.hexdigest()
+        self._query_params = query_params
         super().__init__(session, slice_info, analysis_config, **kwargs)
+
+    def __str__(self):
+        task_str = super().__str__()
+        return f"{task_str} ({self._query})"
 
     @property
     def task_id(self):
@@ -138,7 +155,9 @@ class LoadStructLayouts(SliceAnalysisTask):
     def dataset_layouts(self):
         for desc in self.slice_benchmarks:
             task = desc.find_exec_task(ExtractImpreciseSubobject)
-            yield TypeLayoutLoader(task.struct_layout_db, self._query)
+            yield TypeLayoutLoader(
+                task.struct_layout_db, self._query, self._query_params
+            )
 
     def run(self):
         super().run()
@@ -201,12 +220,27 @@ class AnnotateImpreciseSubobjectLayouts(SliceAnalysisTask):
             .where(TypeLayout.id.in_(has_imprecise))
         )
         return LoadStructLayouts(
+            self.session,
+            self.slice_info,
+            self.analysis_config,
+            query=q,
+            query_params=dict(schema_overrides={"base": pl.UInt64, "top": pl.UInt64}),
+        )
+
+    @dependency
+    def layouts_count(self):
+        q = select(func.count(TypeLayout.id)).select_from(TypeLayout)
+        return LoadStructLayouts(
             self.session, self.slice_info, self.analysis_config, query=q
         )
 
     @output
     def imprecise_layouts(self):
         return ValueTarget(self, "imprecise-layouts")
+
+    @output
+    def total_layouts(self):
+        return ValueTarget(self, "total-layouts")
 
     def run(self):
         """
@@ -290,6 +324,8 @@ class AnnotateImpreciseSubobjectLayouts(SliceAnalysisTask):
         ).select(~cs.ends_with("__r"))
         self.imprecise_layouts.assign(df)
 
+        print(self.layouts_count.struct_layouts.get())
+
 
 class VLAAnnotationConfig(Config):
     """
@@ -329,13 +365,17 @@ class AnnotateLayoutsWithVLA(SliceAnalysisTask):
                 LayoutMember.type_name.label("member_type"),
                 LayoutMember.byte_offset,
                 LayoutMember.byte_size,
-                LayoutMember.is_vla,
+                LayoutMember.max_vla_size,
             )
             .join(LayoutMember.owner_entry)
             .where(TypeLayout.has_vla)
         )
         return LoadStructLayouts(
-            self.session, self.slice_info, self.analysis_config, query=q
+            self.session,
+            self.slice_info,
+            self.analysis_config,
+            query=q,
+            query_params=dict(schema_overrides={"max_vla_size": pl.UInt64}),
         )
 
     @output
