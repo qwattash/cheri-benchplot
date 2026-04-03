@@ -335,6 +335,13 @@ class ConfigContext:
     def mark_resolved(self, count):
         self._resolved += count
 
+    def clone(self) -> Self:
+        clone = ConfigContext()
+        clone._template_params = dict(self._template_params)
+        clone._namespaces = dict(self._namespaces)
+        clone._resolved = self._resolved
+        return clone
+
     def find(self, key: str) -> str | None:
         """
         Resolve a dot-separated key to the corresponding substitution value.
@@ -388,6 +395,9 @@ class ConfigTemplateSpec:
 
     def __init__(self, value: Any):
         self.value = value
+
+    def __repr__(self):
+        return f"<{self.value}>"
 
     def _bind_value(self, value: Any, context: ConfigContext, dtype: type):
         """
@@ -794,6 +804,8 @@ class Config:
                 return result
             elif isinstance(target, Config):
                 return target.bind(context, nested_loc)
+            elif isinstance(target, ConfigTemplateSpec):
+                return target.bind(context, str)
             else:
                 # Undecidable any type does not hold a nested config
                 return target
@@ -995,6 +1007,7 @@ class PlatformArch(Enum):
 
     RISCV64 = "riscv64"
     ARM64 = "arm64"
+    NATIVE = "native"
 
     def __str__(self):
         return self.value
@@ -1034,6 +1047,10 @@ class InstanceConfig(Config):
     userabi: PlatformABI = config_field(
         PlatformABI.PURECAP, desc="User ABI identifier."
     )
+
+    @classmethod
+    def native(cls) -> Self:
+        return InstanceConfig(kernel="GENERIC", name="local", arch=PlatformArch.NATIVE)
 
     def __str__(self):
         return f"{self.name}"
@@ -1333,6 +1350,23 @@ class BenchmarkRunConfig(CommonBenchmarkConfig):
         params = [f"{k}={v}" for k, v in self.parameters.items()]
         config_logger.debug("Resolved BenchmarkRunConfig for %s", ", ".join(params))
 
+    def bind_parameters(self, ctx: ConfigContext):
+        """
+        Ensure that the benchmark parameters do not contain templatized values
+        """
+        limit = 10
+        n_resolved = 0
+        while n_resolved < len(self.parameters) and limit > 0:
+            for param, value in self.parameters.items():
+                if not isinstance(value, ConfigTemplateSpec):
+                    n_resolved += 1
+                    ctx.add_values(**{param: value})
+            for param, value in self.parameters.items():
+                if isinstance(value, ConfigTemplateSpec):
+                    self.parameters[param] = value.bind(ctx, str)
+            limit -= 1
+        assert limit > 0, "Bind recursion limit"
+
 
 class AssetImportAction(Enum):
     """
@@ -1483,14 +1517,17 @@ class SessionRunConfig(CommonSessionConfig):
         # Now scan through all the configurations and subsitute per-dataset fields
         new_bench_conf = []
         for bench_conf in new_config.configurations:
-            ctx.add_namespace(bench_conf, "benchmark")
+            bench_ctx = ctx.clone()
+            bench_ctx.add_namespace(bench_conf, "benchmark")
             # Shorthand for the corresponding instance configuration
-            ctx.add_namespace(bench_conf.instance, "instance")
+            bench_ctx.add_namespace(bench_conf.instance, "instance")
+            # Ensure that the benchmark parameters are not themselves parameterized
+            bench_conf.bind_parameters(bench_ctx.clone())
             # Register parameterization keys, note that these may happen shadow
             # other names, but let it be for now
-            ctx.add_values(**bench_conf.parameters)
+            bench_ctx.add_values(**bench_conf.parameters)
             # Finally do the binding
-            new_bench_conf.append(bench_conf.bind(ctx))
+            new_bench_conf.append(bench_conf.bind(bench_ctx))
         new_config.configurations = new_bench_conf
         return new_config
 
