@@ -5,6 +5,7 @@ from collections import deque
 from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
 from contextlib import contextmanager
 from threading import Semaphore
+from traceback import format_exception
 from typing import Any, ContextManager, Hashable
 
 import networkx as nx
@@ -309,6 +310,7 @@ class TaskScheduler:
                         self.logger.debug("Task cancelled %s", done_task)
                     except Exception as err:
                         self.logger.error("Task %s failed: %s", done_task, err)
+                        self.logger.debug("".join(format_exception(err)))
                         self.failed_tasks.append(done_task)
                         # Drain everything
                         schedule.clear()
