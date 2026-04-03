@@ -252,9 +252,7 @@ class TaskScheduler:
             task_details = []
             if isinstance(failed, DatasetTask):
                 iconf = failed.benchmark.config.instance
-                task_details.append(
-                    f"on {iconf.platform}-{iconf.cheri_target}-{iconf.kernel}"
-                )
+                task_details.append(f"on {iconf}")
                 task_details.append(f"params: {failed.benchmark.parameters}")
             logger.error(
                 "Task %s.%s failed %s",
