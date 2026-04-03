@@ -189,7 +189,7 @@ class ImpreciseSizeDistPlot(SlicePlotTask):
         """
         df = self.layouts.imprecise_layouts.get()
         # XXX maybe add knob to narrow bounds as much as possible on bitfields
-        # top = offset + ((bit_offset + bit_size) / 8).ceil()
+        # top = offset + byte_size + ((bit_offset + bit_size) / 8).ceil()
         req_top = pl.col("byte_offset") + pl.col("byte_size")
         df = df.with_columns(
             (pl.col("byte_offset") - pl.col("base")).alias("base_padding"),
@@ -216,7 +216,9 @@ class ImpreciseSizeDistPlot(SlicePlotTask):
 
         # Build an helper metadata column that can be used for the bin labels
 
-        grid_config = self.config.set_fixed(hue="<side>", tile_xaxis="<hist_bin>")
+        grid_config = self.config.with_config_default(
+            hue="<side>", tile_xaxis="<hist_bin>"
+        )
         # Build a default mapping for the hist_bin labels
         # grid_config = grid_config.set_display_defaults(
         #     param_values={"hist_bin": {

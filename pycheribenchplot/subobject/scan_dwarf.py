@@ -9,7 +9,7 @@ from ..core.analysis import SliceAnalysisTask
 from ..core.artefact import DataFrameLoadTask, SQLTarget, ValueTarget
 from ..core.config import Config, ConfigPath, config_field
 from ..core.task import ExecutionTask, dependency, output
-from .model import LayoutMember, TypeLayout
+from .model import Binary, LayoutMember, TypeLayout
 
 
 @dataclass
@@ -215,8 +215,10 @@ class AnnotateImpreciseSubobjectLayouts(SliceAnalysisTask):
                 LayoutMember.is_function,
                 LayoutMember.is_union.label("is_member_union"),
                 LayoutMember.is_imprecise,
+                Binary.file.label("binary"),
             )
             .join(LayoutMember.owner_entry)
+            .join(TypeLayout.binary)
             .where(TypeLayout.id.in_(has_imprecise))
         )
         return LoadStructLayouts(
@@ -259,27 +261,41 @@ class AnnotateImpreciseSubobjectLayouts(SliceAnalysisTask):
         STRUCT_MEMBER_ID_COLS = STRUCT_LAYOUT_ID_COLS + ["member_name"]
         IMPRECISE_MEMBER_ID_COLS = STRUCT_LAYOUT_ID_COLS + ["member_name__r"]
 
+        # Aggregate the data across different binaries found in the database
+        # retain the "binary" column as a list of binary paths which *could* be expanded later
+        # if needed.
+        df = df.group_by(STRUCT_MEMBER_ID_COLS).agg(
+            # Transform binary into a list
+            pl.col("binary"),
+            # Retain all the rest
+            pl.exclude("binary").first(),
+        )
+        assert df.n_unique(STRUCT_MEMBER_ID_COLS) == len(df), (
+            "Non-unique rows in dataset"
+        )
+
         # Compute overlap group IDs for each imprecise member.
         # This is used to color overlapping elements depending onthe capability
         # base and top of imprecise members
-
+        # Note: we must check that the join keys are unique in the right dataset,
+        # otherwise the left join will generate extra rows.
         imprecise = df.filter(is_imprecise=True).with_row_index("_alias_color")
         tmp_df = df.join(
             imprecise, on=STRUCT_MEMBER_ID_COLS, how="left", suffix="__r"
         ).select(~cs.ends_with("__r"))
+        assert len(tmp_df) == len(df), "Invalid alias_color mapping"
 
         # For each structure layout, join each member with the imprecise members
         # within that layout.
+        # Note: this is expected to grow the number of rows.
         tmp_df = tmp_df.join(
             imprecise, suffix="__r", on=STRUCT_LAYOUT_ID_COLS, how="left"
         )
 
         # We then mark the members that fall within the base/top of imprecise members.
-        top = (
-            pl.col("byte_offset")
-            + pl.col("byte_size")
-            + ((pl.col("bit_offset") + pl.col("bit_size")) / 8).ceil()
-        )
+        # XXX Maybe add a knob to narrow bounds as much as possible on bitfields
+        # byte_offset + byte_size + ((pl.col("bit_offset") + pl.col("bit_size")) / 8).ceil()
+        top = pl.col("byte_offset") + pl.col("byte_size")
         have_overlap = (
             (pl.col("byte_offset") < pl.col("top__r"))
             & (pl.col("base__r") < top)
@@ -313,7 +329,7 @@ class AnnotateImpreciseSubobjectLayouts(SliceAnalysisTask):
             pl.col("_aliased_by").drop_nulls(),
         )
 
-        assert len(tmp_df) == len(df)
+        assert len(tmp_df) == len(df), "Invalid overlap group manipulation"
         assert set(tmp_df.columns) == set(df.columns + ["_aliased_by", "_alias_color"])
         df = tmp_df.join(
             imprecise,
