@@ -231,7 +231,9 @@ class AnnotateImpreciseSubobjectLayouts(SliceAnalysisTask):
 
     @dependency
     def layouts_count(self):
-        q = select(func.count(TypeLayout.id)).select_from(TypeLayout)
+        q = select(func.count(TypeLayout.id).label("total_layouts")).select_from(
+            TypeLayout
+        )
         return LoadStructLayouts(
             self.session, self.slice_info, self.analysis_config, query=q
         )
@@ -239,10 +241,6 @@ class AnnotateImpreciseSubobjectLayouts(SliceAnalysisTask):
     @output
     def imprecise_layouts(self):
         return ValueTarget(self, "imprecise-layouts")
-
-    @output
-    def total_layouts(self):
-        return ValueTarget(self, "total-layouts")
 
     def run(self):
         """
@@ -331,16 +329,22 @@ class AnnotateImpreciseSubobjectLayouts(SliceAnalysisTask):
 
         assert len(tmp_df) == len(df), "Invalid overlap group manipulation"
         assert set(tmp_df.columns) == set(df.columns + ["_aliased_by", "_alias_color"])
-        df = tmp_df.join(
+        tmp_df = tmp_df.join(
             imprecise,
             left_on=STRUCT_MEMBER_ID_COLS,
             right_on=IMPRECISE_MEMBER_ID_COLS,
             suffix="__r",
             how="left",
         ).select(~cs.ends_with("__r"))
-        self.imprecise_layouts.assign(df)
 
-        print(self.layouts_count.struct_layouts.get())
+        # Attach the total layouts count to each row, useful for aggregation
+        total_layouts = self.layouts_count.struct_layouts.get().select(
+            cs.by_name(self.key_columns + ["total_layouts"])
+        )
+        df = tmp_df.join(total_layouts, on=self.key_columns, how="left")
+        assert len(tmp_df) == len(df), "Invalid total_layouts manipulation"
+
+        self.imprecise_layouts.assign(df)
 
 
 class VLAAnnotationConfig(Config):

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import re
 
 import numpy as np
 import polars as pl
@@ -20,6 +21,9 @@ class ReportConfig(Config):
     ignore_files: list[str] | None = config_field(
         None,
         desc="Files matching patterns in this list are not included in the report.",
+    )
+    field_groups: dict[str, str] | None = config_field(
+        None, desc="Map a group name to a regex to match the file column."
     )
 
 
@@ -53,6 +57,89 @@ class ImpreciseSubobjectReport(SliceAnalysisTask):
     def fields(self):
         return Target(self, "fields", ext="csv")
 
+    @output
+    def field_groups(self):
+        return Target(self, "field-groups", ext="csv")
+
+    def _gen_fields_table(self, df, table_cols):
+        data_cols = [
+            "member_name",
+            "file",
+            "line",
+            "byte_size",
+            "is_array",
+            "is_overrun_into_ptr",
+        ]
+
+        self.logger.info(
+            "Generate imprecise sub-object fields report: %s", self.slice_info
+        )
+        output_cols = [*table_cols, *data_cols]
+        table = df.filter(pl.col("_alias_color").is_not_null())
+        table = table.with_columns(
+            pl.col("_alias_pointer_member").alias("is_overrun_into_ptr"),
+            pl.col("array_items").is_not_null().alias("is_array"),
+        )
+
+        table = table.select(output_cols)
+        table = table.sort([*table_cols, "member_name", "file", "line"])
+        table.write_csv(self.fields.single_path())
+
+        # Prepare field group counts if configured
+        if self.config.field_groups:
+
+            def _group_match(value):
+                for name, pattern in self.config.field_groups.items():
+                    if re.match(pattern, value):
+                        return name
+                return "other"
+
+            table = table.with_columns(
+                pl.col("file")
+                .map_elements(_group_match, return_dtype=str)
+                .alias("group")
+            )
+            table = table.group_by("group").agg(
+                pl.col("member_name").count().alias("count"),
+                pl.col("is_array").sum(),
+                pl.col("is_overrun_into_ptr").sum(),
+            )
+            table.write_csv(self.field_groups.single_path())
+
+    def _gen_summary_table(self, df, table_cols):
+        data_cols = [
+            "count",
+            "percent_of_total",
+            "is_array",
+            "is_overrun_into_ptr",
+        ]
+
+        self.logger.info(
+            "Generate imprecise sub-object summary report: %s", self.slice_info
+        )
+        table = df.filter(pl.col("_alias_color").is_not_null())
+        table = table.with_columns(
+            pl.col("_alias_pointer_member").alias("is_overrun_into_ptr"),
+            pl.col("array_items").is_not_null().alias("is_array"),
+        )
+
+        summary = (
+            table.group_by(table_cols)
+            .agg(
+                pl.col("member_name").count().alias("count"),
+                pl.col("total_layouts").first(),
+                pl.col("is_array").sum(),
+                pl.col("is_overrun_into_ptr").sum(),
+            )
+            .with_columns(
+                pl.format(
+                    "{}%", (100 * pl.col("count") / pl.col("total_layouts")).round(2)
+                ).alias("percent_of_total")
+            )
+            .select(table_cols + data_cols)
+        )
+        summary.write_csv(self.summary.single_path())
+
     def run(self):
         df = self.layouts.imprecise_layouts.get()
 
@@ -67,36 +154,8 @@ class ImpreciseSubobjectReport(SliceAnalysisTask):
         else:
             table_cols = self.param_columns
 
-        self.logger.info(
-            "Generate imprecise sub-object fields report: %s", self.slice_info
-        )
-        data_cols = [
-            "member_name",
-            "file",
-            "line",
-            "byte_size",
-            "is_array",
-            "is_overrun_into_ptr",
-        ]
-        output_cols = [*table_cols, *data_cols]
-        table = df.filter(pl.col("_alias_color").is_not_null())
-        table = table.with_columns(
-            pl.col("_alias_pointer_member").alias("is_overrun_into_ptr"),
-            pl.col("array_items").is_not_null().alias("is_array"),
-        )
-        table = table.select(output_cols)
-        table = table.sort([*table_cols, "member_name", "file", "line"])
-        table.write_csv(self.fields.single_path())
-
-        self.logger.info(
-            "Generate imprecise sub-object summary report: %s", self.slice_info
-        )
-        summary = table.group_by(table_cols).agg(
-            pl.col("member_name").count(),
-            pl.col("is_array").sum(),
-            pl.col("is_overrun_into_ptr").sum(),
-        )
-        summary.write_csv(self.summary.single_path())
+        self._gen_fields_table(df, table_cols)
+        self._gen_summary_table(df, table_cols)
 
 
 class VLASubobjectReport(SliceAnalysisTask):
