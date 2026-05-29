@@ -593,6 +593,8 @@ class ParamSliceInfo:
 
     #: Map { param_name: param_value } that identifies this slice
     fixed_params: dict[str, any]
+    #: Parameterization matrix slice
+    descriptor_slice: pl.DataFrame
     #: Names of free-floating parameters in this slice
     free_axes: list[str]
     #: Rank the slice. This is the number of
@@ -662,6 +664,7 @@ class SliceAnalysisTask(AnalysisTask):
             sliced = self.session.parameterization_matrix.filter(
                 **self.slice_info.fixed_params
             )
+            sliced = self.slice_info.descriptor_slice
         else:
             sliced = self.session.parameterization_matrix
         return sliced["descriptor"]
@@ -870,6 +873,7 @@ class GenericAnalysisTask(AnalysisTask):
                 fixed_slice_params = dict(zip(self.config.fixed_axes, name))
                 slice_info = ParamSliceInfo(
                     fixed_params=fixed_slice_params,
+                    descriptor_slice=group_slice,
                     free_axes=list(self._free_axes),
                     rank=self._rank,
                 )
