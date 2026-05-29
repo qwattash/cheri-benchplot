@@ -1,14 +1,19 @@
 from dataclasses import dataclass
-from enum import Enum
 
 import polars as pl
 from marshmallow import ValidationError, validates_schema
 
 from ..core.artefact import Target
 from ..core.config import config_field
-from ..core.error import ConfigurationError
 from ..core.plot import PlotTarget, SlicePlotTask
-from ..core.plot_util import (BarPlotConfig, LinePlotConfig, PlotGrid, PlotGridConfig, grid_barplot, grid_lineplot)
+from ..core.plot_util import (
+    BarPlotConfig,
+    LinePlotConfig,
+    PlotGrid,
+    PlotGridConfig,
+    grid_barplot,
+    grid_lineplot,
+)
 from ..core.task import dependency, output
 from .qps_exec import QpsExecTask
 
@@ -17,6 +22,7 @@ class QpsPlotBase(SlicePlotTask):
     """
     Plot that operates on a slice of the QPS benchmark data.
     """
+
     @dependency
     def qps_data(self):
         for bench in self.slice_benchmarks:
@@ -36,15 +42,21 @@ class QpsPlotConfig(PlotGridConfig):
     """
     Configuration for the QPS throughput plot.
     """
+
     bar_plot: BarPlotConfig | None = config_field(None, desc="Bar plot configuration.")
-    line_plot: LinePlotConfig | None = config_field(None, desc="Line plot configuration.")
+    line_plot: LinePlotConfig | None = config_field(
+        None, desc="Line plot configuration."
+    )
     drop_relative_baseline: bool = config_field(
-        True, desc="Drop baseline value from relative metric columns (delta, overhead)")
+        True, desc="Drop baseline value from relative metric columns (delta, overhead)"
+    )
 
     @validates_schema
     def check_plot_kind(self, data, **kwargs):
         if data["bar_plot"] is None == data["line_plot"] is None:
-            raise ValidationError("One and only one of bar_plot or line_plot must be configured.")
+            raise ValidationError(
+                "One and only one of bar_plot or line_plot must be configured."
+            )
 
 
 class QpsPlotTask(QpsPlotBase):
@@ -55,6 +67,7 @@ class QpsPlotTask(QpsPlotBase):
     plot. The tiling for the metric kind is controlled via the `_metric_type`
     axis in the :class:`QpsPlotConfig`.
     """
+
     task_namespace = "qps"
     task_name = "qps-plot"
     task_config_class = QpsPlotConfig
@@ -75,7 +88,9 @@ class QpsPlotTask(QpsPlotBase):
         stats = self.compute_overhead(df, "qps", how="median", overhead_scale=100)
 
         if self.config.drop_relative_baseline:
-            view_df = stats.filter((pl.col("_metric_type") == "absolute") | ~pl.col("_is_baseline"))
+            view_df = stats.filter(
+                (pl.col("_metric_type") == "absolute") | ~pl.col("_is_baseline")
+            )
         else:
             view_df = stats
 
@@ -86,17 +101,22 @@ class QpsPlotTask(QpsPlotBase):
             dump_df.write_csv(self.qps_stats.single_path())
 
             if plot_config := self.config.bar_plot:
-                grid.map(grid_barplot,
-                         x=plot_config.tile_xaxis,
-                         y="qps",
-                         err=["qps_low", "qps_high"],
-                         config=plot_config)
+                plot_config = plot_config.with_config_default(tile_yaxis="<qps>")
+                grid.map(
+                    grid_barplot,
+                    x=plot_config.tile_xaxis,
+                    y=plot_config.tile_yaxis,
+                    err=["qps_low", "qps_high"],
+                    config=plot_config,
+                )
             if plot_config := self.config.line_plot:
-                grid.map(grid_lineplot,
-                         x=plot_config.tile_xaxis,
-                         y="qps",
-                         err=["qps_low", "qps_high"],
-                         config=plot_config)
+                grid.map(
+                    grid_lineplot,
+                    x=plot_config.tile_xaxis,
+                    y="qps",
+                    err=["qps_low", "qps_high"],
+                    config=plot_config,
+                )
             grid.add_legend()
 
 
@@ -110,6 +130,7 @@ class QpsLatencyPlotTask(QpsPlotBase):
     NOTE: This is _NOT_ the bootstrapped 90th percentile latency. It is an indication
     of the central tendency of the 90th percentile statistic.
     """
+
     task_namespace = "qps"
     task_name = "latency-plot"
     task_config_class = QpsPlotConfig
@@ -130,13 +151,16 @@ class QpsLatencyPlotTask(QpsPlotBase):
             pl.col("latency50") / 1000,
             pl.col("latency90") / 1000,
             pl.col("latency95") / 1000,
-            pl.col("latency99") / 1000)
+            pl.col("latency99") / 1000,
+        )
 
         self.logger.info("Compute QPS latency statistics")
         stats = self.compute_overhead(df, "latency90", how="median", overhead_scale=100)
 
         if self.config.drop_relative_baseline:
-            view_df = stats.filter((pl.col("_metric_type") == "absolute") | ~pl.col("_is_baseline"))
+            view_df = stats.filter(
+                (pl.col("_metric_type") == "absolute") | ~pl.col("_is_baseline")
+            )
         else:
             view_df = stats
 
@@ -147,15 +171,19 @@ class QpsLatencyPlotTask(QpsPlotBase):
             dump_df.write_csv(self.latency_stats.single_path())
 
             if plot_config := self.config.bar_plot:
-                grid.map(grid_barplot,
-                         x=plot_config.tile_xaxis,
-                         y="latency90",
-                         err=["latency90_low", "latency90_high"],
-                         config=plot_config)
+                grid.map(
+                    grid_barplot,
+                    x=plot_config.tile_xaxis,
+                    y="latency90",
+                    err=["latency90_low", "latency90_high"],
+                    config=plot_config,
+                )
             if plot_config := self.config.line_plot:
-                grid.map(grid_lineplot,
-                         x=plot_config.tile_xaxis,
-                         y="latency90",
-                         err=["latency90_low", "latency90_high"],
-                         config=plot_config)
+                grid.map(
+                    grid_lineplot,
+                    x=plot_config.tile_xaxis,
+                    y="latency90",
+                    err=["latency90_low", "latency90_high"],
+                    config=plot_config,
+                )
             grid.add_legend()
