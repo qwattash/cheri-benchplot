@@ -170,7 +170,15 @@ class PlotGridConfig(PlotConfigBase):
         desc="Set column ref to use for Y axis labels. Defaults to Y data column name.",
     )
     tile_row_show_title: bool = config_field(True, desc="Show the row tiling title.")
+    tile_row_title: ColRef | None = config_field(
+        None,
+        desc="Set column ref to use for the row title label. Defaults to tile_row.",
+    )
     tile_col_show_title: bool = config_field(True, desc="Show the column tiling title.")
+    tile_col_title: ColRef | None = config_field(
+        None,
+        desc="Set column ref to use for the col title label. Defaults to tile_col.",
+    )
     tile_sharex: str | bool = config_field("col", desc="Override X axis sharing.")
     tile_sharey: str | bool = config_field("row", desc="Override Y axis sharing.")
 
@@ -647,27 +655,6 @@ class PlotGrid(AbstractContextManager):
         Set row and column labels.
         Suppress unwanted X / Y axis labels and handle labeling overrides.
         """
-        nrows, ncols = self._grid_shape()
-        if col_param := self.tile_col:
-            # Only add the tile header to the first row of the grid.
-            if tile.row_index == 0 and self._config.tile_col_show_title:
-                tile.ax.set_title(f"{col_param} = {tile.col}")
-
-        if row_param := self.tile_row:
-            # Clear shared Y axis labels if this isn't the first column
-            if self._config.tile_sharey and tile.col_index > 0:
-                tile.ax.set_ylabel(None).set_visible(False)
-            # Annotate the row group at the end of the row
-            if tile.col_index == ncols - 1 and self._config.tile_row_show_title:
-                text = tile.ax.annotate(
-                    f"{row_param} = {tile.row}",
-                    xy=(1.02, 0.5),
-                    xycoords="axes fraction",
-                    rotation=270,
-                    ha="left",
-                    va="center",
-                )
-                self._margin_titles.append(text)
 
         # Handle X and Y labels override
         def _sanitize_label_override(label_ref):
@@ -681,6 +668,36 @@ class PlotGrid(AbstractContextManager):
                 )
                 return "unknown"
             return chunk[label_col].first()
+
+        nrows, ncols = self._grid_shape()
+        if col_param := self.tile_col:
+            # Only add the tile header to the first row of the grid.
+            if tile.row_index == 0 and self._config.tile_col_show_title:
+                if title_ref := self._config.tile_row_title:
+                    title = _sanitize_label_override(title_ref)
+                else:
+                    title = f"{col_param} = {tile.col}"
+                tile.ax.set_title(title)
+
+        if row_param := self.tile_row:
+            # Clear shared Y axis labels if this isn't the first column
+            if self._config.tile_sharey and tile.col_index > 0:
+                tile.ax.set_ylabel(None).set_visible(False)
+            # Annotate the row group at the end of the row
+            if tile.col_index == ncols - 1 and self._config.tile_row_show_title:
+                if title_ref := self._config.tile_col_title:
+                    title = _sanitize_label_override(title_ref)
+                else:
+                    title = f"{row_param} = {tile.row}"
+                text = tile.ax.annotate(
+                    title,
+                    xy=(1.02, 0.5),
+                    xycoords="axes fraction",
+                    rotation=270,
+                    ha="left",
+                    va="center",
+                )
+                self._margin_titles.append(text)
 
         if self._config.tile_sharex and tile.row_index != nrows - 1:
             tile.ax.set_xlabel(None)
