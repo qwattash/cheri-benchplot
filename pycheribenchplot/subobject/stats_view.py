@@ -108,8 +108,9 @@ class ImpreciseSubobjectReport(SliceAnalysisTask):
 
     def _gen_summary_table(self, df, table_cols):
         data_cols = [
-            "count",
+            "imprecise_layouts",
             "percent_of_total",
+            "count",
             "is_array",
             "is_overrun_into_ptr",
         ]
@@ -127,13 +128,17 @@ class ImpreciseSubobjectReport(SliceAnalysisTask):
             table.group_by(table_cols)
             .agg(
                 pl.col("member_name").count().alias("count"),
+                pl.col("id").n_unique().alias("imprecise_layouts"),  # layout ID
                 pl.col("total_layouts").first(),
                 pl.col("is_array").sum(),
                 pl.col("is_overrun_into_ptr").sum(),
             )
             .with_columns(
                 pl.format(
-                    "{}%", (100 * pl.col("count") / pl.col("total_layouts")).round(2)
+                    "{}\\%",
+                    (100 * pl.col("imprecise_layouts") / pl.col("total_layouts")).round(
+                        2
+                    ),
                 ).alias("percent_of_total")
             )
             .select(table_cols + data_cols)
@@ -276,7 +281,7 @@ class ImpreciseSizeDistPlot(SlicePlotTask):
         # Build an helper metadata column that can be used for the bin labels
 
         grid_config = self.config.with_config_default(
-            hue="<side>", tile_xaxis="<hist_bin>"
+            hue="<side>", tile_xaxis="<hist_bin>", tile_yaxis="<hist_count>"
         )
         # Build a default mapping for the hist_bin labels
         # grid_config = grid_config.set_display_defaults(
@@ -289,7 +294,7 @@ class ImpreciseSizeDistPlot(SlicePlotTask):
             grid.map(
                 grid_barplot,
                 x=grid_config.tile_xaxis,
-                y="hist_count",
+                y=grid_config.tile_yaxis,
                 config=grid_config,
             )
             grid.add_legend()
