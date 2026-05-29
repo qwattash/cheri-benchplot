@@ -217,6 +217,9 @@ class PlotGridConfig(PlotConfigBase):
         4,
         desc="Number of columns in the legend, this affects the necessary vspace and tile_aspect.",
     )
+    legend_margin: float | None = config_field(
+        None, desc="Custom legend-to-axis margin"
+    )
 
     @property
     def hue_levels(self):
@@ -425,7 +428,7 @@ class PlotGrid(AbstractContextManager):
         self.map(self._set_titles)
         self._finalize_layout()
         for path in self._target.paths():
-            self._figure.savefig(path, bbox_inches="tight")
+            self._figure.savefig(path, bbox_inches="tight", transparent=True)
         plt.close(self._figure)
         self._rc_context.__exit__(exc_type, exc_value, traceback)
 
@@ -794,12 +797,16 @@ class PlotGrid(AbstractContextManager):
         # Generate the legend, if enabled
         if self._legend_kwargs is None or self._config.legend_hide:
             return
-            self._generate_legend()
+        # self._generate_legend()
         if not self._config.hue:
             return
 
+        legend_kwargs = {}
+        if self._config.legend_margin is not None:
+            legend_kwargs["borderaxespad"] = self._config.legend_margin
+
         if self._config.legend_position == "inner":
-            self.map(lambda tile, chunk: tile.ax.legend())
+            self.map(lambda tile, chunk: tile.ax.legend(**legend_kwargs))
         elif self._config.legend_position == "outer":
             # hue_keys = self._df[self.tile_hue].unique(maintain_order=True)
             # labels = self._df[self.tile_hue].unique(maintain_order=True)
@@ -814,6 +821,7 @@ class PlotGrid(AbstractContextManager):
                         legend_handles[label] = handle
 
             self.map(_merge_legend_handles)
+            legend_kwargs.update(self._legend_kwargs)
 
             # DEPRECATED Make space between the title and the subplot axes
             # reserved_y_fraction = 1 - self._config.legend_vspace
@@ -824,7 +832,7 @@ class PlotGrid(AbstractContextManager):
                 legend_handles.keys(),
                 ncols=self._config.legend_columns,
                 loc="outside upper center",
-                **self._legend_kwargs,
+                **legend_kwargs,
             )
         else:
             raise RuntimeError(
