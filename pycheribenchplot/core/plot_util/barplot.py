@@ -18,6 +18,9 @@ class BarPlotConfig(PlotConfigBase):
     tile_xaxis: ColRef = config_field(
         Config.REQUIRED, desc="Column ref to use for the tile X axis."
     )
+    tile_yaxis: ColRef = config_field(
+        None, desc="Column ref to use for the tile Y axis."
+    )
     stack_by: ColRef | None = config_field(
         None, desc="Stack bars along the given column ref."
     )
@@ -67,7 +70,7 @@ def grid_barplot(
     """
     # Note: here all the column refs should have been resolved
     x = tile.ref_to_col(x)
-    assert not y.startswith("<")
+    y = tile.ref_to_col(y)
     assert tile.hue is not None
     assert not tile.hue.startswith("<")
 
