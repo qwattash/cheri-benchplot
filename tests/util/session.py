@@ -106,7 +106,12 @@ class TaskFactory:
         if issubclass(task_type, SliceAnalysisTask):
             return task_type(
                 self._session,
-                ParamSliceInfo(fixed_params={}, free_axes=["target"], rank=1),
+                ParamSliceInfo(
+                    fixed_params={},
+                    descriptor_slice=self._session.parameterization_matrix,
+                    free_axes=["target"],
+                    rank=1,
+                ),
                 analysis_config,
                 config,
             )
