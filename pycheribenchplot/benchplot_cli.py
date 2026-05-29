@@ -284,7 +284,9 @@ class TaskInfoSubCommand(SubCommand):
         if args.m:
             with pl.Config(fmt_str_lengths=150, tbl_rows=-1, tbl_cols=-1):
                 tbl = session.parameterization_matrix.with_columns(
-                    pl.col("descriptor").map_elements(lambda d: d.uuid)
+                    pl.col("descriptor").map_elements(
+                        lambda d: str(d.uuid), return_dtype=str
+                    )
                 )
                 print(tbl)
         else:
