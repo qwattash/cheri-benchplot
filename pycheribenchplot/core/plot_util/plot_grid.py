@@ -59,7 +59,17 @@ class PlotConfigBase(Config):
     Base class for all plot configs.
     """
 
-    pass
+    def with_config_default(self, **kwargs):
+        """
+        Clone the configuration with the given default values.
+        """
+        defaults = {
+            k: v
+            for k, v in kwargs.items()
+            if hasattr(self, k) and getattr(self, k) is None
+        }
+        config = replace(self, **defaults)
+        return config
 
 
 class ColumnTransform(Enum):
