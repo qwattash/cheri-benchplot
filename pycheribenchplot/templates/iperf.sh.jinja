@@ -14,80 +14,102 @@
   {% endif %}
 {% endblock global_setup %}
 
+{% macro server_affinity() %}
+  {% if iperf_config.server_cpu %}-A {{ iperf_config.server_cpu }}{% endif %}
+{% endmacro %}
+
 {% block iteration_setup %}
   {{ super() }}
   # Per-iteration iperf setup
   {% if iperf_config.use_localhost_server %}
     # Start localhost iperf server
     verbose "Start iperf server for iteration {{ current_iteration }}"
-    iperf3 -s --one-off --daemon --pidfile /tmp/iperf_server.pid --interval 60 --bind {{ scenario_config.remote_host }} {{ ipversion() | trim }}
+    # We use a --one-off server to ensure that any process state is entirely reset
+    iperf3 -s --one-off --daemon --pidfile /tmp/iperf_server.pid --interval 60 \
+           --bind {{ iperf_config.remote_host }} \
+           {{ server_affinity() | trim }} {{ ipversion() | trim }}
+    # Make sure we have time to get the server up
+    # XXX is this necessary?
     sleep 1
   {% endif %}
 {% endblock iteration_setup %}
 
-{% macro limit_flag() %}
-  {% if scenario_config.transfer_mode == IPerfTransferLimit.BYTES %}
+{% macro limit_flag() -%}
+  {%- if iperf_config.transfer_mode == IPerfTransferLimit.BYTES -%}
     -n
-  {% elif scenario_config.transfer_mode == IPerfTransferLimit.TIME %}
+  {%- elif iperf_config.transfer_mode == IPerfTransferLimit.TIME -%}
     -t
-  {% elif scenario_config.transfer_mode == IPerfTransferLimit.PACKETS %}
+  {%- elif iperf_config.transfer_mode == IPerfTransferLimit.PACKETS -%}
     -k
-  {% endif %}
-{% endmacro %}
+  {%- endif -%}
+{%- endmacro %}
 
-{% macro mode_flag() %}
-  {% if scenario_config.mode == IPerfMode.CLIENT_RECV %}
+{% macro tx_limit() -%}
+  {{ limit_flag() | trim }} {{ iperf_config.transfer_limit }}
+{%- endmacro %}
+
+{% macro mode_flag() -%}
+  {%- if iperf_config.mode == IPerfMode.CLIENT_RECV -%}
     --reverse
-  {% elif scenario_config.mode == IPerfMode.BIDIRECTIONAL %}
+  {%- elif iperf_config.mode == IPerfMode.BIDIRECTIONAL -%}
     --bidir
-  {% endif %}
-  {# else IPerfMode.CLIENT_SEND leave empty #}
-{% endmacro %}
+  {%- endif -%}
+  {#- else IPerfMode.CLIENT_SEND leave empty -#}
+{%- endmacro %}
 
-{% macro protocol_flag() %}
-  {% if scenario_config.protocol == IPerfProtocol.UDP %}
+{% macro protocol_flag() -%}
+  {%- if iperf_config.protocol == IPerfProtocol.UDP -%}
     --udp -b 0
-  {% elif scenario_config.protocol == IPerfProtocol.SCTP %}
+  {%- elif iperf_config.protocol == IPerfProtocol.SCTP -%}
     --sctp
-  {% endif %}
-  {# else IPerfProtocol.TCP leave empty #}
-{% endmacro %}
+  {%- endif -%}
+  {#- else IPerfProtocol.TCP leave empty -#}
+{%- endmacro %}
 
-{% macro cpuaffinity() %}
-  {% if scenario_config.cpu_affinity %}
-    -A {{ scenario_config.cpu_affinity }}
-  {% endif %}
-{% endmacro %}
+{% macro client_affinity() -%}
+  {%- if iperf_config.client_cpu -%}
+    -A {{ iperf_config.client_cpu -}}
+  {%- endif -%}
+{%- endmacro %}
 
-{% macro mss_flag() %}
-  {% if scenario_config.mss %}
-    --set-mss {{ scenario_config.mss }}
-  {% endif %}
-{% endmacro %}
+{% macro mss_flag() -%}
+  {%- if iperf_config.mss -%}
+    --set-mss {{ iperf_config.mss }}
+  {%- endif -%}
+{%- endmacro %}
 
-{% macro nodelay_flag() %}
-  {% if scenario_config.nodelay %}
+{% macro nodelay_flag() -%}
+  {%- if iperf_config.nodelay -%}
     --no-delay
-  {% endif %}
-{% endmacro %}
+  {%- endif -%}
+{%- endmacro %}
 
-{% macro ipversion() %}
-  {% if scenario_config.use_ipv4 %}
+{% macro ipversion() -%}
+  {%- if iperf_config.use_ipv4 -%}
     -4
-  {% else %}
+  {%- else -%}
     -6
-  {% endif %}
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro client_args(curr_iter) -%}
+  -c {{ iperf_config.remote_host -}}
+  -P {{ iperf_config.streams -}}
+  --interval 60 {#- -#}
+  {{- tx_limit() | trim -}}
+  -l {{ iperf_config.buffer_size -}}
+  {{- client_affinity() | trim -}}
+  {{- protocol_flag() | trim -}}
+  {{- ipversion() | trim -}}
+  {{- mode_flag() | trim -}}
+  {{- mss_flag() | trim -}}
+  {{- nodelay_flag() | trim -}}
+  -J --logfile {{ iperf_gen_output_path(curr_iter) -}}
 {% endmacro %}
 
 {% block iteration_exec %}
   verbose "Run iperf3 iteration {{ current_iteration }}"
-
-  {{ hwpmc.pmcstat(current_iteration) }} iperf3 \
-	-c {{ scenario_config.remote_host }} \
-	{{ limit_flag() | trim }} {{ scenario_config.transfer_limit }} -P {{ scenario_config.streams }} \
-	--interval 60 {{ protocol_flag() | trim }} {{ mode_flag() | trim }} {{ cpuaffinity() | trim }} \
-	-l {{ scenario_config.buffer_size }} {{ mss_flag() | trim }} {{ nodelay_flag() | trim }} {{ ipversion() | trim }} \
-	-J --logfile {{ iperf_gen_output_path(current_iteration) }}
+  {{ hwpmc.pmcstat(current_iteration) }} iperf3 {{ client_args(current_iteration) | trim }}
 {% endblock iteration_exec %}
 
 {% block global_teardown %}

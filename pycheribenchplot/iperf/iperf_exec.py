@@ -2,7 +2,6 @@ import json
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Optional
 
 import polars as pl
 import polars.selectors as cs
@@ -10,8 +9,7 @@ from marshmallow.validate import Regexp
 
 from ..core.artefact import DataFrameLoadTask, RemoteBenchmarkIterationTarget
 from ..core.config import Config, ConfigPath, config_field
-from ..core.task import output
-from ..core.tvrs import TVRSExecConfig, TVRSExecTask
+from ..core.task import ExecutionTask, output
 
 
 class IPerfMode(Enum):
@@ -42,11 +40,9 @@ class IPerfProtocol(Enum):
 
 
 @dataclass
-class IPerfScenario(Config):
+class IPerfConfig(Config):
     """
-    The iperf benchmark parameters are encoded in a scenario json file.
-
-    This is the configuration schema that loads the iperf scenario to run.
+    The iperf benchmark parameters.
 
     In the standard configuration, the client sends data to the server. The
     `mode` parameter can be used to modify this behaviour.
@@ -56,58 +52,47 @@ class IPerfScenario(Config):
     the sender/receiver affinity. This sets both the client and server affinity.
     """
 
-    # yapf: disable
-    protocol: IPerfProtocol = config_field(IPerfProtocol.TCP, desc="Protocol to use")
-    transfer_mode: IPerfTransferLimit = config_field(
-        IPerfTransferLimit.BYTES,
-        desc="How the transfer limit is interpreted"
-    )
-    transfer_limit: str = config_field(
-        "1G",
-        desc="Transfer limit, format depends on `transfer_mode`",
-        validate=Regexp(r"[0-9]+[KMG]?", error="Must be formatted as <N>{KMG}")
-    )
-    remote_host: str = config_field(
-        "localhost",
-        desc="Hostname of the server. By default we operate on localhost. "
-        "When this is set to anything other than localhost, the server setup "
-        "is expected to be done manually"
-    )
-    mode: IPerfMode = config_field(IPerfMode.CLIENT_SEND, desc="Stream mode")
-    streams: int = config_field(1, desc="Number of parallel client streams")
-    buffer_size: int|str = config_field("128K", desc="Size of the send/recv buffer (bytes)")
-    mss: Optional[int] = config_field(None, desc="Set MSS size")
-    window_size: Optional[int|str] = config_field(
-        None,
-        desc="Set socket buffer size (bytes) (indirectly the TCP window)"
-    )
-    warmup: Optional[int] = config_field(None, desc="Warmup seconds")
-    cpu_affinity: Optional[str] = config_field(
-        None,
-        desc="CPU Affinity for send/receive sides",
-        validate=Regexp(r"[0-9]+(,[0-9+])?", error="CPU Affinty must be of the form 'N[,M]'")
-    )
-    nodelay: bool = config_field(False, desc="Disable Nagle algorithm to send small packets immediately")
-    use_ipv4: bool = config_field(True, desc="Force use of IPv4 vs IPv6")
-    # yapf: enable
-
-
-@dataclass
-class IPerfConfig(TVRSExecConfig):
-    """
-    IPerf benchmark configuration.
-    """
-
-    iperf_path: Optional[ConfigPath] = config_field(
+    iperf_path: ConfigPath | None = config_field(
         None, desc="Path of iperf executable in the remote host, appended to PATH"
     )
     use_localhost_server: bool = config_field(
         True,
         desc="Spawn server on localhost, if False, the scenario must specify a remote_host",
     )
+    protocol: IPerfProtocol = config_field(IPerfProtocol.TCP, desc="Protocol to use")
+    transfer_mode: IPerfTransferLimit = config_field(
+        IPerfTransferLimit.BYTES, desc="How the transfer limit is interpreted"
+    )
+    transfer_limit: str = config_field(
+        "1G",
+        desc="Transfer limit, format depends on `transfer_mode`",
+        validate=Regexp(r"[0-9]+[KMG]?", error="Must be formatted as <N>{KMG}"),
+    )
+    remote_host: str = config_field(
+        "localhost",
+        desc="Hostname of the server. By default we operate on localhost. "
+        "When this is set to anything other than localhost, the server setup "
+        "is expected to be done manually",
+    )
+    mode: IPerfMode = config_field(IPerfMode.CLIENT_SEND, desc="Stream mode")
+    streams: int = config_field(1, desc="Number of parallel client streams")
+    buffer_size: str = config_field("128K", desc="Size of the send/recv buffer (bytes)")
+    mss: int | None = config_field(None, desc="Set MSS size")
+    window_size: int | str | None = config_field(
+        None, desc="Set socket buffer size (bytes) (indirectly the TCP window)"
+    )
+    warmup: int | None = config_field(None, desc="Warmup seconds")
+    server_cpu: int | None = config_field(
+        None, desc="Server CPU affinity, when running on localhost"
+    )
+    client_cpu: int | None = config_field(None, desc="Client CPU affinity")
+    nodelay: bool = config_field(
+        False, desc="Disable Nagle algorithm to send small packets immediately"
+    )
+    use_ipv4: bool = config_field(True, desc="Force use of IPv4 vs IPv6")
 
 
-class IngestIPerfStats(DataFrameLoadTask):
+class LoadIPerfStats(DataFrameLoadTask):
     """
     Loader for stats data that produces a standard polars dataframe.
     """
@@ -143,7 +128,7 @@ class IngestIPerfStats(DataFrameLoadTask):
         return df
 
 
-class IPerfExecTask(TVRSExecTask):
+class IPerfExecTask(ExecutionTask):
     """
     Generate the iperf benchmark scripts
 
@@ -155,15 +140,13 @@ class IPerfExecTask(TVRSExecTask):
     task_namespace = "iperf"
     task_name = "exec"
     task_config_class = IPerfConfig
-    scenario_config_class = IPerfScenario
     script_template = "iperf.sh.jinja"
     public = True
 
     @output
     def stats(self):
-        """IPerf json output"""
         return RemoteBenchmarkIterationTarget(
-            self, "stats", ext="json", loader=IngestIPerfStats
+            self, "stats", ext="json", loader=LoadIPerfStats
         )
 
     def run(self):
