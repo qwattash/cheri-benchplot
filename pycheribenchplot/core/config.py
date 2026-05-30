@@ -27,6 +27,8 @@ from .util import new_logger, root_logger
 logger = root_logger()
 config_logger = new_logger("config")
 
+type ConfigTemplateSpec = "ConfigTemplateSpec"
+
 
 def make_uuid() -> str:
     """
@@ -36,7 +38,7 @@ def make_uuid() -> str:
 
 
 def resolve_task_options(
-    task_spec: str, task_options: dict, is_exec: bool = False
+    task_spec: str, task_options: dict | ConfigTemplateSpec, is_exec: bool = False
 ) -> Type["Config"]:
     """
     Helper to lazily coerce task options to the correct type.
@@ -58,13 +60,20 @@ def resolve_task_options(
         task_class = matches[0]
     if task_class.task_config_class:
         conf_class = task_class.task_config_class
-        config_logger.debug("Coerce %s options to %s", task_spec, conf_class.__name__)
+        # The task options here may have been wrapped by a ConfigTemplateSpec
+        # if so, extract the underlying value
+        if isinstance(task_options, ConfigTemplateSpec):
+            task_options = task_options.value
+        assert type(task_options) is dict, "Unexpected task options data"
+        config_logger.debug(
+            "Coerce %s task options to %s", task_spec, conf_class.__name__
+        )
         try:
             return conf_class.schema().load(task_options)
         except ValidationError as err:
             logger.error(
                 "Invalid task options, %s validation failed: %s",
-                conf_class,
+                conf_class.__name__,
                 err.normalized_messages(),
             )
             raise err
@@ -1092,9 +1101,7 @@ class ExecTargetConfig(Config):
     handler: ConfigExecTaskSpec
 
     #: Extra options for the dataset handler, depend on the handler
-    task_options: LazyNestedConfig = dc.field(
-        default_factory=dict
-    )  # Dict[str, ConfigAny] = lazy_nested_config_field()
+    task_options: LazyNestedConfig = dc.field(default_factory=dict)
 
     def __post_init__(self):
         super().__post_init__()
