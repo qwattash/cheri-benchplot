@@ -117,14 +117,19 @@ class SessionSubCommand(SubCommand):
         """
         Hook to handle the create subcommand.
         """
+        config_workdir = args.pipeline_config.parent
         config = self._parse_config(args.pipeline_config, PipelineConfig)
 
         session = self._get_session(user_config, args, missing_ok=True)
         if not session:
-            session = Session.make_new(user_config, config, args.target)
+            session = Session.make_new(
+                user_config, config, args.target, workdir=config_workdir
+            )
         elif args.force:
             session.delete()
-            session = Session.make_new(user_config, config, args.target)
+            session = Session.make_new(
+                user_config, config, args.target, workdir=config_workdir
+            )
         else:
             self.logger.error("Session %s already exists", args.target)
             raise FileExistsError(f"Session {args.target} already exists")

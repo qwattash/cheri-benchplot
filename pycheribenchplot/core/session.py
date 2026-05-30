@@ -53,6 +53,7 @@ class Session:
         user_config: BenchplotUserConfig,
         config: PipelineConfig,
         session_path: Path,
+        workdir: Path = None,
     ) -> Self:
         """
         Create a new session and initialize the directory hierarchy
@@ -62,6 +63,8 @@ class Session:
         :param session_path: The session_path of the new session
         :return: A new session instance
         """
+        if workdir is None:
+            workdir = Path.cwd()
         if session_path.exists():
             benchplot_logger.error(
                 "Session directory already exists for session %s", session_path
@@ -73,7 +76,7 @@ class Session:
         with open(session_path / SESSION_RUN_FILE, "w") as runfile:
             runfile.write(run_config.emit_json())
         session = Session(user_config, run_config, session_path=session_path)
-        session.import_assets(config.assets)
+        session.import_assets(config.assets, workdir)
         return session
 
     @classmethod
@@ -292,7 +295,7 @@ class Session:
         self.logger.info("Remove session %s (%s)", self.name, self.uuid)
         shutil.rmtree(self.session_root_path)
 
-    def import_assets(self, assets: dict[str, AssetConfig]):
+    def import_assets(self, assets: dict[str, AssetConfig], workdir: Path):
         """
         Import the given set of assets into the session.
         Overwrite existing assets.
@@ -311,7 +314,10 @@ class Session:
 
             match import_config.action:
                 case AssetImportAction.COPY:
-                    shutil.copytree(import_config.src, dst, dirs_exist_ok=True)
+                    src = Path(import_config.src)
+                    if not src.is_absolute():
+                        src = workdir / src
+                    shutil.copytree(src, dst, dirs_exist_ok=True)
                 case _:
                     self.logger.error(
                         "Unexpected import action %s, asset ignored",
