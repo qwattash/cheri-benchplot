@@ -12,7 +12,9 @@ ASSETS_DIR = Path(__file__).parent.parent / "workloads"
 
 # Note: rely on the convention that analysis configurations will be named foo.analysis.json
 config_files = [
-    c for c in ASSETS_DIR.rglob("*.json") if not c.name.endswith(".analysis.json")
+    c
+    for c in ASSETS_DIR.rglob("*.json")
+    if not c.name.endswith(".analysis.json") and not c.name.endswith(".template.json")
 ]
 
 
@@ -35,7 +37,9 @@ def test_configuration(config_file, session_path):
     """
     user_config = BenchplotUserConfig()
     workload = PipelineConfig.load_json(config_file)
-    session = Session.make_new(user_config, workload, session_path)
+    session = Session.make_new(
+        user_config, workload, session_path, workdir=config_file.parent
+    )
     session.generate()
 
     # TODO Generate mock data for analysis tests

@@ -1,0 +1,57 @@
+{
+    "plot": {
+        "plot_output_format": ["pdf"]
+    },
+    "baseline": { "c18n": "disable" },
+    "tasks": [{
+        "handler": "analysis.dynamic",
+        "task_options": {
+            "broadcast": [{
+                "handler": "qps.qps-plot",
+                "task_options": {
+                    "derived_columns": {
+                        "c18n_variant": {
+                            "transform": "concat",
+                            "name": "tmp_c18n_variant",
+                            "src": ["<c18n>", "<c18n_policy>", "<c18n_fastpath>"]
+                        },
+                        "c18n_text": {
+                            "transform": "map",
+                            "name": "c18n_text",
+                            "src": "<c18n_variant>",
+                            "args": {
+                                "enable,none,disable": "c18n default-policy no-fastpath",
+                                "enable,none,enable": "c18n default-policy fastpath",
+                                "enable,custom,disable": "c18n custom-policy no-fastpath",
+                                "enable,custom,enable": "c18n custom-policy fastpath",
+                                "disable,none,disable": "no-c18n"
+                            }
+                        }
+                    },
+                    "sort_by": [
+                        "<host>",
+                        "<c18n>",
+                        "<c18n_policy>",
+                        "<c18n_fastpath>",
+                        "<msg_size>"
+                    ],
+                    "hue": "<c18n_text>",
+                    "tile_aspect": 2.0,
+                    "tile_row": "<c18n_policy>",
+                    "tile_col": "<_metric_type>",
+                    "tile_sharey": false,
+                    "drop_relative_baseline": true,
+                    "bar_plot": {
+                        "tile_xaxis": "<msg_size>"
+                    }
+                }
+            }],
+            "fixed_axes": ["target"],
+            "param_filter": {
+                "keep": [{
+                    "matches": { "host": "morello" }
+                }]
+            }
+        }
+    }]
+}
