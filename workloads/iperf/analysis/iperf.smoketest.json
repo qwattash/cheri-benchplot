@@ -9,9 +9,9 @@
             "broadcast": [{
                 "handler": "iperf.summary-plot",
                 "task_options": {
-                    "hue": "<hue>",
+                    "hue": "<target>",
                     "tile_aspect": 4.5,
-                    "tile_row": "<metric>",
+                    "tile_row": "<_metric_type>",
                     "tile_sharey": false,
                     "tile_sharex": true,
                     "legend_columns": 3,
@@ -19,8 +19,8 @@
                     "sort_by": ["<target>"],
                     "sort_order": {
                         "<target>": [
-                            "cheribsd-hybrid",
-                            "cheribsd-purecap"
+                            "hybrid-kernel",
+                            "benchmark-kernel"
                         ]
                     },
                     "drop_relative_baseline": true,

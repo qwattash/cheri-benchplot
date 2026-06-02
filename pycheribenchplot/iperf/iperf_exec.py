@@ -108,16 +108,28 @@ class LoadIPerfStats(DataFrameLoadTask):
         RTT measurements for latency are taken for each stream, so we
         generate one row for each stream for each iteration.
         """
-        data = json.load(open(path, "r"))
+        # Some iperf output files contain multiple concatenated JSON records
+        # (e.g. a warmup run followed by the main run). Read only the first.
+        raw = open(path, "r").read()
+        data, _ = json.JSONDecoder().raw_decode(raw)
         end_info = data["end"]
 
-        snd = pl.DataFrame(end_info["sum_sent"]).with_columns(
-            cs.numeric().exclude("packets").cast(pl.Float64),
-            pl.lit("sender").alias("side"),
+        _keep = ["seconds", "bytes", "bits_per_second", "side"]
+        snd = (
+            pl.DataFrame(end_info["sum_sent"])
+            .with_columns(
+                cs.numeric().exclude("packets").cast(pl.Float64),
+                pl.lit("sender").alias("side"),
+            )
+            .select(_keep)
         )
-        rcv = pl.DataFrame(end_info["sum_received"]).with_columns(
-            cs.numeric().exclude("packets").cast(pl.Float64),
-            pl.lit("receiver").alias("side"),
+        rcv = (
+            pl.DataFrame(end_info["sum_received"])
+            .with_columns(
+                cs.numeric().exclude("packets").cast(pl.Float64),
+                pl.lit("receiver").alias("side"),
+            )
+            .select(_keep)
         )
         df = pl.concat([snd, rcv], how="vertical", rechunk=True)
 
