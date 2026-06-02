@@ -5,7 +5,11 @@ import shutil
 import polars as pl
 import pytest
 
-from pycheribenchplot.core.config import BenchplotUserConfig, PipelineConfig
+from pycheribenchplot.core.config import (
+    AnalysisConfig,
+    BenchplotUserConfig,
+    PipelineConfig,
+)
 from pycheribenchplot.core.session import Session
 
 
@@ -18,6 +22,10 @@ class WorkloadInfo:
     workload_config: Path
     data_path: Path | None = None
     analysis_config: Path | None = None
+
+    @property
+    def has_smoketest(self):
+        return self.data_path is not None and self.analysis_config is not None
 
 
 # Note: expect the following directory layout for workloads
@@ -73,7 +81,22 @@ def test_configuration(wkinfo, session_path):
         user_config, workload, session_path, workdir=wkinfo.workload_config.parent
     )
     session.generate()
-
-    # TODO Generate mock data for analysis tests
-
     session.clean_all()
+
+
+@pytest.mark.parametrize(
+    "wkinfo", filter(lambda w: w.has_smoketest, workloads), ids=generate_id
+)
+def test_analysis(wkinfo, tmp_path):
+    """
+    Run analysis passes for smoketest data.
+    Smoketest data must be maintained in sync with the configurations.
+    """
+    scratch = tmp_path / "data"
+    shutil.copytree(wkinfo.data_path, scratch)
+    user_config = BenchplotUserConfig()
+    session = Session.from_path(user_config, scratch)
+    analysis_config = AnalysisConfig.load_json(wkinfo.analysis_config)
+
+    # Run the analysis pass
+    session.analyse(analysis_config)
