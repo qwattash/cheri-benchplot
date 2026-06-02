@@ -1,61 +1,94 @@
 from dataclasses import dataclass
+from enum import Enum
 
 import polars as pl
-import polars.selectors as cs
-import seaborn as sns
 
-from ..core.analysis import AnalysisTask
-from ..core.artefact import ValueTarget
+from ..core.artefact import Target
 from ..core.config import Config, config_field
-from ..core.plot import PlotTarget, PlotTask
-from ..core.plot_util import PlotGrid, PlotGridConfig, boxplot
+from ..core.plot import PlotTarget, SlicePlotTask
+from ..core.plot_util import BarPlotConfig, PlotGrid, PlotGridConfig, grid_barplot
 from ..core.task import dependency, output
-from ..core.tvrs import TVRSParamsMixin, TVRSPlotConfig
 from .iperf_exec import IPerfExecTask
+
+
+class ThroughputUnit(Enum):
+    """
+    Unit to use when displaying throughput values.
+
+    The divisor is applied to bits/s values to convert them to the target unit.
+    """
+
+    bps = "bps"
+    Kbps = "Kbps"
+    Mbps = "Mbps"
+    Gbps = "Gbps"
+    KiB_s = "KiB/s"
+    MiB_s = "MiB/s"
+    GiB_s = "GiB/s"
+
+    @property
+    def divisor(self) -> float:
+        match self:
+            case ThroughputUnit.bps:
+                return 1
+            case ThroughputUnit.Kbps:
+                return 1e3
+            case ThroughputUnit.Mbps:
+                return 1e6
+            case ThroughputUnit.Gbps:
+                return 1e9
+            case ThroughputUnit.KiB_s:
+                return 8 * 2**10
+            case ThroughputUnit.MiB_s:
+                return 8 * 2**20
+            case ThroughputUnit.GiB_s:
+                return 8 * 2**30
 
 
 @dataclass
 class IPerfSummaryConfig(PlotGridConfig):
-    def __post_init__(self):
-        super().__post_init__()
-        self.setdefault(tile_col="scenario", hue="variant")
-
-
-class UnifiedIPerfStats(AnalysisTask):
-    task_namespace = "iperf"
-    task_name = "combine"
-
-    @dependency
-    def ingest(self):
-        for b in self.session.all_benchmarks():
-            task = b.find_exec_task(IPerfExecTask)
-            yield task.stats.get_loader()
-
-    @output
-    def df(self):
-        return ValueTarget(self, "combined")
-
-    def run(self):
-        df = pl.concat((t.df.get() for t in self.ingest), how="vertical", rechunk=True)
-        self.df.assign(df)
-
-
-class IPerfSummaryPlot(TVRSParamsMixin, PlotTask):
     """
-    Generate a box plot showing the aggregate bitrate throughput
-    for each scenario.
+    Configure the iperf throughput bar plot.
 
-    The target is used as the categorical X axis. Boxes are aggregated by target
-    and each bar group shows combinations of variant/runtime parameterization,
-    if any.
+    The bar_plot configuration controls the X axis and other bar plot parameters.
+    The throughput metric is always on the Y axis; the column ref <throughput> can
+    be used as tile_yaxis (default) or in derived_columns.
 
-    Param columns for renaming:
-    - target, variant, runtime, scenario
-    - _hue: derived hue parameter, combines variant/runtime by default.
-
-    Metric columns for renaming:
-    - rcv_bits_per_second{_overhead}: The throughput as measured on the receiver
+    Metric columns available as column refs:
+    - <throughput>: Throughput in the unit selected by throughput_unit.
+    - <_metric_type>: One of "absolute", "delta" or "overhead".
     """
+
+    bar_plot: BarPlotConfig = config_field(
+        Config.REQUIRED, desc="Bar plot configuration."
+    )
+    drop_relative_baseline: bool = config_field(
+        True,
+        desc="Drop baseline rows from delta/overhead metric views.",
+    )
+    throughput_unit: ThroughputUnit = config_field(
+        ThroughputUnit.MiB_s,
+        by_value=True,
+        desc="Unit for throughput values. Applied after overhead computation.",
+    )
+
+
+class IPerfSummaryPlot(SlicePlotTask):
+    """
+    Generate a bar plot showing the receiver-side bitrate throughput.
+
+    Statistics (median + bootstrap CI) are computed across iterations and
+    expressed both as absolute values and as overhead relative to the
+    configured baseline.  The throughput unit is configurable via
+    ``throughput_unit``; scaling is applied after the overhead computation so
+    that the raw bits/s values are used for statistical inference.
+
+    Available column refs for plot configuration:
+    - <throughput>: Scaled throughput value (unit set by throughput_unit).
+    - <_metric_type>: Metric kind — "absolute", "delta", or "overhead".
+      Use tile_row or tile_col to split the plot by metric kind.
+    """
+
     task_namespace = "iperf"
     task_name = "summary-plot"
     task_config_class = IPerfSummaryConfig
@@ -63,84 +96,75 @@ class IPerfSummaryPlot(TVRSParamsMixin, PlotTask):
 
     @dependency
     def iperf_data(self):
-        return UnifiedIPerfStats(self.session, self.analysis_config)
+        for bench in self.slice_benchmarks:
+            task = bench.find_exec_task(IPerfExecTask)
+            yield task.stats.get_loader()
 
     @output
     def summary_plot(self):
         return PlotTarget(self, "summary")
 
     @output
-    def summary_overhead_plot(self):
-        return PlotTarget(self, "summary-overhead")
+    def summary_stats(self):
+        return Target(self, "summary-stats", ext="csv")
 
-    def _get_data(self):
-        """
-        Get the dataframe with derived columns.
-
-        Add a new column 'side' that encodes the 'sender' column as a string
-        instead of a boolean.
-        """
-        df = self.iperf_data.df.get()
-        df = df.with_columns(
-            pl.when(pl.col("sender") == True).then(pl.lit("sender")).otherwise(pl.lit("receiver")).alias("side"))
-        return df
-
-    def _plot_summary(self):
-        df = self._get_data()
-        df = df.with_columns((pl.col("bits_per_second") / 2**23).alias("MiB_per_second"))
-
-        grid_config = self.config.set_display_defaults(param_names={
-            self.config.hue: "Variant",
-            "MiB_per_second": "Throughput (MiB/s)"
-        })
-        with PlotGrid(self.summary_plot, df, grid_config) as grid:
-
-            def _doplot(tile, chunk):
-                sns.stripplot(chunk,
-                              x=tile.d.block_size_bytes,
-                              y=tile.d.MiB_per_second,
-                              hue=tile.d[self.config.hue],
-                              palette=tile.palette,
-                              ax=tile.ax,
-                              legend=False,
-                              dodge=True)
-
-            grid.map(_doplot)
-            grid.add_legend()
-
-        # ctx = self._get_agg_stream_stats()
-        # ctx.df = ctx.df.with_columns(pl.col("rcv_bits_per_second") / (8 * 2**20))
-        # ctx.relabel(default=dict(
-        #     _hue="Variant",
-        #     rcv_bits_per_second="Throughput (MiB/s)",
-        # ))
-        # ctx.sort()
-
-        # hue_kwargs = dict()
-        # if ctx.r._hue:
-        #     hue_kwargs.update(dict(palette=ctx.build_palette_for("_hue"), hue=ctx.r._hue))
-        # facet_col = ctx.r[self.config.tile_parameter]
-
-        # with new_facet(self.summary_plot.paths(), ctx.df, col=facet_col, col_wrap=3) as facet:
-        #     facet.map_dataframe(sns.boxplot, x=ctx.r.target, y=ctx.r.rcv_bits_per_second, **hue_kwargs)
-        #     facet.add_legend()
-
-    def _plot_overhead(self):
-        pass
-        # ctx = self._get_agg_stream_stats()
-        # ctx = ctx.compute_overhead(["rcv_bits_per_second"])
-        # ctx.relabel(default=dict(_hue="Variant", rcv_bits_per_second_overhead="% Throughput"))
-        # ctx.sort()
-
-        # hue_kwargs = dict()
-        # if ctx.r._hue:
-        #     hue_kwargs.update(dict(palette=ctx.build_palette_for("_hue"), hue=ctx.r._hue))
-        # facet_col = ctx.r[self.config.tile_parameter]
-
-        # with new_facet(self.summary_overhead_plot.paths(), ctx.df, col=facet_col, col_wrap=3) as facet:
-        #     facet.map_dataframe(sns.boxplot, x=ctx.r.target, y=ctx.r.rcv_bits_per_second_overhead, **hue_kwargs)
-        #     facet.add_legend()
+    def _collect_data(self) -> pl.DataFrame:
+        return pl.concat(
+            [loader.df.get() for loader in self.iperf_data],
+            how="vertical",
+            rechunk=True,
+        )
 
     def run_plot(self):
-        self._plot_summary()
-        self._plot_overhead()
+        df = self._collect_data()
+
+        # Use receiver-side throughput only.
+        df = df.filter(pl.col("side") == "receiver")
+
+        self.logger.info("Compute iperf throughput statistics")
+        stats = self.compute_overhead(
+            df, "bits_per_second", how="median", overhead_scale=100
+        )
+
+        # Scale absolute and delta metric types to the configured throughput unit.
+        # Overhead is a dimensionless percentage — leave it unchanged.
+        divisor = self.config.throughput_unit.divisor
+        scale_cond = pl.col("_metric_type") != "overhead"
+        stats = stats.with_columns(
+            pl.when(scale_cond)
+            .then(pl.col("bits_per_second") / divisor)
+            .otherwise(pl.col("bits_per_second"))
+            .alias("throughput"),
+            pl.when(scale_cond)
+            .then(pl.col("bits_per_second_low") / divisor)
+            .otherwise(pl.col("bits_per_second_low"))
+            .alias("throughput_low"),
+            pl.when(scale_cond)
+            .then(pl.col("bits_per_second_high") / divisor)
+            .otherwise(pl.col("bits_per_second_high"))
+            .alias("throughput_high"),
+        )
+
+        if self.config.drop_relative_baseline:
+            view_df = stats.filter(
+                (pl.col("_metric_type") == "absolute") | ~pl.col("_is_baseline")
+            )
+        else:
+            view_df = stats
+
+        self.logger.info("Generate iperf throughput plot")
+        with PlotGrid(self.summary_plot, view_df, self.config) as grid:
+            dump_df = grid.get_grid_df()
+            dump_df.write_csv(self.summary_stats.single_path())
+
+            plot_config = self.config.bar_plot.with_config_default(
+                tile_yaxis="<throughput>"
+            )
+            grid.map(
+                grid_barplot,
+                x=plot_config.tile_xaxis,
+                y=plot_config.tile_yaxis,
+                err=["throughput_low", "throughput_high"],
+                config=plot_config,
+            )
+            grid.add_legend()

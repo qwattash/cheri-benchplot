@@ -112,10 +112,12 @@ class LoadIPerfStats(DataFrameLoadTask):
         end_info = data["end"]
 
         snd = pl.DataFrame(end_info["sum_sent"]).with_columns(
-            cs.numeric().exclude("packets").cast(pl.Float64)
+            cs.numeric().exclude("packets").cast(pl.Float64),
+            pl.lit("sender").alias("side"),
         )
         rcv = pl.DataFrame(end_info["sum_received"]).with_columns(
-            cs.numeric().exclude("packets").cast(pl.Float64)
+            cs.numeric().exclude("packets").cast(pl.Float64),
+            pl.lit("receiver").alias("side"),
         )
         df = pl.concat([snd, rcv], how="vertical", rechunk=True)
 
