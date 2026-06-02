@@ -22,13 +22,16 @@ class SubCommand:
     Base class, this should be derived to provide specific implementations.
     The comments in the subclass will be used to generate help messages.
     """
+
     name: str = None
 
     def __init__(self):
         #: Parent handler, initialized when the subcommand is added to the parent object
         self.parent: Self | None = None
 
-    def _parse_config(self, path: Path | None, config_model: Type[Config], use_default: bool = False) -> Config:
+    def _parse_config(
+        self, path: Path | None, config_model: Type[Config], use_default: bool = False
+    ) -> Config:
         """
         Try to load a configuration file.
 
@@ -54,7 +57,12 @@ class SubCommand:
     def _dump_validation_error(self, err: ValidationError):
         self.logger.error("Validation failed %s", err)
 
-    def _get_session(self, user_config: BenchplotUserConfig, args: ap.Namespace, missing_ok: bool = False):
+    def _get_session(
+        self,
+        user_config: BenchplotUserConfig,
+        args: ap.Namespace,
+        missing_ok: bool = False,
+    ):
         """
         Helper to produce a session from argument parser information.
 
@@ -66,15 +74,11 @@ class SubCommand:
             raise FileNotFoundError(f"Session not found at {args.target}")
         return session
 
-    def _register_session_arg(self, parser, required=False):
+    def _register_session_arg(self, parser):
         """
         Helper to add the session ID argument to the given parser.
         """
-        parser.add_argument("target",
-                            type=Path,
-                            default=Path.cwd(),
-                            nargs="?" if not required else None,
-                            help="Path to the target session, defaults to the current working directory.")
+        parser.add_argument("target", type=Path, help="Path to the target session.")
 
     @property
     def logger(self):
@@ -97,8 +101,11 @@ class CommandLineTool:
     """
     Helper class to manage command line parsing and benchplot initialization.
     """
+
     def __init__(self, name: str):
-        self.parser = ap.ArgumentParser(description=f"CHERI plot and data analysis tool {name}")
+        self.parser = ap.ArgumentParser(
+            description=f"CHERI plot and data analysis tool {name}"
+        )
         #: User-friendly name for the tool help
         self.name = name
         #: SubCommand that handles setup if no subcommand is registered or no subcommand is specified on the CLI.
@@ -116,19 +123,29 @@ class CommandLineTool:
         """
         Register common options to the command line parser.
         """
-        self.parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
-        self.parser.add_argument("-vv", "--debug", action="store_true", help="Additional debug output")
-        self.parser.add_argument("-l", "--logfile", type=Path, help="logfile", default=None)
-        self.parser.add_argument("-w",
-                                 "--workers",
-                                 type=int,
-                                 help="Override max number of workers from configuration file",
-                                 default=None)
-        self.parser.add_argument("-c",
-                                 "--config",
-                                 type=Path,
-                                 help="User environment configuration file. Defaults to ~/.config/cheri-benchplot.json",
-                                 default=Path("~/.config/cheri-benchplot.json").expanduser())
+        self.parser.add_argument(
+            "-v", "--verbose", action="store_true", help="Verbose output"
+        )
+        self.parser.add_argument(
+            "-vv", "--debug", action="store_true", help="Additional debug output"
+        )
+        self.parser.add_argument(
+            "-l", "--logfile", type=Path, help="logfile", default=None
+        )
+        self.parser.add_argument(
+            "-w",
+            "--workers",
+            type=int,
+            help="Override max number of workers from configuration file",
+            default=None,
+        )
+        self.parser.add_argument(
+            "-c",
+            "--config",
+            type=Path,
+            help="User environment configuration file. Defaults to ~/.config/cheri-benchplot.json",
+            default=Path("~/.config/cheri-benchplot.json").expanduser(),
+        )
 
     def _parse_user_config(self, args) -> BenchplotUserConfig:
         """
@@ -171,7 +188,9 @@ class CommandLineTool:
                     exit(1)
             subcmd.handle(user_config, args)
         else:
-            assert self._default_handler, "Default handler must be set if no subcommand is registered"
+            assert self._default_handler, (
+                "Default handler must be set if no subcommand is registered"
+            )
             self._default_handler.handle(user_config, args)
 
     def set_default_handler(self, cmd: SubCommand):

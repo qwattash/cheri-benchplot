@@ -379,6 +379,45 @@ class Session:
             raise RuntimeError("Failed to push session")
         self.logger.info("Session bundle pushed")
 
+    def pull(self, host: str):
+        """
+        Pull a result bundle from the given host into /tmp.
+
+        :param host: scp-like host address
+        """
+        bundle_src = Path("/tmp") / self.session_root_path.with_suffix(".tar.gz").name
+        self.logger.info("Pull results from %s", host)
+        src_path = Path(host.split(":")[-1])
+        if "".join(src_path.suffixes) != ".tar.gz":
+            self.logger.error(
+                "Uncompressed results bundle source: %s, must be .tar.gz", src_path
+            )
+            raise RuntimeError("Invalid source bundle must be compressed")
+        result = subprocess.run(["scp", "-q", host, bundle_src])
+        if result.returncode:
+            self.logger.fatal("Failed to pull results from %s", host)
+            raise RuntimeError("Failed to pull session")
+
+        # Decompress the bundle results
+        session_tmp = bundle_src.parent / bundle_src.name.split(".")[0]
+        self.logger.debug("Create extracted results session at %s", session_tmp)
+        session_tmp.mkdir(exists_ok=True)
+        result = subprocess.run(
+            [
+                "tar",
+                "-z",
+                "-x",
+                "-f",
+                bundle_src,
+                session_tmp,
+            ]
+        )
+        if result.returncode:
+            self.logger.fatal("Failed to extract bundle")
+            raise RuntimeError("Failed to pull session")
+        self.logger.info("Session bundle results fetched")
+        return session_tmp
+
     def merge(self, other: "list[Session]"):
         """
         Merge data from other sessions into this one.

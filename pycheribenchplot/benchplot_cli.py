@@ -35,12 +35,12 @@ class SessionSubCommand(SubCommand):
         sub_create = session_subparsers.add_parser(
             "create", help="Create a new session from the given configuration."
         )
+        self._register_session_arg(sub_create)
         sub_create.add_argument(
             "pipeline_config",
             type=Path,
             help="Path to the pipeline configuration file.",
         )
-        self._register_session_arg(sub_create)
         sub_create.add_argument(
             "-f",
             "--force",
@@ -57,7 +57,7 @@ class SessionSubCommand(SubCommand):
         sub_merge = session_subparsers.add_parser(
             "merge", help="Merge partial results into a session"
         )
-        self._register_session_arg(sub_merge, required=True)
+        self._register_session_arg(sub_merge)
         sub_merge.add_argument(
             "-d",
             "--decode",
@@ -97,8 +97,9 @@ class SessionSubCommand(SubCommand):
         self._register_session_arg(sub_bundle)
 
         sub_push = session_subparsers.add_parser(
-            "push", help="Push the session to a remote location as a bundle"
+            "push", help="Push the session to a remote location as a bundle."
         )
+        self._register_session_arg(sub_push)
         sub_push.add_argument(
             "host",
             type=str,
@@ -111,7 +112,17 @@ class SessionSubCommand(SubCommand):
             type=Path,
             help="Output bundle directory, see `benchplot-cli session bundle`",
         )
-        self._register_session_arg(sub_push)
+
+        sub_pull = session_subparsers.add_parser(
+            "pull",
+            help="Fetch a remote results bundle and merge it with the target session.",
+        )
+        self._register_session_arg(sub_pull)
+        sub_pull.add_argument(
+            "host",
+            type=str,
+            help="SCP source location, a directory or .tar.gz containing the session results.",
+        )
 
     def handle_create(self, user_config, args):
         """
@@ -189,6 +200,11 @@ class SessionSubCommand(SubCommand):
         session = self._get_session(user_config, args)
         bundle_file = session.bundle(path=args.output)
         session.push(args.host, bundle_file)
+
+    def handle_pull(self, user_config, args):
+        session = self._get_session(user_config, args)
+        results_session = session.pull(args.output)
+        session.merge([results_session])
 
     def handle(self, user_config, args):
         if args.session_action is None:
