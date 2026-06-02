@@ -81,7 +81,8 @@ def test_configuration(wkinfo, session_path):
         user_config, workload, session_path, workdir=wkinfo.workload_config.parent
     )
     session.generate()
-    session.clean_all()
+    # Verify no errors
+    assert not session.scheduler.failed_tasks
 
 
 @pytest.mark.parametrize(
@@ -100,3 +101,6 @@ def test_analysis(wkinfo, tmp_path):
 
     # Run the analysis pass
     session.analyse(analysis_config)
+
+    # Verify no errors
+    assert not session.scheduler.failed_tasks
