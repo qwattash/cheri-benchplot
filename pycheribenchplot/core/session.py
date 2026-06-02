@@ -2,6 +2,7 @@ import logging
 import re
 import shutil
 import subprocess
+import tarfile
 from collections import defaultdict
 from pathlib import Path
 from typing import Type
@@ -343,25 +344,12 @@ class Session:
             self.logger.info("Replacing old bundle %s", bundle_file)
             bundle_file.unlink()
         if include_raw_data:
-            archive_src = self.session_root_path.parent
+            archive_src = self.session_root_path
         else:
             archive_src = self.get_plot_root_path()
 
-        result = subprocess.run(
-            [
-                "tar",
-                "-z",
-                "-c",
-                "-C",
-                archive_src,
-                "-f",
-                bundle_file,
-                self.session_root_path.name,
-            ]
-        )
-        if result.returncode:
-            self.logger.fatal("Failed to produce bundle")
-            raise RuntimeError("Failed to bundle session")
+        with tarfile.open(bundle_file, "w:gz") as bundle:
+            bundle.add(archive_src, self.session_root_path.name)
         self.logger.info("Archive created at %s", bundle_file)
         return bundle_file
 
@@ -379,44 +367,51 @@ class Session:
             raise RuntimeError("Failed to push session")
         self.logger.info("Session bundle pushed")
 
-    def pull(self, host: str):
+    def pull(self, host: str, output_path: Path) -> Path:
         """
-        Pull a result bundle from the given host into /tmp.
+        Pull a result bundle from the given host into the given directory.
 
         :param host: scp-like host address
+        :param output_path: path to an existing directory where the data is extracted
         """
-        bundle_src = Path("/tmp") / self.session_root_path.with_suffix(".tar.gz").name
+        bundle_file = self.session_root_path.with_suffix(".tar.gz").name
+        output_bundle = output_path / bundle_file
+
         self.logger.info("Pull results from %s", host)
+
         src_path = Path(host.split(":")[-1])
         if "".join(src_path.suffixes) != ".tar.gz":
             self.logger.error(
                 "Uncompressed results bundle source: %s, must be .tar.gz", src_path
             )
             raise RuntimeError("Invalid source bundle must be compressed")
-        result = subprocess.run(["scp", "-q", host, bundle_src])
+        self.logger.debug("Fetch results as %s", output_bundle)
+
+        result = subprocess.run(["scp", "-q", host, output_bundle])
         if result.returncode:
             self.logger.fatal("Failed to pull results from %s", host)
             raise RuntimeError("Failed to pull session")
 
-        # Decompress the bundle results
-        session_tmp = bundle_src.parent / bundle_src.name.split(".")[0]
-        self.logger.debug("Create extracted results session at %s", session_tmp)
-        session_tmp.mkdir(exists_ok=True)
-        result = subprocess.run(
-            [
-                "tar",
-                "-z",
-                "-x",
-                "-f",
-                bundle_src,
-                session_tmp,
-            ]
-        )
-        if result.returncode:
-            self.logger.fatal("Failed to extract bundle")
-            raise RuntimeError("Failed to pull session")
-        self.logger.info("Session bundle results fetched")
-        return session_tmp
+        with tarfile.open(output_bundle, "r") as bundle:
+            # Inspect the session bundle to find the session data
+            file_list = bundle.getnames()
+            for name in file_list:
+                bundle_entry = Path(name)
+                if bundle_entry.name == SESSION_RUN_FILE:
+                    bundled_session_root = bundle_entry.parent
+                    break
+            else:
+                self.logger.error("Invalid bundle, no session detected")
+                raise RuntimeError("Invalid bundle")
+
+            # Now extract the archive
+            bundle.extractall(output_path, filter="data")
+
+        extracted_session = output_path / bundled_session_root
+        # Verify that the session bundle is sensible
+        assert (extracted_session / SESSION_RUN_FILE).exists()
+        self.logger.info("Fetched session results bundle")
+        return extracted_session
 
     def merge(self, other: "list[Session]"):
         """

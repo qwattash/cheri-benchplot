@@ -203,8 +203,10 @@ class SessionSubCommand(SubCommand):
 
     def handle_pull(self, user_config, args):
         session = self._get_session(user_config, args)
-        results_session = session.pull(args.output)
-        session.merge([results_session])
+        with TemporaryDirectory(delete=False) as results:
+            result_path = session.pull(args.host, Path(results))
+            partial = self._get_session(user_config, ap.Namespace(target=result_path))
+            session.merge([partial])
 
     def handle(self, user_config, args):
         if args.session_action is None:
