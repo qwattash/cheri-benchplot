@@ -33,7 +33,7 @@
                 "commands": [
                     "sysctl security.cheri.runtime_revocation_default=0",
                     "sysctl security.cheri.lib_based_c18n_default=0",
-                    "ifconfig lo2 create",
+                    "[ -z \"$(ifconfig lo2)\" ] && ifconfig lo2 create",
                     "ifconfig lo2 mtu 1500 up",
                     "ifconfig lo2 10.0.0.1 netmask 255.255.255.0"
                 ]
@@ -42,10 +42,12 @@
         "generators": [{
             "handler": "iperf.exec",
             "task_options": {
+                "server_addr": "10.0.0.1",
                 "server_cpu": 0,
                 "client_cpu": 1,
                 "buffer_size": "{bufsize}",
-                "warmup": 10
+                "transfer_limit": "1G",
+                "streams": 1
             }
         }]
     }

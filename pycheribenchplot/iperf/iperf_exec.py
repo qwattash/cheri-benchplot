@@ -55,9 +55,15 @@ class IPerfConfig(Config):
     iperf_path: ConfigPath | None = config_field(
         None, desc="Path of iperf executable in the remote host, appended to PATH"
     )
-    use_localhost_server: bool = config_field(
+    spawn_server: bool = config_field(
         True,
-        desc="Spawn server on localhost, if False, the scenario must specify a remote_host",
+        desc="Spawn server, if False, must specify a different server_addr",
+    )
+    server_addr: str = config_field(
+        "localhost",
+        desc="Hostname of the server. By default we operate on localhost. "
+        "When this is set to anything other than localhost, the server setup "
+        "is expected to be done manually",
     )
     protocol: IPerfProtocol = config_field(IPerfProtocol.TCP, desc="Protocol to use")
     transfer_mode: IPerfTransferLimit = config_field(
@@ -67,12 +73,6 @@ class IPerfConfig(Config):
         "1G",
         desc="Transfer limit, format depends on `transfer_mode`",
         validate=Regexp(r"[0-9]+[KMG]?", error="Must be formatted as <N>{KMG}"),
-    )
-    remote_host: str = config_field(
-        "localhost",
-        desc="Hostname of the server. By default we operate on localhost. "
-        "When this is set to anything other than localhost, the server setup "
-        "is expected to be done manually",
     )
     mode: IPerfMode = config_field(IPerfMode.CLIENT_SEND, desc="Stream mode")
     streams: int = config_field(1, desc="Number of parallel client streams")
@@ -140,7 +140,6 @@ class IPerfExecTask(ExecutionTask):
     task_namespace = "iperf"
     task_name = "exec"
     task_config_class = IPerfConfig
-    script_template = "iperf.sh.jinja"
     public = True
 
     @output
@@ -151,6 +150,7 @@ class IPerfExecTask(ExecutionTask):
 
     def run(self):
         super().run()
+        self.script.set_template("iperf.sh.jinja")
         self.script.extend_context(
             {
                 "iperf_config": self.config,

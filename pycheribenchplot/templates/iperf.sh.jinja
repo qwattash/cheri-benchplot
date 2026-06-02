@@ -21,15 +21,15 @@
 {% block iteration_setup %}
   {{ super() }}
   # Per-iteration iperf setup
-  {% if iperf_config.use_localhost_server %}
+  {%- if iperf_config.spawn_server %}
     # Start localhost iperf server
-    verbose "Start iperf server for iteration {{ current_iteration }}"
+    {{- debug("Start iperf server for iteration {{ current_iteration }}") }}
     # We use a --one-off server to ensure that any process state is entirely reset
     iperf3 -s --one-off --daemon --pidfile /tmp/iperf_server.pid --interval 60 \
-           --bind {{ iperf_config.remote_host }} \
+           --bind {{ iperf_config.server_addr }} \
            {{ server_affinity() | trim }} {{ ipversion() | trim }}
     # Make sure we have time to get the server up
-    # XXX is this necessary?
+    {#- XXX is this necessary? #}
     sleep 1
   {% endif %}
 {% endblock iteration_setup %}
@@ -42,10 +42,6 @@
   {%- elif iperf_config.transfer_mode == IPerfTransferLimit.PACKETS -%}
     -k
   {%- endif -%}
-{%- endmacro %}
-
-{% macro tx_limit() -%}
-  {{ limit_flag() | trim }} {{ iperf_config.transfer_limit }}
 {%- endmacro %}
 
 {% macro mode_flag() -%}
@@ -92,23 +88,36 @@
   {%- endif -%}
 {%- endmacro %}
 
-{% macro client_args(curr_iter) -%}
-  -c {{ iperf_config.remote_host -}}
-  -P {{ iperf_config.streams -}}
-  --interval 60 {#- -#}
-  {{- tx_limit() | trim -}}
-  -l {{ iperf_config.buffer_size -}}
-  {{- client_affinity() | trim -}}
-  {{- protocol_flag() | trim -}}
-  {{- ipversion() | trim -}}
-  {{- mode_flag() | trim -}}
-  {{- mss_flag() | trim -}}
-  {{- nodelay_flag() | trim -}}
-  -J --logfile {{ iperf_gen_output_path(curr_iter) -}}
+{% macro warmup() -%}
+  {%- if iperf_config.warmup -%}
+    {#- Discard N seconds from the run results -#}
+    -O {{ iperf_config.warmup }}
+  {%- endif -%}
+{% endmacro %}
+
+{% macro opt_flags() %}
+  {{ [ client_affinity() | trim,
+       protocol_flag() | trim,
+       ipversion() | trim,
+       mode_flag() | trim,
+       mss_flag() | trim,
+       nodelay_flag() | trim,
+       warmup() | trim,
+   ] | select | join(" ") }}
+{% endmacro %}
+
+{% macro client_args(curr_iter) %}
+  -c {{ iperf_config.server_addr }} \
+  -P {{ iperf_config.streams }} \
+  --interval 60 \
+  {{ limit_flag() | trim }} {{ iperf_config.transfer_limit }} \
+  -l {{ iperf_config.buffer_size }} \
+  {{ opt_flags() | trim }} \
+  -J --logfile {{ iperf_gen_output_path(curr_iter) }}
 {% endmacro %}
 
 {% block iteration_exec %}
-  verbose "Run iperf3 iteration {{ current_iteration }}"
+  {{ debug("Run iperf3 iteration {{ current_iteration }}") }}
   {{ hwpmc.pmcstat(current_iteration) }} iperf3 {{ client_args(current_iteration) | trim }}
 {% endblock iteration_exec %}
 
