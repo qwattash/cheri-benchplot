@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from pathlib import Path
 import shutil
 
@@ -8,18 +9,49 @@ from pycheribenchplot.core.config import BenchplotUserConfig, PipelineConfig
 from pycheribenchplot.core.session import Session
 
 
-ASSETS_DIR = Path(__file__).parent.parent / "workloads"
-
-# Note: rely on the convention that analysis configurations will be named foo.analysis.json
-config_files = [
-    c
-    for c in ASSETS_DIR.rglob("*.json")
-    if not c.name.endswith(".analysis.json") and not c.name.endswith(".template.json")
-]
+WORKLOADS_ROOT = Path(__file__).parent.parent / "workloads"
 
 
-def generate_id(path):
-    return path.name
+@dataclass
+class WorkloadInfo:
+    session_name: str
+    workload_config: Path
+    data_path: Path | None = None
+    analysis_config: Path | None = None
+
+
+# Note: expect the following directory layout for workloads
+#
+# workloads
+#   - <group> (e.g. iperf)
+#     - data (sessions and collected data)
+#       - <session-name> (e.g. iperf.smoketest)
+#       - ...
+#     - analysis (analysis configurations)
+#       - <session-name>.json
+#       - ...
+#     - <session-name>.json (workload configuration e.g. iperf.smoketest.json)
+#
+workloads = []
+
+for group in WORKLOADS_ROOT.iterdir():
+    if not group.is_dir():
+        continue
+    for element in group.iterdir():
+        if element.name.endswith(".json"):
+            name = element.stem
+            wki = WorkloadInfo(name, element.absolute())
+            analysis_conf = group / "analysis" / element.name
+            if analysis_conf.exists():
+                wki.analysis_config = analysis_conf.absolute()
+            data = group / "data" / name
+            if data.exists() and data.is_dir():
+                wki.data_path = data.absolute()
+            workloads.append(wki)
+
+
+def generate_id(wkinfo):
+    return wkinfo.session_name
 
 
 @pytest.fixture
@@ -28,17 +60,17 @@ def session_path(tmp_path):
     return tmp_path
 
 
-@pytest.mark.parametrize("config_file", config_files, ids=generate_id)
-def test_configuration(config_file, session_path):
+@pytest.mark.parametrize("wkinfo", workloads, ids=generate_id)
+def test_configuration(wkinfo, session_path):
     """
     Attempt to parse every workload configuration an initialize the
     corresponding session.
     This ensures that all workloads configurations are properly maintained.
     """
     user_config = BenchplotUserConfig()
-    workload = PipelineConfig.load_json(config_file)
+    workload = PipelineConfig.load_json(wkinfo.workload_config)
     session = Session.make_new(
-        user_config, workload, session_path, workdir=config_file.parent
+        user_config, workload, session_path, workdir=wkinfo.workload_config.parent
     )
     session.generate()
 

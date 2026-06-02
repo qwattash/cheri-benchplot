@@ -12,7 +12,7 @@
             "matches": { "host": "morello-hybrid" },
             "host_system": {
                 "name": "hybrid-kernel",
-                "kernel": "GENERIC-NODEBUG",
+                "kernel": "GENERIC-MORELLO-NODEBUG",
                 "arch": "arm64",
                 "kernelabi": "hybrid",
                 "userabi": "benchmark"
