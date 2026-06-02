@@ -7,6 +7,7 @@ out
 
 dist
 build
-pycheribenchplot/ext/lib
 *.egg-info
-.hypothesis
+
+# Skip generated workload analysis output for now
+workloads/**/data/**/plots
