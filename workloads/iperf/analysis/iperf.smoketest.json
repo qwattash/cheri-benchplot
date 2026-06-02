@@ -1,0 +1,35 @@
+{
+    "plot": {
+        "plot_output_format": ["pdf", "pgf"]
+    },
+    "baseline": { "host": "morello-hybrid" },
+    "tasks": [{
+        "handler": "analysis.dynamic",
+        "task_options": {
+            "broadcast": [{
+                "handler": "iperf.summary-plot",
+                "task_options": {
+                    "hue": "<hue>",
+                    "tile_aspect": 4.5,
+                    "tile_row": "<metric>",
+                    "tile_sharey": false,
+                    "tile_sharex": true,
+                    "legend_columns": 3,
+                    "legend_position": "outer",
+                    "sort_by": ["<target>"],
+                    "sort_order": {
+                        "<target>": [
+                            "cheribsd-hybrid",
+                            "cheribsd-purecap"
+                        ]
+                    },
+                    "drop_relative_baseline": true,
+                    "bar_plot": {
+                        "tile_xaxis": "<bufsize>"
+                    }
+                }
+            }],
+            "fixed_axes": []
+        }
+    }]
+}
