@@ -1,0 +1,944 @@
+{
+    "ssh_key": "/home/qwattash/cheri/cheri-benchplot/workloads/iperf/~/.ssh/id_rsa",
+    "abort_on_failure": true,
+    "concurrent_instances": 0,
+    "concurrent_workers": 0,
+    "reuse_instances": false,
+    "use_builtin_symbolizer": true,
+    "remote_session_path": "/opt/benchmark-output",
+    "analysis_config": {
+        "plot": {
+            "parallel": false,
+            "plot_output_format": [
+                "pdf"
+            ]
+        },
+        "parameter_constants": {},
+        "baseline": null,
+        "use_builtin_symbolizer": true,
+        "tasks": []
+    },
+    "bundle_results": false,
+    "uuid": "56645c4d-e7ed-4c14-a009-f306544ff6d4",
+    "git_sha": {
+        "cheribuild": "92a432e1c0a047b2b0ff8f87ce5c4830fb09e40e",
+        "cheribsd": "3dc9d7087121783dce5654ca4ffdb2ee4ee5ea5f",
+        "qemu": "0f0babda7d12acacccc43cca341645dd8c47e693",
+        "llvm": "ec799dcf3582adff883b37cef569ff9afbd263a8"
+    },
+    "name": "iperf.smoketest",
+    "configurations": [
+        {
+            "name": "iperf",
+            "iterations": 2,
+            "generators": [
+                {
+                    "handler": "iperf.exec",
+                    "task_options": {
+                        "iperf_path": "",
+                        "spawn_server": true,
+                        "server_addr": "10.0.0.1",
+                        "protocol": "tcp",
+                        "transfer_mode": "bytes",
+                        "transfer_limit": "1G",
+                        "mode": "client-send",
+                        "streams": 1,
+                        "buffer_size": "64",
+                        "mss": null,
+                        "window_size": null,
+                        "warmup": null,
+                        "server_cpu": 0,
+                        "client_cpu": 1,
+                        "nodelay": false,
+                        "use_ipv4": true
+                    }
+                }
+            ],
+            "drop_iterations": 0,
+            "desc": "iperf3 smoketest",
+            "command_hooks": {
+                "setup": [
+                    {
+                        "matches": {},
+                        "commands": [
+                            "sysctl security.cheri.runtime_revocation_default=0",
+                            "sysctl security.cheri.lib_based_c18n_default=0",
+                            "[ -z \"$(ifconfig lo2)\" ] && ifconfig lo2 create",
+                            "ifconfig lo2 mtu 1500 up",
+                            "ifconfig lo2 10.0.0.1 netmask 255.255.255.0"
+                        ]
+                    }
+                ]
+            },
+            "uuid": "599954d8-bb8a-4e92-9d7a-e6436dd67cac",
+            "g_uuid": null,
+            "parameters": {
+                "host": "morello-hybrid",
+                "bufsize": "64",
+                "target": "hybrid-kernel"
+            },
+            "instance": {
+                "kernel": "GENERIC-MORELLO-NODEBUG",
+                "name": "hybrid-kernel",
+                "arch": "arm64",
+                "kernelabi": "hybrid",
+                "userabi": "benchmark"
+            }
+        },
+        {
+            "name": "iperf",
+            "iterations": 2,
+            "generators": [
+                {
+                    "handler": "iperf.exec",
+                    "task_options": {
+                        "iperf_path": "",
+                        "spawn_server": true,
+                        "server_addr": "10.0.0.1",
+                        "protocol": "tcp",
+                        "transfer_mode": "bytes",
+                        "transfer_limit": "1G",
+                        "mode": "client-send",
+                        "streams": 1,
+                        "buffer_size": "256",
+                        "mss": null,
+                        "window_size": null,
+                        "warmup": null,
+                        "server_cpu": 0,
+                        "client_cpu": 1,
+                        "nodelay": false,
+                        "use_ipv4": true
+                    }
+                }
+            ],
+            "drop_iterations": 0,
+            "desc": "iperf3 smoketest",
+            "command_hooks": {
+                "setup": [
+                    {
+                        "matches": {},
+                        "commands": [
+                            "sysctl security.cheri.runtime_revocation_default=0",
+                            "sysctl security.cheri.lib_based_c18n_default=0",
+                            "[ -z \"$(ifconfig lo2)\" ] && ifconfig lo2 create",
+                            "ifconfig lo2 mtu 1500 up",
+                            "ifconfig lo2 10.0.0.1 netmask 255.255.255.0"
+                        ]
+                    }
+                ]
+            },
+            "uuid": "9739dacd-e83c-4a40-82eb-995237504585",
+            "g_uuid": null,
+            "parameters": {
+                "host": "morello-hybrid",
+                "bufsize": "256",
+                "target": "hybrid-kernel"
+            },
+            "instance": {
+                "kernel": "GENERIC-MORELLO-NODEBUG",
+                "name": "hybrid-kernel",
+                "arch": "arm64",
+                "kernelabi": "hybrid",
+                "userabi": "benchmark"
+            }
+        },
+        {
+            "name": "iperf",
+            "iterations": 2,
+            "generators": [
+                {
+                    "handler": "iperf.exec",
+                    "task_options": {
+                        "iperf_path": "",
+                        "spawn_server": true,
+                        "server_addr": "10.0.0.1",
+                        "protocol": "tcp",
+                        "transfer_mode": "bytes",
+                        "transfer_limit": "1G",
+                        "mode": "client-send",
+                        "streams": 1,
+                        "buffer_size": "1K",
+                        "mss": null,
+                        "window_size": null,
+                        "warmup": null,
+                        "server_cpu": 0,
+                        "client_cpu": 1,
+                        "nodelay": false,
+                        "use_ipv4": true
+                    }
+                }
+            ],
+            "drop_iterations": 0,
+            "desc": "iperf3 smoketest",
+            "command_hooks": {
+                "setup": [
+                    {
+                        "matches": {},
+                        "commands": [
+                            "sysctl security.cheri.runtime_revocation_default=0",
+                            "sysctl security.cheri.lib_based_c18n_default=0",
+                            "[ -z \"$(ifconfig lo2)\" ] && ifconfig lo2 create",
+                            "ifconfig lo2 mtu 1500 up",
+                            "ifconfig lo2 10.0.0.1 netmask 255.255.255.0"
+                        ]
+                    }
+                ]
+            },
+            "uuid": "5510e2ca-c10c-445d-a6aa-09070d4a9595",
+            "g_uuid": null,
+            "parameters": {
+                "host": "morello-hybrid",
+                "bufsize": "1K",
+                "target": "hybrid-kernel"
+            },
+            "instance": {
+                "kernel": "GENERIC-MORELLO-NODEBUG",
+                "name": "hybrid-kernel",
+                "arch": "arm64",
+                "kernelabi": "hybrid",
+                "userabi": "benchmark"
+            }
+        },
+        {
+            "name": "iperf",
+            "iterations": 2,
+            "generators": [
+                {
+                    "handler": "iperf.exec",
+                    "task_options": {
+                        "iperf_path": "",
+                        "spawn_server": true,
+                        "server_addr": "10.0.0.1",
+                        "protocol": "tcp",
+                        "transfer_mode": "bytes",
+                        "transfer_limit": "1G",
+                        "mode": "client-send",
+                        "streams": 1,
+                        "buffer_size": "4K",
+                        "mss": null,
+                        "window_size": null,
+                        "warmup": null,
+                        "server_cpu": 0,
+                        "client_cpu": 1,
+                        "nodelay": false,
+                        "use_ipv4": true
+                    }
+                }
+            ],
+            "drop_iterations": 0,
+            "desc": "iperf3 smoketest",
+            "command_hooks": {
+                "setup": [
+                    {
+                        "matches": {},
+                        "commands": [
+                            "sysctl security.cheri.runtime_revocation_default=0",
+                            "sysctl security.cheri.lib_based_c18n_default=0",
+                            "[ -z \"$(ifconfig lo2)\" ] && ifconfig lo2 create",
+                            "ifconfig lo2 mtu 1500 up",
+                            "ifconfig lo2 10.0.0.1 netmask 255.255.255.0"
+                        ]
+                    }
+                ]
+            },
+            "uuid": "0f6c6fd7-0d6a-4d74-9cb3-1bcc1c7eb078",
+            "g_uuid": null,
+            "parameters": {
+                "host": "morello-hybrid",
+                "bufsize": "4K",
+                "target": "hybrid-kernel"
+            },
+            "instance": {
+                "kernel": "GENERIC-MORELLO-NODEBUG",
+                "name": "hybrid-kernel",
+                "arch": "arm64",
+                "kernelabi": "hybrid",
+                "userabi": "benchmark"
+            }
+        },
+        {
+            "name": "iperf",
+            "iterations": 2,
+            "generators": [
+                {
+                    "handler": "iperf.exec",
+                    "task_options": {
+                        "iperf_path": "",
+                        "spawn_server": true,
+                        "server_addr": "10.0.0.1",
+                        "protocol": "tcp",
+                        "transfer_mode": "bytes",
+                        "transfer_limit": "1G",
+                        "mode": "client-send",
+                        "streams": 1,
+                        "buffer_size": "16K",
+                        "mss": null,
+                        "window_size": null,
+                        "warmup": null,
+                        "server_cpu": 0,
+                        "client_cpu": 1,
+                        "nodelay": false,
+                        "use_ipv4": true
+                    }
+                }
+            ],
+            "drop_iterations": 0,
+            "desc": "iperf3 smoketest",
+            "command_hooks": {
+                "setup": [
+                    {
+                        "matches": {},
+                        "commands": [
+                            "sysctl security.cheri.runtime_revocation_default=0",
+                            "sysctl security.cheri.lib_based_c18n_default=0",
+                            "[ -z \"$(ifconfig lo2)\" ] && ifconfig lo2 create",
+                            "ifconfig lo2 mtu 1500 up",
+                            "ifconfig lo2 10.0.0.1 netmask 255.255.255.0"
+                        ]
+                    }
+                ]
+            },
+            "uuid": "5dfa11a1-ee21-44c3-8aed-d381f1742b8f",
+            "g_uuid": null,
+            "parameters": {
+                "host": "morello-hybrid",
+                "bufsize": "16K",
+                "target": "hybrid-kernel"
+            },
+            "instance": {
+                "kernel": "GENERIC-MORELLO-NODEBUG",
+                "name": "hybrid-kernel",
+                "arch": "arm64",
+                "kernelabi": "hybrid",
+                "userabi": "benchmark"
+            }
+        },
+        {
+            "name": "iperf",
+            "iterations": 2,
+            "generators": [
+                {
+                    "handler": "iperf.exec",
+                    "task_options": {
+                        "iperf_path": "",
+                        "spawn_server": true,
+                        "server_addr": "10.0.0.1",
+                        "protocol": "tcp",
+                        "transfer_mode": "bytes",
+                        "transfer_limit": "1G",
+                        "mode": "client-send",
+                        "streams": 1,
+                        "buffer_size": "64K",
+                        "mss": null,
+                        "window_size": null,
+                        "warmup": null,
+                        "server_cpu": 0,
+                        "client_cpu": 1,
+                        "nodelay": false,
+                        "use_ipv4": true
+                    }
+                }
+            ],
+            "drop_iterations": 0,
+            "desc": "iperf3 smoketest",
+            "command_hooks": {
+                "setup": [
+                    {
+                        "matches": {},
+                        "commands": [
+                            "sysctl security.cheri.runtime_revocation_default=0",
+                            "sysctl security.cheri.lib_based_c18n_default=0",
+                            "[ -z \"$(ifconfig lo2)\" ] && ifconfig lo2 create",
+                            "ifconfig lo2 mtu 1500 up",
+                            "ifconfig lo2 10.0.0.1 netmask 255.255.255.0"
+                        ]
+                    }
+                ]
+            },
+            "uuid": "7298eed5-c118-48bc-ad0a-b7e17f7943ee",
+            "g_uuid": null,
+            "parameters": {
+                "host": "morello-hybrid",
+                "bufsize": "64K",
+                "target": "hybrid-kernel"
+            },
+            "instance": {
+                "kernel": "GENERIC-MORELLO-NODEBUG",
+                "name": "hybrid-kernel",
+                "arch": "arm64",
+                "kernelabi": "hybrid",
+                "userabi": "benchmark"
+            }
+        },
+        {
+            "name": "iperf",
+            "iterations": 2,
+            "generators": [
+                {
+                    "handler": "iperf.exec",
+                    "task_options": {
+                        "iperf_path": "",
+                        "spawn_server": true,
+                        "server_addr": "10.0.0.1",
+                        "protocol": "tcp",
+                        "transfer_mode": "bytes",
+                        "transfer_limit": "1G",
+                        "mode": "client-send",
+                        "streams": 1,
+                        "buffer_size": "256K",
+                        "mss": null,
+                        "window_size": null,
+                        "warmup": null,
+                        "server_cpu": 0,
+                        "client_cpu": 1,
+                        "nodelay": false,
+                        "use_ipv4": true
+                    }
+                }
+            ],
+            "drop_iterations": 0,
+            "desc": "iperf3 smoketest",
+            "command_hooks": {
+                "setup": [
+                    {
+                        "matches": {},
+                        "commands": [
+                            "sysctl security.cheri.runtime_revocation_default=0",
+                            "sysctl security.cheri.lib_based_c18n_default=0",
+                            "[ -z \"$(ifconfig lo2)\" ] && ifconfig lo2 create",
+                            "ifconfig lo2 mtu 1500 up",
+                            "ifconfig lo2 10.0.0.1 netmask 255.255.255.0"
+                        ]
+                    }
+                ]
+            },
+            "uuid": "952dee70-57c7-47c8-af09-81adb45b0d3f",
+            "g_uuid": null,
+            "parameters": {
+                "host": "morello-hybrid",
+                "bufsize": "256K",
+                "target": "hybrid-kernel"
+            },
+            "instance": {
+                "kernel": "GENERIC-MORELLO-NODEBUG",
+                "name": "hybrid-kernel",
+                "arch": "arm64",
+                "kernelabi": "hybrid",
+                "userabi": "benchmark"
+            }
+        },
+        {
+            "name": "iperf",
+            "iterations": 2,
+            "generators": [
+                {
+                    "handler": "iperf.exec",
+                    "task_options": {
+                        "iperf_path": "",
+                        "spawn_server": true,
+                        "server_addr": "10.0.0.1",
+                        "protocol": "tcp",
+                        "transfer_mode": "bytes",
+                        "transfer_limit": "1G",
+                        "mode": "client-send",
+                        "streams": 1,
+                        "buffer_size": "1M",
+                        "mss": null,
+                        "window_size": null,
+                        "warmup": null,
+                        "server_cpu": 0,
+                        "client_cpu": 1,
+                        "nodelay": false,
+                        "use_ipv4": true
+                    }
+                }
+            ],
+            "drop_iterations": 0,
+            "desc": "iperf3 smoketest",
+            "command_hooks": {
+                "setup": [
+                    {
+                        "matches": {},
+                        "commands": [
+                            "sysctl security.cheri.runtime_revocation_default=0",
+                            "sysctl security.cheri.lib_based_c18n_default=0",
+                            "[ -z \"$(ifconfig lo2)\" ] && ifconfig lo2 create",
+                            "ifconfig lo2 mtu 1500 up",
+                            "ifconfig lo2 10.0.0.1 netmask 255.255.255.0"
+                        ]
+                    }
+                ]
+            },
+            "uuid": "3774e0bd-2452-4b33-8d2c-39b6f0ce4620",
+            "g_uuid": null,
+            "parameters": {
+                "host": "morello-hybrid",
+                "bufsize": "1M",
+                "target": "hybrid-kernel"
+            },
+            "instance": {
+                "kernel": "GENERIC-MORELLO-NODEBUG",
+                "name": "hybrid-kernel",
+                "arch": "arm64",
+                "kernelabi": "hybrid",
+                "userabi": "benchmark"
+            }
+        },
+        {
+            "name": "iperf",
+            "iterations": 2,
+            "generators": [
+                {
+                    "handler": "iperf.exec",
+                    "task_options": {
+                        "iperf_path": "",
+                        "spawn_server": true,
+                        "server_addr": "10.0.0.1",
+                        "protocol": "tcp",
+                        "transfer_mode": "bytes",
+                        "transfer_limit": "1G",
+                        "mode": "client-send",
+                        "streams": 1,
+                        "buffer_size": "64",
+                        "mss": null,
+                        "window_size": null,
+                        "warmup": null,
+                        "server_cpu": 0,
+                        "client_cpu": 1,
+                        "nodelay": false,
+                        "use_ipv4": true
+                    }
+                }
+            ],
+            "drop_iterations": 0,
+            "desc": "iperf3 smoketest",
+            "command_hooks": {
+                "setup": [
+                    {
+                        "matches": {},
+                        "commands": [
+                            "sysctl security.cheri.runtime_revocation_default=0",
+                            "sysctl security.cheri.lib_based_c18n_default=0",
+                            "[ -z \"$(ifconfig lo2)\" ] && ifconfig lo2 create",
+                            "ifconfig lo2 mtu 1500 up",
+                            "ifconfig lo2 10.0.0.1 netmask 255.255.255.0"
+                        ]
+                    }
+                ]
+            },
+            "uuid": "a8451fe1-a901-4c28-a9f2-1b99186c4275",
+            "g_uuid": null,
+            "parameters": {
+                "host": "morello-benchmark",
+                "bufsize": "64",
+                "target": "benchmark-kernel"
+            },
+            "instance": {
+                "kernel": "GENERIC-MORELLO-PURECAP-BENCHMARK-NODEBUG",
+                "name": "benchmark-kernel",
+                "arch": "arm64",
+                "kernelabi": "benchmark",
+                "userabi": "benchmark"
+            }
+        },
+        {
+            "name": "iperf",
+            "iterations": 2,
+            "generators": [
+                {
+                    "handler": "iperf.exec",
+                    "task_options": {
+                        "iperf_path": "",
+                        "spawn_server": true,
+                        "server_addr": "10.0.0.1",
+                        "protocol": "tcp",
+                        "transfer_mode": "bytes",
+                        "transfer_limit": "1G",
+                        "mode": "client-send",
+                        "streams": 1,
+                        "buffer_size": "256",
+                        "mss": null,
+                        "window_size": null,
+                        "warmup": null,
+                        "server_cpu": 0,
+                        "client_cpu": 1,
+                        "nodelay": false,
+                        "use_ipv4": true
+                    }
+                }
+            ],
+            "drop_iterations": 0,
+            "desc": "iperf3 smoketest",
+            "command_hooks": {
+                "setup": [
+                    {
+                        "matches": {},
+                        "commands": [
+                            "sysctl security.cheri.runtime_revocation_default=0",
+                            "sysctl security.cheri.lib_based_c18n_default=0",
+                            "[ -z \"$(ifconfig lo2)\" ] && ifconfig lo2 create",
+                            "ifconfig lo2 mtu 1500 up",
+                            "ifconfig lo2 10.0.0.1 netmask 255.255.255.0"
+                        ]
+                    }
+                ]
+            },
+            "uuid": "c1496bff-e8d4-4571-8809-21796c1e0c34",
+            "g_uuid": null,
+            "parameters": {
+                "host": "morello-benchmark",
+                "bufsize": "256",
+                "target": "benchmark-kernel"
+            },
+            "instance": {
+                "kernel": "GENERIC-MORELLO-PURECAP-BENCHMARK-NODEBUG",
+                "name": "benchmark-kernel",
+                "arch": "arm64",
+                "kernelabi": "benchmark",
+                "userabi": "benchmark"
+            }
+        },
+        {
+            "name": "iperf",
+            "iterations": 2,
+            "generators": [
+                {
+                    "handler": "iperf.exec",
+                    "task_options": {
+                        "iperf_path": "",
+                        "spawn_server": true,
+                        "server_addr": "10.0.0.1",
+                        "protocol": "tcp",
+                        "transfer_mode": "bytes",
+                        "transfer_limit": "1G",
+                        "mode": "client-send",
+                        "streams": 1,
+                        "buffer_size": "1K",
+                        "mss": null,
+                        "window_size": null,
+                        "warmup": null,
+                        "server_cpu": 0,
+                        "client_cpu": 1,
+                        "nodelay": false,
+                        "use_ipv4": true
+                    }
+                }
+            ],
+            "drop_iterations": 0,
+            "desc": "iperf3 smoketest",
+            "command_hooks": {
+                "setup": [
+                    {
+                        "matches": {},
+                        "commands": [
+                            "sysctl security.cheri.runtime_revocation_default=0",
+                            "sysctl security.cheri.lib_based_c18n_default=0",
+                            "[ -z \"$(ifconfig lo2)\" ] && ifconfig lo2 create",
+                            "ifconfig lo2 mtu 1500 up",
+                            "ifconfig lo2 10.0.0.1 netmask 255.255.255.0"
+                        ]
+                    }
+                ]
+            },
+            "uuid": "50b216ba-c1a7-4a61-90b5-53f3667a20dd",
+            "g_uuid": null,
+            "parameters": {
+                "host": "morello-benchmark",
+                "bufsize": "1K",
+                "target": "benchmark-kernel"
+            },
+            "instance": {
+                "kernel": "GENERIC-MORELLO-PURECAP-BENCHMARK-NODEBUG",
+                "name": "benchmark-kernel",
+                "arch": "arm64",
+                "kernelabi": "benchmark",
+                "userabi": "benchmark"
+            }
+        },
+        {
+            "name": "iperf",
+            "iterations": 2,
+            "generators": [
+                {
+                    "handler": "iperf.exec",
+                    "task_options": {
+                        "iperf_path": "",
+                        "spawn_server": true,
+                        "server_addr": "10.0.0.1",
+                        "protocol": "tcp",
+                        "transfer_mode": "bytes",
+                        "transfer_limit": "1G",
+                        "mode": "client-send",
+                        "streams": 1,
+                        "buffer_size": "4K",
+                        "mss": null,
+                        "window_size": null,
+                        "warmup": null,
+                        "server_cpu": 0,
+                        "client_cpu": 1,
+                        "nodelay": false,
+                        "use_ipv4": true
+                    }
+                }
+            ],
+            "drop_iterations": 0,
+            "desc": "iperf3 smoketest",
+            "command_hooks": {
+                "setup": [
+                    {
+                        "matches": {},
+                        "commands": [
+                            "sysctl security.cheri.runtime_revocation_default=0",
+                            "sysctl security.cheri.lib_based_c18n_default=0",
+                            "[ -z \"$(ifconfig lo2)\" ] && ifconfig lo2 create",
+                            "ifconfig lo2 mtu 1500 up",
+                            "ifconfig lo2 10.0.0.1 netmask 255.255.255.0"
+                        ]
+                    }
+                ]
+            },
+            "uuid": "3e7dcfe7-56bf-42bd-8951-b22f1d49a0f4",
+            "g_uuid": null,
+            "parameters": {
+                "host": "morello-benchmark",
+                "bufsize": "4K",
+                "target": "benchmark-kernel"
+            },
+            "instance": {
+                "kernel": "GENERIC-MORELLO-PURECAP-BENCHMARK-NODEBUG",
+                "name": "benchmark-kernel",
+                "arch": "arm64",
+                "kernelabi": "benchmark",
+                "userabi": "benchmark"
+            }
+        },
+        {
+            "name": "iperf",
+            "iterations": 2,
+            "generators": [
+                {
+                    "handler": "iperf.exec",
+                    "task_options": {
+                        "iperf_path": "",
+                        "spawn_server": true,
+                        "server_addr": "10.0.0.1",
+                        "protocol": "tcp",
+                        "transfer_mode": "bytes",
+                        "transfer_limit": "1G",
+                        "mode": "client-send",
+                        "streams": 1,
+                        "buffer_size": "16K",
+                        "mss": null,
+                        "window_size": null,
+                        "warmup": null,
+                        "server_cpu": 0,
+                        "client_cpu": 1,
+                        "nodelay": false,
+                        "use_ipv4": true
+                    }
+                }
+            ],
+            "drop_iterations": 0,
+            "desc": "iperf3 smoketest",
+            "command_hooks": {
+                "setup": [
+                    {
+                        "matches": {},
+                        "commands": [
+                            "sysctl security.cheri.runtime_revocation_default=0",
+                            "sysctl security.cheri.lib_based_c18n_default=0",
+                            "[ -z \"$(ifconfig lo2)\" ] && ifconfig lo2 create",
+                            "ifconfig lo2 mtu 1500 up",
+                            "ifconfig lo2 10.0.0.1 netmask 255.255.255.0"
+                        ]
+                    }
+                ]
+            },
+            "uuid": "e8537d75-a95b-4377-b43d-46ecd7395259",
+            "g_uuid": null,
+            "parameters": {
+                "host": "morello-benchmark",
+                "bufsize": "16K",
+                "target": "benchmark-kernel"
+            },
+            "instance": {
+                "kernel": "GENERIC-MORELLO-PURECAP-BENCHMARK-NODEBUG",
+                "name": "benchmark-kernel",
+                "arch": "arm64",
+                "kernelabi": "benchmark",
+                "userabi": "benchmark"
+            }
+        },
+        {
+            "name": "iperf",
+            "iterations": 2,
+            "generators": [
+                {
+                    "handler": "iperf.exec",
+                    "task_options": {
+                        "iperf_path": "",
+                        "spawn_server": true,
+                        "server_addr": "10.0.0.1",
+                        "protocol": "tcp",
+                        "transfer_mode": "bytes",
+                        "transfer_limit": "1G",
+                        "mode": "client-send",
+                        "streams": 1,
+                        "buffer_size": "64K",
+                        "mss": null,
+                        "window_size": null,
+                        "warmup": null,
+                        "server_cpu": 0,
+                        "client_cpu": 1,
+                        "nodelay": false,
+                        "use_ipv4": true
+                    }
+                }
+            ],
+            "drop_iterations": 0,
+            "desc": "iperf3 smoketest",
+            "command_hooks": {
+                "setup": [
+                    {
+                        "matches": {},
+                        "commands": [
+                            "sysctl security.cheri.runtime_revocation_default=0",
+                            "sysctl security.cheri.lib_based_c18n_default=0",
+                            "[ -z \"$(ifconfig lo2)\" ] && ifconfig lo2 create",
+                            "ifconfig lo2 mtu 1500 up",
+                            "ifconfig lo2 10.0.0.1 netmask 255.255.255.0"
+                        ]
+                    }
+                ]
+            },
+            "uuid": "9aa8bb20-d95c-470f-aab6-e7da97b1291a",
+            "g_uuid": null,
+            "parameters": {
+                "host": "morello-benchmark",
+                "bufsize": "64K",
+                "target": "benchmark-kernel"
+            },
+            "instance": {
+                "kernel": "GENERIC-MORELLO-PURECAP-BENCHMARK-NODEBUG",
+                "name": "benchmark-kernel",
+                "arch": "arm64",
+                "kernelabi": "benchmark",
+                "userabi": "benchmark"
+            }
+        },
+        {
+            "name": "iperf",
+            "iterations": 2,
+            "generators": [
+                {
+                    "handler": "iperf.exec",
+                    "task_options": {
+                        "iperf_path": "",
+                        "spawn_server": true,
+                        "server_addr": "10.0.0.1",
+                        "protocol": "tcp",
+                        "transfer_mode": "bytes",
+                        "transfer_limit": "1G",
+                        "mode": "client-send",
+                        "streams": 1,
+                        "buffer_size": "256K",
+                        "mss": null,
+                        "window_size": null,
+                        "warmup": null,
+                        "server_cpu": 0,
+                        "client_cpu": 1,
+                        "nodelay": false,
+                        "use_ipv4": true
+                    }
+                }
+            ],
+            "drop_iterations": 0,
+            "desc": "iperf3 smoketest",
+            "command_hooks": {
+                "setup": [
+                    {
+                        "matches": {},
+                        "commands": [
+                            "sysctl security.cheri.runtime_revocation_default=0",
+                            "sysctl security.cheri.lib_based_c18n_default=0",
+                            "[ -z \"$(ifconfig lo2)\" ] && ifconfig lo2 create",
+                            "ifconfig lo2 mtu 1500 up",
+                            "ifconfig lo2 10.0.0.1 netmask 255.255.255.0"
+                        ]
+                    }
+                ]
+            },
+            "uuid": "702c21ee-60ee-4577-a13d-bca89361be78",
+            "g_uuid": null,
+            "parameters": {
+                "host": "morello-benchmark",
+                "bufsize": "256K",
+                "target": "benchmark-kernel"
+            },
+            "instance": {
+                "kernel": "GENERIC-MORELLO-PURECAP-BENCHMARK-NODEBUG",
+                "name": "benchmark-kernel",
+                "arch": "arm64",
+                "kernelabi": "benchmark",
+                "userabi": "benchmark"
+            }
+        },
+        {
+            "name": "iperf",
+            "iterations": 2,
+            "generators": [
+                {
+                    "handler": "iperf.exec",
+                    "task_options": {
+                        "iperf_path": "",
+                        "spawn_server": true,
+                        "server_addr": "10.0.0.1",
+                        "protocol": "tcp",
+                        "transfer_mode": "bytes",
+                        "transfer_limit": "1G",
+                        "mode": "client-send",
+                        "streams": 1,
+                        "buffer_size": "1M",
+                        "mss": null,
+                        "window_size": null,
+                        "warmup": null,
+                        "server_cpu": 0,
+                        "client_cpu": 1,
+                        "nodelay": false,
+                        "use_ipv4": true
+                    }
+                }
+            ],
+            "drop_iterations": 0,
+            "desc": "iperf3 smoketest",
+            "command_hooks": {
+                "setup": [
+                    {
+                        "matches": {},
+                        "commands": [
+                            "sysctl security.cheri.runtime_revocation_default=0",
+                            "sysctl security.cheri.lib_based_c18n_default=0",
+                            "[ -z \"$(ifconfig lo2)\" ] && ifconfig lo2 create",
+                            "ifconfig lo2 mtu 1500 up",
+                            "ifconfig lo2 10.0.0.1 netmask 255.255.255.0"
+                        ]
+                    }
+                ]
+            },
+            "uuid": "8d977d07-259d-4e6d-9b9f-b8fedfc476b0",
+            "g_uuid": null,
+            "parameters": {
+                "host": "morello-benchmark",
+                "bufsize": "1M",
+                "target": "benchmark-kernel"
+            },
+            "instance": {
+                "kernel": "GENERIC-MORELLO-PURECAP-BENCHMARK-NODEBUG",
+                "name": "benchmark-kernel",
+                "arch": "arm64",
+                "kernelabi": "benchmark",
+                "userabi": "benchmark"
+            }
+        }
+    ]
+}

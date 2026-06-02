@@ -1,0 +1,131 @@
+{
+	"start":	{
+		"connected":	[{
+				"socket":	6,
+				"local_host":	"10.0.0.1",
+				"local_port":	23861,
+				"remote_host":	"10.0.0.1",
+				"remote_port":	5201
+			}],
+		"version":	"iperf 3.21",
+		"system_info":	"FreeBSD morello-dev 15.0-CURRENT FreeBSD 15.0-CURRENT #1 purecap-kernel-eval-20260528-n278848-d56632fa13ce-dirty: Thu May 28 22:01:42 BST 2026     root@morello-dev:/usr/obj/home/am2419/cheri/cheribsd/arm64.aarch64c/sys/GENERIC-MORELLO-NODEBUG arm64",
+		"timestamp":	{
+			"time":	"Fri, 05 Jun 2026 08:46:50 UTC",
+			"timesecs":	1780649210,
+			"timemillisecs":	1780649210043
+		},
+		"connecting_to":	{
+			"host":	"10.0.0.1",
+			"port":	5201
+		},
+		"cookie":	"aze4rpnr4w7c72lix63sf5ohxnjwu4d3ex3e",
+		"tcp_mss_default":	1460,
+		"target_bitrate":	0,
+		"fq_rate":	0,
+		"sock_bufsize":	0,
+		"sndbuf_actual":	32768,
+		"rcvbuf_actual":	65536,
+		"test_start":	{
+			"protocol":	"TCP",
+			"num_streams":	1,
+			"blksize":	262144,
+			"omit":	0,
+			"duration":	0,
+			"bytes":	1073741824,
+			"blocks":	0,
+			"reverse":	0,
+			"tos":	0,
+			"target_bitrate":	0,
+			"bidir":	0,
+			"fqrate":	0,
+			"interval":	0,
+			"gso":	0,
+			"gro":	0
+		}
+	},
+	"intervals":	[{
+			"streams":	[{
+					"socket":	6,
+					"start":	0,
+					"end":	3.118536,
+					"seconds":	3.1185359954833984,
+					"bytes":	1073741824,
+					"bits_per_second":	2754476653.2888746,
+					"retransmits":	512,
+					"snd_cwnd":	262839,
+					"snd_wnd":	1675200,
+					"rtt":	218,
+					"rttvar":	187,
+					"pmtu":	-1,
+					"reorder":	-1,
+					"omitted":	false,
+					"sender":	true
+				}],
+			"sum":	{
+				"start":	0,
+				"end":	3.118536,
+				"seconds":	3.1185359954833984,
+				"bytes":	1073741824,
+				"bits_per_second":	2754476653.2888746,
+				"retransmits":	512,
+				"omitted":	false,
+				"sender":	true
+			}
+		}],
+	"end":	{
+		"streams":	[{
+				"sender":	{
+					"socket":	6,
+					"start":	0,
+					"end":	3.118536,
+					"seconds":	3.118536,
+					"bytes":	1073741824,
+					"bits_per_second":	2754476649.2995429,
+					"retransmits":	512,
+					"reorder":	-1,
+					"max_snd_cwnd":	262839,
+					"max_snd_wnd":	1675200,
+					"max_rtt":	218,
+					"min_rtt":	218,
+					"mean_rtt":	218,
+					"sender":	true
+				},
+				"receiver":	{
+					"socket":	6,
+					"start":	0,
+					"end":	3.118746,
+					"seconds":	3.118536,
+					"bytes":	1072693248,
+					"bits_per_second":	2751601439.8094621,
+					"sender":	true
+				}
+			}],
+		"sum_sent":	{
+			"start":	0,
+			"end":	3.118536,
+			"seconds":	3.118536,
+			"bytes":	1073741824,
+			"bits_per_second":	2754476649.2995429,
+			"retransmits":	512,
+			"sender":	true
+		},
+		"sum_received":	{
+			"start":	0,
+			"end":	3.118746,
+			"seconds":	3.118746,
+			"bytes":	1072693248,
+			"bits_per_second":	2751601439.8094621,
+			"sender":	true
+		},
+		"cpu_utilization_percent":	{
+			"host_total":	24.287025084000057,
+			"host_user":	0.129637629974143,
+			"host_system":	24.468405594961407,
+			"remote_total":	21.542989466339872,
+			"remote_user":	0,
+			"remote_system":	21.509739114597963
+		},
+		"sender_tcp_congestion":	"cubic",
+		"receiver_tcp_congestion":	"cubic"
+	}
+}
