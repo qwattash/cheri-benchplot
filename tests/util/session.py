@@ -1,6 +1,7 @@
 #
 # Utility for standard session and benchmark fixtures
 #
+import copy
 import typing
 import uuid
 from pathlib import Path
@@ -58,6 +59,30 @@ class TaskFactory:
     def get_session(self) -> Session:
         assert self._session is not None
         return self._session
+
+    def add_configuration(
+        self, name: str, parameters: dict, iterations: int = 3
+    ) -> "TaskFactory":
+        """
+        Add an additional benchmark configuration to the session.
+        Must be called before build().
+        The instance block is copied from the first (default) configuration.
+        """
+        assert self._session is None, "Can not add configurations after build()"
+        session_id = uuid.UUID(self._unrolled_config["uuid"])
+        dataset_id = uuid.uuid3(session_id, name)
+        instance = copy.deepcopy(self._unrolled_config["configurations"][0]["instance"])
+        self._unrolled_config["configurations"].append(
+            {
+                "name": name,
+                "iterations": iterations,
+                "parameters": parameters,
+                "generators": [],
+                "uuid": str(dataset_id),
+                "instance": instance,
+            }
+        )
+        return self
 
     def add_gen_task(self, task_type: typing.Type[Task], task_config: Config = None):
         handler = task_type.task_namespace + "." + task_type.task_name
