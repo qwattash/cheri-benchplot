@@ -380,7 +380,7 @@ class Session:
         self.logger.info("Pull results from %s", host)
 
         src_path = Path(host.split(":")[-1])
-        if "".join(src_path.suffixes) != ".tar.gz":
+        if not "".join(src_path.suffixes).endswith(".tar.gz"):
             self.logger.error(
                 "Uncompressed results bundle source: %s, must be .tar.gz", src_path
             )
