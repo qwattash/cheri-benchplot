@@ -8,28 +8,32 @@
 
 {% block global_setup %}
   {{ super() }}
-  {% if iperf_config.iperf_path %}
+  {% if iperf_config.iperf_path -%}
     # Make sure iperf3 is in PATH
     export PATH="${PATH}:{{ iperf_config.iperf_path }}"
-  {% endif %}
+  {% endif -%}
+  # Ensure that we have no stray iperf data from previous runs
+  find . -regex './[0-9]+/.*\.json' -delete
 {% endblock global_setup %}
 
 {% macro server_affinity() %}
-  {% if iperf_config.server_cpu %}-A {{ iperf_config.server_cpu }}{% endif %}
+  {%- if iperf_config.server_cpu is not none -%}
+    -A {{ iperf_config.server_cpu }}
+  {%- endif -%}
 {% endmacro %}
 
 {% block iteration_setup %}
   {{ super() }}
   # Per-iteration iperf setup
-  {%- if iperf_config.spawn_server %}
+  {% if iperf_config.spawn_server %}
     # Start localhost iperf server
     {{- debug("Start iperf server for iteration {{ current_iteration }}") }}
     # We use a --one-off server to ensure that any process state is entirely reset
-    iperf3 -s --one-off --daemon --pidfile /tmp/iperf_server.pid --interval 60 \
+    iperf3 -s --one-off --daemon --pidfile /tmp/iperf_server.pid --interval 0 \
            --bind {{ iperf_config.server_addr }} \
            {{ server_affinity() | trim }} {{ ipversion() | trim }}
     # Make sure we have time to get the server up
-    {#- XXX is this necessary? #}
+    {# XXX is this necessary? #}
     sleep 1
   {% endif %}
 {% endblock iteration_setup %}
@@ -106,19 +110,16 @@
    ] | select | join(" ") }}
 {% endmacro %}
 
-{% macro client_args(curr_iter) %}
-  -c {{ iperf_config.server_addr }} \
-  -P {{ iperf_config.streams }} \
-  --interval 60 \
-  {{ limit_flag() | trim }} {{ iperf_config.transfer_limit }} \
-  -l {{ iperf_config.buffer_size }} \
-  {{ opt_flags() | trim }} \
-  -J --logfile {{ iperf_gen_output_path(curr_iter) }}
-{% endmacro %}
-
 {% block iteration_exec %}
   {{ debug("Run iperf3 iteration {{ current_iteration }}") }}
-  {{ hwpmc.pmcstat(current_iteration) }} iperf3 {{ client_args(current_iteration) | trim }}
+  {{ hwpmc.pmcstat(current_iteration) }} iperf3 \
+      -c {{ iperf_config.server_addr }} \
+      -P {{ iperf_config.streams }} \
+      --interval 0 \
+      {{ limit_flag() | trim }} {{ iperf_config.transfer_limit }} \
+      -l {{ iperf_config.buffer_size }} \
+      {{ opt_flags() | trim }} \
+      -J --logfile {{ iperf_gen_output_path(current_iteration) }}
 {% endblock iteration_exec %}
 
 {% block global_teardown %}
