@@ -108,11 +108,14 @@ class LoadIPerfStats(DataFrameLoadTask):
         RTT measurements for latency are taken for each stream, so we
         generate one row for each stream for each iteration.
         """
-        # Some iperf output files contain multiple concatenated JSON records
-        # (e.g. a warmup run followed by the main run). Read only the first.
-        raw = open(path, "r").read()
-        data, _ = json.JSONDecoder().raw_decode(raw)
+        # Expect a single json data entry
+        data = json.load(open(path, "r"))
         end_info = data["end"]
+
+        # Double check that there are no errors
+        if "error" in data:
+            self.logger.fatal("Detected error in iperf data: %s", data["error"])
+            raise RuntimeError("Dataset corruption")
 
         _keep = ["seconds", "bytes", "bits_per_second", "side"]
         snd = (
