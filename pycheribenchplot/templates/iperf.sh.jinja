@@ -29,7 +29,7 @@
     # Start localhost iperf server
     {{- debug("Start iperf server for iteration {{ current_iteration }}") }}
     # We use a --one-off server to ensure that any process state is entirely reset
-    iperf3 -s --one-off --daemon --pidfile /tmp/iperf_server.pid --interval 0 \
+    iperf3 -s --one-off --daemon --pidfile /tmp/iperf_server.pid \
            --bind {{ iperf_config.server_addr }} \
            {{ server_affinity() | trim }} {{ ipversion() | trim }}
     # Make sure we have time to get the server up
