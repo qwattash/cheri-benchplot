@@ -1,9 +1,11 @@
+import re
 from dataclasses import dataclass
 from logging import Logger
 from pathlib import Path
 from threading import Lock
 from typing import IO
 
+from beautysh import BashFormatter
 from jinja2 import Environment, PackageLoader, TemplateNotFound, select_autoescape
 
 from .config import PlatformArch, PlatformABI
@@ -26,6 +28,7 @@ ENV = Environment(
     autoescape=select_autoescape(),
     trim_blocks=True,
     lstrip_blocks=True,
+    keep_trailing_newline=True,
 )
 
 
@@ -115,16 +118,15 @@ class TemplateContextBase:
             )
             raise RuntimeError("Target error")
 
-        script = tmpl.render(**self._context)
-
-        # def lstrip_spaces(line):
-        #     # Keep anything that starts with a tab
-        #     if line.startswith(" "):
-        #         line = line.lstrip(" ")
-        #     return line + "\n"
-
-        # fd.writelines(map(lstrip_spaces, script.splitlines()))
-        fd.write(script)
+        source = tmpl.render(**self._context)
+        formatter = BashFormatter(indent_size=4)
+        result, error = formatter.beautify_string(source)
+        if error:
+            self.logger.error("Failed to format script: %s", result.error)
+            raise RuntimeError("Script render error")
+        # Collapse multiple newlines as well
+        sanitized_source = re.sub(r"\n{3,}", "\n\n", result)
+        fd.write(sanitized_source)
 
 
 class ScriptContext(TemplateContextBase):
