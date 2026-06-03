@@ -9,6 +9,13 @@
             "broadcast": [{
                 "handler": "iperf.summary-plot",
                 "task_options": {
+                    "derived_columns": {
+                        "bufsize_order": {
+                            "transform": "bytes2int",
+                            "name": "bufsize_order",
+                            "src": "<bufsize>"
+                        }
+                    },
                     "hue": "<target>",
                     "tile_aspect": 4.5,
                     "tile_row": "<_metric_type>",
@@ -16,7 +23,7 @@
                     "tile_sharex": true,
                     "legend_columns": 3,
                     "legend_position": "outer",
-                    "sort_by": ["<target>"],
+                    "sort_by": ["<target>", "<bufsize_order>"],
                     "sort_order": {
                         "<target>": [
                             "hybrid-kernel",
