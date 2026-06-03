@@ -79,6 +79,8 @@ class ColumnTransform(Enum):
     Map = "map"
     #: Map values to byte size (with suffix)
     MapToBytes = "map2bytes"
+    #: Map byte string with suffixes to integers
+    MapFromBytes = "bytes2int"
     #: Concatenate columns (as strings)
     StrCat = "concat"
 
@@ -97,6 +99,36 @@ def int2bytes(value: int) -> str:
     if idx >= len(SUFFIXES):
         return f"{int(value)} 2^{10 * idx}"
     return f"{int(value)}{SUFFIXES[idx]}"
+
+
+def bytes2int(value: str) -> int:
+    """
+    Coerce a string bytes value with optional K/M/G/T suffix to the corresponding
+    integer value.
+
+    Handles both single-letter (K, M, G, T) and IEC-style (KiB, MiB, GiB, TiB)
+    suffixes. All multipliers are binary powers (K = 1024).
+    """
+    MULTIPLIERS = {
+        "": 1,
+        "b": 1,
+        "k": 2**10,
+        "kib": 2**10,
+        "m": 2**20,
+        "mib": 2**20,
+        "g": 2**30,
+        "gib": 2**30,
+        "t": 2**40,
+        "tib": 2**40,
+    }
+    m = re.fullmatch(r"(\d+)\s*([a-zA-Z]*)", value.strip())
+    if m is None:
+        raise ValueError(f"Cannot parse byte string: {value!r}")
+    num = int(m.group(1))
+    suffix = m.group(2).lower()
+    if suffix not in MULTIPLIERS:
+        raise ValueError(f"Unknown suffix {suffix!r} in byte string: {value!r}")
+    return num * MULTIPLIERS[suffix]
 
 
 @dataclass
@@ -486,11 +518,11 @@ class PlotGrid(AbstractContextManager):
         self._register_ref(ref, spec.name)
 
     def _gen_derived_map_fn(
-        self, ref: str, spec: DerivedColumnConfig, fn: Callable[str, [Any]]
+        self, ref: str, spec: DerivedColumnConfig, fn: Callable, return_dtype=pl.String
     ):
         src = self.ref_to_col(spec.src)
         self._df = self._df.with_columns(
-            pl.col(src).map_elements(fn, return_dtype=str).alias(spec.name)
+            pl.col(src).map_elements(fn, return_dtype=return_dtype).alias(spec.name)
         )
         self._register_ref(ref, spec.name)
 
@@ -521,6 +553,10 @@ class PlotGrid(AbstractContextManager):
                     self._gen_derived_map(ref, spec)
                 case ColumnTransform.MapToBytes:
                     self._gen_derived_map_fn(ref, spec, int2bytes)
+                case ColumnTransform.MapFromBytes:
+                    self._gen_derived_map_fn(
+                        ref, spec, bytes2int, return_dtype=pl.Int64
+                    )
                 case ColumnTransform.StrCat:
                     self._gen_derived_concat(ref, spec)
                 case _:
