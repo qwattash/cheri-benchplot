@@ -4,3 +4,7 @@
 [submodule "tools/dwarf-scanner"]
 	path = tools/dwarf-scanner
 	url = https://github.com/qwattash/cheri-dwarf-scanner.git
+[submodule "workloads"]
+	path = workloads
+	url = git@github.com:qwattash/cheri-workload-results.git
+	branch = main
