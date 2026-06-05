@@ -1,22 +1,21 @@
 #!/usr/bin/env python
 
-import argparse as ap
 from pathlib import Path
 
-from pycheribenchplot.core.config import BenchplotUserConfig
 from pycheribenchplot.core.gui import GUIManager
-from pycheribenchplot.core.session import Session
 from pycheribenchplot.core.tool import CommandLineTool, SubCommand
 
 
 class GUISubCommand(SubCommand):
     def register_options(self, parser):
         super().register_options(parser)
-        parser.add_argument("target",
-                            type=Path,
-                            default=Path.cwd(),
-                            nargs="?",
-                            help="Target session path, defaults to the current working directory.")
+        parser.add_argument(
+            "target",
+            type=Path,
+            default=Path.cwd(),
+            nargs="?",
+            help="Target session path, defaults to the current working directory.",
+        )
 
     def handle(self, user_config, args):
         """
