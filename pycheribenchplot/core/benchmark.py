@@ -203,6 +203,14 @@ class Benchmark:
             )
         return rootfs_path
 
+    @property
+    def repr_parameters(self):
+        """
+        Human-readable parameters in string form
+        """
+        values = ", ".join([f"{k}={v}" for k, v in self.parameters.items()])
+        return f"{{{values}}}"
+
     def _ensure_dir_tree(self):
         """
         Ensure that per-dataset directories are ready

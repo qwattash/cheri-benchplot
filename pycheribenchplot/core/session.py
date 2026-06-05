@@ -454,8 +454,39 @@ class Session:
         """
         Merge the given run directory into the current session.
         """
+
+        def _handle_file_merge(src, dst):
+            src, dst = Path(src), Path(dst)
+            workload_dst = dst.relative_to(self.get_data_root_path())
+
+            # Skip known non-data files, specifically the runner scripts
+            if dst.name == self.workload_run_script and dst.exists():
+                return dst
+
+            # Find the benchmark descriptor this belongs to
+            for desc in self.parameterization_matrix["descriptor"]:
+                if desc.get_benchmark_data_path().name == workload_dst.parts[0]:
+                    self.logger.debug(
+                        "Merge data for %s: %s", desc.repr_parameters, workload_dst
+                    )
+                    if dst.exists():
+                        self.logger.info(
+                            "Replace data for %s: %s",
+                            desc.repr_parameters,
+                            workload_dst,
+                        )
+                    return shutil.copy2(src, dst)
+            else:
+                self.logger.debug("Skip merging non-data path %s", dst)
+            return dst
+
         self.logger.debug("Merge run directory %s", data_root_dir)
-        shutil.copytree(data_root_dir, self.get_data_root_path(), dirs_exist_ok=True)
+        shutil.copytree(
+            data_root_dir,
+            self.get_data_root_path(),
+            dirs_exist_ok=True,
+            copy_function=_handle_file_merge,
+        )
 
     def get_instance_configuration(self, g_uuid: UUID | str) -> InstanceConfig:
         """
