@@ -603,9 +603,10 @@ class PlotGrid(AbstractContextManager):
                 # in the column.
                 if not set(data_values).issubset(data_order):
                     self.logger.error(
-                        "Invalid sort weights mapping for %s, requires %s",
+                        "Invalid sort weights mapping for %s, requires %s, got %s",
                         col,
-                        data_values,
+                        list(data_values),
+                        list(data_order),
                     )
                     raise ConfigurationError("Invalid sort_order configuration")
             n_weights = max(len(data_order), n_weights)
