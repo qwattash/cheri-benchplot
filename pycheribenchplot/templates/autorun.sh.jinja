@@ -62,6 +62,12 @@ if [ -n "${OPT_RC_SETUP}" ]; then
     sysrc benchplot_session="${SESSION_WORKDIR}"
     echo "done"
 
+    # Clear / create autorun logfile
+    # Note that if sbin/daemon finds it here, it will retain the
+    # current permission
+    truncate -s 0 "${SESSION_WORKDIR}/auto-run.log"
+    chmod 644 "${SESSION_WORKDIR}/auto-run.log"
+
     echo "Prepare kernel to boot..."
     case "${ARCH}" in
         {% for arch, run_info in autorun_info.items() %}

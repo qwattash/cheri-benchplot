@@ -1,9 +1,9 @@
-{#
+{#-
  # Runner script for unixbench benchmarks.
  # This extends the standard runner-script.sh.jinja template
  #
  # Note that we use hyperfine to get a more precise timing than from `time`
- #}
+ -#}
 {% extends "runner-script.sh.jinja" %}
 
 {% import "timing.inc.jinja" as timing with context %}
@@ -11,7 +11,7 @@
 
 {% block functions %}
   {{ super() }}
-  {% if kbuild_config.toolchain %}
+  {% if kbuild_config.toolchain -%}
   export X_COMPILER_TYPE=clang \
          XCXX={{ kbuild_config.toolchain }}/clang++ \
          XCPP={{ kbuild_config.toolchain }}/clang-cpp \
@@ -25,7 +25,7 @@
          XOBJCOPY={{ kbuild_config.toolchain }}/llvm-objcopy \
          XRANLIB={{ kbuild_config.toolchain }}/llvm-ranlib \
          XLLVM_LINK={{ kbuild_config.toolchain }}/llvm-link
-  {% endif %}
+  {%- endif %}
 {% endblock %}
 
 {% macro _kernel_build_command(iter) %}
