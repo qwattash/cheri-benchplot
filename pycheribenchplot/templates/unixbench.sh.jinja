@@ -1,35 +1,44 @@
-{#
+{#-
  # Runner script for unixbench benchmarks.
  # This extends the standard runner-script.sh.jinja template
  #
  # This supports the timing and hwpmc extensions.
- #}
+ -#}
 {% extends "runner-script.sh.jinja" %}
 
 {% import "timing.inc.jinja" as timing with context %}
 {% import "hwpmc.inc.jinja" as hwpmc with context %}
 
 {% macro _unixbench_test() %}
-  {{ unixbench_config.unixbench_path or '.' }}/pgms/{{ scenario_config.test_name }}
+  {% if unixbench_config.test_name == UnixBenchTest.SYSCALL %}
+    syscall {{ unixbench_config.duration | int }} getpid
+  {% else %}
+    "INVALID_UNIXBENCH_TEST"
+  {% endif %}
 {% endmacro %}
 
 {% macro _unixbench_command(iter) %}
-  {{ hwpmc.pmcstat(iter) }} {{ _unixbench_test() | trim }} {{ scenario_config.duration | int }} {{ scenario_config.args | join(' ') }}
+
 {% endmacro %}
 
 {% block global_setup %}
   {{ super() }}
   # Required to set fixed workload instead of using time as duration
   export UNIXBENCH_FIXED_WORKLOAD=1
-  # Required for some unixbench tests to point to the pgms directory
-  export UB_BINDIR="{{ unixbench_config.unixbench_path or '.' }}/pgms"
+  {% if unixbench_config.unixbench_path %}
+    export PATH="${PATH}:{{ unixbench_config.unixbench_path }}/pgms"
+    # Required for some unixbench tests to point to the pgms directory
+    export UB_BINDIR="{{ unixbench_config.unixbench_path }}/pgms"
+  {% else %}
+    export UB_BINDIR="$(which dhry2)"
+  {% endif %}
 {% endblock %}
 
 {% block iteration_exec %}
-  echo "Run unixbench {{ scenario_config.test }} iterations {{ current_iteration }}"
+  echo "Run unixbench {{ unixbench_config.test }} iterations {{ current_iteration }}"
 
   {% call() timing.timeit(current_iteration) -%}
-    {{ _unixbench_command(current_iteration) | trim }}
+    {{ hwpmc.pmcstat(current_iteration) }} {{ _unixbench_test() | trim }}
   {%- endcall %}
 {% endblock %}
 

@@ -14,6 +14,7 @@ from . import (
     pmc,
     qps,
     subobject,
+    unixbench,
 )
 
 __all__ = (
@@ -26,4 +27,5 @@ __all__ = (
     pmc,
     qps,
     subobject,
+    unixbench,
 )

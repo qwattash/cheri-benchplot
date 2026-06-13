@@ -1,1 +1,3 @@
-from . import summary, unixbench_exec
+from . import unixbench_exec
+
+__all__ = (unixbench_exec,)
