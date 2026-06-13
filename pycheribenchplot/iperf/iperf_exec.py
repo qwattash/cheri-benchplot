@@ -108,6 +108,7 @@ class LoadIPerfStats(DataFrameLoadTask):
         RTT measurements for latency are taken for each stream, so we
         generate one row for each stream for each iteration.
         """
+        exec_task = self.target.task
         # Expect a single json data entry
         data = json.load(open(path, "r"))
         end_info = data["end"]
@@ -118,6 +119,8 @@ class LoadIPerfStats(DataFrameLoadTask):
             raise RuntimeError("Dataset corruption")
 
         _keep = ["seconds", "bytes", "bits_per_second", "side"]
+        if exec_task.config.protocol == IPerfProtocol.UDP:
+            _keep += ["jitter_ms", "packets", "lost_packets", "lost_percent"]
         snd = (
             pl.DataFrame(end_info["sum_sent"])
             .with_columns(
