@@ -167,15 +167,15 @@ class TimingSlicePlotTask(SlicePlotTask):
         return df
 
     def _do_plot(self, target, view_df, y_display_name):
-        view_df = view_df.rename({"times": y_display_name})
+        plot_config = self.config.with_config_default(tile_yaxis="<times>")
 
         with PlotGrid(target, view_df, self.config) as grid:
             grid.map(
                 grid_barplot,
-                self.config,
-                x=self.config.tile_xaxis,
-                y=y_display_name,
+                x=plot_config.tile_xaxis,
+                y=plot_config.tile_yaxis,
                 err=["times_low", "times_high"],
+                config=plot_config,
             )
             grid.add_legend()
 
