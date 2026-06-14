@@ -375,6 +375,7 @@ class PlotGrid(AbstractContextManager):
         # May override height if needed
         self._height = 3
         self._figure = None
+        self._subfigure = None
         self._grid = None
         self._margin_titles = []
         # This will be populated after the frame sort order is known
@@ -449,7 +450,8 @@ class PlotGrid(AbstractContextManager):
                 )
             kwargs["height_ratios"] = values
 
-        self._grid = self._figure.subplots(nrows, ncols, **kwargs)
+        self._subfigure = self._figure.subfigures(1, 1)
+        self._grid = self._subfigure.subplots(nrows, ncols, **kwargs)
 
         if self._config.title:
             self._figure.suptitle(self._config.title)
@@ -864,7 +866,7 @@ class PlotGrid(AbstractContextManager):
             # reserved_y_fraction = 1 - self._config.legend_vspace
             # self._figure.subplots_adjust(top=reserved_y_fraction, bottom=self._config.legend_vspace)
             # legend_anchor = (0., reserved_y_fraction, 1., self._config.legend_vspace)
-            self._figure.legend(
+            self._subfigure.legend(
                 legend_handles.values(),
                 legend_handles.keys(),
                 ncols=self._config.legend_columns,
