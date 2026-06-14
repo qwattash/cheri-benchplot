@@ -6,7 +6,7 @@ from marshmallow import ValidationError, validates_schema
 from ..core.artefact import Target
 from ..core.config import config_field
 from ..core.plot import PlotTarget, SlicePlotTask
-from ..core.plot_util import (
+from ..core.plot_grid import (
     BarPlotConfig,
     LinePlotConfig,
     PlotGrid,

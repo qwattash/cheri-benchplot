@@ -447,7 +447,7 @@ import polars as pl
 
 from ..core.config import config_field
 from ..core.plot import PlotTarget, SlicePlotTask
-from ..core.plot_util import BarPlotConfig, PlotGrid, PlotGridConfig, grid_barplot
+from ..core.plot_grid import BarPlotConfig, PlotGrid, PlotGridConfig, grid_barplot
 from ..core.task import dependency, output
 from .exec import MyExecTask
 

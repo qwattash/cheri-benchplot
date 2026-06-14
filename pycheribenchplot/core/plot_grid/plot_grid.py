@@ -847,10 +847,6 @@ class PlotGrid(AbstractContextManager):
         if self._config.legend_position == "inner":
             self.map(lambda tile, chunk: tile.ax.legend(**legend_kwargs))
         elif self._config.legend_position == "outer":
-            # hue_keys = self._df[self.tile_hue].unique(maintain_order=True)
-            # labels = self._df[self.tile_hue].unique(maintain_order=True)
-            # patches = [Patch(color=self._color_palette[hue_key]) for hue_key in hue_keys]
-
             legend_handles = {}
 
             def _merge_legend_handles(tile, _chunk):
@@ -862,10 +858,6 @@ class PlotGrid(AbstractContextManager):
             self.map(_merge_legend_handles)
             legend_kwargs.update(self._legend_kwargs)
 
-            # DEPRECATED Make space between the title and the subplot axes
-            # reserved_y_fraction = 1 - self._config.legend_vspace
-            # self._figure.subplots_adjust(top=reserved_y_fraction, bottom=self._config.legend_vspace)
-            # legend_anchor = (0., reserved_y_fraction, 1., self._config.legend_vspace)
             self._subfigure.legend(
                 legend_handles.values(),
                 legend_handles.keys(),

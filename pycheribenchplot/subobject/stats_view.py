@@ -8,7 +8,7 @@ from ..core.analysis import SliceAnalysisTask
 from ..core.artefact import Target
 from ..core.config import Config, config_field
 from ..core.plot import PlotTarget, SlicePlotTask
-from ..core.plot_util import BarPlotConfig, PlotGrid, PlotGridConfig, grid_barplot
+from ..core.plot_grid import BarPlotConfig, PlotGrid, PlotGridConfig, grid_barplot
 from ..core.task import dependency, output
 from .scan_dwarf import AnnotateImpreciseSubobjectLayouts, AnnotateLayoutsWithVLA
 

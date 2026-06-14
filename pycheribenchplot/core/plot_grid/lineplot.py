@@ -18,17 +18,26 @@ class LinePlotConfig(PlotConfigBase):
     """
     Display grid configuration extension specific to line plots.
     """
-    tile_xaxis: ColRef = config_field(Config.REQUIRED, desc="ColRef to use for the X axis of each tile.")
+
+    tile_xaxis: ColRef = config_field(
+        Config.REQUIRED, desc="ColRef to use for the X axis of each tile."
+    )
     tile_xscale: Scale = config_field(Scale.Linear, desc="Scale for the X axis.")
     tile_yscale: Scale = config_field(Scale.Linear, desc="Scale for the Y axis.")
     line_width: float | None = config_field(None, desc="Width of the lines.")
-    marker_fill: bool = config_field(True, desc="When false, only draw the marker outline.")
+    marker_fill: bool = config_field(
+        True, desc="When false, only draw the marker outline."
+    )
     marker_size: float | None = config_field(None, desc="Size of the markers.")
-    marker: ColRef | None = config_field(None, desc="ColRef containing the markers. Should align on the hue.")
-    linestyle: ColRef | None = config_field(None, desc="ColRef containing the linestyles. Should align on the hue.")
+    marker: ColRef | None = config_field(
+        None, desc="ColRef containing the markers. Should align on the hue."
+    )
+    linestyle: ColRef | None = config_field(
+        None, desc="ColRef containing the linestyles. Should align on the hue."
+    )
 
     def uses_param(self, name: str) -> bool:
-        return (super().uses_param(name) or self.tile_xaxis == name)
+        return super().uses_param(name) or self.tile_xaxis == name
 
     def lineplot_kwargs(self) -> dict:
         style_kwargs = {}
@@ -45,12 +54,14 @@ def generate_x_coords(df: pl.DataFrame, x: str) -> pl.DataFrame:
     pass
 
 
-def grid_lineplot(tile: PlotTile,
-                  chunk: pl.DataFrame,
-                  config: LinePlotConfig,
-                  x: str,
-                  y: str,
-                  err: tuple[str, str] | None = None):
+def grid_lineplot(
+    tile: PlotTile,
+    chunk: pl.DataFrame,
+    config: LinePlotConfig,
+    x: str,
+    y: str,
+    err: tuple[str, str] | None = None,
+):
     """
     Create a line plot with error bars.
     """
@@ -90,7 +101,7 @@ def grid_lineplot(tile: PlotTile,
     tile.ax.set_xlabel(x)
     tile.ax.set_ylabel(y)
 
-    for (hue_label, ), hue_group in view.group_by(tile.hue, maintain_order=True):
+    for (hue_label,), hue_group in view.group_by(tile.hue, maintain_order=True):
         color = tile.palette[hue_label]
         plot_kwargs = config.lineplot_kwargs()
         if marker_ref := config.marker:
@@ -102,6 +113,18 @@ def grid_lineplot(tile: PlotTile,
             err_low = (hue_group[y] - hue_group[lower]).abs()
             err_high = (hue_group[upper] - hue_group[y]).abs()
             plot_kwargs.update({"yerr": (err_low, err_high), "capsize": 4})
-            tile.ax.errorbar(hue_group["_x"], hue_group[y], color=color, label=hue_label, **plot_kwargs)
+            tile.ax.errorbar(
+                hue_group["_x"],
+                hue_group[y],
+                color=color,
+                label=hue_label,
+                **plot_kwargs,
+            )
         else:
-            tile.ax.plot(hue_group["_x"], hue_group[y], color=color, label=hue_label, **plot_kwargs)
+            tile.ax.plot(
+                hue_group["_x"],
+                hue_group[y],
+                color=color,
+                label=hue_label,
+                **plot_kwargs,
+            )

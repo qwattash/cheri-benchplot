@@ -11,7 +11,7 @@ import seaborn as sns
 from ..core.artefact import Target
 from ..core.config import Any, Config, ConfigPath, config_field
 from ..core.plot import PlotTarget, PlotTask
-from ..core.plot_util import BarPlotConfig, PlotGrid, PlotGridConfig, grid_barplot
+from ..core.plot_grid import BarPlotConfig, PlotGrid, PlotGridConfig, grid_barplot
 from ..core.task import dependency, output
 from .cloc_exec import CheriBSDClocExecTask, ClocExecTask
 

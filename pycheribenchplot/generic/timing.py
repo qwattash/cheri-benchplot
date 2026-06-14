@@ -7,7 +7,7 @@ import polars as pl
 from ..core.artefact import DataFrameLoadTask, RemoteBenchmarkIterationTarget
 from ..core.config import Config, config_field
 from ..core.plot import PlotTarget, SlicePlotTask
-from ..core.plot_util import BarPlotConfig, PlotGrid, PlotGridConfig, grid_barplot
+from ..core.plot_grid import BarPlotConfig, PlotGrid, PlotGridConfig, grid_barplot
 from ..core.task import ExecutionTask, dependency, output
 
 

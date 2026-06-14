@@ -4,7 +4,7 @@ import matplotlib as mpl
 
 from .analysis import AnalysisTask, SliceAnalysisTask
 from .artefact import Target
-from .plot_util.theme import default_theme
+from .plot_grid import default_theme
 from .task import Task
 
 
@@ -15,6 +15,7 @@ class PlotTarget(Target):
     The output path depends on whether the plot is associated to the session or to
     a single dataset.
     """
+
     def __init__(self, task: Task, output_id: str = "plot", **kwargs):
         kwargs.setdefault("ext", task.analysis_config.plot.plot_output_format)
         super().__init__(task, output_id, **kwargs)
@@ -92,6 +93,7 @@ class PlotTask(AnalysisTask, PlotTaskMixin):
     This task generates one or more plots that are unique within a session.
     This can be used to produce summary or aggregate plots from all the session datasets.
     """
+
     def run(self):
         self._run_with_plot_sandbox()
 
@@ -103,5 +105,6 @@ class SlicePlotTask(SliceAnalysisTask, PlotTaskMixin):
     Note that the plot output will depend on the current slice ID.
     See :class:`PlotTarget`.
     """
+
     def run(self):
         self._run_with_plot_sandbox()

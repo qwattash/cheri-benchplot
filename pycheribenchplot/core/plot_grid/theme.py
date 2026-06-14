@@ -35,13 +35,11 @@ default_theme = {
     "axes.spines.top": False,
     "axes.spines.right": False,
     "axes.prop_cycle": default_color_cycle,
-
     # Grid settings
     "axes.grid.axis": "both",
     "grid.color": ".8",
     "grid.linewidth": 1,
     "grid.linestyle": "-",
-
     # Ticks
     "xtick.color": ".15",
     "ytick.color": ".15",
@@ -53,17 +51,14 @@ default_theme = {
     "ytick.minor.size": 0,
     "xtick.major.pad": 7,
     "ytick.major.pad": 7,
-
     # Lines
     "lines.solid_capstyle": "round",
     "lines.linewidth": 1.5,
-
     # Patches (bars, etc.)
     "patch.linewidth": 0.5,
     "patch.facecolor": "#1f77b4",
     "patch.edgecolor": "white",
     "patch.force_edgecolor": True,
-
     # Text
     "text.color": ".15",
     "font.family": ["sans-serif"],
@@ -75,7 +70,6 @@ default_theme = {
     "ytick.labelsize": "medium",
     "legend.fontsize": "medium",
     "legend.title_fontsize": None,
-
     # Legend
     "legend.frameon": False,
     "legend.numpoints": 1,

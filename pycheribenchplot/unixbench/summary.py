@@ -1,16 +1,12 @@
 from dataclasses import dataclass
-from typing import Optional
 
 import polars as pl
-import seaborn as sns
 
 from ..core.analysis import AnalysisTask
 from ..core.artefact import ValueTarget
-from ..core.config import config_field
 from ..core.plot import PlotTarget, PlotTask
-from ..core.plot_util import PlotGrid, PlotGridConfig, grid_pointplot
+from ..core.plot_grid import PlotGrid, PlotGridConfig, grid_pointplot
 from ..core.task import dependency, output
-from ..core.tvrs import TVRSParamsMixin, TVRSPlotConfig
 from .unixbench_exec import UnixBenchExec
 
 
@@ -26,6 +22,7 @@ class UnixBenchLoad(AnalysisTask):
     """
     Load all unixbench run data.
     """
+
     task_namespace = "unixbench"
     task_name = "load"
 
@@ -44,10 +41,11 @@ class UnixBenchLoad(AnalysisTask):
         self.df.assign(df)
 
 
-class UnixBenchSummaryPlot(TVRSParamsMixin, PlotTask):
+class UnixBenchSummaryPlot(PlotTask):
     """
     Generate a plot for each Unixbench scenario.
     """
+
     task_namespace = "unixbench"
     task_name = "summary"
     task_config_class = UnixBenchSummaryConfig
@@ -71,22 +69,30 @@ class UnixBenchSummaryPlot(TVRSParamsMixin, PlotTask):
         # Transition to the new stats infrastructure
         stats = self.compute_overhead(df, "times", how="median", overhead_scale=100)
 
-        grid_config = self.config.set_display_defaults(param_names={
-            self.config.hue: self.config.hue.capitalize(),
-            "times": "Time (s)"
-        })
+        grid_config = self.config.set_display_defaults(
+            param_names={
+                self.config.hue: self.config.hue.capitalize(),
+                "times": "Time (s)",
+            }
+        )
 
         median_df = stats.filter(_metric_type="absolute")
         with PlotGrid(self.summary, median_df, grid_config) as grid:
-            grid.map(grid_pointplot, x="scenario", y="times", err=["times_low", "times_high"])
+            grid.map(
+                grid_pointplot, x="scenario", y="times", err=["times_low", "times_high"]
+            )
             grid.add_legend()
 
-        grid_config = self.config.set_display_defaults(param_names={
-            self.config.hue: self.config.hue.capitalize(),
-            "times": "% Time Overhead"
-        })
+        grid_config = self.config.set_display_defaults(
+            param_names={
+                self.config.hue: self.config.hue.capitalize(),
+                "times": "% Time Overhead",
+            }
+        )
 
         ovh_df = stats.filter(_metric_type="overhead")
         with PlotGrid(self.overhead, ovh_df, grid_config) as grid:
-            grid.map(grid_pointplot, x="scenario", y="times", err=["times_low", "times_high"])
+            grid.map(
+                grid_pointplot, x="scenario", y="times", err=["times_low", "times_high"]
+            )
             grid.add_legend()
