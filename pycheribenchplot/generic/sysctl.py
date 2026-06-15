@@ -145,7 +145,7 @@ class SysctlSlicePlotTask(SlicePlotTask):
         return PlotTarget(self, "ovh")
 
     def _is_sysctl_name_aligned(self, df) -> bool:
-        return df.group_by("dataset_id").count().n_unique("count") == 1
+        return df.group_by("dataset_id").len().n_unique("count") == 1
 
     def _collect_sysctl_data(self):
         """

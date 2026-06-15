@@ -139,7 +139,7 @@ class CoordGenerator:
         coord_step = 1.0
         seed_group = (
             df.group_by(independent_var, maintain_order=True)
-            .count()
+            .len()
             .with_columns(pl.lit(1).alias(seed_col))
         )
         seed_coord = seed_group.with_columns(
