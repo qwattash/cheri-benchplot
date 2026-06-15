@@ -763,6 +763,9 @@ class ConfigMeta(type):
                     )
                     metadata.update(value.metadata)
 
+                if default is not Config.REQUIRED:
+                    metadata.pop("required")
+
                 overrides[key] = parent.type
                 namespace[key] = config_field(default, field_kwargs, **metadata)
 
