@@ -157,7 +157,9 @@ class PMCExecConfig(Config):
     )
     counters: list[str] = config_field(list, desc="List of PMC counters to use")
     group: PMCSet | None = config_field(
-        None, desc="Pre-defined group of counters, overrides 'counters' option"
+        None,
+        by_value=True,
+        desc="Pre-defined group of counters, overrides 'counters' option",
     )
     follow_fork: bool = config_field(False, desc="Trace children on fork")
 
