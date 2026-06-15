@@ -372,3 +372,119 @@ def test_validate_annotated_field():
 
     _config = TestConfig.schema().load({"custom": "123"})
     _config = TestConfig.schema().load({"custom": "123", "opt": "987"})
+
+
+def test_config_json_imports(tmp_path):
+    import json
+
+    main_json = tmp_path / "main.json"
+    import_json = tmp_path / "imported.json"
+
+    with open(import_json, "w") as f:
+        json.dump(
+            {
+                "str_val": "imported_str",
+                "int_val": 42,
+                "list_val": ["x", "y"],
+                "dict_val": {"foo": "bar"},
+            },
+            f,
+        )
+
+    with open(main_json, "w") as f:
+        json.dump({"str_val": "main_str", "nested_val": "{import:imported.json}"}, f)
+
+    config = DemoNested.load_json(main_json)
+    assert config.str_val == "main_str"
+    assert config.nested_val is not None
+    assert config.nested_val.str_val == "imported_str"
+    assert config.nested_val.int_val == 42
+    assert config.nested_val.list_val == ["x", "y"]
+    assert config.nested_val.dict_val == {"foo": "bar"}
+
+
+@dataclass
+class DeepNested(Config):
+    str_val: str | None = config_field(None)
+    int_val: int | None = config_field(None)
+    nested_val: "DeepNested | None" = config_field(None)
+
+
+def test_config_json_recursive_imports(tmp_path):
+    import json
+
+    sub_dir = tmp_path / "sub"
+    sub_dir.mkdir()
+
+    main_json = tmp_path / "main.json"
+    imported_one = tmp_path / "imported_one.json"
+    imported_two = sub_dir / "imported_two.json"
+
+    with open(imported_two, "w") as f:
+        json.dump({"str_val": "deep_val", "int_val": 999}, f)
+
+    with open(imported_one, "w") as f:
+        json.dump(
+            {"str_val": "level_one", "nested_val": "{import:sub/imported_two.json}"}, f
+        )
+
+    with open(main_json, "w") as f:
+        json.dump({"str_val": "outer", "nested_val": "{import:imported_one.json}"}, f)
+
+    config = DeepNested.load_json(main_json)
+    assert config.str_val == "outer"
+    assert config.nested_val.str_val == "level_one"
+    assert config.nested_val.nested_val.str_val == "deep_val"
+    assert config.nested_val.nested_val.int_val == 999
+
+
+def test_config_json_import_with_templates(tmp_path):
+    import json
+
+    main_json = tmp_path / "main.json"
+    imported_json = tmp_path / "imported.json"
+
+    with open(imported_json, "w") as f:
+        json.dump({"str_val": "{param0}", "int_val": "{param1}"}, f)
+
+    with open(main_json, "w") as f:
+        json.dump({"str_val": "main_str", "nested_val": "{import:imported.json}"}, f)
+
+    config = DemoNested.load_json(main_json)
+    cc = ConfigContext()
+    cc.add_values(param0="resolved_param0", param1=4242)
+    bound = config.bind(cc)
+
+    assert bound.nested_val.str_val == "resolved_param0"
+    assert bound.nested_val.int_val == 4242
+
+
+def test_config_json_import_circular(tmp_path):
+    import json
+    from pycheribenchplot.core.error import ConfigurationError
+
+    main_json = tmp_path / "main.json"
+    imported_json = tmp_path / "imported.json"
+
+    with open(main_json, "w") as f:
+        json.dump({"nested_val": "{import:imported.json}"}, f)
+
+    with open(imported_json, "w") as f:
+        json.dump({"nested_val": "{import:main.json}"}, f)
+
+    with pytest.raises(ConfigurationError) as exc_info:
+        DemoNested.load_json(main_json)
+    assert "Circular dependency" in str(exc_info.value)
+
+
+def test_config_json_import_missing(tmp_path):
+    import json
+    from pycheribenchplot.core.error import ConfigurationError
+
+    main_json = tmp_path / "main.json"
+    with open(main_json, "w") as f:
+        json.dump({"nested_val": "{import:does_not_exist.json}"}, f)
+
+    with pytest.raises(ConfigurationError) as exc_info:
+        DemoNested.load_json(main_json)
+    assert "Missing imported config" in str(exc_info.value)

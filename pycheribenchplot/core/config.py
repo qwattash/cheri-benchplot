@@ -871,9 +871,60 @@ class Config(metaclass=ConfigMeta):
         return cls.schema().load(cls.schema().dump(other))
 
     @classmethod
+    def resolve_json_imports(
+        cls, data: Any, base_dir: Path, seen: set[Path] | None = None
+    ) -> Any:
+        """
+        Recursively resolve template imports like "{import:relative/path.json}" in configuration.
+        """
+        if seen is None:
+            seen = set()
+
+        if isinstance(data, dict):
+            return {
+                k: cls.resolve_json_imports(v, base_dir, seen) for k, v in data.items()
+            }
+        elif isinstance(data, list):
+            return [cls.resolve_json_imports(item, base_dir, seen) for item in data]
+        elif isinstance(data, str):
+            m = re.match(r"^\{import:(.+)\}$", data)
+            if m:
+                import_rel_path = m.group(1).strip()
+                import_path = (base_dir / import_rel_path).resolve()
+
+                if import_path in seen:
+                    logger.error(
+                        "Circular dependency during config import %s: %s",
+                        import_path,
+                        " -> ".join(str(p) for p in sorted(seen)),
+                    )
+                    raise ConfigurationError(f"Circular dependency: {import_path}")
+                if not import_path.exists():
+                    logger.error(
+                        "Imported configuration file not found: %s", import_path
+                    )
+                    raise ConfigurationError(f"Missing imported config {import_path}")
+
+                try:
+                    with open(import_path, "r") as f:
+                        import_data = json.load(f)
+                except Exception as ex:
+                    logger.error("Failed to load imported config %s", import_path)
+                    raise ConfigurationError("Failed to parse configuration") from ex
+
+                return cls.resolve_json_imports(
+                    import_data, import_path.parent, seen | {import_path}
+                )
+            return data
+        else:
+            return data
+
+    @classmethod
     def load_json(cls, jsonpath):
+        jsonpath = Path(jsonpath).resolve()
         with open(jsonpath, "r") as jsonfile:
             data = json.load(jsonfile)
+        data = cls.resolve_json_imports(data, jsonpath.parent)
         logger.debug("Parse configuration from %s", jsonpath)
         return cls.schema().load(data)
 
