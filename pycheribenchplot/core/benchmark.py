@@ -279,6 +279,16 @@ class Benchmark:
         exec_task = BenchmarkExecTask(self, task_config=exec_config)
         return exec_task
 
+    def all_exec_tasks(self) -> list[ExecutionTask]:
+        """
+        Produce a list of instances of the execution tasks for this benchmark context.
+
+        This essentially extracts the generated dependencies of the root execution task.
+        :return: A list of instances of all execution tasks for this benchmark context.
+        """
+        main_task = self.build_exec_task(ExecTaskConfig())
+        return list(main_task.dependencies())
+
     def find_exec_task(
         self, task_class: Type[ExecutionTask], include_subclass=False
     ) -> ExecutionTask:
@@ -289,9 +299,7 @@ class Benchmark:
         :param task_class: The type of the task that needs to be resolved.
         :return: An instance of the given task type, bound to the current benchmark context.
         """
-        main_task = self.build_exec_task(ExecTaskConfig())
-        deps = list(main_task.dependencies())
-        for task in deps:
+        for task in self.all_exec_tasks():
             if (
                 task_class.task_namespace == task.task_namespace
                 and task_class.task_name == task.task_name

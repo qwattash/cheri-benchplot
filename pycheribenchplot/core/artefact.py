@@ -357,6 +357,20 @@ class DataFrameLoadTaskMixin:
     Polars version of the dataframe load task.
     """
 
+    @property
+    def data_columns(self) -> list[str]:
+        """
+        Return a list of available data columns in the dataset.
+
+        The data loader tasks must override the set of data columns.
+        These are used to sanitize the configuration of the Y axis for plotting
+        and for task introspection.
+        """
+        self.logger.warning(
+            "Data columns not defined by %s, override data_columns property", self
+        )
+        return []
+
     def _load_one_csv(self, path: Path, **kwargs) -> pl.DataFrame:
         """
         Load a CSV file into a dataframe.

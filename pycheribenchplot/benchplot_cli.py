@@ -14,9 +14,10 @@ from pycheribenchplot.core.config import (
     BenchplotUserConfig,
     PipelineConfig,
 )
+from pycheribenchplot.core.benchmark import Benchmark
 from pycheribenchplot.core.error import ToolArgparseError
 from pycheribenchplot.core.session import Session
-from pycheribenchplot.core.task import TaskRegistry
+from pycheribenchplot.core.task import ExecutionTask, TaskRegistry
 from pycheribenchplot.core.tool import CommandLineTool, SubCommand
 
 
@@ -297,6 +298,33 @@ class TaskInfoSubCommand(SubCommand):
             help="Describe a configuration object",
         )
 
+    def _emit_benchmark_context(self, bench: Benchmark):
+        """
+        Emit human-readable description of a benchmark context.
+        """
+        c = bench.config
+        print(f"\t{c.name} ({c.uuid}) on {c.instance}")
+        print("\t\tParameterization:")
+        for pk, pv in c.parameters.items():
+            print(f"\t\t - {pk} = {pv}")
+
+        print("\t\tGenerators:")
+        for task in bench.all_exec_tasks():
+            self._emit_generator_info(task)
+
+    def _emit_generator_info(self, task: ExecutionTask):
+        """
+        Emit human-readable description of a generator dataset
+        """
+        print(f"\t\t - {task.task_namespace}.{task.task_name}")
+        for name, target in task.outputs():
+            loader = target.get_loader()
+            try:
+                dependent_variables = loader.data_columns
+            except AttributeError:
+                dependent_variables = []
+            print(f"\t\t\t - output={name} provides={dependent_variables}")
+
     def handle_session(self, user_config, args):
         """
         Display information about the tasks and the data within a session.
@@ -313,14 +341,8 @@ class TaskInfoSubCommand(SubCommand):
                 )
                 print(tbl)
         else:
-            for c in session.config.configurations:
-                print(f"\t{c.name} ({c.uuid}) on {c.instance}")
-                print("\t\tParameterization:")
-                for pk, pv in c.parameters.items():
-                    print(f"\t\t - {pk} = {pv}")
-                print("\t\tGenerators:")
-                for g in c.generators:
-                    print(f"\t\t - {g.handler}")
+            for bench in session.all_benchmarks():
+                self._emit_benchmark_context(bench)
 
         if args.show_analysis_tasks:
             print("\tAvailable analysis tasks:\n")
@@ -333,17 +355,14 @@ class TaskInfoSubCommand(SubCommand):
         Display task information.
         """
         for task_class in TaskRegistry.iter_public():
-            match = False
             for matcher in args.task_spec:
-                match = re.match(
+                m = re.match(
                     matcher, f"{task_class.task_namespace}.{task_class.task_name}"
                 )
-                if match:
+                if m:
+                    # Write out the task description
+                    print(task_class.describe())
                     break
-            if not match:
-                continue
-            # Write out the task description
-            print(task_class.describe())
 
     def handle_config(self, user_config, args):
         """
