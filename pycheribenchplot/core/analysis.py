@@ -382,7 +382,7 @@ class AnalysisTask(SessionTask):
         baseline_sel = self.analysis_config.baseline
         if baseline_sel is None:
             self.logger.error("Missing baseline selector in analysis configuration")
-            raise ValueError("Invalid Configuration")
+            raise ConfigurationError("Missing baseline")
 
         if type(baseline_sel) is dict:
             # If we have the 'instance' parameter, replace it with the corresponding
@@ -611,6 +611,19 @@ class ParamSliceInfo:
         return f"<{fixed} | [{free}]>"
 
 
+@dataclass
+class DependentVariableConfig(Config):
+    """
+    Base class for all slice analysis tasks that support dependent
+    variable selection.
+    """
+
+    dependent_variable: str = config_field(
+        Config.REQUIRED,
+        desc="Data column to use as a dependent variable. This must be selected among valid data columns.",
+    )
+
+
 class SliceAnalysisTask(AnalysisTask):
     """
     Base class for slice analysis tasks.
@@ -675,6 +688,46 @@ class SliceAnalysisTask(AnalysisTask):
         Get the slice parameterisation descriptor.
         """
         return self._slice_info
+
+    def get_available_data_columns(self) -> set[str]:
+        """
+        Search all dependencies for available data columns provided by loaders.
+
+        :returns: A list of valid data column names.
+        """
+        all_data_cols = set()
+        # XXX need to look recursively up the dependency chain
+        for dep_loader in self.dependencies():
+            # A loader may not provide user-visible data, if so it is legal to
+            # provide an empty data columns list or not expose the data_columns property.
+            if hasattr(dep_loader, "data_columns"):
+                all_data_cols.update(dep_loader.data_columns)
+
+        return all_data_cols
+
+    def get_depvar_column(self) -> str:
+        """
+        Sanitize the selected dependent variable column.
+
+        By default, the analysis task checks whether the current configuration
+        inherits from DependentVariableConfig; if so, the dependent variable column is used.
+        The analysis task should override this method to select the column based
+        on different configuration rules.
+
+        :returns: The column name to use for the analysis dependent variable.
+        """
+        assert issubclass(self.task_config_class, DependentVariableConfig)
+        depvar = self.config.dependent_variable
+
+        available = self.get_available_data_columns()
+        if depvar not in available:
+            self.logger.error(
+                "Requested dependent variable '%s' not found. Available data: %s",
+                depvar,
+                ",".join(available),
+            )
+            raise ConfigurationError("Invalid dependent variable")
+        return depvar
 
 
 @dataclass
