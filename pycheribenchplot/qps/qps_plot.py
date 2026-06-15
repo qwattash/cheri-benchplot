@@ -101,11 +101,10 @@ class QpsPlotTask(QpsPlotBase):
             dump_df.write_csv(self.qps_stats.single_path())
 
             if plot_config := self.config.bar_plot:
-                plot_config = plot_config.with_config_default(tile_yaxis="<qps>")
                 grid.map(
                     grid_barplot,
                     x=plot_config.tile_xaxis,
-                    y=plot_config.tile_yaxis,
+                    y="qps",
                     err=["qps_low", "qps_high"],
                     config=plot_config,
                 )

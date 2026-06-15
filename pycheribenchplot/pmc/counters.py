@@ -4,7 +4,7 @@ import polars as pl
 import polars.selectors as cs
 
 from ..core.artefact import Target
-from ..core.config import Config, config_field
+from ..core.config import config_field
 from ..core.plot import PlotTarget, SlicePlotTask
 from ..core.plot_grid import PlotGrid, PlotGridConfig, grid_barplot
 from ..core.task import dependency, output
@@ -13,14 +13,24 @@ from .pmc_exec import IngestPMCCounters, PMCExec
 
 @dataclass
 class PMCPlotConfig(PlotGridConfig):
+    """
+    Configure a performance counter plot.
+
+    The pmc_filter property is used to select only a subset of the recorded
+    counters (including derived metrics).
+    Note that a similar result can be accomplished by using the :attr:`GenericAnalysisConfig.param_filter`
+    at the top level, however this is more flexible as it allows filtering when
+    the workload configuration uses counter groups.
+
+    The cpu_filter property is used to filter system-wide counters by CPU.
+    This is useful to further isolate the data if processes are pinned.
+    """
+
     pmc_filter: list[str] | None = config_field(
         None, desc="Show only the given subset of counters"
     )
     cpu_filter: list[int] | None = config_field(
         None, desc="Filter system-mode counters by CPU index"
-    )
-    tile_xaxis: str = config_field(
-        Config.REQUIRED, desc="Parameter to use for the X axis of each tile"
     )
 
     def resolve_counter_group(self, task: PMCExec) -> str:

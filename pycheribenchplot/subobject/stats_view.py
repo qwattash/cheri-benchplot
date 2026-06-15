@@ -281,7 +281,7 @@ class ImpreciseSizeDistPlot(SlicePlotTask):
         # Build an helper metadata column that can be used for the bin labels
 
         grid_config = self.config.with_config_default(
-            hue="<side>", tile_xaxis="<hist_bin>", tile_yaxis="<hist_count>"
+            hue="<side>", tile_xaxis="<hist_bin>"
         )
         # Build a default mapping for the hist_bin labels
         # grid_config = grid_config.set_display_defaults(
@@ -294,7 +294,7 @@ class ImpreciseSizeDistPlot(SlicePlotTask):
             grid.map(
                 grid_barplot,
                 x=grid_config.tile_xaxis,
-                y=grid_config.tile_yaxis,
+                y="hist_count",
                 config=grid_config,
             )
             grid.add_legend()
