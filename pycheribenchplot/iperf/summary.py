@@ -3,6 +3,7 @@ from enum import Enum
 
 import polars as pl
 
+from ..core.analysis import DependentVariableConfig
 from ..core.artefact import Target
 from ..core.config import Config, config_field
 from ..core.plot import PlotTarget, SlicePlotTask
@@ -46,18 +47,24 @@ class ThroughputUnit(Enum):
 
 
 @dataclass
-class IPerfSummaryConfig(PlotGridConfig):
+class IPerfSummaryConfig(DependentVariableConfig, PlotGridConfig):
     """
-    Configure the iperf throughput bar plot.
+    Configure the iperf bar plot.
 
-    The bar_plot configuration controls the X axis and other bar plot parameters.
-    The throughput metric is always on the Y axis; the column ref <throughput> can
-    be used as tile_yaxis (default) or in derived_columns.
+    The dependent variable is configurable according to the metrics provided by
+    the LoadIPerfStats loader.
+    Note that the throughput_unit is only relevant when the dependent_variable
+    is "bits_per_second".
 
-    Metric columns available as column refs:
-    - <throughput>: Throughput in the unit selected by throughput_unit.
+    The bar_plot configuration enables the bar-plot mode.
+
+    Additional generated columns available as column refs:
+    - <throughput>: The scaled throughput value, according to throughput_unit.
+      This is only relevant when the dependent_variable is "bits_per_second".
     - <_metric_type>: One of "absolute", "delta" or "overhead".
     """
+
+    dependent_variable = "bits_per_second"  #: override
 
     bar_plot: BarPlotConfig = config_field(
         Config.REQUIRED, desc="Bar plot configuration."
@@ -120,30 +127,30 @@ class IPerfSummaryPlot(SlicePlotTask):
 
         # Use receiver-side throughput only.
         df = df.filter(pl.col("side") == "receiver")
+        depvar = self.get_depvar_column()
 
-        self.logger.info("Compute iperf throughput statistics")
-        stats = self.compute_overhead(
-            df, "bits_per_second", how="median", overhead_scale=100
-        )
+        self.logger.info("Compute iperf %s statistics", depvar)
+        stats = self.compute_overhead(df, depvar, how="median", overhead_scale=100)
 
-        # Scale absolute and delta metric types to the configured throughput unit.
-        # Overhead is a dimensionless percentage — leave it unchanged.
-        divisor = self.config.throughput_unit.divisor
-        scale_cond = pl.col("_metric_type") != "overhead"
-        stats = stats.with_columns(
-            pl.when(scale_cond)
-            .then(pl.col("bits_per_second") / divisor)
-            .otherwise(pl.col("bits_per_second"))
-            .alias("throughput"),
-            pl.when(scale_cond)
-            .then(pl.col("bits_per_second_low") / divisor)
-            .otherwise(pl.col("bits_per_second_low"))
-            .alias("throughput_low"),
-            pl.when(scale_cond)
-            .then(pl.col("bits_per_second_high") / divisor)
-            .otherwise(pl.col("bits_per_second_high"))
-            .alias("throughput_high"),
-        )
+        if depvar == "bits_per_second":
+            # Scale absolute and delta metric types to the configured throughput unit.
+            # Overhead is a dimensionless percentage — leave it unchanged.
+            divisor = self.config.throughput_unit.divisor
+            scale_cond = pl.col("_metric_type") != "overhead"
+            stats = stats.with_columns(
+                pl.when(scale_cond)
+                .then(pl.col("bits_per_second") / divisor)
+                .otherwise(pl.col("bits_per_second"))
+                .alias("throughput"),
+                pl.when(scale_cond)
+                .then(pl.col("bits_per_second_low") / divisor)
+                .otherwise(pl.col("bits_per_second_low"))
+                .alias("throughput_low"),
+                pl.when(scale_cond)
+                .then(pl.col("bits_per_second_high") / divisor)
+                .otherwise(pl.col("bits_per_second_high"))
+                .alias("throughput_high"),
+            )
 
         if self.config.drop_relative_baseline:
             view_df = stats.filter(
@@ -152,19 +159,16 @@ class IPerfSummaryPlot(SlicePlotTask):
         else:
             view_df = stats
 
-        self.logger.info("Generate iperf throughput plot")
+        self.logger.info("Generate iperf summary plot")
         with PlotGrid(self.summary_plot, view_df, self.config) as grid:
             dump_df = grid.get_grid_df()
             dump_df.write_csv(self.summary_stats.single_path())
 
-            plot_config = self.config.bar_plot.with_config_default(
-                tile_yaxis="<throughput>"
-            )
             grid.map(
                 grid_barplot,
-                x=plot_config.tile_xaxis,
-                y=plot_config.tile_yaxis,
-                err=["throughput_low", "throughput_high"],
-                config=plot_config,
+                x=self.config.tile_xaxis,
+                y=depvar,
+                err=[f"{depvar}_low", f"{depvar}_high"],
+                config=self.config.bar_plot,
             )
             grid.add_legend()

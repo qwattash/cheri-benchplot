@@ -100,6 +100,15 @@ class LoadIPerfStats(DataFrameLoadTask):
     task_namespace = "iperf"
     task_name = "ingest-stats"
 
+    @property
+    def data_columns(self) -> list[str]:
+        exec_task = self.target.task
+
+        cols = ["seconds", "bytes", "bits_per_second", "side"]
+        if exec_task.config.protocol == IPerfProtocol.UDP:
+            cols += ["jitter_ms", "packets", "lost_packets", "lost_percent"]
+        return cols
+
     def _load_one(self, path: Path) -> pl.DataFrame:
         """
         Load data for a benchmark run from the given target file.
@@ -108,7 +117,7 @@ class LoadIPerfStats(DataFrameLoadTask):
         RTT measurements for latency are taken for each stream, so we
         generate one row for each stream for each iteration.
         """
-        exec_task = self.target.task
+
         # Expect a single json data entry
         data = json.load(open(path, "r"))
         end_info = data["end"]
@@ -118,16 +127,13 @@ class LoadIPerfStats(DataFrameLoadTask):
             self.logger.fatal("Detected error in iperf data: %s", data["error"])
             raise RuntimeError("Dataset corruption")
 
-        _keep = ["seconds", "bytes", "bits_per_second", "side"]
-        if exec_task.config.protocol == IPerfProtocol.UDP:
-            _keep += ["jitter_ms", "packets", "lost_packets", "lost_percent"]
         snd = (
             pl.DataFrame(end_info["sum_sent"])
             .with_columns(
                 cs.numeric().exclude("packets").cast(pl.Float64),
                 pl.lit("sender").alias("side"),
             )
-            .select(_keep)
+            .select(self.data_columns)
         )
         rcv = (
             pl.DataFrame(end_info["sum_received"])
@@ -135,7 +141,7 @@ class LoadIPerfStats(DataFrameLoadTask):
                 cs.numeric().exclude("packets").cast(pl.Float64),
                 pl.lit("receiver").alias("side"),
             )
-            .select(_keep)
+            .select(self.data_columns)
         )
         df = pl.concat([snd, rcv], how="vertical", rechunk=True)
 
