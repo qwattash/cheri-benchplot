@@ -7,15 +7,15 @@
         "handler": "analysis.dynamic",
         "task_options": {
             "broadcast": [{
-                "handler": "timing.plot-slice",
+                "handler": "timing.bar-plot-slice",
                 "task_options": {
-                    "tile_col": "runtime",
-                    "tile_xaxis": "target",
-                    "tile_aspect": 2.0
+                    "dependent_variable": "times",
+                    "tile_aspect": 2.0,
+                    "tile_col": "<revocation>",
+                    "tile_xaxis": "<target>"
                 }
             }],
             "fixed_axes": []
         }
     }]
 }
-

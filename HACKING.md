@@ -134,6 +134,20 @@ Rules:
 `Config` subclasses can also define marshmallow validators using the `@validates` and
 `@validates_schema` decorators from marshmallow to enforce constraints at load time.
 
+#### Dependent Variable Configuration
+
+The specialized `DependentVariableConfig` base class is used for analysis and plotting tasks that support dynamic dependent variable selection:
+
+```python
+from ..core.analysis import DependentVariableConfig
+
+@dataclass
+class MyPlotConfig(DependentVariableConfig, PlotGridConfig, BarPlotConfig):
+    # This automatically inherits the required 'dependent_variable' field.
+    # It can also be overridden with a default:
+    dependent_variable: str = "metric"
+```
+
 ### Analysis Tasks
 
 `AnalysisTask` (`pycheribenchplot/core/analysis.py`) is the base for all session-scoped
@@ -410,6 +424,14 @@ class LoadMyResults(DataFrameLoadTask):
     task_namespace = "mybenchmark"
     task_name = "ingest"
 
+    @property
+    def data_columns(self) -> list[str]:
+        """
+        Return the list of data columns exposed by this loader.
+        This is used to sanitize and validate dependent variable selections.
+        """
+        return ["metric"]
+
     def _load_one(self, path: Path) -> pl.DataFrame:
         """Parse a single iteration output file into a Polars DataFrame."""
         # ... parse JSON / CSV / text ...
@@ -445,6 +467,7 @@ combination, so the task itself never needs to split the data manually.
 from dataclasses import dataclass
 import polars as pl
 
+from ..core.analysis import DependentVariableConfig
 from ..core.config import config_field
 from ..core.plot import PlotTarget, SlicePlotTask
 from ..core.plot_grid import BarPlotConfig, PlotGrid, PlotGridConfig, grid_barplot
@@ -453,7 +476,7 @@ from .exec import MyExecTask
 
 
 @dataclass
-class MyPlotConfig(PlotGridConfig, BarPlotConfig):
+class MyPlotConfig(DependentVariableConfig, PlotGridConfig, BarPlotConfig):
     """
     Configuration for My Benchmark bar plots.
     """
@@ -461,6 +484,7 @@ class MyPlotConfig(PlotGridConfig, BarPlotConfig):
         True,
         desc="Omit the baseline row from delta and overhead metric views.",
     )
+    dependent_variable: str = "metric" #: override default
 
 
 class MySlicePlotTask(SlicePlotTask):
@@ -493,8 +517,9 @@ class MySlicePlotTask(SlicePlotTask):
             rechunk=True,
         )
 
-        # 2. Compute statistics (absolute / delta / overhead).
-        stats = self.compute_overhead(df, "metric", how="median", overhead_scale=100)
+        # 2. Compute statistics (absolute / delta / overhead) using the configured dependent variable.
+        depvar = self.get_depvar_column()
+        stats = self.compute_overhead(df, depvar, how="median", overhead_scale=100)
 
         # 3. Optionally drop the baseline row from relative views.
         if self.config.drop_baseline_from_relative:
@@ -509,8 +534,8 @@ class MySlicePlotTask(SlicePlotTask):
             grid.map(
                 grid_barplot,
                 x=self.config.tile_xaxis,
-                y="metric",
-                err=["metric_low", "metric_high"],
+                y=depvar,
+                err=[f"{depvar}_low", f"{depvar}_high"],
                 config=self.config,
             )
             grid.add_legend()

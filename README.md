@@ -265,7 +265,7 @@ value of the `repo` parameter axis assigned to the specific benchmark combinatio
         "iterations": 1,
         "parameterize": {
             "host": ["morello"],
-            "revocation": ["enabled", "disabled"],
+            "revocation": ["enable", "disable"],
             "repo": ["https://github.com/CTSRD-CHERI/cheribsd-ports.git"]
         },
         "system": [{
@@ -493,6 +493,7 @@ Finally, we tune the aspect-ratio of the tiles to a more pleasant shape.
             "broadcast": [{
                 "handler": "timing.bar-plot-slice",
                 "task_options": {
+                    "dependent_variable": "times",
                     "tile_aspect": 2.0,
                     "tile_col": "<revocation>",
                     "tile_xaxis": "<target>"
@@ -503,6 +504,10 @@ Finally, we tune the aspect-ratio of the tiles to a more pleasant shape.
     }]
 }
 ```
+
+> [!TIP]
+> Plot tasks that inherit from `DependentVariableConfig` (such as `timing.bar-plot-slice`) support the `dependent_variable` parameter in `task_options`. This allows selecting which data column from the loader dataset is mapped to the dependent variable (the Y-axis/metric of the plot).
+> Available data columns are exposed dynamically by the data loaders of dependencies (via their `data_columns` property) and are validated at configuration load-time.
 
 > [!TIP]
 > The plot task options are fairly involved and allow a very arbitrary reshaping
@@ -526,4 +531,3 @@ The benchmark instance will manage the data-generation and analysis for a benchm
 Each benchmark contains a group of tasks (`ExecutionTask` subclasses) that represent data sources.
 These tasks are responsible for generating the commands to produce the data, extract the data from the target cheribsd (or other) instance
 once the benchmark is done, and load the data for analysis.
-
