@@ -89,9 +89,6 @@ class SysctlPlotConfig(PlotGridConfig):
     Configure plotting of data sampled via sysctl.
     """
 
-    tile_xaxis: str = config_field(
-        "target", desc="Parameter to use for the X axis of each tile"
-    )
     sysctl_filter: list[str] = config_field(
         list, desc="Display only the given sysctl prefixes"
     )

@@ -4,6 +4,7 @@ from pathlib import Path
 
 import polars as pl
 
+from ..core.analysis import DependentVariableConfig
 from ..core.artefact import DataFrameLoadTask, RemoteBenchmarkIterationTarget
 from ..core.config import Config, config_field
 from ..core.plot import PlotTarget, SlicePlotTask
@@ -34,6 +35,10 @@ class IngestTimingStats(DataFrameLoadTask):
 
     task_namespace = "timing"
     task_name = "ingest-stats"
+
+    @property
+    def data_columns(self) -> list[str]:
+        return ["times", "user", "system"]
 
     def _load_one(self, path: Path) -> pl.DataFrame:
         """
@@ -117,12 +122,12 @@ class TimingExecTask(ExecutionTask):
 
 
 @dataclass
-class TimingPlotConfig(PlotGridConfig, BarPlotConfig):
+class TimingPlotConfig(DependentVariableConfig, PlotGridConfig, BarPlotConfig):
     """
     Base configuration for the TimingPlotTask.
     """
 
-    pass
+    dependent_variable: str = "times"  #: override
 
 
 class TimingSlicePlotTask(SlicePlotTask):
@@ -137,12 +142,8 @@ class TimingSlicePlotTask(SlicePlotTask):
 
     # XXX should be able to name a specific handler in config in case
     # multiple tasks inherit from TimingExecTask?
+    # This does not feel useful, but maybe should detect it as an error?
     exec_task_class = TimingExecTask
-
-    #: Describe allowed data axes for output
-    data_axes = ["times"]
-    #: Describe overridable axes for plot output
-    synthetic_axes = ["_metric_type"]
 
     @dependency
     def timing(self):
@@ -166,16 +167,14 @@ class TimingSlicePlotTask(SlicePlotTask):
         df = pl.concat((t.df.get() for t in self.timing), how="vertical", rechunk=True)
         return df
 
-    def _do_plot(self, target, view_df, y_display_name):
-        plot_config = self.config.with_config_default(tile_yaxis="<times>")
-
+    def _do_plot(self, target, view_df, depvar):
         with PlotGrid(target, view_df, self.config) as grid:
             grid.map(
                 grid_barplot,
-                x=plot_config.tile_xaxis,
-                y=plot_config.tile_yaxis,
-                err=["times_low", "times_high"],
-                config=plot_config,
+                x=self.config.tile_xaxis,
+                y=depvar,
+                err=[f"{depvar}_low", f"{depvar}_high"],
+                config=self.config,
             )
             grid.add_legend()
 
@@ -183,21 +182,20 @@ class TimingSlicePlotTask(SlicePlotTask):
         df = self._collect_timing()
 
         self.logger.info("Compute timing statistics")
-        stats = self.compute_overhead(df, "times", how="median", overhead_scale=100)
+        depvar = self.get_depvar_column()
+        stats = self.compute_overhead(df, depvar, how="median", overhead_scale=100)
 
         self.logger.info("Plot absolute time measurements")
-        self._do_plot(
-            self.absolute_time, stats.filter(_metric_type="absolute"), "Time (s)"
-        )
+        self._do_plot(self.absolute_time, stats.filter(_metric_type="absolute"), depvar)
 
         self.logger.info("Plot relative time measurements")
         delta_stats = stats.filter(
             (pl.col("_metric_type") == "delta") & ~pl.col("_is_baseline")
         )
-        self._do_plot(self.relative_time, delta_stats, "∆ Time (s)")
+        self._do_plot(self.relative_time, delta_stats, depvar)
 
         self.logger.info("Plot time overhead measurements")
         ovh_stats = stats.filter(
             (pl.col("_metric_type") == "overhead") & ~pl.col("_is_baseline")
         )
-        self._do_plot(self.time_overhead, ovh_stats, "% Overhead")
+        self._do_plot(self.time_overhead, ovh_stats, depvar)
