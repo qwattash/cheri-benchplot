@@ -842,6 +842,50 @@ class ConfigMeta(type):
             return None
 
 
+def _lookup_import_path(data: Any, path: str, import_path: Path) -> Any:
+    """
+    Retrieve nested item from dictionary/list using dot separated path.
+    If path is '*', returns the entire data object.
+    """
+    if path == "*":
+        return data
+
+    parts = re.split(r"[./]", path)
+    current = data
+    for part in parts:
+        if isinstance(current, dict):
+            if part in current:
+                current = current[part]
+            else:
+                logger.error(
+                    "Path '%s' not found in imported config %s (missing key: '%s')",
+                    path,
+                    import_path,
+                    part,
+                )
+                raise ConfigurationError("Imported configuration path not found")
+        elif isinstance(current, list):
+            try:
+                idx = int(part)
+                current = current[idx]
+            except (ValueError, IndexError):
+                logger.error(
+                    "Path '%s' not found in imported config %s (invalid list index: '%s')",
+                    path,
+                    import_path,
+                    part,
+                )
+                raise ConfigurationError("Imported configuration path not found")
+        else:
+            logger.error(
+                "Path '%s' not found in imported config %s (target is not indexable)",
+                path,
+                import_path,
+            )
+            raise ConfigurationError("Imported configuration path not found")
+    return current
+
+
 @dc.dataclass
 class Config(metaclass=ConfigMeta):
     """
@@ -880,46 +924,50 @@ class Config(metaclass=ConfigMeta):
     ) -> Any:
         """
         Recursively resolve template imports like "{import:relative/path.json}" in configuration.
+        Supports both value-level imports and key-level dictionary merging/unpacking.
         """
         if seen is None:
             seen = set()
 
         if isinstance(data, dict):
-            return {
-                k: cls.resolve_json_imports(v, base_dir, seen) for k, v in data.items()
-            }
+            resolved_dict = {}
+            for k, v in data.items():
+                if isinstance(k, str):
+                    # Attempt key-level import
+                    resolved_import, import_path = cls._resolve_one_import(
+                        k, base_dir, seen
+                    )
+                    if resolved_import is not None:
+                        fragment = _lookup_import_path(resolved_import, v, import_path)
+                        if isinstance(fragment, dict):
+                            # Sequential merge/unpack (Option A)
+                            resolved_dict.update(fragment)
+                        else:
+                            logger.error(
+                                "Imported fragment '%s' from %s must be a dictionary to be merged, got %s",
+                                v,
+                                import_path,
+                                type(fragment).__name__,
+                            )
+                            raise ConfigurationError(
+                                "Invalid imported fragment type for dictionary merge"
+                            )
+                        continue
+
+                # Normal key-value pair
+                resolved_dict[k] = cls.resolve_json_imports(v, base_dir, seen)
+            return resolved_dict
+
         elif isinstance(data, list):
             return [cls.resolve_json_imports(item, base_dir, seen) for item in data]
+
         elif isinstance(data, str):
-            m = re.match(r"^\{import:(.+)\}$", data)
-            if m:
-                import_rel_path = m.group(1).strip()
-                import_path = (base_dir / import_rel_path).resolve()
-
-                if import_path in seen:
-                    logger.error(
-                        "Circular dependency during config import %s: %s",
-                        import_path,
-                        " -> ".join(str(p) for p in sorted(seen)),
-                    )
-                    raise ConfigurationError(f"Circular dependency: {import_path}")
-                if not import_path.exists():
-                    logger.error(
-                        "Imported configuration file not found: %s", import_path
-                    )
-                    raise ConfigurationError(f"Missing imported config {import_path}")
-
-                try:
-                    with open(import_path, "r") as f:
-                        import_data = json.load(f)
-                except Exception as ex:
-                    logger.error("Failed to load imported config %s", import_path)
-                    raise ConfigurationError("Failed to parse configuration") from ex
-
-                return cls.resolve_json_imports(
-                    import_data, import_path.parent, seen | {import_path}
-                )
+            # Attempt value-level import
+            resolved_import, _ = cls._resolve_one_import(data, base_dir, seen)
+            if resolved_import is not None:
+                return resolved_import
             return data
+
         else:
             return data
 
@@ -975,6 +1023,51 @@ class Config(metaclass=ConfigMeta):
             desc.write(indent(config_type.describe(), " " * 4))
 
         return desc.getvalue()
+
+    @classmethod
+    def _resolve_one_import(
+        cls, import_spec: str, base_dir: Path, seen: set[Path]
+    ) -> tuple[Any, Path]:
+        """
+        Resolve a single import specifier string, load the JSON file, and recursively
+        resolve any internal imports.
+        Returns a tuple of (resolved_loaded_data, import_file_path).
+        """
+        m = re.match(r"^\{import:(.+)\}$", import_spec)
+        if not m:
+            # Not an import specifier
+            return None, None
+
+        import_rel_path = m.group(1).strip()
+        import_path = (base_dir / import_rel_path).resolve()
+
+        if import_path in seen:
+            logger.error(
+                "Circular dependency during config import %s: %s",
+                import_path,
+                " -> ".join(str(p) for p in sorted(seen)),
+            )
+            raise ConfigurationError(
+                "Circular dependency detected in imported configurations"
+            )
+        if not import_path.exists():
+            logger.error("Imported configuration file not found: %s", import_path)
+            raise ConfigurationError("Missing imported configuration file")
+
+        try:
+            with open(import_path, "r") as f:
+                import_data = json.load(f)
+        except Exception as ex:
+            logger.error(
+                "Failed to parse imported configuration %s: %s", import_path, ex
+            )
+            raise ConfigurationError("Failed to parse imported configuration") from ex
+
+        # Recursively resolve any nested imports within the imported file itself
+        resolved_data = cls.resolve_json_imports(
+            import_data, import_path.parent, seen | {import_path}
+        )
+        return resolved_data, import_path
 
     def __post_init__(self):
         return

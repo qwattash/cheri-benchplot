@@ -503,3 +503,88 @@ def test_config_describe_enum():
 
     desc = EnumConfig.describe()
     assert "color: Color(red, blue)" in desc
+
+
+def test_config_json_key_imports_wildcard(tmp_path):
+    import json
+
+    main_json = tmp_path / "main.json"
+    import_json = tmp_path / "imported.json"
+
+    with open(import_json, "w") as f:
+        json.dump({"str_val": "imported_str", "int_val": 42}, f)
+
+    with open(main_json, "w") as f:
+        json.dump(
+            {"nested_val": {"{import:imported.json}": "*", "list_val": ["x", "y"]}}, f
+        )
+
+    config = DemoNested.load_json(main_json)
+    assert config.nested_val is not None
+    assert config.nested_val.str_val == "imported_str"
+    assert config.nested_val.int_val == 42
+    assert config.nested_val.list_val == ["x", "y"]
+
+
+def test_config_json_key_imports_path(tmp_path):
+    import json
+
+    main_json = tmp_path / "main.json"
+    import_json = tmp_path / "imported.json"
+
+    with open(import_json, "w") as f:
+        json.dump(
+            {
+                "fragments": {
+                    "default_system": {"str_val": "system_name", "int_val": 100}
+                }
+            },
+            f,
+        )
+
+    with open(main_json, "w") as f:
+        json.dump(
+            {
+                "nested_val": {
+                    "{import:imported.json}": "fragments/default_system",
+                    "list_val": ["a", "b"],
+                }
+            },
+            f,
+        )
+
+    config = DemoNested.load_json(main_json)
+    assert config.nested_val is not None
+    assert config.nested_val.str_val == "system_name"
+    assert config.nested_val.int_val == 100
+    assert config.nested_val.list_val == ["a", "b"]
+
+
+def test_config_json_key_imports_errors(tmp_path):
+    import json
+    from pycheribenchplot.core.error import ConfigurationError
+
+    main_json = tmp_path / "main.json"
+    import_json = tmp_path / "imported.json"
+
+    # 1. Imported path does not exist in target JSON
+    with open(import_json, "w") as f:
+        json.dump({"a": 1}, f)
+
+    with open(main_json, "w") as f:
+        json.dump({"nested_val": {"{import:imported.json}": "does.not.exist"}}, f)
+
+    with pytest.raises(ConfigurationError) as exc_info:
+        DemoNested.load_json(main_json)
+    assert "Imported configuration path not found" in str(exc_info.value)
+
+    # 2. Imported fragment is not a dictionary (e.g. a string)
+    with open(import_json, "w") as f:
+        json.dump({"scalar_val": "not_a_dict"}, f)
+
+    with open(main_json, "w") as f:
+        json.dump({"nested_val": {"{import:imported.json}": "scalar_val"}}, f)
+
+    with pytest.raises(ConfigurationError) as exc_info:
+        DemoNested.load_json(main_json)
+    assert "Invalid imported fragment type for dictionary merge" in str(exc_info.value)
