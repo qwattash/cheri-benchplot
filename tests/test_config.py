@@ -488,3 +488,18 @@ def test_config_json_import_missing(tmp_path):
     with pytest.raises(ConfigurationError) as exc_info:
         DemoNested.load_json(main_json)
     assert "Missing imported config" in str(exc_info.value)
+
+
+def test_config_describe_enum():
+    from enum import Enum
+
+    class Color(Enum):
+        RED = "red"
+        BLUE = "blue"
+
+    @dataclass
+    class EnumConfig(Config):
+        color: Color = config_field(Color.RED, desc="The color selection")
+
+    desc = EnumConfig.describe()
+    assert "color: Color(red, blue)" in desc

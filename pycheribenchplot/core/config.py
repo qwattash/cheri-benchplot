@@ -682,6 +682,10 @@ def describe_type(dtype) -> tuple[str, list[Type["Config"]]]:
             return f"list[{lt_desc}]", config_types
 
     config_types = []
+    if isinstance(dtype, type) and issubclass(dtype, Enum):
+        enum_vals = [str(e.value) for e in dtype]
+        return f"{dtype.__name__}({', '.join(enum_vals)})", []
+
     if dc.is_dataclass(dtype) and issubclass(dtype, Config):
         config_types.append(dtype)
     type_name = dtype.__name__
