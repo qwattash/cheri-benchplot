@@ -4,9 +4,9 @@ from typing import Any
 import polars as pl
 from marshmallow import ValidationError, validates
 
-from ..config import Config, config_field
+from ..config import config_field
 from .coords import CoordGenConfig, CoordGenerator
-from .plot_grid import ColRef, PlotConfigBase, PlotTile
+from .plot_grid import check_colref_pattern, ColRef, PlotConfigBase, PlotTile
 
 
 @dataclass
@@ -15,12 +15,6 @@ class BarPlotConfig(PlotConfigBase):
     Display grid configuration extension specific to bar plots.
     """
 
-    tile_xaxis: ColRef = config_field(
-        Config.REQUIRED, desc="Column ref to use for the tile X axis."
-    )
-    tile_yaxis: ColRef = config_field(
-        None, desc="Column ref to use for the tile Y axis."
-    )
     stack_by: ColRef | None = config_field(
         None, desc="Stack bars along the given column ref."
     )
@@ -68,11 +62,10 @@ def grid_barplot(
     confidence interval, or None to disable errorbars.
     :param config: Bar plot configuration object.
     """
-    # Note: here all the column refs should have been resolved
+    # Resolve ColRef for the X axis
     x = tile.ref_to_col(x)
-    y = tile.ref_to_col(y)
-    assert tile.hue is not None
-    assert not tile.hue.startswith("<")
+    # The Y axis is never allowed a ColRef
+    assert not check_colref_pattern(y)
 
     if config.orient == "x" and not chunk[y].dtype.is_numeric():
         raise TypeError("Y axis values must be numeric when orient='x'")

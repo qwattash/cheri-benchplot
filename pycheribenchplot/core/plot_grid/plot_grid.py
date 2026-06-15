@@ -41,6 +41,12 @@ ColRef = Annotated[
 ]
 
 
+def check_colref_pattern(maybe_ref: str) -> bool:
+    if re.match(COLREF_PATTERN, maybe_ref):
+        return True
+    return False
+
+
 @dataclass
 class ColRefMap(Config):
     """
@@ -222,6 +228,9 @@ class PlotGridConfig(PlotConfigBase):
     )
 
     # Per-tile configuration
+    tile_xaxis: ColRef = config_field(
+        Config.REQUIRED, desc="Column ref to use for the tile X axis."
+    )
     tile_x_margin: float | tuple[float, float] | None = config_field(
         None,
         desc="X-axis margin within each tile, in normalised interval units range [0, 1].",
@@ -296,8 +305,8 @@ class PlotTile:
         self,
         grid: "PlotGrid",
         ax: MplAxes,
-        hue: str | None,
-        palette: list | None,
+        hue: str,
+        palette: dict[str,] | None,
         coords: tuple[int, int],
         loc: tuple[any, any],
     ):
@@ -308,6 +317,10 @@ class PlotTile:
         self.palette = palette
         self.coords = coords
         self.loc = loc
+
+        # Paranoia
+        assert self.hue is not None
+        assert not check_colref_pattern(self.hue)
 
     @property
     def row_index(self):
@@ -902,7 +915,7 @@ class PlotGrid(AbstractContextManager):
 
     def try_ref_to_col(self, ref: str) -> str:
         """Try to resolve ref as a ColRef, if not, return it unchanged."""
-        if re.match(COLREF_PATTERN, ref):
+        if check_colref_pattern(ref):
             return self.ref_to_col(ref)
         return ref
 
