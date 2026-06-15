@@ -1,3 +1,4 @@
+import copy
 import dataclasses as dc
 import itertools as it
 import json
@@ -10,6 +11,12 @@ from pathlib import Path
 from textwrap import indent, wrap
 from typing import Annotated, Any, Dict, List, Optional, Set, Type, get_args, get_origin
 from uuid import UUID, uuid4
+
+try:
+    # Python 3.14+
+    import annotationlib
+except ImportError:
+    annotationlib = None
 
 import marshmallow.fields as mfields
 from git import Repo
@@ -640,7 +647,8 @@ def config_field(
             kwargs["default"] = default
         if issubclass(type(default), Enum):
             kwargs["metadata"].setdefault("by_value", True)
-    kwargs["metadata"]["metadata"] = dict(desc=desc)
+    kwargs["metadata"].setdefault("metadata", {})
+    kwargs["metadata"]["metadata"].setdefault("desc", desc)
     return dc.field(**kwargs)
 
 
@@ -680,8 +688,155 @@ def describe_type(dtype) -> tuple[str, list[Type["Config"]]]:
     return str(type_name).split(".")[-1], config_types
 
 
+class ConfigMeta(type):
+    """
+    Metaclass for Config classes.
+
+    This handles configuration field inheritance by merging the field metadata.
+    This means that the same field in the parent can be assigned a different
+    default value in the child configuration without repeating the field
+    description and other information.
+    """
+
+    def __new__(mcs, name, bases, namespace):
+        # Collect all fields from parent classes
+        parent_fields = {}
+        for base in bases:
+            for config_class in base.__mro__:
+                if hasattr(config_class, "__dataclass_fields__"):
+                    parent_fields.update(config_class.__dataclass_fields__)
+
+        if parent_fields:
+            overrides = mcs._handle_overrides(name, parent_fields, namespace)
+            wrapped_annotate = mcs._handle_annotations(name, overrides, namespace)
+        else:
+            wrapped_annotate = None
+
+        cls = super().__new__(mcs, name, bases, namespace)
+
+        if wrapped_annotate:
+            # Wrap the annotate function, pass cls itself as the owner
+            cls.__annotate__ = lambda fmt: wrapped_annotate(cls, fmt)
+
+        return cls
+
+    @staticmethod
+    def _handle_overrides(name, parent_fields, namespace):
+        """
+        Merge field metadata for config_field overrides.
+
+        :returns: A dictionary mapping key -> parent field
+        """
+        overrides = {}
+        for key, value in namespace.items():
+            # Note: value can be either a raw value or a Field
+            if parent := parent_fields.get(key):
+                field_kwargs = dict(
+                    init=parent.init,
+                    repr=parent.repr,
+                    hash=parent.hash,
+                    compare=parent.compare,
+                    kw_only=parent.kw_only,
+                )
+                metadata = copy.deepcopy(dict(parent.metadata))
+
+                # Note: there is no way to override a field without setting a new default.
+                # This may be feasible, but seems a bit moot at the moment
+                if not isinstance(value, dc.Field):
+                    default = value
+                else:
+                    if value.metadata.get("required"):
+                        default = Config.REQUIRED
+                    elif value.default is not dc.MISSING:
+                        default = value.default
+                    else:
+                        default = value.default_factory
+
+                    field_kwargs.update(
+                        dict(
+                            init=value.init,
+                            repr=value.repr,
+                            hash=value.hash,
+                            compare=value.compare,
+                            kw_only=value.kw_only,
+                        )
+                    )
+                    metadata.update(value.metadata)
+
+                overrides[key] = parent.type
+                namespace[key] = config_field(default, field_kwargs, **metadata)
+
+        return overrides
+
+    @staticmethod
+    def _handle_annotations(name, overrides, namespace):
+        """
+        Make sure that type annotations are propagated correctly from the parent.
+
+        Note that for python 3.14+ we use annotationlib to do this properly, in this
+        case this returns a wrapped annotation function
+
+        :returns: Wrapped annotation function (python 3.14+) or None
+        """
+
+        # Helper, loop over overrides and wrap an annotations dictionary
+        def _do_wrap_annotations(annotations, fmt):
+            for key, f_type in overrides.items():
+                # Verify that type annotations match
+                if key in annotations and annotations.get(key) != f_type:
+                    raise TypeError(
+                        f"Invalid config field override of {key} with type {f_type} by {name}"
+                    )
+                elif annotationlib:
+                    if fmt == annotationlib.Format.STRING:
+                        annotations[key] = getattr(f_type, "__name__", str(f_type))
+                    else:
+                        annotations[key] = f_type
+                else:
+                    annotations[key] = f_type
+            return annotations
+
+        if annotationlib:
+            # Lazy annotation eval on python 3.14+
+            # Assume that we never use eager mode (from __future__ import annotations)
+            assert "__annotations__" not in namespace
+
+            if annotate := annotationlib.get_annotate_from_class_namespace(namespace):
+                # The custom wrapper propagates the types based on the parent
+                def _wrap_annotate(cls, fmt):
+                    annotations = annotationlib.call_annotate_function(
+                        annotate, fmt, owner=cls
+                    )
+                    return _do_wrap_annotations(annotations, fmt)
+
+                return _wrap_annotate
+            elif overrides:
+                # No annotations present at all, create the annotations from parent
+                def _wrap_annotate(cls, fmt):
+                    return _do_wrap_annotations({}, fmt)
+
+                return _wrap_annotate
+            else:
+                # No annotations and no overrides, do not wrap
+                return None
+        else:
+            # Eager annotation eval on python up to 3.13
+            namespace.setdefault("__annotations__", {})
+            annotations = namespace["__annotations__"]
+
+            for key, f_type in overrides.items():
+                # Verify that type annotations match
+                if key in annotations and annotations.get(key) != f_type:
+                    raise TypeError(
+                        f"Invalid config field override of {key} with type {f_type} by {name}"
+                    )
+                else:
+                    annotations[key] = f_type
+            return None
+
+
 @dc.dataclass
-class Config:
+class Config(metaclass=ConfigMeta):
     """
     Base class for configuration data structure that support template substitution.
     Note that this should be used across the whole hierarchy of nested configurations
