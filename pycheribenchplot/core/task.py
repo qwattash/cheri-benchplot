@@ -467,6 +467,7 @@ class output:
 
     def __init__(self, fn: Callable | None = None, name: str | None = None):
         """
+        :param fn: Decorated function
         :param name: Override the name of the output, the name of the decorated
         function is used otherwise.
         """
