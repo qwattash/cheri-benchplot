@@ -23,7 +23,7 @@ class PMCType(Enum):
 
 class PMCSet(Enum):
     """
-    Pre-defined sets of counters
+    Pre-defined sets of counters.
     """
 
     Instr = "instr"
@@ -156,7 +156,7 @@ class PMCExecConfig(Config):
         97553, desc="Counter sampling rate, only relevant in sampling mode"
     )
     counters: list[str] = config_field(list, desc="List of PMC counters to use")
-    group: str | None = config_field(
+    group: PMCSet | None = config_field(
         None, desc="Pre-defined group of counters, overrides 'counters' option"
     )
     follow_fork: bool = config_field(False, desc="Trace children on fork")
