@@ -6,13 +6,19 @@ import polars.selectors as cs
 from ..core.artefact import Target
 from ..core.config import config_field
 from ..core.plot import PlotTarget, SlicePlotTask
-from ..core.plot_grid import PlotGrid, PlotGridConfig, grid_barplot
+from ..core.plot_grid import (
+    BarPlotConfig,
+    OptColRef,
+    PlotGrid,
+    PlotGridConfig,
+    grid_barplot,
+)
 from ..core.task import dependency, output
 from .pmc_exec import IngestPMCCounters, PMCExec
 
 
 @dataclass
-class PMCPlotConfig(PlotGridConfig):
+class PMCPlotConfig(PlotGridConfig, BarPlotConfig):
     """
     Configure a performance counter plot.
 
@@ -25,6 +31,35 @@ class PMCPlotConfig(PlotGridConfig):
     The cpu_filter property is used to filter system-wide counters by CPU.
     This is useful to further isolate the data if processes are pinned.
     """
+
+    tile_sharex: str | bool = False  #: override
+    tile_sharey: str | bool = False  #: override
+    tile_row: OptColRef = "<_counter>"  #: override
+    tile_col: OptColRef = "<_metric_type>"  #: override
+
+    # XXX it would be nice to have a clean default configuration, it is
+    # unclear how much value there is into it.
+    # default_axis_names = {
+    #     "_metric_type": "Measurement",
+    #     "_counter": "Counter",
+    # }
+    # if self.config.hue:
+    #     default_axis_names[self.config.hue] = self.config.hue.capitalize()
+    # default_metric_labels = {
+    #     "absolute": "Counter value",
+    #     "delta": "∆ Counter value",
+    #     "overhead": "% Overhead",
+    # }
+    # grid_config = self.config.with_default_axis_rename(default_axis_names)
+    # grid_config = grid_config.with_default_axis_remap(
+    #     {"_metric_type": default_metric_labels}
+    # )
+    # grid_config = grid_config.with_config_default(
+    #     tile_sharey=False,
+    #     tile_sharex=False,
+    #     tile_row="_counter",
+    #     tile_col="_metric_type",
+    # )
 
     pmc_filter: list[str] | None = config_field(
         None, desc="Show only the given subset of counters"
@@ -53,6 +88,13 @@ class PMCSliceSummary(SlicePlotTask):
     If the goal is comparing derived metrics across runs that use different counter
     groups, it is advised to use the counter group parameterisation axis as a
     fixed axis in the dynamic analysis top-level task.
+
+    Generated columns:
+    - _counter: The name of the counter
+    - value: The counter value
+    - _metric_type: The statistic computed in value, can be one of absolute, delta,
+      overhead
+    - _cpu: The CPU on which the counters are obserte
     """
 
     task_namespace = "pmc"
@@ -202,43 +244,16 @@ class PMCSliceSummary(SlicePlotTask):
 
     def run_plot(self):
         self.logger.info("Plot combined PMC summary for slice %s", self.slice_info)
-        # Setup default grid configuration
-        default_axis_names = {
-            "_metric_type": "Measurement",
-            "_counter": "Counter",
-        }
-        if self.config.hue:
-            default_axis_names[self.config.hue] = self.config.hue.capitalize()
-        default_metric_labels = {
-            "absolute": "Counter value",
-            "delta": "∆ Counter value",
-            "overhead": "% Overhead",
-        }
 
-        grid_config = self.config.with_default_axis_rename(default_axis_names)
-        grid_config = grid_config.with_default_axis_remap(
-            {"_metric_type": default_metric_labels}
-        )
-        grid_config = grid_config.with_config_default(
-            tile_sharey=False,
-            tile_sharex=False,
-            tile_row="_counter",
-            tile_col="_metric_type",
-        )
         # Draw the barplot but adjust the Y label to reflect the tile metric type
-        with PlotGrid(self.summary_combined, self.stats, grid_config) as grid:
+        with PlotGrid(self.summary_combined, self.stats, self.config) as grid:
             grid.map(
                 grid_barplot,
                 x=self.config.tile_xaxis,
                 y="value",
                 err=["value_low", "value_high"],
+                config=self.config,
             )
-
-            # XXX this seems useful, integrate it in the base plot grid
-            def _adjust_ylabel(tile, chunk):
-                tile.ax.set_ylabel(chunk[tile.d._metric_type][0])
-
-            grid.map(_adjust_ylabel)
             grid.add_legend()
 
         # Pivot back for readability
@@ -271,22 +286,23 @@ class PMCSliceAbsSummary(PMCSliceSummary):
     def run_plot(self):
         self.logger.info("Plot absolute counters summary for slice %s", self.slice_info)
         median_df = self.stats.filter(_metric_type="absolute")
-        default_axis_names = {
-            "_counter": "Counter",
-            "value": "Counter value",
-        }
-        if self.config.hue:
-            default_axis_names[self.config.hue] = self.config.hue.capitalize()
-        grid_config = self.config.with_default_axis_rename(
-            default_axis_names
-        ).with_config_default(tile_row="_counter")
+        # default_axis_names = {
+        #     "_counter": "Counter",
+        #     "value": "Counter value",
+        # }
+        # if self.config.hue:
+        #     default_axis_names[self.config.hue] = self.config.hue.capitalize()
+        # grid_config = self.config.with_default_axis_rename(
+        #     default_axis_names
+        # ).with_config_default(tile_row="_counter")
 
-        with PlotGrid(self.summary_plot, median_df, grid_config) as grid:
+        with PlotGrid(self.summary_plot, median_df, self.config) as grid:
             grid.map(
                 grid_barplot,
                 x=self.config.tile_xaxis,
                 y="value",
                 err=["value_low", "value_high"],
+                config=self.config,
             )
             grid.add_legend()
 
@@ -311,22 +327,23 @@ class PMCSliceRelSummary(PMCSliceSummary):
     def run_plot(self):
         self.logger.info("Plot counters delta summary for slice %s", self.slice_info)
         delta_df = self.stats.filter(_metric_type="delta")
-        default_axis_names = {
-            "_counter": "Counter",
-            "value": "∆ Counter value",
-        }
-        if self.config.hue:
-            default_axis_names[self.config.hue] = self.config.hue.capitalize()
-        grid_config = self.config.with_default_axis_rename(
-            default_axis_names
-        ).with_config_default(tile_row="_counter")
+        # default_axis_names = {
+        #     "_counter": "Counter",
+        #     "value": "∆ Counter value",
+        # }
+        # if self.config.hue:
+        #     default_axis_names[self.config.hue] = self.config.hue.capitalize()
+        # grid_config = self.config.with_default_axis_rename(
+        #     default_axis_names
+        # ).with_config_default(tile_row="_counter")
 
-        with PlotGrid(self.summary_delta_plot, delta_df, grid_config) as grid:
+        with PlotGrid(self.summary_delta_plot, delta_df, self.config) as grid:
             grid.map(
                 grid_barplot,
                 x=self.config.tile_xaxis,
                 y="value",
                 err=["value_low", "value_high"],
+                config=self.config,
             )
             grid.add_legend()
 
@@ -352,21 +369,22 @@ class PMCSliceOverheadSummary(PMCSliceSummary):
         self.logger.info("Plot counters overhead summary for slice %s", self.slice_info)
         # Note: filter out the baseline data, as it doesn't make sense to have it here
         overhead_df = self.stats.filter(_metric_type="overhead", _is_baseline=False)
-        default_axis_names = {
-            "_counter": "Counter",
-            "value": "% Overhead",
-        }
-        if self.config.hue:
-            default_axis_names[self.config.hue] = self.config.hue.capitalize()
-        grid_config = self.config.with_default_axis_rename(
-            default_axis_names
-        ).with_config_default(tile_row="_counter")
+        # default_axis_names = {
+        #     "_counter": "Counter",
+        #     "value": "% Overhead",
+        # }
+        # if self.config.hue:
+        #     default_axis_names[self.config.hue] = self.config.hue.capitalize()
+        # grid_config = self.config.with_default_axis_rename(
+        #     default_axis_names
+        # ).with_config_default(tile_row="_counter")
 
-        with PlotGrid(self.summary_ovh_plot, overhead_df, grid_config) as grid:
+        with PlotGrid(self.summary_ovh_plot, overhead_df, self.config) as grid:
             grid.map(
                 grid_barplot,
                 x=self.config.tile_xaxis,
                 y="value",
                 err=["value_low", "value_high"],
+                config=self.config,
             )
             grid.add_legend()
