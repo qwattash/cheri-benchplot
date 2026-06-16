@@ -31,6 +31,7 @@ class WorkloadInfo:
 # Note: expect the following directory layout for workloads
 #
 # workloads
+#   - fragments (imported workload fragments)
 #   - <group> (e.g. iperf)
 #     - data (sessions and collected data)
 #       - <session-name> (e.g. iperf.smoketest)
@@ -44,6 +45,8 @@ workloads = []
 
 for group in WORKLOADS_ROOT.iterdir():
     if not group.is_dir():
+        continue
+    if group.name == "fragments":
         continue
     for element in group.iterdir():
         if element.name.endswith(".json"):
