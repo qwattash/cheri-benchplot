@@ -768,10 +768,12 @@ class ConfigMeta(type):
                     metadata.update(value.metadata)
 
                 if default is not Config.REQUIRED:
-                    metadata.pop("required")
+                    metadata.pop("required", None)
 
                 overrides[key] = parent.type
-                namespace[key] = config_field(default, field_kwargs, **metadata)
+                namespace[key] = config_field(
+                    default, field_kwargs=field_kwargs, **metadata
+                )
 
         return overrides
 
@@ -791,9 +793,14 @@ class ConfigMeta(type):
             for key, f_type in overrides.items():
                 # Verify that type annotations match
                 if key in annotations and annotations.get(key) != f_type:
-                    raise TypeError(
-                        f"Invalid config field override of {key} with type {f_type} by {name}"
+                    logger.error(
+                        "Invalid config field override of %s with type %s by %s with type %s",
+                        key,
+                        f_type,
+                        name,
+                        annotations.get(key),
                     )
+                    raise TypeError("Invalid config field override")
                 elif annotationlib:
                     if fmt == annotationlib.Format.STRING:
                         annotations[key] = getattr(f_type, "__name__", str(f_type))
@@ -834,9 +841,14 @@ class ConfigMeta(type):
             for key, f_type in overrides.items():
                 # Verify that type annotations match
                 if key in annotations and annotations.get(key) != f_type:
-                    raise TypeError(
-                        f"Invalid config field override of {key} with type {f_type} by {name}"
+                    logger.error(
+                        "Invalid config field override of %s with type %s by %s with type %s",
+                        key,
+                        f_type,
+                        name,
+                        annotations.get(key),
                     )
+                    raise TypeError("Invalid config field override")
                 else:
                     annotations[key] = f_type
             return None
