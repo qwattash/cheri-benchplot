@@ -28,6 +28,7 @@ class PMCSet(Enum):
 
     Instr = "instr"
     CheriInstr = "cheri-instr"
+    CheriInstr2 = "cheri-instr-2"
     L1Cache = "l1cache"
     L2Cache = "l2cache"
     L3Cache = "l3cache"
@@ -51,6 +52,18 @@ PMC_SET_COUNTERS = {
         "STALL_BACKEND",
     ],
     PMCSet.CheriInstr: [
+        "CPU_CYCLES",
+        "INST_RETIRED",
+        "INST_SPEC",
+        "LD_SPEC",
+        "ST_SPEC",
+        "CAP_LD_SPEC",
+        "CAP_ST_SPEC",
+        "BR_MIS_PRED",
+        "STALL_FRONTEND",
+        "STALL_BACKEND",
+    ],
+    PMCSet.CheriInstr2: [
         "CPU_CYCLES",
         "INST_RETIRED",
         "INST_SPEC",
