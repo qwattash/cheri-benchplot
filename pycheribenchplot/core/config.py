@@ -226,6 +226,7 @@ class TemplateFieldProxy(mfields.Field):
             required=wrapped.required,
             load_default=wrapped.load_default,
             dump_default=wrapped.dump_default,
+            allow_none=wrapped.allow_none,
         )
         self._wrapped_field = wrapped
 
@@ -634,11 +635,12 @@ def config_field(
     """
 
     kwargs = dict(metadata=metadata)
+    meta_kw = kwargs["metadata"]
     if field_kwargs is not None:
         kwargs.update(field_kwargs)
     if default == Config.REQUIRED:
         # No default, make the field required but pacify dataclass
-        kwargs["metadata"]["required"] = True
+        meta_kw["required"] = True
         kwargs["default"] = None
     else:
         if callable(default):
@@ -646,9 +648,11 @@ def config_field(
         else:
             kwargs["default"] = default
         if issubclass(type(default), Enum):
-            kwargs["metadata"].setdefault("by_value", True)
-    kwargs["metadata"].setdefault("metadata", {})
-    kwargs["metadata"]["metadata"].setdefault("desc", desc)
+            meta_kw.setdefault("by_value", True)
+    meta_kw.setdefault("metadata", {})
+    if default is None:
+        meta_kw["metadata"]["allow_none"] = True
+    meta_kw["metadata"].setdefault("desc", desc)
     return dc.field(**kwargs)
 
 
