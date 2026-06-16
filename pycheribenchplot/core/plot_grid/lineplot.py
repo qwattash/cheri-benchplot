@@ -3,8 +3,8 @@ from enum import Enum
 
 import polars as pl
 
-from ..config import Config, config_field
-from .plot_grid import ColRef, PlotConfigBase, PlotTile
+from ..config import config_field
+from .plot_grid import OptColRef, PlotConfigBase, PlotTile
 
 
 class Scale(Enum):
@@ -19,9 +19,6 @@ class LinePlotConfig(PlotConfigBase):
     Display grid configuration extension specific to line plots.
     """
 
-    tile_xaxis: ColRef = config_field(
-        Config.REQUIRED, desc="ColRef to use for the X axis of each tile."
-    )
     tile_xscale: Scale = config_field(Scale.Linear, desc="Scale for the X axis.")
     tile_yscale: Scale = config_field(Scale.Linear, desc="Scale for the Y axis.")
     line_width: float | None = config_field(None, desc="Width of the lines.")
@@ -29,10 +26,10 @@ class LinePlotConfig(PlotConfigBase):
         True, desc="When false, only draw the marker outline."
     )
     marker_size: float | None = config_field(None, desc="Size of the markers.")
-    marker: ColRef | None = config_field(
+    marker: OptColRef = config_field(
         None, desc="ColRef containing the markers. Should align on the hue."
     )
-    linestyle: ColRef | None = config_field(
+    linestyle: OptColRef = config_field(
         None, desc="ColRef containing the linestyles. Should align on the hue."
     )
 

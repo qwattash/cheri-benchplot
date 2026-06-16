@@ -6,7 +6,7 @@ from marshmallow import ValidationError, validates
 
 from ..config import config_field
 from .coords import CoordGenConfig, CoordGenerator
-from .plot_grid import check_colref_pattern, ColRef, PlotConfigBase, PlotTile
+from .plot_grid import check_colref_pattern, OptColRef, PlotConfigBase, PlotTile
 
 
 @dataclass
@@ -15,10 +15,10 @@ class BarPlotConfig(PlotConfigBase):
     Display grid configuration extension specific to bar plots.
     """
 
-    stack_by: ColRef | None = config_field(
+    stack_by: OptColRef = config_field(
         None, desc="Stack bars along the given column ref."
     )
-    shift_by: ColRef | None = config_field(
+    shift_by: OptColRef = config_field(
         None, desc="Shift bars along the given column ref."
     )
     orient: str = config_field("x", desc="Plot orientation (x or y).")

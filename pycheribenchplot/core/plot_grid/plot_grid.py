@@ -39,6 +39,15 @@ ColRef = Annotated[
         )
     ),
 ]
+OptColRef = Annotated[
+    str | None,
+    mf.String(
+        validate=mv.Regexp(
+            COLREF_PATTERN, error="Invalid column ref {input}, must be '<ref>'"
+        ),
+        allow_none=True,
+    ),
+]
 
 
 def check_colref_pattern(maybe_ref: str) -> bool:
@@ -193,27 +202,27 @@ class PlotGridConfig(PlotConfigBase):
     )
 
     # Tiling configuration
-    tile_row: ColRef | None = config_field(
+    tile_row: OptColRef = config_field(
         None, desc="Set column ref to use for grid rows."
     )
-    tile_col: ColRef | None = config_field(
+    tile_col: OptColRef = config_field(
         None, desc="Set column ref to use for grid cols."
     )
-    tile_xlabel: ColRef | None = config_field(
+    tile_xlabel: OptColRef = config_field(
         None,
         desc="Set column ref to use for X axis labels. Defaults to X data column name.",
     )
-    tile_ylabel: ColRef | None = config_field(
+    tile_ylabel: OptColRef = config_field(
         None,
         desc="Set column ref to use for Y axis labels. Defaults to Y data column name.",
     )
     tile_row_show_title: bool = config_field(True, desc="Show the row tiling title.")
-    tile_row_title: ColRef | None = config_field(
+    tile_row_title: OptColRef = config_field(
         None,
         desc="Set column ref to use for the row title label. Defaults to tile_row.",
     )
     tile_col_show_title: bool = config_field(True, desc="Show the column tiling title.")
-    tile_col_title: ColRef | None = config_field(
+    tile_col_title: OptColRef = config_field(
         None,
         desc="Set column ref to use for the col title label. Defaults to tile_col.",
     )
