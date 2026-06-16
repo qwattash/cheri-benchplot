@@ -990,10 +990,11 @@ class Config(metaclass=ConfigMeta):
     @classmethod
     def load_json(cls, jsonpath):
         jsonpath = Path(jsonpath).resolve()
+        logger.debug("Parse configuration from %s", jsonpath)
         with open(jsonpath, "r") as jsonfile:
             data = json.load(jsonfile)
         data = cls.resolve_json_imports(data, jsonpath.parent)
-        logger.debug("Parse configuration from %s", jsonpath)
+        logger.debug("Resolved JSON imports: %s", json.dumps(data))
         return cls.schema().load(data)
 
     @classmethod
@@ -1049,13 +1050,16 @@ class Config(metaclass=ConfigMeta):
         resolve any internal imports.
         Returns a tuple of (resolved_loaded_data, import_file_path).
         """
-        m = re.match(r"^\{import:(.+)\}$", import_spec)
+        m = re.match(
+            r"^\{import:([a-zA-Z0-9/ ._-]+):?([a-zA-Z0-9_.]+)?\}$", import_spec
+        )
         if not m:
             # Not an import specifier
             return None, None
 
         import_rel_path = m.group(1).strip()
         import_path = (base_dir / import_rel_path).resolve()
+        import_extract = m.group(2)
 
         if import_path in seen:
             logger.error(
@@ -1083,6 +1087,11 @@ class Config(metaclass=ConfigMeta):
         resolved_data = cls.resolve_json_imports(
             import_data, import_path.parent, seen | {import_path}
         )
+        if import_extract:
+            resolved_data = _lookup_import_path(
+                resolved_data, import_extract, import_path
+            )
+
         return resolved_data, import_path
 
     def __post_init__(self):

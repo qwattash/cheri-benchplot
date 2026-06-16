@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Annotated
+import json
 
 import pytest
 from marshmallow import ValidationError
@@ -13,7 +14,7 @@ from pycheribenchplot.core.config import (
     ConfigTemplateSpec,
     config_field,
 )
-from pycheribenchplot.core.error import ConfigTemplateBindError
+from pycheribenchplot.core.error import ConfigTemplateBindError, ConfigurationError
 
 
 @dataclass
@@ -375,8 +376,6 @@ def test_validate_annotated_field():
 
 
 def test_config_json_imports(tmp_path):
-    import json
-
     main_json = tmp_path / "main.json"
     import_json = tmp_path / "imported.json"
 
@@ -411,8 +410,6 @@ class DeepNested(Config):
 
 
 def test_config_json_recursive_imports(tmp_path):
-    import json
-
     sub_dir = tmp_path / "sub"
     sub_dir.mkdir()
 
@@ -439,8 +436,6 @@ def test_config_json_recursive_imports(tmp_path):
 
 
 def test_config_json_import_with_templates(tmp_path):
-    import json
-
     main_json = tmp_path / "main.json"
     imported_json = tmp_path / "imported.json"
 
@@ -460,9 +455,6 @@ def test_config_json_import_with_templates(tmp_path):
 
 
 def test_config_json_import_circular(tmp_path):
-    import json
-    from pycheribenchplot.core.error import ConfigurationError
-
     main_json = tmp_path / "main.json"
     imported_json = tmp_path / "imported.json"
 
@@ -478,9 +470,6 @@ def test_config_json_import_circular(tmp_path):
 
 
 def test_config_json_import_missing(tmp_path):
-    import json
-    from pycheribenchplot.core.error import ConfigurationError
-
     main_json = tmp_path / "main.json"
     with open(main_json, "w") as f:
         json.dump({"nested_val": "{import:does_not_exist.json}"}, f)
@@ -506,8 +495,6 @@ def test_config_describe_enum():
 
 
 def test_config_json_key_imports_wildcard(tmp_path):
-    import json
-
     main_json = tmp_path / "main.json"
     import_json = tmp_path / "imported.json"
 
@@ -527,8 +514,6 @@ def test_config_json_key_imports_wildcard(tmp_path):
 
 
 def test_config_json_key_imports_path(tmp_path):
-    import json
-
     main_json = tmp_path / "main.json"
     import_json = tmp_path / "imported.json"
 
@@ -546,7 +531,36 @@ def test_config_json_key_imports_path(tmp_path):
         json.dump(
             {
                 "nested_val": {
-                    "{import:imported.json}": "fragments/default_system",
+                    "{import:imported.json}": "fragments.default_system",
+                    "list_val": ["a", "b"],
+                }
+            },
+            f,
+        )
+
+    config = DemoNested.load_json(main_json)
+    assert config.nested_val is not None
+    assert config.nested_val.str_val == "system_name"
+    assert config.nested_val.int_val == 100
+    assert config.nested_val.list_val == ["a", "b"]
+
+
+def test_config_json_key_block_import(tmp_path):
+    main_json = tmp_path / "main.json"
+    import_json = tmp_path / "imported.json"
+
+    with open(import_json, "w") as f:
+        json.dump(
+            {"fragments": {"str_val": "system_name", "int_val": 100}},
+            f,
+        )
+
+    with open(main_json, "w") as f:
+        json.dump(
+            {
+                "nested_val": {
+                    "str_val": "{import:imported.json:fragments.str_val}",
+                    "int_val": "{import:imported.json:fragments.int_val}",
                     "list_val": ["a", "b"],
                 }
             },
@@ -561,9 +575,6 @@ def test_config_json_key_imports_path(tmp_path):
 
 
 def test_config_json_key_imports_errors(tmp_path):
-    import json
-    from pycheribenchplot.core.error import ConfigurationError
-
     main_json = tmp_path / "main.json"
     import_json = tmp_path / "imported.json"
 
