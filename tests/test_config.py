@@ -588,3 +588,55 @@ def test_config_json_key_imports_errors(tmp_path):
     with pytest.raises(ConfigurationError) as exc_info:
         DemoNested.load_json(main_json)
     assert "Invalid imported fragment type for dictionary merge" in str(exc_info.value)
+
+
+@dataclass
+class DummyOptionalAnnotatedConfig(Config):
+    # This represents the broken marshmallow-dataclass behavior
+    opt_field: Annotated[str, mf.String()] | None = config_field(None)
+
+
+@dataclass
+class DummyOptColRefConfig(Config):
+    # This represents the OptColRef solution
+    from pycheribenchplot.core.plot_grid import OptColRef
+
+    col: OptColRef = config_field(None)
+
+
+@pytest.mark.xfail(
+    reason="marshmallow-dataclass does not propagate allow_none for optional annotated types with pre-instantiated fields"
+)
+def test_optional_annotated_field_allow_none():
+    """
+    Test that optional union of annotated types propagates allow_none.
+    This is currently expected to fail due to a marshmallow-dataclass limitation.
+    """
+    schema = DummyOptionalAnnotatedConfig.schema()
+    field = schema.fields["opt_field"]
+
+    # Verify allow_none propagation
+    assert field.allow_none is True
+    if hasattr(field, "_wrapped_field"):
+        assert field._wrapped_field.allow_none is True
+
+    # Attempt deserialization of None
+    loaded = schema.load({"opt_field": None})
+    assert loaded.opt_field is None
+
+
+def test_opt_col_ref_allow_none():
+    """
+    Test that the custom OptColRef type correctly handles allow_none and loads null values.
+    """
+    schema = DummyOptColRefConfig.schema()
+    field = schema.fields["col"]
+
+    # Both proxy and wrapped field must accept None
+    assert field.allow_none is True
+    if hasattr(field, "_wrapped_field"):
+        assert field._wrapped_field.allow_none is True
+
+    # Loading None must succeed
+    loaded = schema.load({"col": None})
+    assert loaded.col is None
