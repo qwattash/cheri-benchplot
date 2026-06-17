@@ -25,6 +25,19 @@ class BarPlotConfig(PlotConfigBase):
     coordgen: dict[str, Any] = config_field(
         dict, desc="Coordinate generator extra arguments. (internal)"
     )
+    show_bar_label: bool = config_field(
+        False, desc="Show the actual value of the bar on top of each bar."
+    )
+    bar_label_rotation: float = config_field(
+        0.0, desc="Rotation angle for the bar labels."
+    )
+    bar_label: OptColRef = config_field(
+        None,
+        desc="Optional ColRef to select an alternative column for the label (permits arbitrary formatting).",
+    )
+    bar_label_size: float | None = config_field(
+        None, desc="Label text size (or None for default font size)."
+    )
 
     @validates("orient")
     def check_orientation(self, data, **kwargs):
@@ -38,6 +51,97 @@ class BarPlotConfig(PlotConfigBase):
             or self.tile_xaxis == ref
             or self.stack_by == ref
             or self.shift_by == ref
+            or self.bar_label == ref
+        )
+
+
+def _draw_bar_labels(
+    tile: PlotTile,
+    df: pl.DataFrame,
+    coord: pl.Series,
+    config: BarPlotConfig,
+    d_var: str,
+    err: tuple[str, str] | None,
+):
+    """
+    Helper function to draw value labels on top of (or next to) each bar.
+
+    :param tile: The tile descriptor
+    :param df: The hue_group dataframe
+    :param coord: Series of coordinates on the independent-variable orientation axis
+    :param config: Bar plot configuration
+    :param d_var: Dependent variable column name
+    :param err: Tuple with the error bar column names, if configured
+    """
+    label_col = d_var
+    if config.bar_label:
+        label_col = tile.ref_to_col(config.bar_label)
+
+    # Format the label values according to the label configuration
+    if df.schema[label_col].is_numeric():
+        bar_label = df.select(
+            pl.col(label_col)
+            .cast(pl.Float32)
+            .fill_nan(None)
+            .map_elements(lambda v: f"{v:.3g}", skip_nulls=True)
+            .fill_null("")
+        ).to_series()
+    else:
+        bar_label = df[label_col]
+
+    sign = df[d_var].sign()
+    if err:
+        # the 'top' Y coordinate depends on the sign of the data, when negative, we need to
+        # pick the lower error bar position.
+        text_coord = df.select(
+            pl.when(pl.col(d_var) >= 0).then(pl.col(err[1])).otherwise(pl.col(err[0]))
+            + pl.col("__gen_stack")
+        ).to_series()
+    else:
+        text_coord = df.select(pl.col(d_var) + pl.col("__gen_stack")).to_series()
+
+    # Produce offset, va and ha vectors
+    text_offset = 3 * sign  # 3 points offset
+    if config.orient == "x":
+        text_x = coord
+        text_y = text_coord
+        text_ha = "center"
+        text_align = df.select(
+            pl.when(pl.col(d_var) >= 0).then(pl.lit("bottom")).otherwise(pl.lit("top"))
+        ).to_series()  # va
+    else:
+        text_offset = (3, 0)  # 3 points of horizontal offset
+        text_x = text_coord
+        text_y = coord
+        text_align = df.select(
+            pl.when(pl.col(d_var) >= 0).then(pl.lit("left")).otherwise(pl.lit("right"))
+        ).to_series()  # ha
+        text_va = "center"
+
+    annotate_kwargs = {}
+    if config.bar_label_size is not None:
+        annotate_kwargs["fontsize"] = config.bar_label_size
+
+    for x, y, label, off, align in zip(
+        text_x, text_y, bar_label, text_offset, text_align
+    ):
+        if config.orient == "x":
+            offset = (0, off)
+            ha, va = text_ha, align
+        else:
+            offset = (off, 0)
+            ha, va = align, text_va
+
+        tile.ax.annotate(
+            label,
+            xy=(x, y),
+            xytext=offset,
+            textcoords="offset points",
+            ha=ha,
+            va=va,
+            rotation=config.bar_label_rotation,
+            rotation_mode="anchor",
+            **annotate_kwargs,
         )
 
 
@@ -126,3 +230,6 @@ def grid_barplot(
             label=hue_label,
             **error_kwargs,
         )
+
+        if config.show_bar_label:
+            _draw_bar_labels(tile, hue_group, coord, config, d_var, err)
