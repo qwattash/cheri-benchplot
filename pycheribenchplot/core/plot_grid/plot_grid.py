@@ -194,7 +194,7 @@ class PlotGridConfig(PlotConfigBase):
     # General figure-level configuration
     title: str | None = config_field(None, desc="Set figure title.")
     size: tuple[float, float] | None = config_field(
-        None, desc="Override figure size, in inches."
+        None, desc="Override figure size, in inches [W x H]."
     )
     style: dict[str, Any] = config_field(
         dict,

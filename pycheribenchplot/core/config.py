@@ -956,7 +956,7 @@ class Config(metaclass=ConfigMeta):
                     if resolved_import is not None:
                         fragment = _lookup_import_path(resolved_import, v, import_path)
                         if isinstance(fragment, dict):
-                            # Sequential merge/unpack (Option A)
+                            # Sequential merge/unpack
                             resolved_dict.update(fragment)
                         else:
                             logger.error(
