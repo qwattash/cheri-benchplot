@@ -9,8 +9,9 @@ usage() {
     echo "Usage: $0"
 }
 
-OPT_CRON_SETUP=
-OPT_CRON_TEARDOWN=
+OPT_RC_SETUP=
+OPT_RC_TEARDOWN=
+OPT_NOREBOOT=
 
 SESSION_WORKDIR="$(pwd)"
 AUTORUN_PATH="${SESSION_WORKDIR}/$(basename '$0')"
@@ -28,6 +29,9 @@ while [ "$#" -gt 0 ]; do
             ;;
         -t)
             OPT_RC_TEARDOWN=1
+            ;;
+        -n)
+            OPT_NOREBOOT=1
             ;;
         *)
             usage
@@ -130,7 +134,7 @@ esac
 if [ -n "$WORKLOAD_SCRIPT" ]; then
     echo "Auto-run sequence ({{ session }}): workload ${WORKLOAD_SCRIPT}"
     echo "Waiting for system to settle"
-    sleep 1m
+    sleep ${SETTLE_TIME}
     echo "Run!"
     ${SESSION_WORKDIR}/${WORKLOAD_SCRIPT}
 fi
