@@ -10,14 +10,21 @@ if [ ! -f /boot/kernel/kernel ]; then
     touch /boot/kernel/kernel
 fi
 
-name="benchplot"
-
-load_rc_config $name
+load_rc_config
 : ${benchplot_enable:="NO"}
 : ${benchplot_session:=""}
 : ${benchplot_user:="root"}
+: ${benchplot_settle_delay:=""}
+
+if [ -n "${benchplot_settle_delay}" ]; then
+    _delay_arg="-k ${benchplot_settle_delay}"
+fi
 
 autorun_script="${benchplot_session}/auto-run.sh"
+
+if [ "${benchplot_enable}" = "NO" ]; then
+    err 0 "Benchplot autorun disabled."
+fi
 
 if [ ! -d "${benchplot_session}" ]; then
 	err 1 "${benchplot_session} is not a directory."
@@ -30,6 +37,6 @@ fi
 info "Autorun benchplot session at ${benchplot_session}"
 
 # -n prevents auto-reboot
-(cd ${benchplot_session} && ${autorun_script} -n)
+(cd ${benchplot_session} && ${autorun_script} -n ${_delay_arg})
 
 poweroff

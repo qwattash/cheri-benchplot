@@ -735,6 +735,14 @@ class Session:
             ctx.render(script_file)
         autorun_rc_path.chmod(0o755)
 
+        ctx = TemplateContextBase(self.logger)
+        ctx.set_template("rc-local.sh.jinja")
+        ctx.extend_context({"session": self.config.name})
+        autorun_rc_path = data_root / "rc.local"
+        with open(autorun_rc_path, "w+") as script_file:
+            ctx.render(script_file)
+        autorun_rc_path.chmod(0o755)
+
         # Schedule generators according to the collected descriptors
         for descriptor in self.parameterization_matrix["descriptor"]:
             descriptor.schedule_exec_tasks(self.scheduler, ExecTaskConfig())

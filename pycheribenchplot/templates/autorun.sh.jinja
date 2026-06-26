@@ -6,6 +6,8 @@ usage() {
     echo "Run session across multiple targets on this machine"
     echo "-s Prepare the machine for autorun"
     echo "-t Cleaup the autorun init.d"
+    echo "-n Do not trigger reboot"
+    echo "-k <time> Use custom settle time, defaults to 5 seconds"
     echo "Usage: $0"
 }
 
@@ -16,7 +18,7 @@ OPT_NOREBOOT=
 SESSION_WORKDIR="$(pwd)"
 AUTORUN_PATH="${SESSION_WORKDIR}/$(basename '$0')"
 AUTORUN_RC="/usr/local/etc/rc.d/benchplot"
-SETTLE_TIME="1m"
+SETTLE_TIME=5
 
 while [ "$#" -gt 0 ]; do
     case $1 in
@@ -33,6 +35,14 @@ while [ "$#" -gt 0 ]; do
         -n)
             OPT_NOREBOOT=1
             ;;
+        -k)
+            if [ -n "$2" ]; then
+                SETTLE_TIME=$2
+                shift
+            else
+                usage
+                exit
+            fi
         *)
             usage
             exit
