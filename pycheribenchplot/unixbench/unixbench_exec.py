@@ -24,6 +24,7 @@ class UnixBenchConfig(TimingConfig):
     duration: int = config_field(
         10000, desc="Duration of an iteration (number of transactions)"
     )
+    cpu: list[int] | None = config_field(None, desc="Pin unixbench to given CPU")
 
 
 class UnixBenchExec(TimingExecTask):
