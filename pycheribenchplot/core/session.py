@@ -80,6 +80,96 @@ class Session:
         session.import_assets(config.assets, workdir)
         return session
 
+    def extend(self, config: PipelineConfig, workdir: Path = None):
+        """
+        Extend the current session with new configurations from a PipelineConfig.
+        Existing parameterizations are retained with their original UUIDs.
+        If the new configuration is not a strict superset of the existing session's
+        parameterizations, this operation fails cleanly and leaves the session intact.
+        """
+        if workdir is None:
+            workdir = Path.cwd()
+
+        new_run_config = SessionRunConfig.generate(self.user_config, config)
+
+        # TODO Verify that iterations count has not changed
+
+        # Collect current parameterization axes from run configurations
+        current_axes = defaultdict(set)
+        current_param_keys = []
+        for run in self.config.configurations:
+            # Note: the parameterization tuple must be sorted to be stable
+            run_key = tuple(sorted(run.parameters.items()))
+            current_param_keys.append(run_key)
+            for key, val in run.parameters.items():
+                current_axes[key].add(val)
+
+        new_axes = defaultdict(set)
+        for run in new_run_config.configurations:
+            for key, val in run.parameters.items():
+                new_axes[key].add(val)
+
+        # Verify that the new axes are a superset of the current axes
+        for key, current_values in current_axes.items():
+            if key not in new_axes:
+                self.logger.error(
+                    "Extend failed: New configuration is missing existing parameter axis '%s'",
+                    key,
+                )
+                raise ValueError(
+                    f"Extend failed: new configuration not a superset, missing '{key}'"
+                )
+
+            missing_values = current_values - new_axes[key]
+            if missing_values:
+                self.logger.error(
+                    "Extend failed: New configuration is missing existing values %s for axis '%s'",
+                    missing_values,
+                    key,
+                )
+                raise ValueError(
+                    f"Extend failed: new configuration not a superset, missing values for '{key}'"
+                )
+
+        # Verify that each parameterization in the new configuration also exists in the
+        # current configuration.
+        # This ensures that any `skip` rules in the new config didn't orphan an existing benchmark run.
+        old_combinations = {
+            frozenset(run.parameters.items()) for run in self.config.configurations
+        }
+        new_combinations = {
+            frozenset(run.parameters.items()) for run in new_run_config.configurations
+        }
+
+        if not old_combinations.issubset(new_combinations):
+            missing = old_combinations - new_combinations
+            self.logger.error(
+                "Extend failed: The new configuration omits some parameter combinations: %s",
+                missing,
+            )
+            raise ValueError("Extend failed: new configuration not a superset")
+
+        # Merge configurations, note that we will not modify any existing value
+        added_count = 0
+        for new_bench in new_run_config.configurations:
+            new_run_key = tuple(sorted(new_bench.parameters.items()))
+            if new_run_key not in current_param_keys:
+                self.config.configurations.append(new_bench)
+                # Note that there should never be duplicates, maybe we want to catch this?
+                current_param_keys.append(new_run_key)
+                added_count += 1
+
+        self.logger.info(
+            "Extended session with %d new benchmark parameterizations", added_count
+        )
+
+        self.import_assets(config.assets, workdir)
+        # Not strictly necessary, just for consistency
+        self.parameterization_matrix = self._resolve_parameterization_matrix()
+
+        with open(self.session_root_path / SESSION_RUN_FILE, "w") as runfile:
+            runfile.write(self.config.emit_json())
+
     @classmethod
     def is_session(cls, path: Path) -> bool:
         """

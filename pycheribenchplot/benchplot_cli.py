@@ -49,6 +49,16 @@ class SessionSubCommand(SubCommand):
             help="Force re-create the session if it already exists. Use with caution.",
         )
 
+        sub_extend = session_subparsers.add_parser(
+            "extend", help="Extend an existing session from the given configuration."
+        )
+        self._register_session_arg(sub_extend)
+        sub_extend.add_argument(
+            "pipeline_config",
+            type=Path,
+            help="Path to the pipeline configuration file.",
+        )
+
         sub_gen = session_subparsers.add_parser("generate", help="Generate run scripts")
         self._register_session_arg(sub_gen)
 
@@ -145,6 +155,16 @@ class SessionSubCommand(SubCommand):
         else:
             self.logger.error("Session %s already exists", args.target)
             raise FileExistsError(f"Session {args.target} already exists")
+
+    def handle_extend(self, user_config, args):
+        """
+        Hook to handle the extend subcommand.
+        """
+        config_workdir = args.pipeline_config.parent
+        config = self._parse_config(args.pipeline_config, PipelineConfig)
+
+        session = self._get_session(user_config, args, missing_ok=False)
+        session.extend(config, workdir=config_workdir)
 
     def handle_generate(self, user_config, args):
         """
