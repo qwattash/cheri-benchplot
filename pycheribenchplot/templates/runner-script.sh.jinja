@@ -57,6 +57,11 @@ echo "Parameters:"
   {% for hook in setup_hooks -%}
     {{ gen_hook("setup", hook) }}
   {% endfor %}
+
+  # Ensure that data directories exist
+  for ITERATION in $(seq 0 {{ iterations - 1 }}); do
+    mkdir -p ${ITERATION}
+  done
 {% endblock %}
 
 #### Run loop
