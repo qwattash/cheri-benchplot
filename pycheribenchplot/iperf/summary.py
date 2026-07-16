@@ -109,11 +109,13 @@ class IPerfSummaryPlot(SlicePlotTask):
 
     @output
     def summary_plot(self):
-        return PlotTarget(self, "summary")
+        depvar = self.get_depvar_column()
+        return PlotTarget(self, f"{depvar}")
 
     @output
     def summary_stats(self):
-        return Target(self, "summary-stats", ext="csv")
+        depvar = self.get_depvar_column()
+        return Target(self, f"{depvar}-stats", ext="csv")
 
     def _collect_data(self) -> pl.DataFrame:
         return pl.concat(
