@@ -150,7 +150,7 @@ if [ -n "$WORKLOAD_SCRIPT" ]; then
     ${SESSION_WORKDIR}/${WORKLOAD_SCRIPT}
 fi
 
-if [ -n "${NEXT_KERNEL}" ]; then
+if [ -n "${NEXT_KERNEL}" -a -z "${OPT_NOREBOOT}" ]; then
     echo "Prepare kernel to boot..."
     boot_kernel "${NEXT_KERNEL}"
     echo "reboot"

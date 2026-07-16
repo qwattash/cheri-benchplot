@@ -15,6 +15,7 @@ load_rc_config
 : ${benchplot_session:=""}
 : ${benchplot_user:="root"}
 : ${benchplot_settle_delay:=""}
+: ${benchplot_debug:="NO"}
 
 if [ -n "${benchplot_settle_delay}" ]; then
     _delay_arg="-k ${benchplot_settle_delay}"
@@ -39,4 +40,8 @@ info "Autorun benchplot session at ${benchplot_session}"
 # -n prevents auto-reboot
 (cd ${benchplot_session} && ${autorun_script} -n ${_delay_arg})
 
-poweroff
+if [ "${benchplot_debug}" = "NO" ]; then
+    # Introduce some delay to let output buffers drain before poweroff
+    sleep 2
+    poweroff
+fi

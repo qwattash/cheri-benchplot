@@ -11,7 +11,7 @@
  #}
 {% macro timeit(iteration) %}
   {% if timing_config.timing_mode == TimingTool.TIME %}
-    { time -p {{ caller() }} 2>&1 > /dev/null ; } 2> {{ timing_gen_output_path(iteration) }}
+    time -p -o {{ timing_gen_output_path(iteration) }} {{ caller() }}
   {% elif timing_config.timing_mode == TimingTool.HYPERFINE %}
     hyperfine --style={{ hyperfine_style }} -r 1 --export-json {{ timing_gen_output_path(iteration) }} "{{ caller() | trim }}"
   {% else %}
