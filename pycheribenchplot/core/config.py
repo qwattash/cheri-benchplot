@@ -1388,6 +1388,8 @@ class InstanceConfig(Config):
         PlatformABI.PURECAP, desc="User ABI identifier."
     )
 
+    bootenv: str = config_field(None, desc="ZFS boot environment for the benchmarks")
+
     @classmethod
     def native(cls) -> Self:
         return InstanceConfig(kernel="GENERIC", name="local", arch=PlatformArch.NATIVE)

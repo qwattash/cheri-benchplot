@@ -5,6 +5,7 @@
 info "cheri-benchplot rc.local {{ session }}"
 
 # Ensure that we have a kernel file, this is necessary for hwpmc
+# in FPGA images
 if [ ! -f /boot/kernel/kernel ]; then
     mkdir -p /boot/kernel
     touch /boot/kernel/kernel
@@ -15,7 +16,7 @@ load_rc_config
 : ${benchplot_session:=""}
 : ${benchplot_user:="root"}
 : ${benchplot_settle_delay:=""}
-: ${benchplot_debug:="NO"}
+: ${benchplot_reboot:="NO"}
 
 if [ -n "${benchplot_settle_delay}" ]; then
     _delay_arg="-k ${benchplot_settle_delay}"
@@ -36,11 +37,14 @@ if [ ! -x "${autorun_script}" ]; then
 fi
 
 info "Autorun benchplot session at ${benchplot_session}"
+if [ "${benchplot_reboot}" = "NO" ]; then
+    NOREBOOT="-n"
+fi
 
 # -n prevents auto-reboot
-(cd ${benchplot_session} && ${autorun_script} -n ${_delay_arg})
+(cd ${benchplot_session} && ${autorun_script} ${NOREBOOT} ${_delay_arg})
 
-if [ "${benchplot_debug}" = "NO" ]; then
+if [ "${benchplot_reboot}" = "NO" ]; then
     # Introduce some delay to let output buffers drain before poweroff
     sleep 2
     poweroff
