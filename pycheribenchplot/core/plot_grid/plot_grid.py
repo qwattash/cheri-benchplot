@@ -375,6 +375,18 @@ class DataFrameInfo:
         return cls(desc)
 
 
+class ChunkDebugPrinter:
+    """
+    Debug helper that prints information on a dataframe.
+    """
+
+    def __init__(self, df):
+        self.df = df
+
+    def __str__(self):
+        return self.df.glimpse(return_type="string")
+
+
 class PlotGrid(AbstractContextManager):
     """
     Abstraction to generate grid plots based on polars dataframes.
@@ -939,10 +951,10 @@ class PlotGrid(AbstractContextManager):
             ):
                 tile = self._make_tile(ax, i, j, row_param, col_param)
                 self.logger.debug(
-                    "PlotGrid: tile callback (row=%s, col=%s) %s",
+                    "PlotGrid: tile callback (row=%s, col=%s)\n%s",
                     row_param,
                     col_param,
-                    chunk,
+                    ChunkDebugPrinter(chunk),
                 )
                 tile_plotter(tile, chunk, *args, **kwargs)
 
@@ -964,4 +976,4 @@ def grid_debug(tile: PlotTile, chunk: pl.DataFrame, x: str, y: str, logger: Logg
 
     This dumps the output sorted dataframe for each tile.
     """
-    logger.debug("Dump tile (%s, %s)\n%s", tile.row, tile.col, chunk)
+    logger.debug("Dump tile (%s, %s)\n%s", tile.row, tile.col, ChunkDebugPrinter(chunk))

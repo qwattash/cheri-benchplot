@@ -171,6 +171,15 @@ def grid_barplot(
     # The Y axis is never allowed a ColRef
     assert not check_colref_pattern(y)
 
+    # The error columns may contain NaN, but not NoneType, verify this
+    if err:
+        assert chunk[err[0]].null_count() == 0, (
+            f"Unexpected NoneType in error column {err[0]}"
+        )
+        assert chunk[err[1]].null_count() == 0, (
+            f"Unexpected NoneType in error column {err[1]}"
+        )
+
     if config.orient == "x" and not chunk[y].dtype.is_numeric():
         raise TypeError("Y axis values must be numeric when orient='x'")
     if config.orient == "y" and not chunk[x].dtype.is_numeric():
