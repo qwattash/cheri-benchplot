@@ -471,34 +471,42 @@ class Session:
         Merge a session to the current session by matching parameterization keys.
 
         The ext_params argument can be used when the source session parameterization
-        space is a subspace of the current session.
-        This allows to set the missing parameterization keys to complete the merge.
+        space is a subspace of the current session to set missing parameterization keys.
 
-        :param other: Session to merge into the current.
+        :param src: Source session to merge into the current session.
         :param ext_params: Additional parameterization axes to add to the source session.
+        :param allow_override: Allow ext_params to override existing source parameters.
+        :raises ValueError: If parameterization validation fails or source values don't exist in destination.
         """
-        # First, check parameterization space invariants
+        assert len(self.parameterization_matrix) > 0, (
+            "Cannot merge into empty destination session"
+        )
+
+        # Validate that ext_params does not contain reserved parameter names
+        # Exception: 'target' is allowed for renaming
+        reserved_in_ext = set(ext_params.keys()).intersection(RESERVED_PARAMETER_NAMES)
+        if reserved_in_ext:
+            self.logger.error(
+                "Extended parameters contain reserved names: %s",
+                ", ".join(reserved_in_ext),
+            )
+            raise ValueError("Reserved parameter name in ext_params")
+
         src_matrix = src.parameterization_matrix
         src_axes = set(src_matrix.columns)
         curr_axes = set(self.parameterization_matrix.columns)
 
-        # XXX we may have to treat "target" as a special synthetic axis
-
         if dup_keys := src_axes.intersection(ext_params.keys()):
-            # Some of the ext_params are already set in the source, complain
             for pkey in dup_keys:
                 self.logger.warning(
                     "Override src parameter %s with %s", pkey, ext_params[pkey]
                 )
 
-            # There is an extra guard here to make sure this is really the intention.
-            # There is a legitimate use case when we want to override the original values
-            # of the axis.
+            # Guard against unintentional parameter override
             if not allow_override:
                 self.logger.error("Parameter override not allowed")
                 raise ValueError("Invalid merge parameter extension")
         if not src_axes.issubset(curr_axes):
-            # The src param space must be a subset of the current one, can't meaningfully merge
             extra = src_axes.difference(curr_axes)
             self.logger.error(
                 "Source parameterization is not a subset of the current parameter set, found extra axes: %s",
@@ -508,22 +516,60 @@ class Session:
 
         ext_src_axes = src_axes.union(ext_params.keys())
         if not ext_src_axes == curr_axes:
-            # The extended space must match the current space.
-            # Some axes are missing and the resulting merge would be misaligned, complain
             missing = curr_axes.difference(ext_src_axes)
             self.logger.error("Missing extended parameter axes: %s", ", ".join(missing))
             raise ValueError("Invalid merge extended parameters")
 
-        # Now it is safe to go ahead with the merge, to do so, we can just do a join()
-        # on the parameterization matrix
-        src_matrix = src_matrix.with_columns(
+        # Prepare for validation and merge
+        join_axes = list(curr_axes - set(RESERVED_PARAMETER_NAMES))
+
+        # Apply ext_params to source matrix
+        extended_src_matrix = src_matrix.with_columns(
             **{k: pl.lit(v) for k, v in ext_params.items()}
         )
-        join_axes = list(curr_axes - set(RESERVED_PARAMETER_NAMES))
+
+        # Check for duplicate source contexts after extension
+        src_rows = extended_src_matrix.select(join_axes)
+        unique_rows = src_rows.unique()
+
+        if len(src_rows) != len(unique_rows):
+            # Find and report duplicates
+            duplicate_mask = src_rows.is_duplicated()
+            duplicate_rows = src_rows.filter(duplicate_mask).unique()
+
+            dup_combos = []
+            for row in duplicate_rows.iter_rows(named=True):
+                combo = ", ".join(f"{k}={v}" for k, v in row.items())
+                dup_combos.append(f"({combo})")
+
+            self.logger.warning(
+                "Duplicate source contexts detected: %s. "
+                "Later data will overwrite earlier data.",
+                "; ".join(dup_combos),
+            )
+
+        # Validate source parameter combinations exist in destination
+        dst_rows = self.parameterization_matrix.select(join_axes).unique()
+
+        missing_rows = src_rows.unique().join(dst_rows, on=join_axes, how="anti")
+
+        if len(missing_rows) > 0:
+            missing_combos = []
+            for row in missing_rows.iter_rows(named=True):
+                combo = ", ".join(f"{k}={v}" for k, v in row.items())
+                missing_combos.append(f"({combo})")
+
+            self.logger.error(
+                "Source parameter combinations not found in destination: %s",
+                "; ".join(missing_combos),
+            )
+            raise ValueError("Invalid merge source values")
+
+        # Perform join on parameterization matrix
         join_matrix = self.parameterization_matrix.join(
-            src_matrix, join_axes, suffix="_src"
+            extended_src_matrix, join_axes, suffix="_src"
         )
-        assert len(join_matrix) == len(src_matrix)
+        assert len(join_matrix) == len(extended_src_matrix)
         for row in join_matrix.iter_rows(named=True):
             row["descriptor"].merge_data(row["descriptor_src"])
 
