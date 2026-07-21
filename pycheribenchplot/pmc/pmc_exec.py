@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-import pandas as pd
 import polars as pl
 from marshmallow import ValidationError, validates_schema
 
@@ -256,10 +255,28 @@ class IngestPMCCounters(DataFrameLoadTask):
                 raise RuntimeError("PMC file parsing error")
             matches = re.findall(r"[ps]/(?P<col>[a-zA-Z0-9_/-]+)", header)
             cols = [c.lower() for c in matches]
-        # XXX can we ditch pandas here?
-        df = pl.from_pandas(
-            pd.read_csv(path, sep=r"\s+", header=0, names=cols, index_col=False)
+        # Ditch pandas for this
+        # df = pl.from_pandas(
+        #     pd.read_csv(path, sep=r"\s+", header=0, names=cols, index_col=False)
+        # )
+        # XXX Note: pl.read_lines is marked as unstable and could change under us.
+        # This is done by splitting by whitespace into a struct and then unnesting
+        # the struct fields into standard columns
+        df = (
+            pl.read_lines(path, name="pmc_data")
+            .slice(1)  # Skip header
+            .select(pl.col("pmc_data").str.strip_chars())
+            .filter(~pl.col("pmc_data").str.starts_with("#"))
+            .select(
+                pl.col("pmc_data")
+                .str.replace_all(r"\s+", ",")
+                .str.split(",")
+                .list.to_struct(fields=cols)
+            )
+            .unnest("pmc_data")
+            .cast(pl.UInt64)
         )
+
         # Assume we have all numeric columns and the counters are incremental
         df = df.sum()
         # Default counter group to identify multiple pmcstat configurations
