@@ -71,6 +71,7 @@ def session_path(tmp_path):
     return tmp_path
 
 
+@pytest.mark.timeout(30)
 @pytest.mark.parametrize("wkinfo", workloads, ids=generate_id)
 def test_configuration(wkinfo, session_path):
     """
@@ -88,6 +89,7 @@ def test_configuration(wkinfo, session_path):
     assert not session.scheduler.failed_tasks
 
 
+@pytest.mark.timeout(30)
 @pytest.mark.parametrize(
     "wkinfo", filter(lambda w: w.has_smoketest, workloads), ids=generate_id
 )
