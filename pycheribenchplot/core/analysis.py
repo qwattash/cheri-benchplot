@@ -265,8 +265,8 @@ class AnalysisTask(SessionTask):
                     boot.confidence_interval.high,
                 )
             else:
-                # Do not generate error  bars, single iteration
-                ci_low = ci_high = None
+                # Do not generate error bars, single iteration
+                ci_low = ci_high = np.nan
             s_value = statistic_fn(*args, axis=0)
             stats_chunk = chunk.select(
                 cs.by_name(param_columns).first(),
@@ -274,6 +274,10 @@ class AnalysisTask(SessionTask):
                 pl.lit(ci_low).alias(ci_low_col),
                 pl.lit(ci_high).alias(ci_high_col),
             )
+            # Error bars are allowed to be NaN, but not NoneType
+            # if this happens, something went very wrong
+            assert stats_chunk[ci_low_col].null_count() == 0, "Invalid stats ci_low"
+            assert stats_chunk[ci_high_col].null_count() == 0, "Invalid stats ci_high"
             return stats_chunk
 
         def _median_diff(left, right, axis=-1):
