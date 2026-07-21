@@ -208,15 +208,15 @@ class TestMedianBootstrap:
 
     # --- Confidence interval presence --------------------------------------
 
-    def test_single_iteration_ci_is_null(self, analysis_task):
+    def test_single_iteration_ci_is_nan(self, analysis_task):
         """
         With only one observation per group there is nothing to bootstrap —
-        both CI bounds must be null for every output row.
+        both CI bounds must be NaN for every output row.
         """
         df = _make_df([5], [10])
         result = analysis_task.compute_overhead(df, "value", how="median")
-        assert result["value_low"].null_count() == result.shape[0]
-        assert result["value_high"].null_count() == result.shape[0]
+        assert result["value_low"].is_nan().sum() == result.shape[0]
+        assert result["value_high"].is_nan().sum() == result.shape[0]
 
     def test_multi_iteration_ci_not_null(self, analysis_task):
         """
@@ -243,7 +243,7 @@ class TestMedianBootstrap:
         result = analysis_task.compute_overhead(df, "value", how="median")
         for row in result.iter_rows(named=True):
             lo, val, hi = row["value_low"], row["value"], row["value_high"]
-            if lo is None or hi is None:
+            if np.isnan(lo) or np.isnan(hi):
                 continue
             assert lo <= val <= hi, (
                 f"CI ordering violated: low={lo}, value={val}, high={hi} "
