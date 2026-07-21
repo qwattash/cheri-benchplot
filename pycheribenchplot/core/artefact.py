@@ -185,37 +185,6 @@ class Target(Borg):
         return param_gen
 
 
-class RemoteTarget(Target):
-    """
-    Target with an associated remote file.
-    """
-
-    def iter_remote_paths(self, **kwargs) -> Iterator[Path]:
-        """
-        Iterate over parameterization key and remote path pairs.
-        The target may not have any remote paths, in this case this
-        returns and empty iterator.
-
-        This is only supported for exec tasks.
-        If this is a session task, the path is considered relative to the session data root.
-        If this is a dataset task, the path is considered relative to the benchmark data root.
-
-        :param **kwargs: Filter keys for the path parameterization.
-        :return: A generator of remote paths associated to the target.
-        """
-        param_gen = self._filter_path_parameters(**kwargs)
-        params = product(*param_gen.values())
-        for param_set in params:
-            param_args = dict(zip(self._path_parameters.keys(), param_set))
-            path = Path(self._path_template.format(**param_args))
-            if path.is_absolute():
-                path = path.relative_to("/")
-            yield path
-
-    def remote_paths(self, **kwargs) -> list[Path] | Path:
-        return list(self.iter_remote_paths(**kwargs))
-
-
 class BenchmarkIterationTarget(Target):
     """
     Target that specifies output files for different iterations.
@@ -236,7 +205,7 @@ class BenchmarkIterationTarget(Target):
         super().__init__(task, output_id, template, **kwargs)
 
 
-class RemoteBenchmarkIterationTarget(BenchmarkIterationTarget, RemoteTarget):
+class RemoteBenchmarkIterationTarget(BenchmarkIterationTarget):
     """
     Same as the :class:`BenchmarkIterationTarget` but has associated remote files.
     """

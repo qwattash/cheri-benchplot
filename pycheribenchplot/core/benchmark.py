@@ -2,7 +2,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Type
 
-from .artefact import RemoteTarget
 from .config import CommandHookConfig, Config, ExecTargetConfig
 from .elf import AddressSpaceManager
 from .error import TaskNotFound
@@ -85,22 +84,6 @@ class BenchmarkExecTask(Task):
         for phase, hooks in self.benchmark.config.command_hooks.items():
             for hook_config in hooks:
                 self._handle_command_hook(phase, hook_config)
-
-    def _extract_files(self, instance, task):
-        """
-        Extract remote files for a given task.
-        """
-        for output_key, output in task.outputs():
-            if not isinstance(output, RemoteTarget):
-                continue
-            for remote_path, host_path in zip(output.remote_paths(), output.paths()):
-                self.logger.debug(
-                    "Extract %s guest: %s => host: %s",
-                    output_key,
-                    remote_path,
-                    host_path,
-                )
-                instance.extract_file(remote_path, host_path)
 
     @property
     def session(self):
