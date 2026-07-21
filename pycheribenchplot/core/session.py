@@ -34,7 +34,7 @@ SESSION_RUN_FILE = "session-run.json"
 benchplot_logger = logging.getLogger("cheri-benchplot")
 
 # XXX Is `target` reserved as well?
-RESERVED_PARAMETER_NAMES = ["descriptor", "iteration"]
+RESERVED_PARAMETER_NAMES = ["descriptor", "instance", "iteration"]
 
 
 class Session:
@@ -230,7 +230,9 @@ class Session:
         #: Note that this should be readonly.
         self.platform_map = {}
         #: A dataframe that organises the set of benchmarks to run or analyse.
-        self.parameterization_matrix = self._resolve_parameterization_matrix()
+        self.parameterization_matrix = self._resolve_parameterization_matrix(
+            self.config
+        )
 
         # Before using the workers configuration, check if we are overriding it
         if self.user_config.concurrent_workers:
@@ -257,7 +259,9 @@ class Session:
         ctx.add_values(assets="../../assets")
         return config.bind(ctx)
 
-    def _resolve_parameterization_matrix(self) -> pl.DataFrame:
+    def _resolve_parameterization_matrix(
+        self, config: SessionRunConfig
+    ) -> pl.DataFrame:
         """
         Generate the parameterization matrix from the generators configurations.
 
@@ -266,11 +270,12 @@ class Session:
          - target: Built-in parameterization axis for the host system configuration
          - <params>: A variable number of columns depending on the benchmark parameterization.
 
+        :param config: The source session run configuration.
         :return: The benchmark matrix as a polars dataframe
         """
         # First pass, collect the parameterization axes
         parameters = defaultdict(list)
-        for dataset_config in self.config.configurations:
+        for dataset_config in config.configurations:
             self.logger.debug("Found benchmark run config %s", dataset_config)
             # Note that g_uuids are used for backward-compatibility only
             self.platform_map[dataset_config.g_uuid] = dataset_config.instance
@@ -295,7 +300,7 @@ class Session:
         # The invariant is that all configurations must have the same set of
         # parameterization axes, although may not have all the possible combinations
         # of values.
-        for dataset_config in self.config.configurations:
+        for dataset_config in config.configurations:
             descriptor_axes = set(dataset_config.parameters.keys())
             if diff := descriptor_axes.symmetric_difference(all_parameters):
                 self.logger.error(
@@ -503,19 +508,24 @@ class Session:
         self.logger.info("Fetched session results bundle")
         return extracted_session
 
-    def merge(self, other: "list[Session]"):
+    def merge(self, other: list[Self], by_key: bool, ext_params: dict[str, str]):
         """
         Merge data from other sessions into this one.
 
         Note that the sessions must be copies of this one, so we check that
-        the UUID matches.
+        the UUID matches, unless by_key is set.
 
         :param other: List of sessions to merge into the current one.
+        :param by_key: Do not merge by dataset UUID, instead merge by matching the
+        parameterization key.
+        :param ext_params: Force parameterization axes values to set for the 'other'
+        session. This will warn if overriding an axis that exists in the 'other'
+        session, because it is intended to be used after `Session.extend()`.
         """
         self.logger.info("Merge session %s runs", self)
         srcs = {}
         for src_session in other:
-            if src_session.uuid != self.uuid:
+            if not by_key and src_session.uuid != self.uuid:
                 self.logger.error(
                     "Can not merge sessions with mismatching UUIDs: %s",
                     src_session.session_root_path,
@@ -534,15 +544,84 @@ class Session:
                 continue
             srcs[src_session.session_root_path] = src_session
 
-        # Now that we are happy with the UUIDs, actually merge the results
         for src_session in srcs.values():
             self.logger.debug("Merging session %s", src_session.session_root_path)
-            self.merge_raw(src_session.get_data_root_path())
+            if by_key:
+                self.merge_by_key(src_session, ext_params)
+            else:
+                # We checked the session UUID above, so the dataset UUIDs should
+                # be stable for matching sessions.
+                self.merge_by_uuid(src_session.get_data_root_path())
         self.logger.info("Merged sessions run data")
 
-    def merge_raw(self, data_root_dir: Path):
+    def merge_by_key(
+        self, src: Self, ext_params: dict[str, str], allow_override: bool = False
+    ):
+        """
+        Merge a session to the current session by matching parameterization keys.
+
+        The ext_params argument can be used when the source session parameterization
+        space is a subspace of the current session.
+        This allows to set the missing parameterization keys to complete the merge.
+
+        :param other: Session to merge into the current.
+        :param ext_params: Additional parameterization axes to add to the source session.
+        """
+        # First, check parameterization space invariants
+        src_matrix = src.parameterization_matrix
+        src_axes = set(src_matrix.columns)
+        curr_axes = set(self.parameterization_matrix.columns)
+
+        # XXX we may have to treat "target" as a special synthetic axis
+
+        if dup_keys := src_axes.intersection(ext_params.keys()):
+            # Some of the ext_params are already set in the source, complain
+            for pkey in dup_keys:
+                self.logger.warning(
+                    "Override src parameter %s with %s", pkey, ext_params[pkey]
+                )
+
+            # There is an extra guard here to make sure this is really the intention.
+            # There is a legitimate use case when we want to override the original values
+            # of the axis.
+            if not allow_override:
+                self.logger.error("Parameter override not allowed")
+                raise ValueError("Invalid merge parameter extension")
+        if not src_axes.issubset(curr_axes):
+            # The src param space must be a subset of the current one, can't meaningfully merge
+            extra = src_axes.difference(curr_axes)
+            self.logger.error(
+                "Source parameterization is not a subset of the current parameter set, found extra axes: %s",
+                ", ".join(extra),
+            )
+            raise ValueError("Invalid merge source")
+
+        ext_src_axes = src_axes.union(ext_params.keys())
+        if not ext_src_axes == curr_axes:
+            # The extended space must match the current space.
+            # Some axes are missing and the resulting merge would be misaligned, complain
+            missing = curr_axes.difference(ext_src_axes)
+            self.logger.error("Missing extended parameter axes: %s", ", ".join(missing))
+            raise ValueError("Invalid merge extended parameters")
+
+        # Now it is safe to go ahead with the merge, to do so, we can just do a join()
+        # on the parameterization matrix
+        src_matrix = src_matrix.with_columns(
+            **{k: pl.lit(v) for k, v in ext_params.items()}
+        )
+        join_axes = list(curr_axes - set(RESERVED_PARAMETER_NAMES))
+        join_matrix = self.parameterization_matrix.join(
+            src_matrix, join_axes, suffix="_src"
+        )
+        assert len(join_matrix) == len(src_matrix)
+        for row in join_matrix.iter_rows(named=True):
+            row["descriptor"].merge_data(row["descriptor_src"])
+
+    def merge_by_uuid(self, data_root_dir: Path):
         """
         Merge the given run directory into the current session.
+        This assumes that the UUIDs in the session are stable between the source
+        and destination of the merge.
         """
 
         def _handle_file_merge(src, dst):

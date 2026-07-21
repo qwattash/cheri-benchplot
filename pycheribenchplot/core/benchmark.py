@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Type
+from typing import Self, Type
 
+import shutil
 from .config import CommandHookConfig, Config, ExecTargetConfig
 from .elf import AddressSpaceManager
 from .error import TaskNotFound
@@ -320,3 +321,33 @@ class Benchmark:
         exec_task = self.build_exec_task(exec_config)
         self.logger.debug("Initialize top-level benchmark task %s", exec_task)
         scheduler.add_task(exec_task)
+
+    def merge_data(self, src: Self):
+        """
+        Import data from another benchmark context, which may belong to a different session.
+
+        This is part of the session merge logic.
+        We could delegate further merging to Exec tasks or inspect the outputs, but this
+        seems complicated.
+        XXX Ideally I should update the session structure to help with this in the future.
+        """
+        self.logger.info("Merge benchmark data %s -> %s", src, self)
+
+        src_root = src.get_benchmark_data_path()
+        dst_root = self.get_benchmark_data_path()
+        for item in src_root.rglob("*"):
+            # Do not copy the runner script
+            if item.name == self.session.workload_run_script:
+                continue
+            rel_path = item.relative_to(src_root)
+            # Replace the source UUID with the current context UUID
+            rel_path = str(rel_path).replace(src.uuid, self.uuid)
+            dst_path = dst_root / rel_path
+            if item.is_dir():
+                dst_path.mkdir(parents=True, exist_ok=True)
+            elif item.is_file():
+                dst_path.parent.mkdir(parents=True, exist_ok=True)
+                self.logger.debug("Import file %s -> %s", item, dst_path)
+                shutil.copy2(item, dst_path)
+            else:
+                raise RuntimeError(f"Unexpected file {item}")

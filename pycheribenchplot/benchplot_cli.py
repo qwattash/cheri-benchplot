@@ -76,6 +76,19 @@ class SessionSubCommand(SubCommand):
             help="Interpret sources as base64-encoded tarballs which only contain the run directory.",
         )
         sub_merge.add_argument(
+            "-k",
+            "--by-key",
+            action="store_true",
+            help="Merge by parameterization keys, ignore dataset UUIDs.",
+        )
+        sub_merge.add_argument(
+            "-x",
+            "--extra-param",
+            action="append",
+            type=str,
+            help="Requires -k. Force extra parameterization axes key=value, use this to extend sessions.",
+        )
+        sub_merge.add_argument(
             "partials", type=Path, nargs="+", help="Partial runs to merge"
         )
 
@@ -187,6 +200,24 @@ class SessionSubCommand(SubCommand):
         """
         session = self._get_session(user_config, args)
 
+        if args.extra_param and not args.by_key:
+            self.logger.error("Command session merge -x requires --by-key.")
+            raise ToolArgparseError("Invalid arguments")
+        if args.decode and args.by_key:
+            self.logger.error("merge -d is not yet supported with --by-key.")
+            raise ToolArgparseError("Unsupported arguments, TODO")
+
+        ext_params = {}
+        for kvstr in args.extra_param:
+            try:
+                k, v = kvstr.split("=")
+            except ValueError:
+                self.logger.error(
+                    "Invalid argument -x %s, must be '<key>=<value>'", kvstr
+                )
+                raise ToolArgparseError("Invalid arguments")
+            ext_params[k] = v
+
         if args.decode:
             for src_path in args.partials:
                 self._handle_raw_merge(session, src_path)
@@ -196,7 +227,7 @@ class SessionSubCommand(SubCommand):
             for src_path in args.partials:
                 partial = self._get_session(user_config, ap.Namespace(target=src_path))
                 to_merge.append(partial)
-            session.merge(to_merge)
+            session.merge(to_merge, by_key=args.by_key, ext_params=ext_params)
 
     def handle_clean(self, user_config, args):
         # XXX add safety net question?
@@ -227,7 +258,7 @@ class SessionSubCommand(SubCommand):
         with TemporaryDirectory(delete=False) as results:
             result_path = session.pull(args.host, Path(results))
             partial = self._get_session(user_config, ap.Namespace(target=result_path))
-            session.merge([partial])
+            session.merge([partial], by_key=False, ext_params={})
 
     def handle(self, user_config, args):
         if args.session_action is None:
@@ -256,7 +287,7 @@ class SessionSubCommand(SubCommand):
             src_archive.extractall(raw_run)
             src_archive.close()
 
-            session.merge_raw(raw_run)
+            session.merge_by_uuid(raw_run)
 
 
 class TaskInfoSubCommand(SubCommand):
