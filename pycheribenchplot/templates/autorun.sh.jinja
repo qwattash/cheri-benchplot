@@ -95,7 +95,7 @@ boot_kernel() {
             bectl umount "${bootenv}"
             rmdir /tmp/be_mount
             # Ensure that the next boot will look for /boot/nextboot.conf
-            zfsbootcfg -z ZROOT -n "freebsd:nvstore" -k "nextboot_enable" -v "YES"
+            zfsbootcfg -z zroot -n "freebsd:nvstore" -k "nextboot_enable" -v "YES"
         else
             nextboot {% if single_user %}-o "-s"{% endif %} -k "kernel.${kconf}"
         fi
