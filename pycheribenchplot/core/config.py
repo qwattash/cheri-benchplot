@@ -1934,10 +1934,9 @@ class SessionRunConfig(CommonSessionConfig):
         :return: A new session runfile configuration
         """
         session = SessionRunConfig.from_common_conf(config)
-        logger.info("Create new session %s", session.uuid)
-
         bench_config = config.benchmark_config
         sorted_params = OrderedDict(bench_config.parameterize)
+        logger.info("Create new session %s: %s", session.uuid, bench_config.desc)
 
         # Host system names must be unique, warn if this is not the case.
         # It might be useful to have multiple matchers for the same system, so
