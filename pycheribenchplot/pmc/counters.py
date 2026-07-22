@@ -68,6 +68,10 @@ class PMCPlotConfig(PlotGridConfig, BarPlotConfig):
         None, desc="Filter system-mode counters by CPU index"
     )
 
+    drop_relative_baseline: bool = config_field(
+        True, desc="Drop the baseline data point from the normalized plots"
+    )
+
     def resolve_counter_group(self, task: PMCExec) -> str:
         return task.get_counters_loader().counter_group
 
@@ -241,6 +245,11 @@ class PMCSliceSummary(SlicePlotTask):
         self.stats = self.compute_overhead(
             df, "value", extra_groupby=["_counter"], how="median", overhead_scale=100
         )
+
+        if self.config.drop_relative_baseline:
+            self.stats = self.stats.filter(
+                (pl.col("_metric_type") == "absolute") | ~pl.col("_is_baseline")
+            )
 
     def run_plot(self):
         self.logger.info("Plot combined PMC summary for slice %s", self.slice_info)
