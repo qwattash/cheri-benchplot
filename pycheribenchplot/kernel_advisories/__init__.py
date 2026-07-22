@@ -1,1 +1,1 @@
-from . import analysis, ingest
+# register_tasks = True

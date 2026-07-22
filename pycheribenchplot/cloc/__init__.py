@@ -1,1 +1,1 @@
-from . import cloc, cloc_exec
+register_tasks = True

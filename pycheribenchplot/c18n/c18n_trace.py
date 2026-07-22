@@ -1,11 +1,11 @@
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
 import polars as pl
 
-from ..core.analysis import AnalysisTask
 from ..core.artefact import DataFrameLoadTask, RemoteBenchmarkIterationTarget
-from ..core.config import Config, ConfigPath, config_field
+from ..core.config import Config, config_field
 from ..core.task import ExecutionTask, output
 
 
@@ -16,7 +16,8 @@ class C18nKtraceLoader(DataFrameLoadTask):
     def _load_chunks(self, src_file, chunk_size):
         transition_regex = re.compile(
             r"(?P<pid>[0-9]+) .*RTLD: c18n: (?P<caller>[\w./<>+-\[\]]+) -> (?P<callee>[\w./<>+-\[\]]+) "
-            r"at \[(?P<symbol_number>[0-9]+)\] (?P<symbol>[\w<>-]+)")
+            r"at \[(?P<symbol_number>[0-9]+)\] (?P<symbol>[\w<>-]+)"
+        )
 
         chunk = []
         for line in src_file:
@@ -34,7 +35,7 @@ class C18nKtraceLoader(DataFrameLoadTask):
         if chunk:
             yield pl.DataFrame(chunk)
 
-    def _load_one(self, path: "Path") -> pl.DataFrame:
+    def _load_one(self, path: Path) -> pl.DataFrame:
         self.logger.info("Loading c18n transition data for %s", self.benchmark)
         with open(path, "r") as src:
             df = pl.concat(self._load_chunks(src, chunk_size=100000))
@@ -46,6 +47,7 @@ class C18nKtraceConfig(Config):
     """
     Configure ktrace for c18n user probes.
     """
+
     c18n_utrace_enable: bool = config_field(True, desc="Enable or disable c18n tracing")
 
 
@@ -54,6 +56,7 @@ class C18nKtraceExec(ExecutionTask):
     Add-on task that instruments a benchmark to run under ktrace with
     c18n user probes.
     """
+
     public = True
     task_namespace = "c18n"
     task_name = "ktrace"
@@ -61,10 +64,14 @@ class C18nKtraceExec(ExecutionTask):
 
     @output
     def trace_data(self):
-        return RemoteBenchmarkIterationTarget(self, "c18n-trace", ext="txt", loader=C18nKtraceLoader)
+        return RemoteBenchmarkIterationTarget(
+            self, "c18n-trace", ext="txt", loader=C18nKtraceLoader
+        )
 
     def run(self):
-        self.script.extend_context({
-            "c18n_utrace_config": self.config,
-            "c18n_utrace_gen_output_path": self.trace_data.shell_path_builder()
-        })
+        self.script.extend_context(
+            {
+                "c18n_utrace_config": self.config,
+                "c18n_utrace_gen_output_path": self.trace_data.shell_path_builder(),
+            }
+        )

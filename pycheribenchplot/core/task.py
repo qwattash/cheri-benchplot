@@ -1,4 +1,6 @@
 import dataclasses as dc
+import importlib
+import pkgutil
 import re
 from collections import defaultdict
 from io import StringIO
@@ -9,7 +11,7 @@ from typing import Callable, Generator, Hashable, Iterable, Self, Type
 import polars as pl
 
 from .borg import Borg
-from .config import Config
+from .config import AnalysisConfig, Config, InstanceConfig
 from .error import MissingDependency, TaskNotFound
 from .util import new_logger
 
@@ -46,6 +48,7 @@ class TaskRegistry(type):
 
     public_tasks = defaultdict(dict)
     all_tasks = defaultdict(dict)
+    _discover_done = False
 
     def __new__(mcls, name: str, bases: tuple[Type], kdict: dict):
         """
@@ -94,6 +97,37 @@ class TaskRegistry(type):
         cls._output_registry[ref.name] = ref.attr
 
     @classmethod
+    def discover(cls):
+        """
+        Scan the benchplot module hierarchy to trigger task registration.
+        This is done lazily to avoid startup cost due to excessive import.
+
+        Only benchplot packages exposing the `register_tasks=True` setting are inspected.
+        """
+        if cls._discover_done:
+            # Assume we will discover everything in a single pass, we may make this
+            # lazier later.
+            return
+
+        def _scan_package(package):
+            if not getattr(package, "register_tasks", False):
+                return
+
+            for modinfo in pkgutil.iter_modules(package.__path__):
+                if modinfo.name.startswith("_"):
+                    # Skip these, marking currently deprecated or code that needs updating.
+                    continue
+                full_name = f"{package.__name__}.{modinfo.name}"
+                mod = importlib.import_module(full_name)
+                if modinfo.ispkg:
+                    _scan_package(mod)
+
+        import pycheribenchplot as cbp
+
+        _scan_package(cbp)
+        cls._discover_done = True
+
+    @classmethod
     def resolve_exec_task(cls, task_spec: str) -> TaskType | None:
         """
         Find the exec task named by the given task specifier.
@@ -105,6 +139,7 @@ class TaskRegistry(type):
             2. The namespace of an exec task (e.g. <task_spec>.exec exists)
         :return: The matching exec task or None
         """
+        cls.discover()
         parts = task_spec.split(".")
         ns = cls.public_tasks[".".join(parts[:-1])]
         # If it is a full name, we are done
@@ -128,6 +163,7 @@ class TaskRegistry(type):
             2. A wildcard task (e.g. <task_namespace>.*)
         :return: A list of matching tasks
         """
+        cls.discover()
         parts = task_spec.split(".")
         ns = cls.public_tasks[".".join(parts[:-1])]
         if parts[-1] == "*":
@@ -139,6 +175,7 @@ class TaskRegistry(type):
 
     @classmethod
     def iter_public(cls) -> TaskTypeSequence:
+        cls.discover()
         for ns, tasks in cls.public_tasks.items():
             for key, t in tasks.items():
                 yield t
@@ -607,3 +644,82 @@ class ExecutionTask(DatasetTask):
     @property
     def uuid(self):
         return self.benchmark.uuid
+
+
+class AnalysisTask(SessionTask):
+    """
+    Base session-wide analysis task.
+
+    This is intended to be the public entry point of analysis passes that run plotting
+    and data processing.
+    Dedicated subclasses provide additional specialization for data processing.
+
+    Note that this currently assumes that tasks with the same name are not issued
+    more than once for each benchmark run UUID. If this is violated, we need to
+    change the task ID generation.
+    """
+
+    task_namespace = "analysis"
+
+    def __init__(
+        self,
+        session: Session,
+        analysis_config: AnalysisConfig,
+        task_config: Config | None = None,
+    ):
+        super().__init__(session, task_config=task_config)
+        # Analysis configuration for this invocation
+        self.analysis_config = analysis_config
+
+        # Collect parameterization axes from the benchmark matrix
+        all_bench = self.session.all_benchmarks()
+        assert len(all_bench) > 0
+        self._param_columns = list(all_bench[0].parameters.keys())
+
+    @property
+    def param_columns(self) -> list[str]:
+        """
+        Return the set of parameter names that are expected to be found in
+        a dataframe containing data for this session.
+        """
+        return list(self._param_columns)
+
+    @property
+    def param_columns_with_iter(self) -> list[str]:
+        """
+        Return the set of parameter names that are configured by the parameterisation matrix,
+        with the addition of the iteration index column.
+        """
+        return [*self.param_columns, "iteration"]
+
+    @property
+    def key_columns(self) -> list[str]:
+        """
+        Row ID columns, excluding the iteration.
+        This includes the parameterisation columns and the dataset ID column.
+        """
+        return ["dataset_id", *self.param_columns]
+
+    @property
+    def key_columns_with_iter(self) -> list[str]:
+        """
+        Row ID columns including the iteration.
+        This includes the parameterisation columns and the dataset ID colum,
+        plus the iteration index.
+        """
+        return ["dataset_id", *self.param_columns, "iteration"]
+
+    def get_instance_config(self, g_uuid: str) -> InstanceConfig:
+        """
+        Helper to retreive an instance configuration for the given g_uuid.
+        """
+        return self.session.get_instance_configuration(g_uuid)
+
+    def g_uuid_to_label(self, g_uuid: str) -> str:
+        """
+        Helper that maps group UUIDs to a human-readable label that describes the instance
+
+        Deprecated, use the `target` parameter.
+        """
+        instance_config = self.get_instance_config(g_uuid)
+        return instance_config.name

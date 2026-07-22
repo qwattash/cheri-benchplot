@@ -1,1 +1,1 @@
-from . import counters, ingest, pmc_exec, stacks
+register_tasks = True

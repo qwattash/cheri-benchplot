@@ -4,7 +4,6 @@ from typing import Self, Type
 
 import shutil
 from .config import CommandHookConfig, Config, ExecTargetConfig
-from .elf import AddressSpaceManager
 from .error import TaskNotFound
 from .scheduler import TaskScheduler
 from .shellgen import ScriptContext, ScriptHook
@@ -133,9 +132,6 @@ class Benchmark:
         self.session = session
         self.config = config
         self.logger = new_logger(f"{self.config.name}:{self.config.instance.name}")
-
-        # Symbol mapping handler for this benchmark instance
-        self.sym_resolver = AddressSpaceManager(self)
 
     def __str__(self):
         return f"{self.config.name}({self.uuid})"

@@ -1,1 +1,1 @@
-from . import c18n_plot, c18n_trace
+register_tasks = True

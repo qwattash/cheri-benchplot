@@ -1,1 +1,1 @@
-from . import layouts_view, scan_dwarf, stats_view
+register_tasks = True

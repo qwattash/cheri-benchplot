@@ -1,1 +1,1 @@
-from . import sysctl, task, timing
+register_tasks = True

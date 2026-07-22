@@ -2,7 +2,7 @@ import numpy as np
 import polars as pl
 import pytest
 
-from pycheribenchplot.core.analysis import AnalysisTask
+from pycheribenchplot.core.analysis import BootstrapAnalysisTask
 from pycheribenchplot.core.config import AnalysisConfig
 
 from .util.session import TaskFactory, task_factory  # noqa: F401 (task_factory used indirectly)
@@ -24,7 +24,7 @@ from .util.session import TaskFactory, task_factory  # noqa: F401 (task_factory 
 # ---------------------------------------------------------------------------
 
 
-class MinimalAnalysisTask(AnalysisTask):
+class MinimalAnalysisTask(BootstrapAnalysisTask):
     """Concrete AnalysisTask subclass used purely to exercise compute_overhead."""
 
     task_namespace = "analysis.test"

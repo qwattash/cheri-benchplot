@@ -20,8 +20,8 @@ from ..error import ConfigurationError
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
+    from ..task import AnalysisTask
 
-type AnalysisTask = "AnalysisTask"
 type MplAxes = "Axes"
 
 COLREF_PATTERN = r"^<[\w_-]+>$"

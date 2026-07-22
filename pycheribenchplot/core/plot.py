@@ -2,7 +2,9 @@ from threading import Lock
 
 import matplotlib as mpl
 
-from .analysis import AnalysisTask, SliceAnalysisTask
+mpl.use("pdf")
+
+from .analysis import BootstrapAnalysisTask, SliceAnalysisTask
 from .artefact import Target
 from .plot_grid import default_theme
 from .task import Task
@@ -86,7 +88,7 @@ class PlotTaskMixin:
         raise NotImplementedError("Must override")
 
 
-class PlotTask(AnalysisTask, PlotTaskMixin):
+class PlotTask(BootstrapAnalysisTask, PlotTaskMixin):
     """
     Session-level plotting task.
 

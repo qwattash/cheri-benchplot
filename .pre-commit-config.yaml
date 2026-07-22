@@ -12,17 +12,19 @@ repos:
         args: [ "--fix=lf" ]
       - id: check-case-conflict
   - repo: https://github.com/charliermarsh/ruff-pre-commit
-    rev: 'v0.15.22' # Ruff version.
+    rev: "v0.15.22"
     hooks:
       - id: ruff
         stages: [ pre-push, pre-commit, manual ]
+        args: [ "--target-version", "py314" ]
       - id: ruff-format
         stages: [ pre-push, pre-commit, manual ]
+        args: [ "--target-version", "py314" ]
   - repo: local
     hooks:
       - id: benchplot-pytest
         name: benchplot pytest
-        entry: sh -c 'python3 -m pytest -n auto -q . >&2'
+        entry: sh -c "python3 -m pytest -n auto -q . >&2"
         language: system
         always_run: true
         pass_filenames: false

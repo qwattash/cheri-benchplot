@@ -14,18 +14,17 @@ from .benchmark import Benchmark
 from .config import (
     AnalysisConfig,
     Config,
-    InstanceConfig,
     TaskTargetConfig,
     config_field,
 )
 from .error import ConfigurationError
-from .task import SessionTask, TaskRegistry, dependency
+from .task import AnalysisTask, TaskRegistry, dependency
 
 # Forward definition, XXX remove circular import if possible...
 Session: TypeAlias = "Session"
 
 
-class AnalysisTask(SessionTask):
+class BootstrapAnalysisTask(AnalysisTask):
     """
     Analysis tasks that perform anythin from plotting to data checks and transformations.
     This is the base class for all public analysis steps that are allocated by the session.
@@ -37,23 +36,6 @@ class AnalysisTask(SessionTask):
     change the task ID generation.
     """
 
-    task_namespace = "analysis"
-
-    def __init__(
-        self,
-        session: Session,
-        analysis_config: AnalysisConfig,
-        task_config: Config | None = None,
-    ):
-        super().__init__(session, task_config=task_config)
-        # Analysis configuration for this invocation
-        self.analysis_config = analysis_config
-
-        # Collect parameterization axes from the benchmark matrix
-        all_bench = self.session.all_benchmarks()
-        assert len(all_bench) > 0
-        self._param_columns = list(all_bench[0].parameters.keys())
-
     def _do_mean_overhead(self, df, metric, extra_groupby, overhead_scale):
         """
         Compute the overhead assuming normal distribution of the "metric" data in the
@@ -61,7 +43,7 @@ class AnalysisTask(SessionTask):
 
         The parameter axes from the benchmark configuration are used to group the
         dataframe to compute the statistic metrics.
-        Note that this returns data in long-form, see :meth:`AnalysisTask.compute_overhead`.
+        Note that this returns data in long-form, see :meth:`BootstrapAnalysisTask.compute_overhead`.
         """
         if len(df.select(cs.ends_with("_std", "_baseline"))):
             self.logger.error(
@@ -185,7 +167,7 @@ class AnalysisTask(SessionTask):
 
         The parameter axes from the benchmark configuration are used to group the
         dataframe to compute the statistic metrics.
-        Data is returned in long-form, see :meth:`AnalysisTask.compute_overhead`.
+        Data is returned in long-form, see :meth:`BootstrapAnalysisTask.compute_overhead`.
         """
         baseline_sel = self.baseline_selector()
         param_columns = self.param_columns
@@ -328,54 +310,6 @@ class AnalysisTask(SessionTask):
 
         return out_df
 
-    @property
-    def param_columns(self) -> list[str]:
-        """
-        Return the set of parameter names that are expected to be found in
-        a dataframe containing data for this session.
-        """
-        return list(self._param_columns)
-
-    @property
-    def param_columns_with_iter(self) -> list[str]:
-        """
-        Return the set of parameter names that are configured by the parameterisation matrix,
-        with the addition of the iteration index column.
-        """
-        return [*self.param_columns, "iteration"]
-
-    @property
-    def key_columns(self) -> list[str]:
-        """
-        Row ID columns, excluding the iteration.
-        This includes the parameterisation columns and the dataset ID column.
-        """
-        return ["dataset_id", *self.param_columns]
-
-    @property
-    def key_columns_with_iter(self) -> list[str]:
-        """
-        Row ID columns including the iteration.
-        This includes the parameterisation columns and the dataset ID colum,
-        plus the iteration index.
-        """
-        return ["dataset_id", *self.param_columns, "iteration"]
-
-    def get_instance_config(self, g_uuid: str) -> InstanceConfig:
-        """
-        Helper to retreive an instance configuration for the given g_uuid.
-        """
-        return self.session.get_instance_configuration(g_uuid)
-
-    def g_uuid_to_label(self, g_uuid: str) -> str:
-        """
-        Helper that maps group UUIDs to a human-readable label that describes the instance
-
-        Deprecated, use the `target` parameter.
-        """
-        instance_config = self.get_instance_config(g_uuid)
-        return instance_config.name
-
     def baseline_selector(self) -> dict[str, str]:
         """
         Generate a dictionary of selectors that identify the baseline data slice.
@@ -513,7 +447,7 @@ class AnalysisTask(SessionTask):
 
 
 @deprecated("Use SliceAnalisysTask instead")
-class DatasetAnalysisTask(AnalysisTask):
+class DatasetAnalysisTask(BootstrapAnalysisTask):
     """
     Base class for analysis tasks that operate on a single dataset context.
     These generally used to perform per-dataset operations such as loading
@@ -549,7 +483,7 @@ class DatasetAnalysisTask(AnalysisTask):
 
 
 @deprecated("Use GenericAnalisysTask instead")
-class DatasetAnalysisTaskGroup(AnalysisTask):
+class DatasetAnalysisTaskGroup(BootstrapAnalysisTask):
     """
     Synthetic target that schedules a per-dataset analysis task for each dataset in the session.
     """
@@ -628,7 +562,7 @@ class DependentVariableConfig(Config):
     )
 
 
-class SliceAnalysisTask(AnalysisTask):
+class SliceAnalysisTask(BootstrapAnalysisTask):
     """
     Base class for slice analysis tasks.
 

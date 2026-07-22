@@ -1,1 +1,1 @@
-from . import analysis, build_exec
+register_tasks = True

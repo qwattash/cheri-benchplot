@@ -11,7 +11,6 @@ from uuid import UUID
 import polars as pl
 from typing_extensions import Self
 
-from .analysis import AnalysisTask, DatasetAnalysisTaskGroup
 from .benchmark import Benchmark, ExecTaskConfig
 from .config import (
     AnalysisConfig,
@@ -23,10 +22,9 @@ from .config import (
     PipelineConfig,
     SessionRunConfig,
 )
-from .instance import InstanceManager
 from .scheduler import TaskScheduler
 from .shellgen import TemplateContextBase
-from .task import DatasetTask, ExecutionTask, SessionTask, TaskRegistry
+from .task import AnalysisTask, ExecutionTask, SessionTask, TaskRegistry
 from .util import new_logger
 
 #: Constant, name of the generated session configuration file
@@ -804,17 +802,11 @@ class Session:
         if clean:
             self.clean_all()
 
-        instance_manager = InstanceManager(self)
-        self.scheduler.register_resource(instance_manager)
-
         # Resolve the session driver strategy
         # driver_class = TaskRegistry.resolve_task(driver_config.handler, kind=SessionDriver)
-
-        # Package the session to transfer to the remote hosts
-        # session_root = self.session_root_path
-
         # Schedule the session driver task
         # self.scheduler.add_task(driver)
+
         self.logger.info("Session %s begin execution", self.name)
         self.scheduler.run()
         self.logger.info("Session %s execution completed", self.name)
@@ -868,14 +860,10 @@ class Session:
                 else:
                     options = task_spec.task_options
 
-                # If the task is a session-wide task, just schedule it.
-                # If the task is per-dataset, schedule one instance for each dataset.
-                if issubclass(task_klass, SessionTask):
-                    task = task_klass(self, analysis_config, task_config=options)
-                elif issubclass(task_klass, DatasetTask):
-                    task = DatasetAnalysisTaskGroup(
-                        self, task_klass, analysis_config, task_config=options
-                    )
+                # Analysis tasks are supposed to be session-wide.
+                # They can still delegate work to per-dataset tasks via dependencies.
+                assert issubclass(task_klass, SessionTask)
+                task = task_klass(self, analysis_config, task_config=options)
                 self.logger.debug(
                     "Schedule analysis task %s with opts %s", task, options
                 )
