@@ -94,6 +94,66 @@ run shell scripts and the benchmark executable. Depending on the data collected,
 we may require some auxiliary commands to be available; for example, collecting
 hardware performance counters may require the FreeBSD `pmcstat` utility.
 
+### Merging Sessions
+
+The `benchplot-cli session merge` command allows you to merge data from related sessions.
+This is particularly useful when you need to add new data to an existing session by extending
+the parameterization space with new axes or values.
+
+#### Common Use Case: Extending a Session
+
+When you need to add new data to an existing session, you typically:
+
+1. Identify the new parameterization axes or values you want to add
+2. Create a new "superset" session that includes both old and new parameterization combinations
+3. Use `session merge --by-key` to transfer data from the old session to the new one
+4. Use the `-x` option to specify where the old data fits in the expanded parameterization space
+
+#### Example
+
+Suppose you have an existing session with parameterization `{"arch": "aarch64"}` and want to
+extend it with a new `variant` axis that has values "base" and "purecap". You would:
+
+1. Create a new session with parameterization including both `arch` and `variant` axes
+2. Merge the old session data into the new session:
+
+```
+benchplot-cli session merge --by-key -x variant=base path/to/new-session path/to/old-session
+```
+
+This tells benchplot to match data from the old session by the `arch` parameterization key,
+and place it in the new session where `variant=base`.
+
+#### Merge Command Options
+
+```
+benchplot-cli session merge [options] <target-session> <source-session> [<source-session> ...]
+
+Options:
+  --by-key, -k          Merge by parameterization keys instead of dataset UUIDs.
+                        This is the recommended mode for extending sessions.
+
+  --extra-param, -x     Specify additional parameterization axis values as key=value.
+                        Can be repeated for multiple axes. Requires --by-key.
+                        Use this to place source data in the correct position within
+                        the target's expanded parameterization space.
+
+  --decode, -d          Interpret sources as base64-encoded tarballs containing only
+                        the run directory. Cannot be used with --by-key.
+```
+
+#### Validation Rules
+
+When using `--by-key`, the merge operation validates that:
+
+- Source parameterization axes must be a subset of target session axes
+- Source parameter values must exist in the target session
+- Extended parameters (`-x`) must complete the parameterization space (all missing axes must be specified)
+- Extended parameters must not contain reserved names (except `target`)
+
+If validation fails, the merge operation will report detailed error messages indicating
+which constraints were violated.
+
 ### Pipeline Configuration
 
 The pipeline configuration is the user-facing description of the desired
