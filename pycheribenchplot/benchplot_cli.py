@@ -304,7 +304,13 @@ class TaskInfoSubCommand(SubCommand):
             "task", help="Display information about a task"
         )
         sub_task.add_argument(
-            "task_spec", nargs="+", help="Name(s) of task(s) to describe"
+            "-l",
+            "--list",
+            action="store_true",
+            help="Only list the matching tasks instead of printing detailed documentation",
+        )
+        sub_task.add_argument(
+            "task_spec", nargs="+", help="Name(s) of task(s) to describe, regex match"
         )
 
         sub_config = info_subparsers.add_parser(
@@ -387,13 +393,16 @@ class TaskInfoSubCommand(SubCommand):
         """
         for task_class in TaskRegistry.iter_public():
             for matcher in args.task_spec:
-                m = re.match(
-                    matcher, f"{task_class.task_namespace}.{task_class.task_name}"
-                )
-                if m:
-                    # Write out the task description
-                    print(task_class.describe())
-                    break
+                task_key = f"{task_class.task_namespace}.{task_class.task_name}"
+                if re.match(matcher, task_key):
+                    if args.list:
+                        task_kind = (
+                            "Gen" if issubclass(task_class, ExecutionTask) else "An"
+                        )
+                        print(task_kind, "\t", task_key)
+                    else:
+                        # Write out the task description
+                        print(task_class.describe())
 
     def handle_config(self, user_config, args):
         """
