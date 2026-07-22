@@ -21,7 +21,11 @@ default_color_cycle = plt.cycler("color", benchplot_tab_colors)
 # Create and register color maps
 benchplot_tab = ListedColormap(benchplot_tab_colors, name="benchplot_tab")
 
-cmap_registry.register(benchplot_tab)
+try:
+    cmap_registry.register(benchplot_tab)
+except ValueError:
+    # Already registered, skip
+    pass
 
 # Default theme configuration, this is applied to the rc_context in each PlotTask.
 default_theme = {
