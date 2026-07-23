@@ -186,6 +186,23 @@ class BootstrapAnalysisTask(AnalysisTask):
         # associate baseline values to each group.
         # In order to compute the degrees of freedom of the baseline, we filter-out all derived parameter
         # columns that do not vary within the baseline chunk.
+        # Verify that the baseline selector makes sense.
+        for key, value in baseline_sel.items():
+            if key not in df.columns:
+                self.logger.error(
+                    "Invalid baseline selector, key %s does not match any columns %s",
+                    key,
+                    ", ".join(df.columns),
+                )
+                raise RuntimeError("Invalid baseline selector")
+            if value not in df[key]:
+                self.logger.error(
+                    "Invalid baseline selector, value %s is not in %s",
+                    value,
+                    ", ".join(df[key].unique()),
+                )
+                raise RuntimeError("Invalid baseline selector")
+
         metric_b = f"{metric}_baseline"
         baseline = (
             df.filter(**baseline_sel)
@@ -222,7 +239,7 @@ class BootstrapAnalysisTask(AnalysisTask):
             # If this is the case, it means we also have a single iteration.
             # There is no point of bootstrapping in this case, but the functions
             # below will take care of this.
-            assert baseline.shape[0] == 1, "Unexpected baseline shape"
+            assert baseline.shape[0] == 1, f"Unexpected baseline shape {baseline}"
             jdf = df.join(baseline, how="cross")
         assert metric_b in jdf.columns, "Baseline data column missing"
         df = jdf
