@@ -244,6 +244,15 @@ class IngestPMCCounters(DataFrameLoadTask):
     def system_mode(self):
         return self.target.task.config.system_mode
 
+    @property
+    def data_columns(self):
+        return ["counter_value"]
+
+    @property
+    def auxiliary_columns(self):
+        # TODO this is not hooked to anything at the moment
+        return ["counter_group", "counter", "cpu"]
+
     def _load_one(self, path: Path) -> pl.DataFrame:
         self.logger.debug("Ingest %s", path)
         with open(path, "r") as pmc_fd:
@@ -274,29 +283,29 @@ class IngestPMCCounters(DataFrameLoadTask):
                 .list.to_struct(fields=cols)
             )
             .unnest("pmc_data")
-            .cast(pl.UInt64)
+            .cast(pl.Float64)
         )
 
         # Assume we have all numeric columns and the counters are incremental
         df = df.sum()
         # Default counter group to identify multiple pmcstat configurations
         df = df.with_columns(pl.lit(self.counter_group).alias("_counter_group"))
-        # If these are system-mode counters we have to distinguish between CPUs
+        # Prepare the output long-form dataframe
+        df = df.unpivot(
+            index=["_counter_group"],
+            variable_name="_counter",
+            value_name="counter_value",
+        )
+        # Set the CPU column
         if self.system_mode:
-            # The columns are in the format <N>/<counter> where <N> is the CPU index
-            tmp_df = df.unpivot(
-                index=["_counter_group"], variable_name="_counter", value_name="_value"
-            )
-            tmp_df = tmp_df.with_columns(
+            # Counter name columns are in the format <N>/<counter> where <N> is the CPU index
+            df = df.with_columns(
                 pl.col("_counter")
                 .str.split(by="/")
                 .list.first()
                 .cast(pl.Int32)
                 .alias("_cpu"),
                 pl.col("_counter").str.split(by="/").list.last().alias("_counter"),
-            )
-            df = tmp_df.pivot(
-                on="_counter", index=["_counter_group", "_cpu"], values="_value"
             )
         else:
             df = df.with_columns(pl.lit(0).alias("_cpu"))
@@ -318,7 +327,9 @@ class PMCExec(ExecutionTask):
 
     @output
     def pmc_data(self):
-        return RemoteBenchmarkIterationTarget(self, "hwpmc", ext="out")
+        return RemoteBenchmarkIterationTarget(
+            self, "hwpmc", ext="out", loader=IngestPMCCounters
+        )
 
     @property
     def pmc_group_id(self) -> str:
@@ -329,9 +340,6 @@ class PMCExec(ExecutionTask):
     def pmc_names(self) -> list[str]:
         """Normalised counter names in this execution"""
         return [c.lower() for c in self.config.pmc_counters]
-
-    def get_counters_loader(self):
-        return IngestPMCCounters(self.pmc_data)
 
     def run(self):
         self.script.extend_context(

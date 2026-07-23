@@ -73,7 +73,7 @@ class PMCPlotConfig(PlotGridConfig, BarPlotConfig):
     )
 
     def resolve_counter_group(self, task: PMCExec) -> str:
-        return task.get_counters_loader().counter_group
+        return task.pmc_data.get_loader().counter_group
 
 
 class PMCSliceSummary(SlicePlotTask):
@@ -109,44 +109,23 @@ class PMCSliceSummary(SlicePlotTask):
     rc_params = {"axes.labelsize": "large", "font.size": 9, "xtick.labelsize": 9}
 
     derived_metrics = {
-        "cycles_per_insn": {
-            "requires": ["inst_retired", "cpu_cycles"],
-            "column": (pl.col("cpu_cycles") / pl.col("inst_retired")),
-        },
-        "ipc": {
-            "requires": ["inst_retired", "cpu_cycles"],
-            "column": (pl.col("inst_retired") / pl.col("cpu_cycles")),
-        },
-        "br_pred_miss_rate": {
-            "requires": ["br_pred", "br_mis_pred"],
-            "column": (pl.col("br_mis_pred") / pl.col("br_pred")),
-        },
-        "insn_spec_rate": {
-            "requires": ["inst_retired", "inst_spec"],
-            "column": (pl.col("inst_retired") / pl.col("inst_spec")),
-        },
-        "eff_backend_ipc": {
-            "requires": ["inst_retired", "cpu_cycles", "stall_backend"],
-            "column": pl.col("inst_retired")
-            / (pl.col("cpu_cycles") - pl.col("stall_backend")),
-        },
-        "l1i_hit_rate": {
-            "requires": ["l1i_cache", "l1i_cache_refill"],
-            "column": (pl.col("l1i_cache") - pl.col("l1i_cache_refill"))
-            / pl.col("l1i_cache"),
-        },
-        "l1d_hit_rate": {
-            "requires": ["l1d_cache", "l1d_cache_refill"],
-            "column": (pl.col("l1d_cache") - pl.col("l1d_cache_refill"))
-            / pl.col("l1d_cache"),
-        },
+        "cycles_per_insn": pl.col("cpu_cycles") / pl.col("inst_retired"),
+        "ipc": pl.col("inst_retired") / pl.col("cpu_cycles"),
+        "br_pred_miss_rate": pl.col("br_mis_pred") / pl.col("br_pred"),
+        "insn_spec_rate": pl.col("inst_retired") / pl.col("inst_spec"),
+        "eff_backend_ipc": pl.col("inst_retired")
+        / (pl.col("cpu_cycles") - pl.col("stall_backend")),
+        "l1i_hit_rate": (pl.col("l1i_cache") - pl.col("l1i_cache_refill"))
+        / pl.col("l1i_cache"),
+        "l1d_hit_rate": (pl.col("l1d_cache") - pl.col("l1d_cache_refill"))
+        / pl.col("l1d_cache"),
     }
 
     @dependency
     def counters(self):
         for bench in self.slice_benchmarks:
             task = bench.find_exec_task(PMCExec)
-            yield task.get_counters_loader()
+            yield task.pmc_data.get_loader()
 
     @output
     def summary_combined(self):
@@ -156,34 +135,42 @@ class PMCSliceSummary(SlicePlotTask):
     def summary_tbl(self):
         return Target(self, "table", ext="csv")
 
-    def _gen_derived_metrics(self, df: pl.DataFrame) -> (pl.DataFrame, list[str]):
+    def _gen_derived_metrics(self, df: pl.DataFrame) -> pl.DataFrame:
         """
         Generate derived metrics for the slice.
 
-        Expec the input dataframe to be in wide form and have a constant _counter_group axis.
+        Expec the input dataframe to be in long form and have a constant _counter_group axis.
         Note that we avoid computing derived metrics across different _counter_group values,
         because these are captured in different executions and have weaker correlation
         depending on the overall probe effect.
-        We generate a new column for each derived metric and the list of generated columns
-        is returned together with the dataframe.
+        We generate a set of counter rows for each derived metric.
         """
-        derived = []
-        for name, spec in self.derived_metrics.items():
-            has_cols = True
-            for required_column in spec["requires"]:
-                if required_column not in df.columns:
-                    self.logger.debug(
-                        "Skip derived metric %s: requires missing column %s",
-                        name,
-                        required_column,
-                    )
-                    has_cols = False
-                    break
-            if not has_cols:
-                continue
-            derived.append(name)
-            df = df.with_columns((spec["column"]).alias(name))
-        return df, derived
+        avail_counters = set(df["_counter"].unique())
+        computable_metrics = {
+            name: expr
+            for name, expr in self.derived_metrics.items()
+            if not set(expr.meta.root_names()).difference(avail_counters)
+        }
+        required_counters = set().union(
+            *[expr.meta.root_names() for expr in computable_metrics.values()]
+        )
+        assert required_counters or len(computable_metrics) == 0
+
+        index = [*self.key_columns_with_iter, "_counter_group", "_cpu"]
+        result_df = (
+            df.filter(pl.col("_counter").is_in(required_counters))
+            .pivot(on="_counter", index=index, values="counter_value")
+            .with_columns(
+                [expr.alias(name) for name, expr in computable_metrics.items()]
+            )
+            .unpivot(
+                on=computable_metrics.keys(),
+                index=index,
+                variable_name="_counter",
+                value_name="counter_value",
+            )
+        )
+        return pl.concat([df, result_df])
 
     def _collect_metrics(self, loader: IngestPMCCounters) -> pl.DataFrame:
         """
@@ -195,16 +182,14 @@ class PMCSliceSummary(SlicePlotTask):
         provides data that is associated to a single _counter_group.
         Wide form data makes this easier to do.
         """
+        pmc_columns = ["_counter_group", "_cpu", "_counter", "counter_value"]
         df = loader.df.get()
+        # Verify and normalize expected columns
+        df = df.select(self.key_columns_with_iter + pmc_columns)
         assert df.n_unique("_counter_group") == 1, (
             "Loader has data from multiple counter groups"
         )
-        df, derived_metrics = self._gen_derived_metrics(df)
-        metrics = [*loader.counter_names, *derived_metrics]
-        index_cols = [*self.key_columns_with_iter, "_cpu"]
-        df = df.unpivot(
-            on=metrics, index=index_cols, variable_name="_counter", value_name="value"
-        )
+        df = self._gen_derived_metrics(df)
         return df
 
     def setup_plot(self):
@@ -233,8 +218,8 @@ class PMCSliceSummary(SlicePlotTask):
         df = (
             df.group_by(["dataset_id", "_counter", "iteration"])
             .agg(
-                pl.col("value").sum(),
-                cs.exclude("value").first(),
+                pl.col("counter_value").sum(),
+                cs.exclude("counter_value").first(),
             )
             .select(cs.exclude("_cpu"))
         )
@@ -243,7 +228,11 @@ class PMCSliceSummary(SlicePlotTask):
 
         self.logger.info("Bootstrap overhead confidence intervals")
         self.stats = self.compute_overhead(
-            df, "value", extra_groupby=["_counter"], how="median", overhead_scale=100
+            df,
+            "counter_value",
+            extra_groupby=["_counter"],
+            how="median",
+            overhead_scale=100,
         )
 
         if self.config.drop_relative_baseline:
@@ -259,7 +248,7 @@ class PMCSliceSummary(SlicePlotTask):
             grid.map(
                 grid_barplot,
                 x=self.config.tile_xaxis,
-                y="value",
+                y="counter_value",
                 err=["value_low", "value_high"],
                 config=self.config,
             )
@@ -270,7 +259,7 @@ class PMCSliceSummary(SlicePlotTask):
         tbl_data = self.stats.pivot(
             columns="_metric_type",
             index=[*self._param_columns, "_counter"],
-            values="value",
+            values="counter_value",
         )
         tbl_data.write_csv(self.summary_tbl.single_path())
 
