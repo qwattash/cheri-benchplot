@@ -182,13 +182,22 @@ Each row also carries an `_is_baseline` boolean. The baseline group is identifie
 - **DataFrames**: use [Polars](https://pola.rs/) exclusively. Use `polars.selectors`
   (`import polars.selectors as cs`) for column selection patterns. Prefer long-form
   data layout for analysis outputs.
-- **Module registration**: every new module must import its submodules in `__init__.py`
-  so that task classes are registered before the CLI or config parser needs them:
+- **Module registration**: task classes are registered automatically when their module
+  is imported. The `TaskRegistry.discover()` scanner walks the `pycheribenchplot`
+  package hierarchy and inspects only packages that expose `register_tasks = True`
+  in their `__init__.py`:
 
   ```python
   # pycheribenchplot/mybenchmark/__init__.py
-  from . import exec, plot
+  register_tasks = True
   ```
+
+  All modules and subpackages under a package marked this way will be imported
+  recursively during discovery, which triggers task registration.
+
+  > **Tip:** Files whose names start with an underscore (`_`) are ignored during the
+  > scan, regardless of `register_tasks`. Use this to hide helper modules or deprecated
+  > task code from discovery.
 
 ---
 
@@ -335,20 +344,21 @@ backends, controlled by the `pmc_type` config field.
 ```
 pycheribenchplot/
 └── mybenchmark/
-    ├── __init__.py     # must import all submodules
+    ├── __init__.py     # must set register_tasks = True
     ├── exec.py         # ExecutionTask + loader
     └── plot.py         # SlicePlotTask
 ```
 
-The `__init__.py` must import all submodules so that tasks are registered at import time:
+The `__init__.py` must set `register_tasks = True` so that `TaskRegistry.discover()`
+scans the package:
 
 ```python
 # pycheribenchplot/mybenchmark/__init__.py
-from . import exec, plot
+register_tasks = True
 ```
 
-Register the new module by adding an import to `pycheribenchplot/__init__.py` (or
-wherever the top-level module imports are collected for your entry point).
+All modules and subpackages under `mybenchmark/` will be imported automatically during
+discovery; you do not need to import them manually in `__init__.py`.
 
 ### Step 2 — Define the Configuration
 
@@ -584,9 +594,10 @@ Guidelines:
 
 ## Common Pitfalls
 
-- **Forgetting `__init__.py` imports**: task classes are only registered when their module
-  is imported. If `from . import exec` is absent, the task will not appear in
-  `benchplot-cli info task` and cannot be referenced in config files.
+- **Forgetting `register_tasks = True`**: task classes are only registered when their
+  module is imported by the discovery scanner. If the package's `__init__.py` does not
+  set `register_tasks = True`, the scanner will skip the entire package and the task
+  will not appear in `benchplot-cli info task` or be usable in config files.
 
 - **Using `dataclasses.field()` instead of `config_field()`**: this bypasses marshmallow
   serialization, breaks JSON loading, and hides the field from `benchplot-cli info`.
