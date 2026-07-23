@@ -576,18 +576,3 @@ Finally, we tune the aspect-ratio of the tiles to a more pleasant shape.
 > Furthermore, the output depends on the sorting of the plot input data. The
 > ordering is completely tunable by assigning different weights to different
 > parameter axes.
-
-## Internals / Hacking
-
-> [!WARNING]
-> TODO this is outdated and incomplete. Maybe should move to sphinx docs.
-
-Tasks are logically organised into namespaces. This is used to filter tasks that are compatible with each other.
-For example, analysis tasks in the `foo` namespace should all be able to operate on data produced by generators in the `foo` namespace.
-
-At session creation, a new `Benchmark` object is created for each benchmark/instance combination.
-This represents a data-generation run and is uniquely identified by an UUID.
-The benchmark instance will manage the data-generation and analysis for a benchmark/instance configuration pair.
-Each benchmark contains a group of tasks (`ExecutionTask` subclasses) that represent data sources.
-These tasks are responsible for generating the commands to produce the data, extract the data from the target cheribsd (or other) instance
-once the benchmark is done, and load the data for analysis.
