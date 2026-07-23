@@ -75,6 +75,7 @@ class SessionSubCommand(SubCommand):
             "-x",
             "--extra-param",
             action="append",
+            default=list(),
             type=str,
             help="Requires -k. Force extra parameterization axes key=value, use this to extend sessions.",
         )
