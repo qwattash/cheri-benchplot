@@ -35,9 +35,7 @@ def test_grid_barplot_labels_enabled_x_orient(mock_tile):
     df = pl.DataFrame(
         {"category": ["A", "B"], "hue": ["H1", "H1"], "val": [10.0, 20.5]}
     )
-    config = BarPlotConfig(
-        show_bar_label=True, bar_label_rotation=45, bar_label_size=12
-    )
+    config = BarPlotConfig(show_bar_label=True, bar_label_orient="h", bar_label_size=12)
 
     grid_barplot(mock_tile, df, config, x="<category>", y="val")
 
@@ -58,7 +56,7 @@ def test_grid_barplot_labels_enabled_x_orient(mock_tile):
     assert kwargs["xytext"] == (0, 3)
     assert kwargs["ha"] == "center"
     assert kwargs["va"] == "bottom"
-    assert kwargs["rotation"] == 45
+    assert kwargs["rotation"] == 0
     assert kwargs["fontsize"] == 12
 
 
