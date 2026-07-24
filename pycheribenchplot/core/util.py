@@ -40,7 +40,7 @@ def setup_logging(
     default_level = logging.INFO
     if verbose:
         default_level = logging.DEBUG
-    logger = logging.getLogger("cheri-benchplot")
+    logger = logging.getLogger("cbp")
     logger.setLevel(default_level)
     logger.propagate = False
     # Console logging
@@ -76,12 +76,12 @@ def setup_logging(
 
 
 def root_logger():
-    return logging.getLogger("cheri-benchplot")
+    return logging.getLogger("cbp")
 
 
 def new_logger(name, parent=None):
     if parent is None:
-        parent = logging.getLogger("cheri-benchplot")
+        parent = logging.getLogger("cbp")
     return parent.getChild(name)
 
 

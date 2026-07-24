@@ -127,7 +127,7 @@ class Session:
         #: Main session configuration
         self.config = self._resolve_config_template(config)
         #: Root logger for the session, initialized as soon as we know we have a stable session name
-        self.logger = new_logger(f"session-{self.config.name}")
+        self.logger = new_logger(self.config.name)
         if session_path is None:
             session_root_path = self.user_config.session_path / self.config.name
         else:
