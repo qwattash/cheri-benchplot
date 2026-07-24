@@ -256,17 +256,32 @@ class BootstrapAnalysisTask(AnalysisTask):
             """
             assert selectors[0] == metric
             args = tuple(chunk[s] for s in selectors)
+            s_value = statistic_fn(*args, axis=0)
 
-            if chunk.shape[0] > 1:
+            # If the data in args does not have enough variability (e.g all values are
+            # the same), a similar problem occurs with the BCa method.
+            # Given that this is also a degenerate case, do not generate error bars.
+            # This covers both the case in which there is only one data point
+            # (i.e. chunk.shape[0] == 1) and multiple samples with the same value.
+            unique_samples = max(tuple(chunk[s].n_unique() for s in selectors))
+
+            # If the baseline has a consistently 0 metric, the overhead calculation
+            # may cause  a divide-by-zero and the BCa method will complain because
+            # the metric distribution becomes all NaN.
+            # To avoid spurious warnings, check the statistic_fn on the original
+            # chunk and just skip bootstrapping if the statistic is NaN to begin
+            # with.
+            if np.isnan(s_value).all() or unique_samples == 1:
+                # Do not generate error bars, single iteration or degenerate statistic
+                ci_low = ci_high = np.nan
+            else:
+                assert not np.isnan(s_value)
                 boot = scs.bootstrap(args, statistic_fn, vectorized=True, method="BCa")
                 ci_low, ci_high = (
                     boot.confidence_interval.low,
                     boot.confidence_interval.high,
                 )
-            else:
-                # Do not generate error bars, single iteration
-                ci_low = ci_high = np.nan
-            s_value = statistic_fn(*args, axis=0)
+
             stats_chunk = chunk.select(
                 cs.by_name(param_columns).first(),
                 pl.lit(s_value).alias(metric),
@@ -313,7 +328,7 @@ class BootstrapAnalysisTask(AnalysisTask):
         delta_stat = delta_stat.with_columns(pl.lit("delta").alias("_metric_type"))
 
         # Bootstrap the median overhead from the baseline and each other group.
-        # Note that we force the baseline to baseline overhead to 0.
+        # Note that we force the baseline to baseline overhead to NaN.
         ovh_stat = grouped.map_groups(
             lambda chunk: _bootstrap(chunk, [metric, metric_b], _median_overhead)
         )
