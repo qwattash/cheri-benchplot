@@ -850,18 +850,6 @@ class GenericAnalysisTask(AnalysisTask):
             self._rank,
         )
 
-    # @property
-    # def task_id(self):
-    #     """
-    #     Note that this depends on the inner slice task, so we can define multiple
-    #     generic analysis passes within the same analysis configuration.
-    #     """
-    #     task_id = f"{super().task_id}-slice"
-    #     for broadcast_class, _ in self.resolved_slice_tasks:
-    #         task_id += "-" + broadcast_class.task_namespace + broadcast_class.task_name
-
-    #     return task_id
-
     @property
     def descriptor_matrix(self):
         df = self.session.parameterization_matrix
@@ -918,13 +906,17 @@ class GenericAnalysisTask(AnalysisTask):
                     rank=self._rank,
                 )
                 # XXX check that the rank is not too large
-                slice_uname = slice_name or ""
+                name_parts = []
                 if self.user_task_name:
-                    slice_uname = f"{self.user_task_name}/{slice_uname}"
+                    name_parts.append(self.user_task_name)
+                if slice_name:
+                    name_parts.append(slice_name)
+                slice_user_name = "/".join(name_parts) or None
+
                 yield slice_task(
                     self.session,
                     slice_info,
                     self.analysis_config,
                     task_config=group_options,
-                    task_name=slice_uname,
+                    task_name=slice_user_name,
                 )
