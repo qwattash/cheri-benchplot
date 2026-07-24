@@ -34,8 +34,6 @@ from .util import new_logger, root_logger
 logger = root_logger()
 config_logger = new_logger("config")
 
-type ConfigTemplateSpec = "ConfigTemplateSpec"
-
 
 def make_uuid() -> str:
     """
@@ -884,7 +882,7 @@ def _lookup_import_path(data: Any, path: str, import_path: Path) -> Any:
             try:
                 idx = int(part)
                 current = current[idx]
-            except (ValueError, IndexError):
+            except ValueError, IndexError:
                 logger.error(
                     "Path '%s' not found in imported config %s (invalid list index: '%s')",
                     path,
@@ -1406,6 +1404,13 @@ class TaskTargetConfig(Config):
 
     #: Task specifier with format indicated by :meth:`TaskRegistry.resolve_task`
     handler: ConfigTaskSpec
+
+    #: Task identifier, used to distinguish tasks with the same handler.
+    name: str | None = config_field(
+        None,
+        desc="Unique task identifier, used to distinguish tasks with the same handler. "
+        "Defaults to handler name.",
+    )
 
     #: Extra options for the dataset handler, depend on the handler
     task_options: LazyNestedConfig = dc.field(default_factory=dict)

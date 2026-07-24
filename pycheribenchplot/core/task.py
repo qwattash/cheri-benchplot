@@ -554,22 +554,35 @@ class SessionTask(Task):
     These tasks do not reference a specific benchmark ID or benchmark group ID.
     """
 
-    def __init__(self, session: Session, task_config: Config = None):
+    def __init__(
+        self, session: Session, task_name: str | None = None, task_config: Config = None
+    ):
         self._session = session
+        self._user_task_name = task_name
 
         # Borg initialization occurs here
         super().__init__(task_config=task_config)
 
         #: Task logger is a child of the session logger
-        self.logger = new_logger(f"{self.task_name}", parent=session.logger)
+        uname_suffix = (
+            "" if self._user_task_name is None else f"/{self._user_task_name}"
+        )
+        self.logger = new_logger(
+            f"{self.task_name}{uname_suffix}", parent=session.logger
+        )
 
     @property
     def session(self):
         return self._session
 
     @property
+    def user_task_name(self):
+        return self._user_task_name
+
+    @property
     def task_id(self):
-        return f"{self.task_namespace}.{self.task_name}-{self.session.uuid}"
+        suffix = "" if self._user_task_name is None else f"-{self._user_task_name}"
+        return f"{self.task_namespace}.{self.task_name}{suffix}"
 
 
 class DatasetTask(Task):
@@ -665,9 +678,10 @@ class AnalysisTask(SessionTask):
         self,
         session: Session,
         analysis_config: AnalysisConfig,
+        task_name: str | None = None,
         task_config: Config | None = None,
     ):
-        super().__init__(session, task_config=task_config)
+        super().__init__(session, task_name=task_name, task_config=task_config)
         # Analysis configuration for this invocation
         self.analysis_config = analysis_config
 

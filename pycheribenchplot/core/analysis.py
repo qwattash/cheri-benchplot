@@ -477,13 +477,19 @@ class DatasetAnalysisTask(BootstrapAnalysisTask):
         self,
         benchmark: Benchmark,
         analysis_config: AnalysisConfig,
+        task_name: str | None = None,
         task_config: Config | None = None,
     ):
         #: The associated benchmark context
         self.benchmark = benchmark
 
         # Borg initialization occurs here
-        super().__init__(benchmark.session, analysis_config, task_config=task_config)
+        super().__init__(
+            benchmark.session,
+            analysis_config,
+            task_name=task_name,
+            task_config=task_config,
+        )
 
     @property
     def uuid(self):
@@ -512,12 +518,15 @@ class DatasetAnalysisTaskGroup(BootstrapAnalysisTask):
         session: Session,
         task_class: Type[DatasetAnalysisTask],
         analysis_config: AnalysisConfig,
+        task_name: str | None = None,
         task_config: Config | None = None,
     ):
         self._task_class = task_class
 
         # Borg initialization occurs here
-        super().__init__(session, analysis_config, task_config)
+        super().__init__(
+            session, analysis_config, task_name=task_name, task_config=task_config
+        )
 
     @dependency
     def children(self):
@@ -604,11 +613,14 @@ class SliceAnalysisTask(BootstrapAnalysisTask):
         session: Session,
         slice_info: ParamSliceInfo,
         analysis_config: AnalysisConfig,
+        task_name: str | None = None,
         task_config: Config | None = None,
     ):
         self._slice_info = slice_info
         # Borg state initialization
-        super().__init__(session, analysis_config, task_config)
+        super().__init__(
+            session, analysis_config, task_name=task_name, task_config=task_config
+        )
 
     @property
     def task_id(self):
@@ -783,9 +795,12 @@ class GenericAnalysisTask(AnalysisTask):
         self,
         session: Session,
         analysis_config: AnalysisConfig,
+        task_name: str | None = None,
         task_config: Config | None = None,
     ):
-        super().__init__(session, analysis_config, task_config)
+        super().__init__(
+            session, analysis_config, task_name=task_name, task_config=task_config
+        )
 
         if not set(self.param_columns).issuperset(self.config.fixed_axes):
             self.logger.error(
@@ -820,17 +835,17 @@ class GenericAnalysisTask(AnalysisTask):
             self._rank,
         )
 
-    @property
-    def task_id(self):
-        """
-        Note that this depends on the inner slice task, so we can define multiple
-        generic analysis passes within the same analysis configuration.
-        """
-        task_id = f"{super().task_id}-slice"
-        for broadcast_class, _ in self.resolved_slice_tasks:
-            task_id += "-" + broadcast_class.task_namespace + broadcast_class.task_name
+    # @property
+    # def task_id(self):
+    #     """
+    #     Note that this depends on the inner slice task, so we can define multiple
+    #     generic analysis passes within the same analysis configuration.
+    #     """
+    #     task_id = f"{super().task_id}-slice"
+    #     for broadcast_class, _ in self.resolved_slice_tasks:
+    #         task_id += "-" + broadcast_class.task_namespace + broadcast_class.task_name
 
-        return task_id
+    #     return task_id
 
     @property
     def descriptor_matrix(self):
@@ -857,13 +872,15 @@ class GenericAnalysisTask(AnalysisTask):
         return df
 
     @cached_property
-    def resolved_slice_tasks(self) -> list[tuple[Type[SliceAnalysisTask], Config]]:
+    def resolved_slice_tasks(self) -> list[tuple[Type[SliceAnalysisTask], str, Config]]:
         # Note: the config layer guarantees that the handler is valid at this point
         # XXX we need to support multiple broadcast handlers
         task_types = []
         for slice_config in self.config.broadcast:
             for slice_task_type in TaskRegistry.resolve_task(slice_config.handler):
-                task_types.append((slice_task_type, slice_config.task_options))
+                task_types.append(
+                    (slice_task_type, slice_config.name, slice_config.task_options)
+                )
         return task_types
 
     @dependency
@@ -875,7 +892,7 @@ class GenericAnalysisTask(AnalysisTask):
             groups = self.descriptor_matrix.group_by(self.config.fixed_axes)
         else:
             groups = [(tuple(), self.descriptor_matrix)]
-        for slice_task, slice_config in self.resolved_slice_tasks:
+        for slice_task, slice_name, slice_config in self.resolved_slice_tasks:
             for name, group_slice in groups:
                 group_options = copy.deepcopy(slice_config)
                 fixed_slice_params = dict(zip(self.config.fixed_axes, name))
@@ -886,6 +903,13 @@ class GenericAnalysisTask(AnalysisTask):
                     rank=self._rank,
                 )
                 # XXX check that the rank is not too large
+                slice_uname = slice_name or ""
+                if self.user_task_name:
+                    slice_uname = f"{self.user_task_name}/{slice_uname}"
                 yield slice_task(
-                    self.session, slice_info, self.analysis_config, group_options
+                    self.session,
+                    slice_info,
+                    self.analysis_config,
+                    task_config=group_options,
+                    task_name=slice_uname,
                 )

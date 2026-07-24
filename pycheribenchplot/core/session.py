@@ -22,6 +22,7 @@ from .config import (
     PipelineConfig,
     SessionRunConfig,
 )
+from .error import ConfigurationError
 from .scheduler import TaskScheduler
 from .shellgen import TemplateContextBase
 from .task import AnalysisTask, ExecutionTask, SessionTask, TaskRegistry
@@ -838,6 +839,7 @@ class Session:
             # Load default analysis configuration from the session
             analysis_config = self.config.analysis_config
 
+        task_names = defaultdict(list)
         for task_spec in analysis_config.tasks:
             resolved = TaskRegistry.resolve_task(task_spec.handler)
             if not resolved:
@@ -860,10 +862,20 @@ class Session:
                 else:
                     options = task_spec.task_options
 
+                if task_spec.name in task_names[task_spec.handler]:
+                    self.logger.error(
+                        "Attempting to schedule multiple tasks with the same handler, "
+                        "use the TaskTargetConfig.name to disambiguate."
+                    )
+                    raise ConfigurationError("Ambiguous task identification")
+                task_names[task_spec.handler].append(task_spec.name)
+
                 # Analysis tasks are supposed to be session-wide.
                 # They can still delegate work to per-dataset tasks via dependencies.
                 assert issubclass(task_klass, SessionTask)
-                task = task_klass(self, analysis_config, task_config=options)
+                task = task_klass(
+                    self, analysis_config, task_config=options, task_name=task_spec.name
+                )
                 self.logger.debug(
                     "Schedule analysis task %s with opts %s", task, options
                 )
