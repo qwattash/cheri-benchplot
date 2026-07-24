@@ -582,7 +582,7 @@ class SessionTask(Task):
     @property
     def task_id(self):
         suffix = "" if self._user_task_name is None else f"-{self._user_task_name}"
-        return f"{self.task_namespace}.{self.task_name}{suffix}"
+        return f"{self.task_namespace}.{self.task_name}{suffix}-{self.session.uuid}"
 
 
 class DatasetTask(Task):
