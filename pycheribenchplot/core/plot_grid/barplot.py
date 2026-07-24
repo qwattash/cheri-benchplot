@@ -28,8 +28,8 @@ class BarPlotConfig(PlotConfigBase):
     show_bar_label: bool = config_field(
         False, desc="Show the actual value of the bar on top of each bar."
     )
-    bar_label_rotation: float = config_field(
-        0.0, desc="Rotation angle for the bar labels."
+    bar_label_orient: str = config_field(
+        "h", desc="Orientation of the bar labels (h or v)."
     )
     bar_label: OptColRef = config_field(
         None,
@@ -38,6 +38,11 @@ class BarPlotConfig(PlotConfigBase):
     bar_label_size: float | None = config_field(
         None, desc="Label text size (or None for default font size)."
     )
+
+    @validates("bar_label_orient")
+    def check_bar_label_orientation(self, data, **kwargs):
+        if data not in ["h", "v"]:
+            raise ValidationError("Bar label orientation must be 'h' or 'v'")
 
     @validates("orient")
     def check_orientation(self, data, **kwargs):
@@ -100,37 +105,59 @@ def _draw_bar_labels(
     else:
         text_coord = df.select(pl.col(d_var) + pl.col("__gen_stack")).to_series()
 
-    # Produce offset, va and ha vectors
+    # Produce offset, alignment and location vectors
     text_offset = 3 * sign  # 3 points offset
+    align_lr_vector = df.select(
+        pl.when(pl.col(d_var) >= 0).then(pl.lit("left")).otherwise(pl.lit("right"))
+    ).to_series()
+    align_tb_vector = df.select(
+        pl.when(pl.col(d_var) >= 0).then(pl.lit("bottom")).otherwise(pl.lit("top"))
+    ).to_series()
     if config.orient == "x":
         text_x = coord
         text_y = text_coord
-        text_ha = "center"
-        text_align = df.select(
-            pl.when(pl.col(d_var) >= 0).then(pl.lit("bottom")).otherwise(pl.lit("top"))
-        ).to_series()  # va
+        if config.bar_label_orient == "h":
+            text_ha = "center"
+            text_align = align_tb_vector  # va
+        elif config.bar_label_orient == "v":
+            text_align = align_lr_vector  # ha
+            text_va = "center"
     else:
-        text_offset = (3, 0)  # 3 points of horizontal offset
         text_x = text_coord
         text_y = coord
-        text_align = df.select(
-            pl.when(pl.col(d_var) >= 0).then(pl.lit("left")).otherwise(pl.lit("right"))
-        ).to_series()  # ha
-        text_va = "center"
+        if config.bar_label_orient == "h":
+            text_align = align_lr_vector  # ha
+            text_va = "center"
+        elif config.bar_label_orient == "v":
+            text_ha = "center"
+            text_align = align_tb_vector  # va
 
     annotate_kwargs = {}
     if config.bar_label_size is not None:
         annotate_kwargs["fontsize"] = config.bar_label_size
+
+    if config.bar_label_orient == "h":
+        annotate_kwargs["rotation"] = 0
+        annotate_kwargs["rotation_mode"] = "anchor"
+    else:
+        annotate_kwargs["rotation"] = 90
+        annotate_kwargs["rotation_mode"] = "anchor"
 
     for x, y, label, off, align in zip(
         text_x, text_y, bar_label, text_offset, text_align
     ):
         if config.orient == "x":
             offset = (0, off)
-            ha, va = text_ha, align
+            if config.bar_label_orient == "h":
+                ha, va = text_ha, align
+            else:
+                ha, va = align, text_va
         else:
             offset = (off, 0)
-            ha, va = align, text_va
+            if config.bar_label_orient == "h":
+                ha, va = align, text_va
+            else:
+                ha, va = text_ha, align
 
         tile.ax.annotate(
             label,
@@ -139,8 +166,6 @@ def _draw_bar_labels(
             textcoords="offset points",
             ha=ha,
             va=va,
-            rotation=config.bar_label_rotation,
-            rotation_mode="anchor",
             **annotate_kwargs,
         )
 
