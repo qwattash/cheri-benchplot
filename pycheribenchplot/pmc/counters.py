@@ -230,7 +230,7 @@ class PMCSliceSummary(SlicePlotTask):
         self.stats = self.compute_overhead(
             df,
             "counter_value",
-            extra_groupby=["_counter"],
+            extra_groupby=["_counter_group", "_counter"],
             how="median",
             overhead_scale=100,
         )
@@ -249,7 +249,7 @@ class PMCSliceSummary(SlicePlotTask):
                 grid_barplot,
                 x=self.config.tile_xaxis,
                 y="counter_value",
-                err=["value_low", "value_high"],
+                err=["counter_value_low", "counter_value_high"],
                 config=self.config,
             )
             grid.add_legend()
@@ -284,22 +284,13 @@ class PMCSliceAbsSummary(PMCSliceSummary):
     def run_plot(self):
         self.logger.info("Plot absolute counters summary for slice %s", self.slice_info)
         median_df = self.stats.filter(_metric_type="absolute")
-        # default_axis_names = {
-        #     "_counter": "Counter",
-        #     "value": "Counter value",
-        # }
-        # if self.config.hue:
-        #     default_axis_names[self.config.hue] = self.config.hue.capitalize()
-        # grid_config = self.config.with_default_axis_rename(
-        #     default_axis_names
-        # ).with_config_default(tile_row="_counter")
 
         with PlotGrid(self.summary_plot, median_df, self.config) as grid:
             grid.map(
                 grid_barplot,
                 x=self.config.tile_xaxis,
-                y="value",
-                err=["value_low", "value_high"],
+                y="counter_value",
+                err=["counter_value_low", "counter_value_high"],
                 config=self.config,
             )
             grid.add_legend()
@@ -339,8 +330,8 @@ class PMCSliceRelSummary(PMCSliceSummary):
             grid.map(
                 grid_barplot,
                 x=self.config.tile_xaxis,
-                y="value",
-                err=["value_low", "value_high"],
+                y="counter_value",
+                err=["counter_value_low", "counter_value_high"],
                 config=self.config,
             )
             grid.add_legend()
@@ -381,8 +372,8 @@ class PMCSliceOverheadSummary(PMCSliceSummary):
             grid.map(
                 grid_barplot,
                 x=self.config.tile_xaxis,
-                y="value",
-                err=["value_low", "value_high"],
+                y="counter_value",
+                err=["counter_value_low", "counter_value_high"],
                 config=self.config,
             )
             grid.add_legend()
