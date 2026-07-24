@@ -257,7 +257,7 @@ class PMCSliceSummary(SlicePlotTask):
         # Pivot back for readability
         self.logger.info("Generate tabular data for slice %s", self.slice_info)
         tbl_data = self.stats.pivot(
-            columns="_metric_type",
+            on="_metric_type",
             index=[*self._param_columns, "_counter"],
             values="counter_value",
         )
