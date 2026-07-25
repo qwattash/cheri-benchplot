@@ -1,0 +1,42 @@
+{#
+ # Runner script for Redis benchmark.
+ # Supports the hwpmc and timing extensions.
+ #}
+{% extends "runner-script.sh.jinja" %}
+
+{% import "hwpmc.inc.jinja" as hwpmc with context %}
+{% import "timing.inc.jinja" as timing with context %}
+
+{% block global_setup %}
+  {{ super() }}
+  {% if redis_config.redis_benchmark_path -%}
+    # Make sure redis-benchmark is in PATH
+    export PATH="${PATH}:{{ redis_config.redis_benchmark_path }}"
+  {% endif -%}
+{% endblock global_setup %}
+
+{% macro test_flag() -%}
+  {%- if redis_config.test is not none -%}
+    -t {{ redis_config.test.value }}
+  {%- endif -%}
+{%- endmacro %}
+
+{% block iteration_exec %}
+  echo "Run redis-benchmark iteration {{ current_iteration }}"
+
+  {% call() timing.timeit(current_iteration) -%}
+    {{ hwpmc.pmcstat(current_iteration) }} \
+      redis-benchmark \
+      -h {{ redis_config.host }} -p {{ redis_config.port }} {{ test_flag() | trim }} \
+      -n {{ redis_config.requests }} -c {{ redis_config.connections }} \
+      --precision 3 -q --csv \
+      > {{ redis_gen_output_path(current_iteration) }}
+  {%- endcall %}
+{% endblock iteration_exec %}
+
+{% block global_teardown %}
+  {{ super() }}
+  {% for i in range(iterations) %}
+    {{ hwpmc.pmcstat_postprocess(i) }}
+  {% endfor %}
+{% endblock global_teardown %}
