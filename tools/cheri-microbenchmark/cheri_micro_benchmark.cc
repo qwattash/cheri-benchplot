@@ -1,32 +1,23 @@
-#include <benchmark/benchmark.h>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <cstdint>
 #include <ctime>
 #include <iostream>
 #include <unistd.h>
 #include <inttypes.h>
 
-// Cache line alignment constraint for CHERI capabilities (128 bits = 16 bytes).
-// Aligning memory to 64-byte boundaries prevents split cache-line penalties.
-#define CACHE_LINE_SIZE 64
+#include "cheri_micro_benchmark.h"
 
-// Function to read the AArch64 virtual cycle counter register (cntvct_el0)
-static inline uint64_t read_cntvct() {
-    uint64_t val;
-    asm volatile("mrs %0, cntvct_el0" : "=r" (val));
-    return val;
-}
+auto COUNTER_NAMES = std::to_array<std::string>({
+    "INST_RETIRED",
+    "BR_MIS_PRED",
+    "BR_PRED",
+    "LD_SPEC",
+    "ST_SPEC",
+    "CAP_LD_SPEC",
+    "CAP_ST_SPEC",
+  });
 
-// Function to read the AArch64 counter frequency register (cntfrq_el0)
-static inline uint64_t read_cntfrq() {
-    uint64_t val;
-    asm volatile("mrs %0, cntfrq_el0" : "=r" (val));
-    return val;
-}
-
-static void CustomArguments(benchmark::internal::Benchmark* b) {
+void CustomArguments(benchmark::internal::Benchmark* b) {
   // b->Arg(64);
   // b->Arg(256);
   b->Arg(512);
@@ -167,6 +158,38 @@ static void bench_capability_ldr_str(const void *src, void *dst, size_t count) {
 }
 
 /**
+ * Benchmark loop using single capability  LDR and STR instructions.
+ * Loop is unrolled 4x manually in assembly (64 bytes read + 64 bytes written per iteration).
+ */
+static void bench_capability_4_ldr_str(const void *src, void *dst, size_t count) {
+    register uintptr_t s_ptr asm("c0") = (uintptr_t)src;
+    register uintptr_t d_ptr asm("c1") = (uintptr_t)dst;
+
+    asm volatile (
+        "1:\n\t"
+        // 4x Unrolled 128-bit scalar loads
+        "ldr c3,  [%[src], #0]\n\t"
+        "ldr c4,  [%[src], #16]\n\t"
+        "ldr c5,  [%[src], #32]\n\t"
+        "ldr c6,  [%[src], #48]\n\t"
+        "add %[src], %[src], #64\n\t"
+
+        // 4x Unrolled 128-bit scalar stores
+        "str c3,  [%[dst], #0]\n\t"
+        "str c4,  [%[dst], #16]\n\t"
+        "str c5,  [%[dst], #32]\n\t"
+        "str c6,  [%[dst], #48]\n\t"
+        "add %[dst], %[dst], #64\n\t"
+
+        "subs %[count], %[count], #64\n\t"
+        "b.ne 1b\n\t"
+        : [count] "+r" (count)
+        : [src] "C" (s_ptr), [dst] "C" (d_ptr)
+        : "c3", "c4", "c5", "c6", "memory", "cc"
+    );
+}
+
+/**
  * Benchmark loop using pair capability 128-bit LDP and STP instructions.
  * Loop is unrolled 4x manually in assembly (128 bytes read + 128 bytes written per iteration).
  */
@@ -265,6 +288,41 @@ static void CopyLoop_LdpStp_Cap(benchmark::State& state) {
     std::free(dst);
 }
 BENCHMARK(CopyLoop_LdpStp_Cap)->Apply(CustomArguments);
+
+
+static void CopyLoop_LdrStr_4_Cap(benchmark::State& state) {
+    const size_t buffer_size = state.range(0);
+
+    void *src = nullptr;
+    void *dst = nullptr;
+    if (posix_memalign(&src, CACHE_LINE_SIZE, buffer_size) != 0 ||
+        posix_memalign(&dst, CACHE_LINE_SIZE, buffer_size) != 0) {
+        state.SkipWithError("Aligned allocation failed");
+        return;
+    }
+    std::memset(src, 0xAB, buffer_size);
+    std::memset(dst, 0x00, buffer_size);
+
+    uint64_t start_cycles = read_cntvct();
+
+    for (auto _ : state) {
+        bench_capability_4_ldr_str(src, dst, buffer_size);
+        benchmark::ClobberMemory();
+    }
+
+    uint64_t end_cycles = read_cntvct();
+    uint64_t total_unroll_iterations = state.iterations() * (buffer_size / 64);
+
+    state.SetBytesProcessed(int64_t(total_unroll_iterations) * 64); // 64 bytes worth of data moved
+    state.SetItemsProcessed(int64_t(total_unroll_iterations) * 8); // 8 memory instructions
+
+    double cycles_per_iter = static_cast<double>(end_cycles - start_cycles) / static_cast<double>(total_unroll_iterations);
+    state.counters["Cycles/Iter"] = benchmark::Counter(cycles_per_iter, benchmark::Counter::kDefaults);
+
+    std::free(src);
+    std::free(dst);
+}
+BENCHMARK(CopyLoop_LdrStr_4_Cap)->Apply(CustomArguments);
 #endif
 
 static void CopyLoop_LdpStp_64bit(benchmark::State& state) {
@@ -314,21 +372,25 @@ static void CopyLoop_LdrStr_64bit(benchmark::State& state) {
     std::memset(src, 0xAB, buffer_size);
     std::memset(dst, 0x00, buffer_size);
 
-    uint64_t start_cycles = read_cntvct();
+    PerfCounterReader reader(COUNTER_NAMES);
 
+    reader.start();
     for (auto _ : state) {
         bench_scalar_ldr_str(src, dst, buffer_size);
         benchmark::ClobberMemory();
     }
+    reader.stop();
 
-    uint64_t end_cycles = read_cntvct();
-    uint64_t total_unroll_iterations = state.iterations() * (buffer_size / 64);
+    state.counters.merge(reader.get_counters());
 
-    state.SetBytesProcessed(int64_t(total_unroll_iterations) * 64); // 64 bytes worth of data moved
-    state.SetItemsProcessed(int64_t(total_unroll_iterations) * 16); // 16 memory instructions
+    uint64_t total_iterations = state.iterations() * (buffer_size / 64);
 
-    double cycles_per_iter = static_cast<double>(end_cycles - start_cycles) / static_cast<double>(total_unroll_iterations);
-    state.counters["Cycles/Iter"] = benchmark::Counter(cycles_per_iter, benchmark::Counter::kDefaults);
+    // 64 bytes per inner loop iteration
+    state.SetBytesProcessed(total_iterations * 64);
+    // 16 memory operations per loop iteration
+    state.SetItemsProcessed(total_iterations * 16);
+    // double cycles_per_iter = static_cast<double>(end_cycles - start_cycles) / static_cast<double>(total_unroll_iterations);
+    // state.counters["Cycles/Iter"] = benchmark::Counter(cycles_per_iter, benchmark::Counter::kDefaults);
 
     std::free(src);
     std::free(dst);
@@ -337,23 +399,17 @@ BENCHMARK(CopyLoop_LdrStr_64bit)->Apply(CustomArguments);
 
 int main(int argc, char** argv) {
     std::cout << "========================================================================================\n";
-    std::cout << "             Google Benchmark: Arm Morello CHERI Load/Store Microbenchmark             \n";
+    std::cout << "                           Arm Morello CHERI Microbenchmark                             \n";
     std::cout << "========================================================================================\n";
 
-#if defined(__CHERI__)
-#if defined(__ARM_MORELLO_PURECAP_BENCHMARK_ABI)
-    std::cout << "[Target ABI] CHERI Pure-Capability Benchmark (-mabi=purecap-benchmark)\n";
-#else
-    std::cout << "[Target ABI] CHERI Pure-Capability (-mabi=purecap)\n";
+#ifdef __CHERI__
+#ifndef __ARM_MORELLO_PURECAP_BENCHMARK_ABI
+    std::cerr << "[ WARNING ] Kernel built for Morello purecap ABI " << std::endl;
+    std::cerr << "[ WARNING ] Maybe you meant to use the benchmark ABI (-mabi=purecap-benchmark)?" << std::endl;
 #endif
-#elif __has_feature(capabilities)
-    std::cout << "[Target ABI] Morello Hybrid\n";
-#else
-    std::cout << "[Target ABI] Standard AArch64\n";
 #endif
 
-    std::cout << "Counter Frequency: " << read_cntfrq() << " Hz\n";
-    std::cout << "========================================================================================\n\n";
+    init_counters();
 
     ::benchmark::Initialize(&argc, argv);
     if (::benchmark::ReportUnrecognizedArguments(argc, argv)) return 1;
