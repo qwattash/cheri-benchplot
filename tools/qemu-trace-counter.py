@@ -10,7 +10,9 @@ from pathlib import Path
 import polars as pl
 import polars.selectors as cs
 
-INSN_LINE = re.compile(r"^\[0:[0-9]+\]\s+([0-9abcdefx]+):\s+([0-9abcdefx]+)\s+([a-z0-9]+)\s+(.*)")
+INSN_LINE = re.compile(
+    r"^\[0:[0-9]+\]\s+([0-9abcdefx]+):\s+([0-9abcdefx]+)\s+([a-z0-9]+)\s+(.*)"
+)
 CAP_OPERAND = re.compile(r"^c[zr0-9]+,")
 
 addr2line = shutil.which("llvm-addr2line")
@@ -125,12 +127,18 @@ def collect_functions(trace_file, cumulative=False):
 
     calls["_top_"] = global_icount
     fn_icount["_top_"] += icount
-    cumul_icount_df = (pl.from_records([list(calls.keys()), [i.icount for i in calls.values()]],
-                                       schema=["fn", "cumul_icount"]).unnest("cumul_icount").select(
-                                           pl.col("fn"),
-                                           cs.all().exclude("fn").name.prefix("cumul_")))
-    fn_icount_df = (pl.from_records([list(fn_icount.keys()), [i.icount for i in fn_icount.values()]],
-                                    schema=["fn", "icount"]).unnest("icount"))
+    cumul_icount_df = (
+        pl.from_records(
+            [list(calls.keys()), [i.icount for i in calls.values()]],
+            schema=["fn", "cumul_icount"],
+        )
+        .unnest("cumul_icount")
+        .select(pl.col("fn"), cs.all().exclude("fn").name.prefix("cumul_"))
+    )
+    fn_icount_df = pl.from_records(
+        [list(fn_icount.keys()), [i.icount for i in fn_icount.values()]],
+        schema=["fn", "icount"],
+    ).unnest("icount")
     return cumul_icount_df.join(fn_icount_df, on="fn")
 
 
@@ -144,7 +152,10 @@ def resolve_symbol(obj_set: list[Path], addr: str) -> str:
         if base is not None:
             addr = addr - base
         result = subprocess.run(
-            ["llvm-addr2line", "-f", "--obj", obj_path.expanduser(), f"{addr:x}"], capture_output=True, check=True)
+            ["llvm-addr2line", "-f", "--obj", obj_path.expanduser(), f"{addr:x}"],
+            capture_output=True,
+            check=True,
+        )
         out = result.stdout.decode("UTF-8").splitlines()
         fn = out[0]
         print("Lookup symbol", obj_path.expanduser(), f"{addr:x}", "->", fn)
@@ -156,9 +167,11 @@ def resolve_symbol(obj_set: list[Path], addr: str) -> str:
 def symbolize_trace(trace_file, obj_set, out_file):
     base = obj_set[0][0]
     obj = obj_set[0][1]
-    addr2line = subprocess.Popen(["llvm-addr2line", "-f", "--obj", obj.expanduser()],
-                                 stdin=subprocess.PIPE,
-                                 stdout=subprocess.PIPE)
+    addr2line = subprocess.Popen(
+        ["llvm-addr2line", "-f", "--obj", obj.expanduser()],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+    )
 
     def resolve_location(addr):
         addr = int(addr, 16)
@@ -184,15 +197,32 @@ def symbolize_trace(trace_file, obj_set, out_file):
 def main():
     parser = ap.ArgumentParser("QEMU instruction trace tool")
     parser.add_argument("trace_file", type=Path, help="Trace file to inspect")
-    parser.add_argument("--obj", type=Path, help="Path to an object file for function annotation")
-    parser.add_argument("--cumulative",
-                        default=False,
-                        action="store_true",
-                        help="Cumulative instruction count for function calls")
-    parser.add_argument("--output", type=Path, default=Path.cwd() / "output.csv", help="Output file name")
+    parser.add_argument(
+        "--obj", type=Path, help="Path to an object file for function annotation"
+    )
+    parser.add_argument(
+        "--cumulative",
+        default=False,
+        action="store_true",
+        help="Cumulative instruction count for function calls",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path.cwd() / "output.csv",
+        help="Output file name",
+    )
+    parser.add_argument(
+        "--addr2line",
+        type=Path,
+        default=None,
+        help="addr2line tool, defaults to system",
+    )
 
     args = parser.parse_args()
 
+    if args.addr2line:
+        addr2line = args.addr2line
     print("Using llvm-addr2line:", addr2line)
 
     obj_set = []
@@ -203,7 +233,10 @@ def main():
         hist_df = collect_functions(fd, args.cumulative)
 
         sym_df = hist_df.with_columns(
-            pl.col("fn").map_elements(lambda addr: resolve_symbol(obj_set, addr), return_dtype=pl.String))
+            pl.col("fn").map_elements(
+                lambda addr: resolve_symbol(obj_set, addr), return_dtype=pl.String
+            )
+        )
         sym_df.write_csv(args.output)
         print(sym_df)
 
