@@ -40,6 +40,9 @@ class RedisConfig(TimingConfig):
         6379,
         desc="Port of the Redis server",
     )
+    server_config: ConfigPath | None = config_field(
+        None, desc="Server configuration file, may be in benchmark assets"
+    )
     threads: int = config_field(
         1,
         desc="Number of parallel clients",
@@ -60,6 +63,8 @@ class RedisConfig(TimingConfig):
         None,
         desc="Test to run (null = use redis-benchmark default)",
     )
+    server_cpu: list[int] | None = config_field(None, desc="Server CPU affinity")
+    client_cpu: list[int] | None = config_field(None, desc="Client CPU affinity")
 
 
 class LoadRedisStats(DataFrameLoadTask):

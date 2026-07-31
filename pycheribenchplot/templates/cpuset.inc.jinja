@@ -1,0 +1,17 @@
+{#
+ # Wrap commands in cpuset to manage CPU affinity.
+ #}
+
+{% macro _cpu_list_arg(cpu_list) -%}
+    {% if cpu_list is sequence -%}
+        {{ cpu_list | join(",") }}
+    {%- else -%}
+        {{ cpu_list }}
+    {%- endif -%}
+{%- endmacro %}
+
+{% macro set_affinity(cpu_list) -%}
+    {% if cpu_list is not none -%}
+        cpuset -l {{ _cpu_list_arg(cpu_list) | trim }} {{ caller() }}
+    {%- endif -%}
+{% endmacro %}

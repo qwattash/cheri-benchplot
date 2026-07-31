@@ -1,11 +1,19 @@
 {#
  # Runner script for Redis benchmark.
  # Supports the hwpmc and timing extensions.
+ #
+ # Note that currently the pmcstat tool is tied to the benchmark process.
+ # This is fine if we measure system-mode counters, but per-process counters
+ # will measure the wrong thing.
+ # We may want to tie it to the server process, but that is started in the
+ # iteration setup phase and there is going to be a delay between the time
+ # the server starts and the workload begins.
  #}
 {% extends "runner-script.sh.jinja" %}
 
 {% import "hwpmc.inc.jinja" as hwpmc with context %}
 {% import "timing.inc.jinja" as timing with context %}
+{% import "cpuset.inc.jinja" as cpuset with context %}
 
 {% block global_setup %}
   {{ super() }}
@@ -13,6 +21,12 @@
     # Make sure redis-benchmark is in PATH
     export PATH="${PATH}:{{ redis_config.redis_benchmark_path }}"
   {% endif -%}
+
+  {# NOTYET
+    {% if redis_config.persistent_server %}
+        redis-server {{ redis_config.server_config or '' }} &
+    {% endif %}
+   #}
 {% endblock global_setup %}
 
 {% macro test_flag() -%}
@@ -21,18 +35,34 @@
   {%- endif -%}
 {%- endmacro %}
 
+{% block iteration_setup %}
+  {% call() cpuset.set_affinity(redis_config.server_cpu) %}
+    redis-server {{ redis_config.server_config or '' }} &
+  {% endcall %}
+   REDIS_PID=$!
+   sleep 1
+{% endblock iteration_setup %}
+
 {% block iteration_exec %}
   echo "Run redis-benchmark iteration {{ current_iteration }}"
 
-  {% call() timing.timeit(current_iteration) -%}
-    {{ hwpmc.pmcstat(current_iteration) }} \
-      redis-benchmark \
-      -h {{ redis_config.host }} -p {{ redis_config.port }} {{ test_flag() | trim }} \
-      -n {{ redis_config.requests }} -c {{ redis_config.connections }} \
-      --precision 3 -q --csv \
-      > {{ redis_gen_output_path(current_iteration) }}
+  {% call() cpuset.set_affinity(redis_config.client_cpu) -%}
+    {% call() timing.timeit(current_iteration) -%}
+      {% call() hwpmc.pmcstat(current_iteration) -%}
+        redis-benchmark \
+          -h {{ redis_config.host }} -p {{ redis_config.port }} {{ test_flag() | trim }} \
+          -n {{ redis_config.requests }} -c {{ redis_config.connections }} \
+          --precision 3 -q --csv \
+          > {{ redis_gen_output_path(current_iteration) }}
+      {%- endcall %}
+    {%- endcall %}
   {%- endcall %}
 {% endblock iteration_exec %}
+
+{% block iteration_teardown %}
+   kill -TERM ${REDIS_PID}
+   wait ${REDIS_PID}
+{% endblock iteration_teardown %}
 
 {% block global_teardown %}
   {{ super() }}

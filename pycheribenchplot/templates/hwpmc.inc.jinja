@@ -61,9 +61,9 @@ env LD_PRELOAD=/usr/lib/libstatcounters.so STATCOUNTERS_OUTPUT={{ _output_file(i
 {% macro pmcstat(iteration, extra_flags) %}
   {% if hwpmc_config is defined -%}
     {% if hwpmc_config.pmc_type == PMCType.HWPMC -%}
-      {{ _pmcstat(iteration, extra_flags) | trim -}}
+      {{ _pmcstat(iteration, extra_flags) | trim }} {{ caller() | trim }}
     {% elif hwpmc_config.pmc_type == PMCType.STATCOUNTERS -%}
-      {{ _statcounters(iteration, extra_flags) | trim -}}
+      {{ _statcounters(iteration, extra_flags) | trim }} {{ caller() | trim }}
     {% endif -%}
   {% endif -%}
 {% endmacro %}
