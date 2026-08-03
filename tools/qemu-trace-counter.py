@@ -1,167 +1,178 @@
 #!/bin/python
 
 import argparse as ap
+import logging
 import re
-import shutil
 import subprocess
-from collections import defaultdict
 from pathlib import Path
 
 import polars as pl
 import polars.selectors as cs
 
 INSN_LINE = re.compile(
-    r"^\[0:[0-9]+\]\s+([0-9abcdefx]+):\s+([0-9abcdefx]+)\s+([a-z0-9]+)\s+(.*)"
+    r"^\[0:[0-9]+\]\s+([0-9abcdefx]+):\s+([0-9abcdefx]+)\s+([a-z0-9.]+)\s+(.*)"
 )
+BASIC_LINE = re.compile(r"^\[0:[0-9]+\]")
 CAP_OPERAND = re.compile(r"^c[zr0-9]+,")
 
-addr2line = shutil.which("llvm-addr2line")
+logger = logging.getLogger("qemu-trace-counter")
 
 
-class ICount:
-    def __init__(self):
-        self.icount = {
-            "all": 0,
-            "cheri": 0,
-            # all single-operand load/store
-            "ld": 0,
-            "st": 0,
-            # all pair load/store
-            "ld_pair": 0,
-            "st_pair": 0,
-            # pair load/store with capability registers
-            "cheri_ld_pair": 0,
-            "cheri_st_pair": 0,
-            # pair load/store with integer registers
-            "int_ld_pair": 0,
-            "int_st_pair": 0,
-            # adrp instructions, should correlate to # of GOT accesses
-            "adrp": 0,
-        }
+class Bucket:
+    def __init__(self, iclass):
+        self.iclass = iclass
+        self.count = 0
 
-    def __add__(self, other):
-        r = ICount()
-        r += other
-        return r
-
-    def __sub__(self, other):
-        r = ICount()
-        for cat, count in self.icount.items():
-            r.icount[cat] = count - other.icount[cat]
-        return r
-
-    def __iadd__(self, other):
-        for cat, count in self.icount.items():
-            self.icount[cat] += other.icount[cat]
-        return self
-
-    def increment(self, opcode, mnemonic, operands):
-        self.icount["all"] += 1
+    @classmethod
+    def from_match(cls, m):
+        _opcode = m.group(2)
+        mnemonic = m.group(3)
+        operands = m.group(4)
 
         if mnemonic.startswith("ldr") or mnemonic == "ldp":
+            iclass = "ld"
             if mnemonic == "ldp":
-                self.icount["ld_pair"] += 1
-                if CAP_OPERAND.match(operands):
-                    self.icount["cheri_ld_pair"] += 1
-                else:
-                    self.icount["int_ld_pair"] += 1
+                iclass += "_pair"
+            if CAP_OPERAND.match(operands):
+                iclass += "_cap"
             else:
-                self.icount["ld"] += 1
+                iclass += "_int"
         elif mnemonic.startswith("str") or mnemonic == "stp":
-            if mnemonic == "stp":
-                self.icount["st_pair"] += 1
-                if CAP_OPERAND.match(operands):
-                    self.icount["cheri_st_pair"] += 1
-                else:
-                    self.icount["int_st_pair"] += 1
+            iclass = "st"
+            if mnemonic == "stpp":
+                iclass += "_pair"
+            if CAP_OPERAND.match(operands):
+                iclass += "_cap"
             else:
-                self.icount["st"] += 1
+                iclass += "_int"
         elif mnemonic.startswith("scbnds"):
-            self.icount["cheri"] += 1
-        elif mnemonic == "adrp":
-            self.icount["adrp"] += 1
+            iclass = "cheri"
+        else:
+            iclass = "other"
 
-    def clone(self):
-        r = ICount()
-        r.icount = dict(self.icount)
-        return r
+        return Bucket(iclass)
 
 
-def collect_functions(trace_file, cumulative=False):
-    fn_icount = defaultdict(ICount)
-    fn_icount["_top_"] = ICount()
-    calls = {}
-    stack = []
-    global_icount = ICount()
-    icount = ICount()
-    has_call = False
-    has_ret = False
+def filter_by_kernel_pc(pc, line_match):
+    """
+    Predicate to discard trace lines with non-kernel PCs.
+    Return true if the entry is valid.
+    """
+    if pc <= 0x0001000000000000:
+        return False
+    return True
+
+
+def collect_pc_hist(trace_file, line_filters):
+    """
+    Build a histogram for every PC hit in the trace.
+    Produces a dataframe with columns pc, iclass, count
+    """
+    hist = {}
 
     for line in trace_file:
         if m := INSN_LINE.match(line):
-            pc = m.group(1)
-            if has_call:
-                stack.append((pc, global_icount.clone()))
-                has_call = False
-                fn_icount[pc] = ICount()
-            elif has_ret:
-                pc, start = stack.pop()
-                calls[pc] = global_icount - start
-                has_ret = False
-                fn_icount[pc] += icount
-                icount = ICount()
+            pc = int(m.group(1), 16)
+            if line_filters:
+                valid = all([fn(pc, m) for fn in line_filters])
+                if not valid:
+                    continue
+            logger.debug("ENTRY %x: mnemonic='%s'", pc, m.group(3))
+            bucket = hist.get(pc)
+            if not bucket:
+                bucket = Bucket.from_match(m)
+                hist[pc] = bucket
+            bucket.count += 1
+        elif m := BASIC_LINE.match(line):
+            logger.warning("Suspicious line mismatch '%s'", line)
 
-            opcode = m.group(2)
-            mnemonic = m.group(3)
-            operands = m.group(4)
-            global_icount.increment(opcode, mnemonic, operands)
-            icount.increment(opcode, mnemonic, operands)
-
-            if mnemonic == "blr" or mnemonic == "bl" or mnemonic == "svc":
-                has_call = True
-                curr_frame = "_top_" if len(stack) == 0 else stack[-1][0]
-                fn_icount[curr_frame] += icount
-                icount = ICount()
-            elif mnemonic == "ret" or mnemonic == "eret" or opcode == "d69f03e0":
-                has_ret = True
-
-    calls["_top_"] = global_icount
-    fn_icount["_top_"] += icount
-    cumul_icount_df = (
-        pl.from_records(
-            [list(calls.keys()), [i.icount for i in calls.values()]],
-            schema=["fn", "cumul_icount"],
-        )
-        .unnest("cumul_icount")
-        .select(pl.col("fn"), cs.all().exclude("fn").name.prefix("cumul_"))
+    print("Collected", len(hist), "buckets")
+    hist_df = pl.DataFrame(
+        zip(
+            hist.keys(),
+            map(lambda b: b.iclass, hist.values()),
+            map(lambda b: b.count, hist.values()),
+        ),
+        schema=["pc", "iclass", "count"],
     )
-    fn_icount_df = pl.from_records(
-        [list(fn_icount.keys()), [i.icount for i in fn_icount.values()]],
-        schema=["fn", "icount"],
-    ).unnest("icount")
-    return cumul_icount_df.join(fn_icount_df, on="fn")
+
+    return hist_df
 
 
-def resolve_symbol(obj_set: list[Path], addr: str) -> str:
-    try:
-        addr = int(addr, 16)
-    except ValueError:
-        return addr
+def collect_symbols(obj_set):
+    """
+    Collect symbols from each object file.
+    """
+    syms = []
 
     for base, obj_path in obj_set:
-        if base is not None:
-            addr = addr - base
-        result = subprocess.run(
-            ["llvm-addr2line", "-f", "--obj", obj_path.expanduser(), f"{addr:x}"],
-            capture_output=True,
-            check=True,
+        result = subprocess.Popen(
+            ["llvm-nm", "-C", "-D", "-P", obj_path.expanduser()],
+            stdout=subprocess.PIPE,
+            text=False,
         )
-        out = result.stdout.decode("UTF-8").splitlines()
-        fn = out[0]
-        print("Lookup symbol", obj_path.expanduser(), f"{addr:x}", "->", fn)
-        if fn == "??":
-            return f"0x{addr:x}"
-        return fn
+
+        df = pl.read_csv(
+            result.stdout,
+            separator=" ",
+            has_header=False,
+            new_columns=["name", "flags", "addr", "size"],
+            schema_overrides={"addr": pl.String, "size": pl.String},
+        ).with_columns(
+            pl.col("addr").str.to_integer(base=16, dtype=pl.UInt64) + base,
+            pl.col("size").str.to_integer(base=16, dtype=pl.UInt64),
+        )
+
+        result.wait()
+        syms.append(df)
+
+    return pl.concat(syms)
+
+
+def symbolize_fallback(df, obj_set):
+    base = obj_set[0][0]
+    obj = obj_set[0][1]
+
+    addr2line = subprocess.Popen(
+        f"llvm-addr2line -f --obj {obj.expanduser()} | paste -d ',' - -",
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        shell=True,
+    )
+
+    fallback = df.filter(pl.col("name").is_null()).with_columns(pl.col("pc") - base)
+    addr2line_data = fallback.select(pl.col("pc").map_elements(hex)).write_csv(
+        include_header=False
+    )
+    stdout, _ = addr2line.communicate(input=addr2line_data.encode("utf-8"))
+
+    symbols = (
+        pl.read_csv(stdout, has_header=False)
+        .with_columns(
+            fallback["pc"],
+            pl.when(pl.col("column_1").str.starts_with("??"))
+            .then(None)
+            .otherwise(pl.col("column_1"))
+            .alias("fallback"),
+            pl.when(pl.col("column_2").str.starts_with("??"))
+            .then(None)
+            .otherwise(pl.col("column_2"))
+            .alias("location"),
+        )
+        .select(["pc", "fallback"])
+    )
+
+    print(
+        "Fallback symbol resolution for",
+        (~symbols["fallback"].is_null()).sum(),
+        "buckets",
+    )
+    sym_df = (
+        df.join(symbols, on="pc", how="left")
+        .with_columns(pl.coalesce("name", "fallback").alias("name"))
+        .select(cs.exclude("fallback"))
+    )
+    return sym_df
 
 
 def symbolize_trace(trace_file, obj_set, out_file):
@@ -201,10 +212,36 @@ def main():
         "--obj", type=Path, help="Path to an object file for function annotation"
     )
     parser.add_argument(
-        "--cumulative",
+        "--kernel-only",
         default=False,
         action="store_true",
-        help="Cumulative instruction count for function calls",
+        help="Filter out user space instructions",
+    )
+    parser.add_argument(
+        "--skip-until", type=str, help="Skip entries until the given symbol is called"
+    )
+    parser.add_argument(
+        "--skip-until-pc", type=str, help="Skip entries until the given address is hit"
+    )
+    parser.add_argument(
+        "--skip-after", type=str, help="Record entries until the given symbol is called"
+    )
+    parser.add_argument(
+        "--skip-after-pc",
+        type=str,
+        help="Record entries until the given address is hit",
+    )
+    parser.add_argument(
+        "--skip-after-count",
+        default=1,
+        type=int,
+        help="Stop after hitting the skip-after symbol the given number of times",
+    )
+    parser.add_argument(
+        "--aggregate",
+        default=False,
+        action="store_true",
+        help="Aggregate counts by symbol",
     )
     parser.add_argument(
         "--output",
@@ -212,37 +249,124 @@ def main():
         default=Path.cwd() / "output.csv",
         help="Output file name",
     )
-    parser.add_argument(
-        "--addr2line",
-        type=Path,
-        default=None,
-        help="addr2line tool, defaults to system",
-    )
+    parser.add_argument("--verbose", action="store_true", help="Debug output")
 
     args = parser.parse_args()
 
-    if args.addr2line:
-        addr2line = args.addr2line
-    print("Using llvm-addr2line:", addr2line)
+    if args.verbose:
+        logging.basicConfig(level=logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.INFO)
 
     obj_set = []
     if args.obj:
         obj_set.append((0, args.obj))
 
-    with open(args.trace_file, "r") as fd:
-        hist_df = collect_functions(fd, args.cumulative)
+    line_filters = []
+    if args.kernel_only:
+        line_filters.append(filter_by_kernel_pc)
 
-        sym_df = hist_df.with_columns(
-            pl.col("fn").map_elements(
-                lambda addr: resolve_symbol(obj_set, addr), return_dtype=pl.String
+    symbols = collect_symbols(obj_set)
+
+    trigger_state = {}
+
+    def _skip_until(pc, target):
+        if pc == target:
+            trigger_state["skip_until"] = True
+        return trigger_state["skip_until"]
+
+    def _skip_after(pc, target):
+        if pc == target:
+            trigger_state["skip_after_count"] -= 1
+            if trigger_state["skip_after_count"] <= 0:
+                trigger_state["skip_after"] = False
+        return trigger_state["skip_after"]
+
+    if args.skip_until or args.skip_until_pc:
+        if args.skip_until:
+            target = symbols.filter(name=args.skip_until)
+            if len(target) == 0:
+                logger.error(
+                    "skip-until: trigger symbol '%s' not found", args.skip_until
+                )
+                exit(1)
+            target = target["addr"].first()
+            logger.info("Skip entries until %s %x", args.skip_until, target)
+        else:
+            target = int(args.skip_until_pc, 16)
+            logger.info("Skip entries until %x", target)
+        trigger_state["skip_until"] = False
+        line_filters.append(lambda pc, _: _skip_until(pc, target))
+
+    if args.skip_after or args.skip_after_pc:
+        if args.skip_after:
+            target = symbols.filter(name=args.skip_after)
+            if len(target) == 0:
+                logger.error(
+                    "skip-after: trigger symbol '%s' not found", args.skip_after
+                )
+                exit(1)
+            target = target["addr"].first()
+            logger.info(
+                "Skip entries after %s %x %d times",
+                args.skip_after,
+                target,
+                args.skip_after_count,
             )
-        )
-        sym_df.write_csv(args.output)
-        print(sym_df)
+        else:
+            target = int(args.skip_after_pc, 16)
+            logger.info("Skip entries after %x %d times", target, args.skip_after_count)
+        trigger_state["skip_after"] = True
+        trigger_state["skip_after_count"] = args.skip_after_count
+        line_filters.append(lambda pc, _: _skip_after(pc, target))
 
     with open(args.trace_file, "r") as fd:
-        with open(args.trace_file.with_suffix(".sym"), "w+") as out:
-            symbolize_trace(fd, obj_set, out)
+        hist_df = collect_pc_hist(fd, line_filters)
+
+    # Assign symbols to buckets
+    resolved = hist_df.join_where(
+        symbols,
+        pl.col("pc") < pl.col("addr") + pl.col("size"),
+        pl.col("pc") >= pl.col("addr"),
+    ).select(["pc", "name", "iclass", "count"])
+
+    sym_df = hist_df.join(resolved, on="pc", how="left").select(
+        ["pc", "name", "iclass", "count"]
+    )
+    print(
+        "Initial symbolized frame resolved symbols for",
+        (~sym_df["name"].is_null()).sum(),
+        "buckets",
+    )
+    if sym_df["name"].is_null().sum() != 0:
+        sym_df = symbolize_fallback(sym_df, obj_set)
+
+    # Detect the function entrypoint buckets
+    callsite_buckets = sym_df.join(symbols, left_on="pc", right_on="addr", how="inner")
+
+    # Dump before aggregating anything
+    sym_df.write_csv(args.output.with_suffix(".full"))
+
+    # Finalize output
+    if args.aggregate:
+        sym_df = sym_df.group_by(["name"]).agg(pl.col("count").sum())
+        sym_df = (
+            sym_df.join(callsite_buckets, on="name")
+            .with_columns(pl.col("count_right").alias("call_count"))
+            .select(["name", "count", "call_count"])
+        )
+        sym_df = sym_df.sort(by=["count", "call_count", "name"])
+    else:
+        sym_df = sym_df.group_by(["name", "iclass"]).agg(pl.col("count").sum())
+        sym_df = sym_df.sort(by=["count", "name", "iclass"])
+        callsite_buckets.write_csv(args.output.with_suffix(".calls"))
+    sym_df.write_csv(args.output)
+
+    print("Total instructions matched", sym_df["count"].sum())
+
+    # with open(args.trace_file, "r") as fd:
+    #     with open(args.trace_file.with_suffix(".sym"), "w+") as out:
+    #         symbolize_trace(fd, obj_set, out)
 
 
 if __name__ == "__main__":
