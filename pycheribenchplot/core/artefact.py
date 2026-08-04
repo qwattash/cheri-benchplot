@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session as SqlSession
 from typing_extensions import Self
 
 from .borg import Borg
-from .task import DatasetTask, ExecutionTask, SessionTask, Task, output
+from .task import AnalysisTask, DatasetTask, ExecutionTask, SessionTask, Task, output
 
 
 class Target(Borg):
@@ -97,7 +97,9 @@ class Target(Borg):
         This defaults to the session or benchmark paths, depending on the
         task type.
         """
-        if isinstance(self._task, SessionTask):
+        if isinstance(self._task, AnalysisTask):
+            return self._task.get_analysis_path()
+        elif isinstance(self._task, SessionTask):
             if isinstance(self._task, ExecutionTask):
                 return self._task.session.get_data_root_path()
             else:

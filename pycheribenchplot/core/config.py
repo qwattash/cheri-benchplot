@@ -1475,24 +1475,32 @@ class PlotConfig(Config):
 
 @dc.dataclass
 class AnalysisConfig(Config):
+    #: Optional name for the analysis pass
+    name: str | None = config_field(
+        None, desc="Name of the analysis pass, used for the target output directory"
+    )
+
     #: General plot configuration
-    plot: PlotConfig = dc.field(default_factory=PlotConfig)
+    plot: PlotConfig = config_field(PlotConfig, desc="Global plot configuration")
 
     #: Constants to show in various plots, depending on the X and Y axes.
     # The dictionary maps parameters of the benchmark parameterisation to a dict
     # mapping description -> constant value
-    parameter_constants: Dict[str, dict] = dc.field(default_factory=dict)
+    parameter_constants: Dict[str, dict] = config_field(dict, desc="DEPRECATED")
 
     #: Baseline dataset identifier.
     #: This can be an UUID or a set of parameter key/values that uniquely identify
     #: a single benchmark run.
-    baseline: Optional[UUIDStr | dict] = None
+    baseline: Optional[UUIDStr | dict] = config_field(
+        None,
+        desc="Baseline selector, can be an UUID or a dict of parameter key-values that identify a benchmark run or data slice.",
+    )
 
     #: Use builtin symbolizer instead of addr2line
-    use_builtin_symbolizer: bool = True
+    use_builtin_symbolizer: bool = config_field(True, desc="DEPRECATED")
 
     #: Specify analysis passes to run
-    tasks: List[TaskTargetConfig] = dc.field(default_factory=list)
+    tasks: List[TaskTargetConfig] = config_field(list, desc="Analysis pass tasks")
 
 
 @dc.dataclass

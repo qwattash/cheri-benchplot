@@ -4,6 +4,7 @@ import pkgutil
 import re
 from collections import defaultdict
 from io import StringIO
+from pathlib import Path
 from textwrap import indent
 from threading import Event
 from typing import Callable, Generator, Hashable, Iterable, Self, Type
@@ -737,3 +738,15 @@ class AnalysisTask(SessionTask):
         """
         instance_config = self.get_instance_config(g_uuid)
         return instance_config.name
+
+    def get_analysis_path(self) -> Path:
+        """
+        Get base path for the current analysis pass artefacts.
+        Every analysis target should use this path for the output.
+        """
+        path = self.session.get_analysis_root_path()
+        if self.analysis_config.name:
+            path = path / self.analysis_config.name
+        if not path.exists():
+            path.mkdir()
+        return path
