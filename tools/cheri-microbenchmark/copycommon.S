@@ -78,11 +78,11 @@ ending:
 
 .text
 .align	4
-.global	copycommon_simple
-.type	copycommon_simple,@function
+.global	copycommon_loadstore_8B
+.type	copycommon_loadstore_8B,@function
 
 /* copycommon_simple(src, dst, len) */
-copycommon_simple:
+copycommon_loadstore_8B:
 	mov	x5, #0			/* x5 is the offset to load/store */
 
 	/* Copy words */
@@ -111,4 +111,4 @@ copy_end_bytes:
 copy_done:
 	mov	x0, xzr			/* Return 0 */
 	ret
-.size	copycommon_simple, . - copycommon_simple
+.size	copycommon_loadstore_8B, . - copycommon_loadstore_8B

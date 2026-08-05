@@ -33,7 +33,8 @@ add_executable(cheri_ubench cheri_micro_benchmark.cc)
 target_sources(cheri_ubench
   PRIVATE
   registry.cc
-  copyinout_benchmark.cc
+  copy_loop.cc
+  copyinout.cc
   copycommon.S)
 target_link_libraries(cheri_ubench PRIVATE benchmark::benchmark)
 
