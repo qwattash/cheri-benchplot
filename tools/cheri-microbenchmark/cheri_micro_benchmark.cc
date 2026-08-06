@@ -7,12 +7,8 @@
 #include "cheri_micro_benchmark.h"
 
 void CopyBenchmarkArgs(benchmark::internal::Benchmark *b) {
-  b->Arg(512);
-  b->Arg(1472);
-  b->Arg(1 << 16);
-  b->Arg(1 << 20);
-  b->Arg(1 << 24);
-  b->ArgName("bytes");
+  b->ArgsProduct({{512, 1472, 1 << 16, 1 << 20, 1 << 24}, {0, 4, 8}});
+  b->ArgNames({"bytes", "offset"});
 }
 
 int main(int argc, char **argv) {

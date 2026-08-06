@@ -6,6 +6,7 @@
 #include <array>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -24,6 +25,24 @@ void CopyBenchmarkArgs(benchmark::internal::Benchmark *b);
 #define ALWAYS_INLINE __attribute__((always_inline))
 
 extern std::unordered_map<std::string, uint64_t> EventRegistry;
+
+#if 0
+#define DEBUG(x) (x)
+#define DEBUG_COUNTER(idx, val)                                                \
+  do {                                                                         \
+    std::cerr << "DEBUG: counter[" << idx << "] = " << val << std::endl;       \
+  } while (0)
+
+#define DEBUG_EVENT(idx, event)                                                \
+  do {                                                                         \
+    std::cerr << "DEBUG: config counter[" << idx << "] = " << std::hex         \
+              << event << std::dec << std::endl;                               \
+  } while (0)
+#else
+#define DEBUG(x)
+#define DEBUG_COUNTER(idx, val)
+#define DEBUG_EVENT(idx, event)
+#endif
 
 #ifdef __aarch64__
 
@@ -50,28 +69,11 @@ static inline uint64_t read_cntfrq() { return READ_SPECIALREG(cntfrq_el0); }
 
 static inline uint64_t read_cycles() { return READ_SPECIALREG(pmccntr_el0); }
 
-#if 0
-#define DEBUG(x) (x)
-#define DEBUG_COUNTER(idx, val) do {                                    \
-    std::cerr << "DEBUG: counter[" << idx << "] = " << val <<           \
-      std::endl;                                                        \
-  } while (0)
-
-#define DEBUG_EVENT(idx, event) do {                          \
-    std::cerr << "DEBUG: config counter[" << idx << "] = " << \
-      std::hex << event << std::endl;                         \
-  } while (0)
-#else
-#define DEBUG(x)
-#define DEBUG_COUNTER(idx, val)
-#define DEBUG_EVENT(idx, event)
-#endif
-
 #define EVAL_PMEVCNTR_CASE(target_idx, current_idx)                            \
   if constexpr (current_idx == target_idx) {                                   \
     uint64_t val;                                                              \
     asm volatile("mrs %0, pmevcntr" #target_idx "_el0" : "=r"(val));           \
-    DEBUG_COUNTER(target_idx, val);                                     \
+    DEBUG_COUNTER(target_idx, val);                                            \
     return val;                                                                \
   }
 
@@ -79,7 +81,7 @@ static inline uint64_t read_cycles() { return READ_SPECIALREG(pmccntr_el0); }
   if constexpr (current_idx == target_idx) {                                   \
     asm volatile("msr pmevtyper" #target_idx                                   \
                  "_el0, %0" ::"r"(PMEVTYPER_NSH | event));                     \
-    DEBUG_EVENT(target_idx, event);                                     \
+    DEBUG_EVENT(target_idx, event);                                            \
   }
 
 template <size_t NumCounters> class PerfCounterReader {
@@ -166,14 +168,29 @@ private:
     EVAL_PMEVTYPER_CASE(30, Index, event)
   }
 
-  // Compile-time loop using a fold expression to fill the results array
-  // sequentially
   template <size_t... Is>
-  void read_all_impl(std::array<uint64_t, NumCounters + 1> &out,
-                     std::index_sequence<Is...>) const {
+  void add_all_impl(std::array<uint64_t, NumCounters + 1> &out,
+                    std::index_sequence<Is...>) const {
     // Use __builtin_add_overflow?
     ((out[Is] += read_counter<Is>()), ...);
     out[NumCounters] += READ_SPECIALREG(pmccntr_el0);
+  }
+
+  template <size_t... Is>
+  void add_all_impl(std::array<uint64_t, NumCounters + 1> &out,
+                    std::array<uint64_t, NumCounters + 1> &start,
+                    std::array<uint64_t, NumCounters + 1> &snap,
+                    std::index_sequence<Is...>) const {
+    // Use __builtin_add_overflow?
+    ((out[Is] += snap[Is] - start[Is]), ...);
+    out[NumCounters] += snap[NumCounters] - start[NumCounters];
+  }
+
+  template <size_t... Is>
+  void read_all_impl(std::array<uint64_t, NumCounters + 1> &out,
+                     std::index_sequence<Is...>) const {
+    ((out[Is] = read_counter<Is>()), ...);
+    out[NumCounters] = READ_SPECIALREG(pmccntr_el0);
   }
 
   // Compile-time loop using a fold expression to initialize all counters
@@ -233,23 +250,20 @@ public:
     return read_counter<Index>();
   }
 
-  std::array<uint64_t, NumCounters + 1> read_all() const {
+  std::array<uint64_t, NumCounters + 1> capture_raw() const {
     std::array<uint64_t, NumCounters + 1> results{};
+    /*
+     * Note: ISB required as DDI0487 D24.1.2.2
+     * XXX do we need a dsb as well?
+     */
+    asm volatile("isb" ::: "memory");
     read_all_impl(results, std::make_index_sequence<NumCounters>{});
     return results;
   }
 
-  void checkpoint() {
-    asm volatile("isb" ::: "memory");
-    read_all_impl(values, std::make_index_sequence<NumCounters>{});
-    // Reset counters to zero
-    reset();
-    // asm volatile("isb" ::: "memory");
-  }
-
-  std::unordered_map<std::string, uint64_t> get() const {
+  std::unordered_map<std::string, uint64_t> capture() const {
     std::unordered_map<std::string, uint64_t> out;
-    auto results = read_all();
+    auto results = capture_raw();
 
     for (size_t i = 0; i < NumCounters; i++) {
       out[counter_names[i]] = results[i];
@@ -258,14 +272,60 @@ public:
     return out;
   }
 
+  /*
+   * Use in conjunction with checkpoint to increment the counter values
+   * with the delta between the current and the start values of the counters.
+   * This will not reset the counters, nor issue any barrier.
+   */
+  void snapshot(std::array<uint64_t, NumCounters + 1> &start) {
+    // asm volatile("dsb ish" ::: "memory");
+    start = capture_raw();
+  }
+
+  void checkpoint(std::array<uint64_t, NumCounters + 1> &start) {
+    // Do we need the dsb here? it appears to make a difference
+    asm volatile("dsb ish" ::: "memory");
+    auto curr = capture_raw();
+    add_all_impl(values, start, curr, std::make_index_sequence<NumCounters>{});
+    /*
+     * We may decide to reset the counters to 0 now to avoid overflows.
+     * Do this if any counter crossed to the second half of the counter space.
+     * Note that this will not cause additional probe effect, because
+     * the snapshot() should be taken before the code under test.
+     *
+     * Technically this can be done really fast by or-ing together all
+     * elements and seeing if bit 31 is set. Hopefully -O3 is
+     * smarter than me and optimizes it.
+     */
+    auto max = std::max_element(curr.begin(), std::prev(curr.end()));
+    if (*max > std::numeric_limits<uint32_t>::max() / 2 ||
+        curr[NumCounters] > std::numeric_limits<uint64_t>::max() / 2) {
+      // Reset all counters to 0
+      reset();
+      // No need to isb here, assuming that we will snapshot() the next round.
+    }
+  }
+
+  /*
+   * Checkpoint without a delta, read and reset the counters.
+   */
+  void checkpoint() {
+    // I don't think we need a dsb here, but maybe we need it in stop()
+    // before checkpointing there?
+    asm volatile("dsb ish; isb" ::: "memory");
+    add_all_impl(values, std::make_index_sequence<NumCounters>{});
+    // Reset counters to zero
+    reset();
+    asm volatile("isb" ::: "memory");
+  }
+
   std::map<std::string, benchmark::Counter> get_counters() const {
     std::map<std::string, benchmark::Counter> out;
-    auto results = read_all();
 
     for (size_t i = 0; i < NumCounters; i++) {
-      out[counter_names[i]] = benchmark::Counter(results[i]);
+      out[counter_names[i]] = benchmark::Counter(values[i]);
     }
-    out["CPU_CYCLES"] = benchmark::Counter(results[NumCounters]);
+    out["CPU_CYCLES"] = benchmark::Counter(values[NumCounters]);
     return out;
   }
 
@@ -273,15 +333,19 @@ public:
     std::map<std::string, benchmark::Counter> out;
 
     for (size_t i = 0; i < NumCounters; i++) {
-      out[counter_names[i]] = benchmark::Counter(static_cast<double>(values[i]), benchmark::Counter::kAvgIterations);
+      out[counter_names[i]] = benchmark::Counter(
+          static_cast<double>(values[i]), benchmark::Counter::kAvgIterations);
     }
-    out["CPU_CYCLES"] = benchmark::Counter(static_cast<double>(values[NumCounters]), benchmark::Counter::kAvgIterations);
+    out["CPU_CYCLES"] =
+        benchmark::Counter(static_cast<double>(values[NumCounters]),
+                           benchmark::Counter::kAvgIterations);
     return out;
   }
 
   ALWAYS_INLINE void reset() const noexcept {
     // pmcr control
     // LC = long cycle counter (overflow on u64 overflow)
+    // LP = long event counters (overflow on u64 overflow), not supported
     // C = reset pmccntr_el0 to 0
     // P = reset event counters to 0
     // E = enable event counters
@@ -300,7 +364,7 @@ public:
     asm volatile("isb" ::: "memory");
   }
 
-  ALWAYS_INLINE void stop() const noexcept {
+  ALWAYS_INLINE void stop() noexcept {
     uint64_t val = READ_SPECIALREG(pmcr_el0);
     DEBUG(std::cerr << "stop" << std::endl);
     val &= PMCR_E;
@@ -324,65 +388,102 @@ public:
 #endif /* __aarch64__ */
 
 /*
- * Common memcpy-like benchmark body.
- * This allocates two cache-aligned buffers of a given size and runs the given copy-like
- * function in the benchmark loop, capturing the performance counters.
+ * Control probe position for counters.
+ * XXX Maybe tie this to the CounterSet?
  */
-template<auto Func, size_t NumCounters>
-requires std::regular_invocable<decltype(Func), const void *, void *, size_t>
-static void BenchmarkBody(benchmark::State &state, const std::array<std::string_view, NumCounters> &counters) {
-  const size_t buffer_size = state.range(0);
+static constexpr int CM_DELTA = 1;
+static constexpr int CM_RESET = 2;
+static constexpr int CM_END = 3;
+static constexpr int counter_mode = CM_DELTA;
 
-  void *src = nullptr;
-  void *dst = nullptr;
-  if (posix_memalign(&src, CACHE_LINE_SIZE, buffer_size) != 0 ||
-      posix_memalign(&dst, CACHE_LINE_SIZE, buffer_size) != 0) {
-    state.SkipWithError("Aligned allocation failed");
+/*
+ * Common memcpy-like benchmark body.
+ * This allocates two cache-aligned buffers of a given size and runs the given
+ * copy-like function in the benchmark loop, capturing the performance counters.
+ */
+template <auto Func, size_t NumCounters>
+  requires std::regular_invocable<decltype(Func), const void *, void *, size_t>
+static void
+BenchmarkBody(benchmark::State &state,
+              const std::array<std::string_view, NumCounters> &counters) {
+  const size_t buffer_size = state.range(0);
+  const size_t align_offset = state.range(1);
+  if (align_offset >= CACHE_LINE_SIZE) {
+    state.SkipWithError("Alignment offset must be less than a cache line");
     return;
   }
-  std::memset(src, 0xAB, buffer_size);
-  std::memset(dst, 0x00, buffer_size);
+  const size_t block_size = buffer_size + CACHE_LINE_SIZE;
+
+  void *src_block = nullptr;
+  void *dst_block = nullptr;
+  int error;
+  if ((error = posix_memalign(&src_block, CACHE_LINE_SIZE, block_size))) {
+    std::cerr << "src error: buffer size " << buffer_size << " errno " << error
+              << std::endl;
+    state.SkipWithError("Aligned src allocation failed");
+    return;
+  }
+  if ((error = posix_memalign(&dst_block, CACHE_LINE_SIZE, block_size))) {
+    std::cerr << "dst error: buffer size " << buffer_size << " errno " << error
+              << std::endl;
+    state.SkipWithError("Aligned dst allocation failed");
+    free(src_block);
+    return;
+  }
+  std::memset(src_block, 0xAB, block_size);
+  std::memset(dst_block, 0x00, block_size);
+  char *src = static_cast<char *>(src_block) + align_offset;
+  char *dst = static_cast<char *>(dst_block) + align_offset;
 
   PerfCounterReader reader(counters);
+  std::array<uint64_t, NumCounters + 1> start;
 
   /* Note: should all be inlined from here... */
   reader.start();
   for (auto _ : state) {
+    if constexpr (counter_mode == CM_DELTA) {
+      reader.snapshot(start);
+    }
     Func(src, dst, buffer_size);
+    if constexpr (counter_mode == CM_DELTA) {
+      reader.checkpoint(start);
+    } else if (counter_mode == CM_RESET) {
+      reader.checkpoint();
+    }
+
     benchmark::ClobberMemory();
   }
   reader.stop();
-  reader.checkpoint();
   /* ...to here, to minimize counters perturbations. */
+  if constexpr (counter_mode == CM_END) {
+    reader.checkpoint();
+  }
 
   state.counters.merge(reader.get_avg_counters());
 
   state.SetBytesProcessed(state.iterations() * buffer_size);
-  // double cycles_per_iter = static_cast<double>(end_cycles - start_cycles) /
-  // static_cast<double>(total_unroll_iterations); state.counters["Cycles/Iter"]
-  // = benchmark::Counter(cycles_per_iter, benchmark::Counter::kDefaults);
 
-  std::free(src);
-  std::free(dst);
+  free(src_block);
+  free(dst_block);
 }
 
-template<auto Func, typename Counters, size_t... Is>
+template <auto Func, typename Counters, size_t... Is>
 std::array<benchmark::internal::Benchmark *, sizeof...(Is)>
 RegisterBenchmarkWithCounters(std::string name, std::index_sequence<Is...>) {
   /* Fold expression to register a benchmark with each counter set */
-  return std::to_array({
-      [&](){
-        using CounterSet = std::tuple_element_t<Is, Counters>;
-        constexpr size_t NumCounters = std::tuple_size<decltype(CounterSet::counters)>{};
+  return std::to_array({[&]() {
+    using CounterSet = std::tuple_element_t<Is, Counters>;
+    constexpr size_t NumCounters =
+        std::tuple_size<decltype(CounterSet::counters)>{};
 
-        auto b = benchmark::RegisterBenchmark(name + "/" + std::string(CounterSet::name),
-                                              [](benchmark::State &state) {
-                                                BenchmarkBody<Func, NumCounters>(state, CounterSet::counters);
-                                              });
-        b->Apply(CopyBenchmarkArgs);
-        return b;
-      }()...
-  });
+    auto b = benchmark::RegisterBenchmark(
+        name + "/" + std::string(CounterSet::name),
+        [](benchmark::State &state) {
+          BenchmarkBody<Func, NumCounters>(state, CounterSet::counters);
+        });
+    b->Apply(CopyBenchmarkArgs);
+    return b;
+  }()...});
 }
 
 struct InstrCounters {
@@ -395,12 +496,12 @@ struct InstrCounters {
       "ST_SPEC",
       "CAP_LD_SPEC",
       "CAP_ST_SPEC",
-    });
+  });
 };
 using AllCounters = std::tuple<InstrCounters>;
 
-#define BENCHMARK_WITH_COUNTERS(loop_fn)                                \
-  static auto _benchmark_with_counters_ ## loop_fn =                    \
-    RegisterBenchmarkWithCounters<loop_fn, AllCounters>(                \
-      # loop_fn, \
-      std::make_index_sequence<std::tuple_size_v<AllCounters>>{})
+#define BENCHMARK_WITH_COUNTERS(loop_fn)                                       \
+  static auto _benchmark_with_counters_##loop_fn =                             \
+      RegisterBenchmarkWithCounters<loop_fn, AllCounters>(                     \
+          #loop_fn,                                                            \
+          std::make_index_sequence<std::tuple_size_v<AllCounters>>{})

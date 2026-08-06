@@ -1,10 +1,10 @@
 .text
 .align	4
-.global	copycommon_scalar_unrolled
-.type	copycommon_scalar_unrolled,@function
+.global	copycommon_pair_64B
+.type	copycommon_pair_64B,@function
 
-/* copycommon_scalar_unrolled(src, dst, len) */
-copycommon_scalar_unrolled:
+/* copycommon_pair_64B(src, dst, len) */
+copycommon_pair_64B:
 	/* Check alignment */
 	orr	x3, x0, x1
 	ands	x3, x3, 0x07
@@ -74,7 +74,7 @@ last_byte:
 ending:
 	mov	x0, xzr		/* return 0 */
 	ret
-.size	copycommon_scalar_unrolled, . - copycommon_scalar_unrolled
+.size	copycommon_pair_64B, . - copycommon_pair_64B
 
 .text
 .align	4

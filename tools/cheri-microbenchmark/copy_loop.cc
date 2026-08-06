@@ -1,6 +1,7 @@
 /*
  * Basic copy loop benchmarks.
- * These are intended to validate very simple assumptions about loads and stores.
+ * These are intended to validate very simple assumptions about loads and
+ * stores.
  */
 
 #include <concepts>
@@ -14,7 +15,8 @@ namespace {
  * Loop is unrolled 8x manually in assembly (64 bytes read + 64 bytes written
  * per iteration).
  */
-static void scalar_loadstore_loop_64B(const void *src, void *dst, size_t count) {
+static void scalar_loadstore_loop_64B(const void *src, void *dst,
+                                      size_t count) {
 #ifdef __CHERI__
   register uintptr_t s_ptr asm("c0") = (uintptr_t)src;
   register uintptr_t d_ptr asm("c1") = (uintptr_t)dst;
@@ -52,7 +54,7 @@ static void scalar_loadstore_loop_64B(const void *src, void *dst, size_t count) 
 #ifdef __CHERI__
                : [src] "C"(s_ptr), [dst] "C"(d_ptr)
 #else
-                 : [src] "r"(s_ptr), [dst] "r"(d_ptr)
+               : [src] "r"(s_ptr), [dst] "r"(d_ptr)
 #endif
                : "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "memory",
                  "cc");
@@ -93,7 +95,7 @@ static void scalar_pair_loop_64B(const void *src, void *dst, size_t count) {
 #ifdef __CHERI__
                : [src] "C"(s_ptr), [dst] "C"(d_ptr)
 #else
-                 : [src] "r"(s_ptr), [dst] "r"(d_ptr)
+               : [src] "r"(s_ptr), [dst] "r"(d_ptr)
 #endif
                : "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "memory",
                  "cc");
@@ -145,8 +147,7 @@ static void cap_loadstore_loop_128B(const void *src, void *dst, size_t count) {
  * Loop is unrolled 4x manually in assembly (64 bytes read + 64 bytes written
  * per iteration).
  */
-static void cap_loadstore_loop_64B(const void *src, void *dst,
-                                       size_t count) {
+static void cap_loadstore_loop_64B(const void *src, void *dst, size_t count) {
   register uintptr_t s_ptr asm("c0") = (uintptr_t)src;
   register uintptr_t d_ptr asm("c1") = (uintptr_t)dst;
 
@@ -205,7 +206,7 @@ static void cap_pair_loop_128B(const void *src, void *dst, size_t count) {
 }
 #endif /* __CHERI__ */
 
-} /* namespace anonymous */
+} // namespace
 
 /*
  * Test hardware performance counters access.
