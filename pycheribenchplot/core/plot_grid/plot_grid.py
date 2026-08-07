@@ -904,6 +904,8 @@ class PlotGrid(AbstractContextManager):
                 f"Invalid legend_position='{self._config.legend_position}'"
             )
 
+        self._subfigure.align_ylabels()
+
     @property
     def tile_row(self) -> str | None:
         if ref := self._config.tile_row:
