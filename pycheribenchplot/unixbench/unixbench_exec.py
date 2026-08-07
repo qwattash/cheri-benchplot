@@ -11,6 +11,10 @@ class UnixBenchTest(Enum):
     """
 
     SYSCALL = "syscall"
+    PIPE = "pipe"
+    CONTEXT = "context"
+    SPAWN = "spawn"
+    EXEC = "exec"
 
 
 @dataclass

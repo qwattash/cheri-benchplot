@@ -6,22 +6,25 @@
  -#}
 {% extends "runner-script.sh.jinja" %}
 
-{% import "timing.inc.jinja" as timing with context %}
+{% import "cpuset.inc.jinja" as cpuset with context %}
 {% import "hwpmc.inc.jinja" as hwpmc with context %}
+{% import "timing.inc.jinja" as timing with context %}
 
 {% macro _unixbench_test() %}
   {% if unixbench_config.test_name == UnixBenchTest.SYSCALL %}
     syscall {{ unixbench_config.duration | int }} getpid
+  {% elif unixbench_config.test_name == UnixBenchTest.PIPE %}
+    pipe {{ unixbench_config.duration | int }}
+  {% elif unixbench_config.test_name == UnixBenchTest.CONTEXT %}
+    context1 {{ unixbench_config.duration | int }}
+  {% elif unixbench_config.test_name == UnixBenchTest.SPAWN %}
+    spawn {{ unixbench_config.duration | int }}
+  {% elif unixbench_config.test_name == UnixBenchTest.EXEC %}
+    execl {{ unixbench_config.duration | int }}
   {% else %}
-    "INVALID_UNIXBENCH_TEST"
+    exit 1
   {% endif %}
 {% endmacro %}
-
-{%- macro cpuset() -%}
-  {%- if unixbench_config.cpu -%}
-  cpuset -l {{ unixbench_config.cpu | join(",") }}
-  {%- endif -%}
-{%- endmacro -%}
 
 {% block global_setup %}
   {{ super() }}
@@ -40,7 +43,11 @@
   echo "Run unixbench {{ unixbench_config.test }} iterations {{ current_iteration }}"
 
   {% call() timing.timeit(current_iteration) -%}
-    {{ cpuset() }} {{ hwpmc.pmcstat(current_iteration) }} {{ _unixbench_test() | trim }}
+    {% call() cpuset.set_affinity(unixbench_config.cpu) -%}
+      {% call() hwpmc.pmcstat(current_iteration) -%}
+        {{ _unixbench_test() | trim }}
+      {%- endcall %}
+    {%- endcall %}
   {%- endcall %}
 {% endblock %}
 
