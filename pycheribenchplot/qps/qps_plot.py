@@ -103,7 +103,7 @@ class QpsPlotTask(QpsPlotBase):
             if plot_config := self.config.bar_plot:
                 grid.map(
                     grid_barplot,
-                    x=plot_config.tile_xaxis,
+                    x=self.config.tile_xaxis,
                     y="qps",
                     err=["qps_low", "qps_high"],
                     config=plot_config,
@@ -111,7 +111,7 @@ class QpsPlotTask(QpsPlotBase):
             if plot_config := self.config.line_plot:
                 grid.map(
                     grid_lineplot,
-                    x=plot_config.tile_xaxis,
+                    x=self.config.tile_xaxis,
                     y="qps",
                     err=["qps_low", "qps_high"],
                     config=plot_config,
