@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import shutil
 
@@ -21,10 +21,10 @@ class WorkloadInfo:
     session_name: str
     workload_config: Path
     data_path: Path | None = None
-    analysis_config: Path | None = None
+    analysis_config: list[Path] | None = None
 
     @property
-    def has_smoketest(self):
+    def can_test_analysis(self):
         return self.data_path is not None and self.analysis_config is not None
 
 
@@ -38,6 +38,10 @@ class WorkloadInfo:
 #       - ...
 #     - analysis (analysis configurations)
 #       - <session-name>.json
+#       - <session-name> (alternative to a single <session-name>.json)
+#         - pass_1.json
+#         - pass_2.json
+#         - ...
 #       - ...
 #     - <session-name>.json (workload configuration e.g. iperf.smoketest.json)
 #
@@ -53,16 +57,39 @@ for group in WORKLOADS_ROOT.iterdir():
             name = element.stem
             wki = WorkloadInfo(name, element.absolute())
             analysis_conf = group / "analysis" / element.name
+            analysis_conf_dir = group / "analysis" / element.stem
             if analysis_conf.exists():
-                wki.analysis_config = analysis_conf.absolute()
+                wki.analysis_config = [analysis_conf.absolute()]
+            elif analysis_conf_dir.is_dir():
+                pass_configs = analysis_conf_dir.glob("*.json")
+                wki.analysis_config = [p.absolute() for p in pass_configs]
             data = group / "data" / name
             if data.exists() and data.is_dir():
                 wki.data_path = data.absolute()
             workloads.append(wki)
 
 
+def analysis_workloads() -> list[WorkloadInfo]:
+    unrolled = []
+    for wki in workloads:
+        if not wki.can_test_analysis:
+            continue
+        if len(wki.analysis_config) == 1:
+            unrolled.append(wki)
+        else:
+            for pass_config in wki.analysis_config:
+                inst = replace(wki, analysis_config=[pass_config])
+                unrolled.append(inst)
+    return unrolled
+
+
 def generate_id(wkinfo):
     return wkinfo.session_name
+
+
+def generate_analysis_id(wkinfo):
+    pass_name = wkinfo.analysis_config[0].stem
+    return f"{wkinfo.session_name}:{pass_name}"
 
 
 @pytest.fixture
@@ -84,15 +111,14 @@ def test_configuration(wkinfo, session_path):
     session = Session.make_new(
         user_config, workload, session_path, workdir=wkinfo.workload_config.parent
     )
+    assert session is not None
     session.generate()
     # Verify no errors
     assert not session.scheduler.failed_tasks
 
 
 @pytest.mark.timeout(300)
-@pytest.mark.parametrize(
-    "wkinfo", filter(lambda w: w.has_smoketest, workloads), ids=generate_id
-)
+@pytest.mark.parametrize("wkinfo", analysis_workloads(), ids=generate_analysis_id)
 def test_analysis(wkinfo, tmp_path):
     """
     Run analysis passes for smoketest data.
@@ -102,7 +128,8 @@ def test_analysis(wkinfo, tmp_path):
     shutil.copytree(wkinfo.data_path, scratch)
     user_config = BenchplotUserConfig()
     session = Session.from_path(user_config, scratch)
-    analysis_config = AnalysisConfig.load_json(wkinfo.analysis_config)
+    assert session is not None
+    analysis_config = AnalysisConfig.load_json(wkinfo.analysis_config[0])
 
     # Run the analysis pass
     session.analyse(analysis_config)
