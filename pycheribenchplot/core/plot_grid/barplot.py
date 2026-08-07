@@ -49,16 +49,6 @@ class BarPlotConfig(PlotConfigBase):
         if data != "x" and data != "y":
             raise ValidationError("Orientation must be 'x' or 'y'.")
 
-    def uses_param(self, name: str) -> bool:
-        ref = f"<{name}>"
-        return (
-            super().uses_param(name)
-            or self.tile_xaxis == ref
-            or self.stack_by == ref
-            or self.shift_by == ref
-            or self.bar_label == ref
-        )
-
 
 def _draw_bar_labels(
     tile: PlotTile,

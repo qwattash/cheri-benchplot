@@ -33,9 +33,6 @@ class LinePlotConfig(PlotConfigBase):
         None, desc="ColRef containing the linestyles. Should align on the hue."
     )
 
-    def uses_param(self, name: str) -> bool:
-        return super().uses_param(name) or self.tile_xaxis == name
-
     def lineplot_kwargs(self) -> dict:
         style_kwargs = {}
         if w := self.line_width:
