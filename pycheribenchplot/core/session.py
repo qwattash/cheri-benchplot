@@ -168,6 +168,15 @@ class Session:
         ctx.add_values(assets="../../assets")
         return config.bind(ctx)
 
+    def _resolve_analysis_template(self, config: AnalysisConfig) -> AnalysisConfig:
+        """
+        Resolve template bindings for analysis configurations.
+        """
+        ctx = ConfigContext()
+        ctx.add_namespace(self.config)
+        ctx.add_namespace(config, "analysis")
+        return config.bind(ctx)
+
     def _resolve_parameterization_matrix(
         self, config: SessionRunConfig
     ) -> pl.DataFrame:
@@ -826,6 +835,8 @@ class Session:
 
         :param analysis_config: The analysis configuration
         """
+
+        # XXX the default analysis configuration should go away.
         if set_default:
             self.logger.info("Update analysis configuration for session %s", self.name)
             self.config.analysis_config = analysis_config
@@ -838,6 +849,8 @@ class Session:
         if analysis_config is None:
             # Load default analysis configuration from the session
             analysis_config = self.config.analysis_config
+
+        analysis_config = self._resolve_analysis_template(analysis_config)
 
         task_names = defaultdict(list)
         for task_spec in analysis_config.tasks:

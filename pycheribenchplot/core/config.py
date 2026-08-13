@@ -1122,11 +1122,15 @@ class Config(metaclass=ConfigMeta):
             elif target_ty is Any:
                 # Can not really know, conservatively say yes
                 return True
-            else:
+            elif origin_ty is None:
                 is_config = issubclass(target_ty, Config)
                 # All Configs must be dataclasses
                 assert not is_config or dc.is_dataclass(target_ty)
                 return is_config
+            else:
+                # This is a complex type annotation, shoud not be holding
+                # a nested config type
+                return False
 
         def _bind_nested_config(target, nested_loc) -> Any:
             if isinstance(target, list):

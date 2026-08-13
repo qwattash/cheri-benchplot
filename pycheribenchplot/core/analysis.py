@@ -14,6 +14,7 @@ from .benchmark import Benchmark
 from .config import (
     AnalysisConfig,
     Config,
+    ConfigContext,
     TaskTargetConfig,
     config_field,
 )
@@ -746,9 +747,6 @@ class GenericAnalysisConfig(Config):
     """
 
     #: The handler that we broadcast each data slice to, must be a SliceAnalysisConfig.
-    #: XXX I think I want to allow multiple task specs here
-    #: We should have a special configuration type for SliceTargetConfig
-    #: this would allow us to filter for slice targets at configuration time
     broadcast: List[TaskTargetConfig] = config_field(
         MISSING, desc="Analysis task that is run for each fixed_axes grouping"
     )
@@ -877,7 +875,6 @@ class GenericAnalysisTask(AnalysisTask):
     @cached_property
     def resolved_slice_tasks(self) -> list[tuple[Type[SliceAnalysisTask], str, Config]]:
         # Note: the config layer guarantees that the handler is valid at this point
-        # XXX we need to support multiple broadcast handlers
         task_types = []
         for slice_config in self.config.broadcast:
             for slice_task_type in TaskRegistry.resolve_task(slice_config.handler):
@@ -905,6 +902,13 @@ class GenericAnalysisTask(AnalysisTask):
                     free_axes=list(self._free_axes),
                     rank=self._rank,
                 )
+                # Handle config template substitutions for each slice
+                # configuration.
+                ctx = ConfigContext()
+                ctx.add_namespace(self.session.config)
+                ctx.add_namespace(self.analysis_config, "analysis")
+                ctx.add_values(**fixed_slice_params)
+                group_options = group_options.bind(ctx)
                 # XXX check that the rank is not too large
                 name_parts = []
                 if self.user_task_name:
