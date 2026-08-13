@@ -112,9 +112,10 @@ def test_configuration(wkinfo, session_path):
         user_config, workload, session_path, workdir=wkinfo.workload_config.parent
     )
     assert session is not None
-    session.generate()
+    scheduler = session.make_scheduler()
+    session.generate(scheduler)
     # Verify no errors
-    assert not session.scheduler.failed_tasks
+    assert not scheduler.failed_tasks
 
 
 @pytest.mark.timeout(300)
@@ -132,7 +133,8 @@ def test_analysis(wkinfo, tmp_path):
     analysis_config = AnalysisConfig.load_json(wkinfo.analysis_config[0])
 
     # Run the analysis pass
-    session.analyse(analysis_config)
+    scheduler = session.make_scheduler()
+    session.analyse(analysis_config, scheduler)
 
     # Verify no errors
-    assert not session.scheduler.failed_tasks
+    assert not scheduler.failed_tasks

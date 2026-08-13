@@ -1,4 +1,5 @@
 import logging
+import multiprocessing as mp
 import re
 import shutil
 import subprocess
@@ -151,11 +152,20 @@ class Session:
             )
             self.config.concurrent_workers = self.user_config.concurrent_workers
 
-        #: Task scheduler
-        self.scheduler = TaskScheduler(self)
-
     def __str__(self):
         return f"Session({self.uuid}) [{self.name}]"
+
+    def make_scheduler(self) -> TaskScheduler:
+        """
+        Create a :class:`TaskScheduler` configured for this session.
+
+        The scheduler is a separate object from the session; the caller owns it
+        and passes it to :meth:`generate` or :meth:`analyse` as needed.  This
+        factory method derives the worker count and logger from the session
+        configuration so callers do not need to repeat that logic.
+        """
+        n_workers = self.config.concurrent_workers or mp.cpu_count()
+        return TaskScheduler(n_workers=n_workers, logger=self.logger)
 
     def _resolve_config_template(self, config: SessionRunConfig) -> SessionRunConfig:
         """
@@ -706,12 +716,15 @@ class Session:
             shutil.rmtree(plot_root)
         self._ensure_dir_tree()
 
-    def generate(self, clean: bool = False):
+    def generate(self, scheduler: TaskScheduler, clean: bool = False):
         """
         Run the session execution generators.
 
         This will run the tasks configured as "generators" in the configuration to
         produce shell scripts in the session directories.
+
+        :param scheduler: The task scheduler to use for execution.
+        :param clean: If True, wipe all outputs before generating.
         """
         if clean:
             self.clean_all()
@@ -788,14 +801,14 @@ class Session:
 
         # Schedule generators according to the collected descriptors
         for descriptor in self.parameterization_matrix["descriptor"]:
-            descriptor.schedule_exec_tasks(self.scheduler, ExecTaskConfig())
+            descriptor.schedule_exec_tasks(scheduler, ExecTaskConfig())
 
         self.logger.info("Session %s generate exec scripts", self.name)
-        self.scheduler.run()
+        scheduler.run()
         self.logger.info("Session %s scripts ready", self.name)
-        self.scheduler.report_failures(self.logger)
+        scheduler.report_failures(self.logger)
 
-    def run(self, driver_config, clean: bool = True):
+    def run(self, driver_config, scheduler: TaskScheduler, clean: bool = True):
         """
         Run the session on host machines.
 
@@ -818,22 +831,28 @@ class Session:
         # self.scheduler.add_task(driver)
 
         self.logger.info("Session %s begin execution", self.name)
-        self.scheduler.run()
+        scheduler.run()
         self.logger.info("Session %s execution completed", self.name)
-        self.scheduler.report_failures(self.logger)
+        scheduler.report_failures(self.logger)
 
     def analyse(
-        self, analysis_config: AnalysisConfig | None, set_default: bool = False
+        self,
+        analysis_config: AnalysisConfig | None,
+        scheduler: TaskScheduler,
+        set_default: bool = False,
     ):
         """
         Run the session analysis tasks requested.
-        The analysis pipeline is slighly different from the execution pipeline.
+        The analysis pipeline is slightly different from the execution pipeline.
         This is because the same data can be used for different analysis targets and
         the user should be able to specify the set of targets we need to run.
         Here the analysis configuration should specify a set of public task names that
-        we collect and schedule
+        we collect and schedule.
 
-        :param analysis_config: The analysis configuration
+        :param analysis_config: The analysis configuration.
+        :param scheduler: The task scheduler to use for execution.
+        :param set_default: If True, persist the analysis configuration as the session
+            default.
         """
 
         # XXX the default analysis configuration should go away.
@@ -892,11 +911,11 @@ class Session:
                 self.logger.debug(
                     "Schedule analysis task %s with opts %s", task, options
                 )
-                self.scheduler.add_task(task)
+                scheduler.add_task(task)
         self.logger.info("Session %s start analysis", self.name)
-        self.scheduler.run()
+        scheduler.run()
         self.logger.info("Session %s analysis finished", self.name)
-        self.scheduler.report_failures(self.logger)
+        scheduler.report_failures(self.logger)
 
     def find_all_exec_tasks(
         self, task_class: Type[ExecutionTask]

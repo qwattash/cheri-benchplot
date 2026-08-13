@@ -165,7 +165,8 @@ class SessionSubCommand(SubCommand):
         Hook to handle script generation subcommand.
         """
         session = self._get_session(user_config, args)
-        session.generate()
+        scheduler = session.make_scheduler()
+        session.generate(scheduler)
 
     def handle_run(self, user_config, args):
         """
@@ -223,7 +224,8 @@ class SessionSubCommand(SubCommand):
 
         # Use the analysis configuration from the session by default
         analysis_config = self._parse_config(args.analysis_config, AnalysisConfig)
-        session.analyse(analysis_config)
+        scheduler = session.make_scheduler()
+        session.analyse(analysis_config, scheduler)
 
     def handle_bundle(self, user_config, args):
         session = self._get_session(user_config, args)

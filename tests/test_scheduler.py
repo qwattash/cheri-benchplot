@@ -3,7 +3,6 @@ import time
 
 import pytest
 
-from pycheribenchplot.core.scheduler import TaskScheduler
 from pycheribenchplot.core.task import Task, dependency
 
 # ruff: ignore
@@ -13,7 +12,7 @@ from .util.session import task_factory
 @pytest.fixture
 def sched(task_factory):
     session = task_factory.build()
-    sched = TaskScheduler(session)
+    sched = session.make_scheduler()
     return sched
 
 
@@ -177,7 +176,7 @@ class WithFailDepTestTask(Task):
 def test_task_cancellation(task_factory):
     session = task_factory.build()
     session.config.concurrent_workers = 1
-    sched = TaskScheduler(session)
+    sched = session.make_scheduler()
 
     failing = task_factory.build_task(FailingTestTask)
     to_cancel = task_factory.build_task(WithFailDepTestTask)

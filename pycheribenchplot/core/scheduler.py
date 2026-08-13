@@ -1,6 +1,5 @@
 import concurrent.futures as cf
 import dataclasses as dc
-import multiprocessing as mp
 from collections import deque
 from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
 from contextlib import contextmanager
@@ -13,13 +12,11 @@ import networkx as nx
 from .task import DatasetTask, Task
 from .util import new_logger
 
-type Session = "Session"
-
 
 class ResourceManager:
     """
     Base class to abstract resource limits on tasks.
-    Resouce managers must be registered with the task scheduler before running or adding
+    Resource managers must be registered with the task scheduler before running or adding
     any tasks to the scheduler.
     Resource managers are identified by the resource name, so concrete managers must set
     a resource_name class property and collisions are not allowed.
@@ -71,11 +68,10 @@ class ResourceManager:
         assert cls.resource_name is not None, f"{cls} is missing resource name?"
         return cls.ResourceRequest(cls.resource_name, pool, kwargs)
 
-    def __init__(self, session: Session, limit: int | None):
+    def __init__(self, limit: int | None):
         assert self.resource_name is not None, (
             f"{self.__class__} is missing resource name?"
         )
-        self.session = session
         self.logger = new_logger(f"rman-{self.resource_name}")
         self.limit = limit
         if not self.is_unlimited:
@@ -179,16 +175,14 @@ class TaskScheduler:
     them in order to the thread pool.
     """
 
-    def __init__(self, session: Session):
+    def __init__(self, n_workers: int, logger=None):
         """
-        :param session: The session for which we are scheduling tasks.
+        :param n_workers: Maximum number of concurrent worker threads.
+        :param logger: Optional parent logger; a child logger named "sched" is derived
+            from it.  If omitted a top-level logger is used.
         """
-        n_workers = session.config.concurrent_workers or mp.cpu_count()
-
-        #: Parent session
-        self.session = session
         #: Scheduler logger
-        self.logger = new_logger("sched", self.session.logger)
+        self.logger = new_logger("sched", logger)
         #: Task graph, nodes are Task.task_id, each node has the attribute task
         #: containing the task instance to run.
         self._task_graph = nx.DiGraph()
