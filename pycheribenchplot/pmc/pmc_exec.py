@@ -25,7 +25,8 @@ class PMCSet(Enum):
     Pre-defined sets of counters.
     """
 
-    Instr = "instr"
+    Generic = "generic"
+    InstrMix = "instr-mix"
     CheriInstr = "cheri-instr"
     CheriInstr2 = "cheri-instr-2"
     L1Cache = "l1cache"
@@ -38,17 +39,30 @@ class PMCSet(Enum):
 
 
 PMC_SET_COUNTERS = {
-    PMCSet.Instr: [
+    # A generic mix of counters
+    PMCSet.Generic: [
         "CPU_CYCLES",
         "INST_RETIRED",
         "INST_SPEC",
         "LD_SPEC",
         "ST_SPEC",
-        "EXC_SVC",
-        "EXC_IRQ",
-        "EXC_TRAP_IRQ",
+        "L1D_CACHE_REFILL",
+        "L1D_CACHE",
         "STALL_FRONTEND",
         "STALL_BACKEND",
+    ],
+    # Counters for instruction mix evaluation
+    PMCSet.InstrMix: [
+        "CPU_CYCLES",
+        "INST_SPEC",
+        "LD_SPEC",
+        "ST_SPEC",
+        "ASE_SPEC",
+        "VFP_SPEC",
+        "DP_SPEC",
+        "BR_IMMED_SPEC",
+        "BR_INDIRECT_SPEC",
+        "BR_RETURN_SPEC",
     ],
     PMCSet.CheriInstr: [
         "CPU_CYCLES",
@@ -117,6 +131,7 @@ PMC_SET_COUNTERS = {
         "BR_MIS_PRED_RETIRED",
         "BR_RETURN_SPEC",
     ],
+    # TLB/MMU effectiveness
     PMCSet.TLB: [
         "CPU_CYCLES",
         "INST_RETIRED",

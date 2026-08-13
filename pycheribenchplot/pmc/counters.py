@@ -17,6 +17,21 @@ from ..core.task import dependency, output
 from .pmc_exec import IngestPMCCounters, PMCExec
 
 
+def rate(col_a, col_b, mul=1, inverted=False):
+    """
+    Helper to generate a derived metric as a rate between two counters.
+    """
+    if inverted:
+        r = 1 - pl.col(col_a) / pl.col(col_b)
+    else:
+        r = pl.col(col_a) / pl.col(col_b)
+    return mul * r
+
+
+def hit_rate(refill, total):
+    return rate(refill, total, mul=100, inverted=True)
+
+
 @dataclass
 class PMCPlotConfig(PlotGridConfig, BarPlotConfig):
     """
@@ -109,16 +124,58 @@ class PMCSliceSummary(SlicePlotTask):
     rc_params = {"axes.labelsize": "large", "font.size": 9, "xtick.labelsize": 9}
 
     derived_metrics = {
-        "cycles_per_insn": pl.col("cpu_cycles") / pl.col("inst_retired"),
-        "ipc": pl.col("inst_retired") / pl.col("cpu_cycles"),
-        "br_pred_miss_rate": pl.col("br_mis_pred") / pl.col("br_pred"),
+        "cpi": rate("cpu_cycles", "inst_retired"),
+        "ipc": rate("inst_retired", "cpu_cycles"),
         "insn_spec_rate": pl.col("inst_retired") / pl.col("inst_spec"),
         "eff_backend_ipc": pl.col("inst_retired")
         / (pl.col("cpu_cycles") - pl.col("stall_backend")),
-        "l1i_hit_rate": (pl.col("l1i_cache") - pl.col("l1i_cache_refill"))
-        / pl.col("l1i_cache"),
-        "l1d_hit_rate": (pl.col("l1d_cache") - pl.col("l1d_cache_refill"))
-        / pl.col("l1d_cache"),
+        ## Branch effectiveness and prediction
+        # misprediction rate
+        "br_miss_rate": rate("br_mis_pred", "br_pred"),
+        "br_ret_miss_rate": rate("br_mis_pred_retired", "br_pred_retired"),
+        # misprediction per 1k instructions
+        "br_ret_miss_pki": 1000 * rate("br_mis_pred_retired", "inst_retired"),
+        ## Derived metrics for cache effectiveness
+        # NOTE that a cache MISS can lead to multiple REFILLs, or multiple
+        # misses can be satisfied by a single REFILL.
+        "l1i_hit_rate": hit_rate("l1i_cache_refill", "l1i_cache"),
+        "l1d_hit_rate": hit_rate("l1d_cache_refill", "l1d_cache"),
+        "l2_hit_rate": hit_rate("l2d_cache_refill", "l2d_cache"),
+        "l3_hit_rate": hit_rate("l3d_cache_refill", "l2d_cache"),
+        # Refill per 1k instructions
+        "l1d_refill_pki": 1000 * rate("l1d_cache_refill", "inst_retired"),
+        "l2_refill_pki": 1000 * rate("l2d_cache_refill", "inst_retired"),
+        "l3_refill_pki": 1000 * rate("l3d_cache_refill", "inst_retired"),
+        ## Derived metrics for instruction mix evaluation
+        # Share of load/store instructions, proxy for load on execution
+        # unit from memory accesses.
+        "ldst_exec_rate": (pl.col("ld_spec") + pl.col("st_spec"))
+        * 100
+        / pl.col("inst_spec"),
+        # Share of data processing instructions
+        "dp_exec_rate": pl.col("dp_spec") * 100 / pl.col("inst_spec"),
+        # Share of SIMD/FP instructions
+        "fp_exec_rate": pl.col("vfp_spec") * 100 / pl.col("inst_spec"),
+        "simd_exec_rate": pl.col("ase_spec") * 100 / pl.col("inst_spec"),
+        # Share of branch instructions
+        "branch_exec_rate": (
+            pl.col("br_immed_spec")
+            + pl.col("br_indirect_spec")
+            + pl.col("br_return_spec")
+        )
+        * 100
+        / pl.col("inst_spec"),
+        ## Derived metrics for TLB effectiveness
+        # TLB refill rates
+        "l1i_tlb_hit_rate": hit_rate("l1i_tlb_refill", "l1i_tlb"),
+        "l1d_tlb_hit_rate": hit_rate("l1d_tlb_refill", "l1d_tlb"),
+        "l2_tlb_hit_rate": hit_rate("l2d_tlb_refill", "l2d_tlb"),
+        # TLB triggered page table walks per 1k instructions
+        "itlb_walk_pki": 1000 * rate("itlb_walk", "inst_retired"),
+        "dtlb_walk_pki": 1000 * rate("dtlb_walk", "inst_retired"),
+        # TLB walk rates
+        "itlb_walk_rate": rate("itlb_walk", "l1i_tlb"),
+        "dtlb_walk_rate": rate("dtlb_walk", "l1d_tlb"),
     }
 
     @dependency
