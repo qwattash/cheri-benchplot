@@ -1,4 +1,4 @@
-from threading import Lock
+import threading
 
 import matplotlib as mpl
 
@@ -8,6 +8,62 @@ from .analysis import BootstrapAnalysisTask, SliceAnalysisTask
 from .artefact import Target
 from .plot_grid import default_theme
 from .task import Task
+
+# Capture the original matplotlib global configurations
+_global_rc_blueprint = dict(mpl.rcParams)
+
+
+class ThreadLocalRcParams:
+    """
+    A transparent proxy wrapper that routes all Matplotlib rcParams
+    interactions to thread-isolated dictionaries.
+    """
+
+    def __init__(self):
+        self.__dict__["_local"] = threading.local()
+
+    @property
+    def _current_rc(self):
+        # Dynamically initialize a fresh thread-local config
+        if not hasattr(self._local, "config"):
+            # Using mpl.RcParams ensures validation logic remains intact
+            self._local.config = mpl.RcParams(_global_rc_blueprint)
+        return self._local.config
+
+    def __getattr__(self, name):
+        return getattr(self._current_rc, name)
+
+    def __setattr__(self, name, value):
+        setattr(self._current_rc, name, value)
+
+    def __delattr__(self, name):
+        delattr(self._current_rc, name)
+
+    # Route all dictionary operations to the thread-local instance
+    def __getitem__(self, key):
+        return self._current_rc[key]
+
+    def __setitem__(self, key, value):
+        self._current_rc[key] = value
+
+    def __delitem__(self, key):
+        del self._current_rc[key]
+
+    def __contains__(self, key):
+        return key in self._current_rc
+
+    def __iter__(self):
+        return iter(self._current_rc)
+
+    def __len__(self):
+        return len(self._current_rc)
+
+    def __repr__(self):
+        return repr(self._current_rc)
+
+
+# monkey-patch matplotlib to swap out the global dictionary with the thread-local proxy
+mpl.rcParams = ThreadLocalRcParams()
 
 
 class PlotTarget(Target):
@@ -37,11 +93,6 @@ class PlotTaskMixin:
     Each plot task is responsible for setting up a figure and axes.
     """
 
-    # Note that this is necessary to serialize matplotlib rcParams overrides.
-    # If we could defer this until the PlotGrid context it would probably
-    # allow some more parallel processing of plot data.
-    rc_mutex = Lock()
-
     def _plot_output(self, suffix: str = None) -> PlotTarget:
         """
         Deprecated way to build the plot target. Should use PlotTarget directly.
@@ -64,10 +115,9 @@ class PlotTaskMixin:
         theme = default_theme | rc_override
 
         self.setup_plot()
-        with PlotTaskMixin.rc_mutex:
-            self.logger.debug("Override matplotlib rcParams: %s", rc_override)
-            with mpl.rc_context(rc=theme):
-                self.run_plot()
+        self.logger.debug("Override matplotlib rcParams: %s", rc_override)
+        with mpl.rc_context(rc=theme):
+            self.run_plot()
 
     def setup_plot(self):
         """
