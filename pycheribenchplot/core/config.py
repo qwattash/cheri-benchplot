@@ -2019,14 +2019,15 @@ class SessionRunConfig(CommonSessionConfig):
                 if value is not None:
                     run_config.parameters[name] = value
                 else:
+                    pstring = " ".join(f"{k}={v}" for k, v in parameters.items())
                     logger.error(
-                        "Unresolved derived parameter %s: %s (%s)",
+                        "Unresolved derived parameter '%s': %s (%s)",
                         name,
                         spec,
-                        parameters,
+                        pstring,
                     )
                     raise ConfigurationError(
-                        "Unresolved derived parameter %s for %s", name, parameters
+                        f"Unresolved derived parameter '{name}' for {pstring}"
                     )
 
             run_config.uuid = uuid4()
