@@ -1777,8 +1777,8 @@ class CommonSessionConfig(Config):
     #: Allow reusing instances for multiple benchmark runs
     reuse_instances: bool = False
 
-    #: Extract symbols with elftools instead of llvm
-    use_builtin_symbolizer: bool = True
+    #: Use builtin symbolizer instead of addr2line
+    use_builtin_symbolizer: bool = config_field(True, desc="DEPRECATED")
 
     #: Path to the session directory tree in the benchmark host
     remote_session_path: ConfigPath = Path("/opt/benchmark-output")
