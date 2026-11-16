@@ -1365,6 +1365,21 @@ class PlatformABI(Enum):
         return self.value
 
 
+class DeploymentType(Enum):
+    """
+    Benchmark deployment method.
+    """
+
+    #: Generate MFS root images and related boot scripts
+    MFS_ROOT_IMAGE = "mfs-root"
+    #: Generate ZFS rootfs images for boot enviroments or jails
+    ZFS_ROOT_IMAGE = "zfs-root"
+    #: Generate tar.gz rootfs archive
+    ROOTFS_ARCHIVE = "rootfs-archive"
+    #: Do not generate deployment images
+    NONE = "none"
+
+
 @dc.dataclass
 class InstanceConfig(Config):
     """
@@ -1391,6 +1406,11 @@ class InstanceConfig(Config):
     )
 
     bootenv: str = config_field(None, desc="ZFS boot environment for the benchmarks")
+
+    deployment: DeploymentType = config_field(
+        DeploymentType.NONE,
+        desc="System deployment configuration. This enables benchmark image generation.",
+    )
 
     @classmethod
     def native(cls) -> Self:
