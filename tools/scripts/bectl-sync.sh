@@ -105,7 +105,7 @@ printf 'Clearing schg flags and extracting %s...\n' "$ARCHIVE"
 chflags -R noschg "$MNT"
 tar -xpf "$ARCHIVE" --exclude='./etc*' -C "$MNT"
 
-printf 'Unmounting and setting one-time boot target...\n'
+printf 'Unmounting...\n'
 bectl umount "$BE_NAME"
 MOUNTED=0
 
