@@ -103,6 +103,16 @@ MOUNTED=1
 
 printf 'Clearing schg flags and extracting %s...\n' "$ARCHIVE"
 chflags -R noschg "$MNT"
+
+# Remove base OS trees so files deleted upstream do not linger from the parent BE
+for dir in \
+    bin sbin lib libexec rescue \
+    usr/bin usr/include usr/lib usr/lib32 usr/lib64 usr/libdata usr/libexec usr/sbin usr/share usr/tests \
+    usr/local var/db/pkg boot/kernel boot/dtb boot/defaults boot/lua boot/modules
+do
+    rm -rf "${MNT:?}/${dir}"
+done
+
 tar -xpf "$ARCHIVE" --exclude='./etc*' -C "$MNT"
 
 printf 'Unmounting...\n'
