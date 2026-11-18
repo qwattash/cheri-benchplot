@@ -1520,9 +1520,6 @@ class AnalysisConfig(Config):
         desc="Baseline selector, can be an UUID or a dict of parameter key-values that identify a benchmark run or data slice.",
     )
 
-    #: Use builtin symbolizer instead of addr2line
-    use_builtin_symbolizer: bool = config_field(True, desc="DEPRECATED")
-
     #: Specify analysis passes to run
     tasks: List[TaskTargetConfig] = config_field(list, desc="Analysis pass tasks")
 
@@ -1779,9 +1776,6 @@ class CommonSessionConfig(Config):
     internal session runfile.
     """
 
-    #: Path to the SSH private key to use to access instances
-    ssh_key: ConfigPath = Path("~/.ssh/id_rsa")
-
     #: Failure policy for workers. If true, when an worker encounters an error, it
     #: causes the scheduler to stop executing tasks and cleaup. If false failures
     #: are tolerated and the tasks that depend on the failed one will be removed
@@ -1790,12 +1784,6 @@ class CommonSessionConfig(Config):
 
     #: Maximum number of concurrent workers
     concurrent_workers: int = 0
-
-    #: Allow reusing instances for multiple benchmark runs
-    reuse_instances: bool = False
-
-    #: Use builtin symbolizer instead of addr2line
-    use_builtin_symbolizer: bool = config_field(True, desc="DEPRECATED")
 
     #: Path to the session directory tree in the benchmark host
     remote_session_path: ConfigPath = Path("/opt/benchmark-output")
@@ -1809,7 +1797,6 @@ class CommonSessionConfig(Config):
 
     def __post_init__(self):
         super().__post_init__()
-        self.ssh_key = self.ssh_key.resolve()
 
     @classmethod
     def from_common_conf(cls, other: "CommonSessionConfig"):
