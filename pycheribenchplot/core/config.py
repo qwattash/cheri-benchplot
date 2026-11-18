@@ -1788,9 +1788,6 @@ class CommonSessionConfig(Config):
     #: Path to the session directory tree in the benchmark host
     remote_session_path: ConfigPath = Path("/opt/benchmark-output")
 
-    #: Default analysis task configuration
-    analysis_config: AnalysisConfig = dc.field(default_factory=AnalysisConfig)
-
     #: Tar and base64-encode the benchmark results to stdout.
     #: This is useful if the benchmark host does not support a filesystem output.
     bundle_results: bool = False

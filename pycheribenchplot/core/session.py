@@ -837,9 +837,8 @@ class Session:
 
     def analyse(
         self,
-        analysis_config: AnalysisConfig | None,
+        analysis_config: AnalysisConfig,
         scheduler: TaskScheduler,
-        set_default: bool = False,
     ):
         """
         Run the session analysis tasks requested.
@@ -851,24 +850,7 @@ class Session:
 
         :param analysis_config: The analysis configuration.
         :param scheduler: The task scheduler to use for execution.
-        :param set_default: If True, persist the analysis configuration as the session
-            default.
         """
-
-        # XXX the default analysis configuration should go away.
-        if set_default:
-            self.logger.info("Update analysis configuration for session %s", self.name)
-            self.config.analysis_config = analysis_config
-            with open(self.session_root_path / SESSION_RUN_FILE, "w") as runfile:
-                runfile.write(self.config.emit_json())
-            if analysis_config is None:
-                # We are removing the default config, nothing else to do
-                return
-
-        if analysis_config is None:
-            # Load default analysis configuration from the session
-            analysis_config = self.config.analysis_config
-
         analysis_config = self._resolve_analysis_template(analysis_config)
 
         task_names = defaultdict(list)

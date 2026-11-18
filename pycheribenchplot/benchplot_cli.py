@@ -222,7 +222,6 @@ class SessionSubCommand(SubCommand):
         if args.clean:
             session.clean_analysis()
 
-        # Use the analysis configuration from the session by default
         analysis_config = self._parse_config(args.analysis_config, AnalysisConfig)
         scheduler = session.make_scheduler()
         session.analyse(analysis_config, scheduler)
