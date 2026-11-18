@@ -1,6 +1,6 @@
 {
     "version": "1.0",
-    "benchmark_config": {
+    "benchmark": {
         "name": "my-generic-example",
         "desc": "Description for humans",
         "iterations": 1,

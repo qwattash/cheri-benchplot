@@ -1817,7 +1817,7 @@ class PipelineConfig(CommonSessionConfig):
 
     version: str = config_field("1.0", desc="Session configuration version")
 
-    benchmark_config: PipelineBenchmarkConfig = config_field(
+    benchmark: PipelineBenchmarkConfig = config_field(
         Config.REQUIRED, desc="Benchmark parameterisation configuration"
     )
 
@@ -1952,7 +1952,7 @@ class SessionRunConfig(CommonSessionConfig):
         :return: A new session runfile configuration
         """
         session = SessionRunConfig.from_common_conf(config)
-        bench_config = config.benchmark_config
+        bench_config = config.benchmark
         sorted_params = OrderedDict(bench_config.parameterize)
         logger.info("Create new session %s: %s", session.uuid, bench_config.desc)
 

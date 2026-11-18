@@ -167,7 +167,7 @@ The JSON pipeline configuration has the following shape:
 ```
 {
     "version": "1.0",
-    "benchmark_config": {
+    "benchmark": {
         "name": "my-generic-example",
         "desc": "Description for humans",
         "iterations": 1,
@@ -203,7 +203,7 @@ The key fields in this file are:
 > The name "iteration" is reserved for internal use (the benchmark iteration number).
 > The name "descriptor" is reserved for internal use.
 > The name "target" is semi-reserved, the value is automatically generated from the
-> `benchmark_config.system` mapping, but can be forced if the axis is explicitly
+> `benchmark.system` mapping, but can be forced if the axis is explicitly
 > specificed.
 
 The `benchplot-cli` tool is your friend, this can be used to show
@@ -254,7 +254,7 @@ hyperfine for collecting timing results, we will set `timing_tool` to "time".
 ```
 {
     "version": "1.0",
-    "benchmark_config": {
+    "benchmark": {
         "name": "my-generic-example",
         "desc": "Description for humans",
         "iterations": 1,
@@ -316,7 +316,7 @@ value of the `repo` parameter axis assigned to the specific benchmark combinatio
 ```
 {
     "version": "1.0",
-    "benchmark_config": {
+    "benchmark": {
         "name": "my-generic-example",
         "desc": "Description for humans",
         "iterations": 1,
@@ -362,7 +362,7 @@ substitution to use the `revocation` axis as an argument to `proccontrol`.
 ```
 {
     "version": "1.0",
-    "benchmark_config": {
+    "benchmark": {
         "name": "my-generic-example",
         "desc": "Description for humans",
         "iterations": 1,
