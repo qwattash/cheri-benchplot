@@ -125,6 +125,12 @@ def test_analysis(wkinfo, tmp_path):
     Run analysis passes for smoketest data.
     Smoketest data must be maintained in sync with the configurations.
     """
+    # Determine whether there is actual output data, otherwise we skip this
+    # Use the .run_completed markers to determine whether the session did run,
+    # at least partially. Partial runs should fail.
+    if not list(wkinfo.data_path.rglob(".run_completed")):
+        pytest.skip("Session did not run yet, no data detected.")
+
     scratch = tmp_path / "data"
     shutil.copytree(wkinfo.data_path, scratch)
     user_config = BenchplotUserConfig()
