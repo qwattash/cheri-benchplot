@@ -167,7 +167,6 @@ The JSON pipeline configuration has the following shape:
 ```
 {
     "version": "1.0",
-    "concurrent_instances": 1,
     "benchmark_config": {
         "name": "my-generic-example",
         "desc": "Description for humans",
@@ -255,7 +254,6 @@ hyperfine for collecting timing results, we will set `timing_tool` to "time".
 ```
 {
     "version": "1.0",
-    "concurrent_instances": 1,
     "benchmark_config": {
         "name": "my-generic-example",
         "desc": "Description for humans",
@@ -318,7 +316,6 @@ value of the `repo` parameter axis assigned to the specific benchmark combinatio
 ```
 {
     "version": "1.0",
-    "concurrent_instances": 1,
     "benchmark_config": {
         "name": "my-generic-example",
         "desc": "Description for humans",
@@ -365,7 +362,6 @@ substitution to use the `revocation` axis as an argument to `proccontrol`.
 ```
 {
     "version": "1.0",
-    "concurrent_instances": 1,
     "benchmark_config": {
         "name": "my-generic-example",
         "desc": "Description for humans",

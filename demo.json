@@ -1,6 +1,5 @@
 {
     "version": "1.0",
-    "concurrent_instances": 1,
     "benchmark_config": {
         "name": "my-generic-example",
         "desc": "Description for humans",

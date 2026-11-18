@@ -1788,9 +1788,6 @@ class CommonSessionConfig(Config):
     #: from the schedule.
     abort_on_failure: bool = True
 
-    #: Maximum number of concurrent instances that can be run (0 means unlimted)
-    concurrent_instances: int = 0
-
     #: Maximum number of concurrent workers
     concurrent_workers: int = 0
 
