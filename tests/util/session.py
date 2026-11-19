@@ -165,6 +165,30 @@ def task_factory(tmp_path) -> TaskFactory:
     return f
 
 
+@pytest.fixture
+def benchplot_user_config(tmp_path: Path) -> BenchplotUserConfig:
+    """
+    Provide an isolated BenchplotUserConfig rooted under ``tmp_path``.
+
+    Creates ``sessions``, ``sdk``, ``build``, and ``src`` subdirectories so
+    schema directory-existence validation passes without touching host paths.
+    """
+    sessions = tmp_path / "sessions"
+    sdk = tmp_path / "sdk"
+    build = tmp_path / "build"
+    src = tmp_path / "src"
+    for d in (sessions, sdk, build, src):
+        d.mkdir(parents=True, exist_ok=True)
+    return BenchplotUserConfig.schema().load(
+        {
+            "session_path": str(sessions),
+            "sdk_path": str(sdk),
+            "build_path": str(build),
+            "src_path": str(src),
+        }
+    )
+
+
 def helper_run_task(task: Task):
     """
     Run a task and all its dependencies recursively

@@ -19,8 +19,7 @@ except ImportError:
     annotationlib = None
 
 import marshmallow.fields as mfields
-from git import Repo
-from marshmallow import Schema, ValidationError, validates
+from marshmallow import Schema, ValidationError, validates, validates_schema
 from marshmallow.validate import And, ContainsOnly, OneOf, Predicate
 from marshmallow_dataclass import class_schema
 from typing_extensions import Self
@@ -365,9 +364,14 @@ class ConfigContext:
         :return: The template substitution or None
         """
         if "." in key:
-            # Lookup by namespace
+            # Lookup by namespace, falling back to the global namespace if present
             parts = key.split(".")
-            value = self._namespaces[parts[0]]
+            value = self._namespaces.get(parts[0])
+            if value is None and (globalns := self._namespaces.get("__global__")):
+                value = getattr(globalns, parts[0], None)
+            if value is None:
+                config_logger.debug("Unresolved template '%s'", key)
+                return None
             for name in parts[1:]:
                 try:
                     value = getattr(value, name)
@@ -1420,6 +1424,363 @@ class InstanceConfig(Config):
         return f"{self.name}"
 
 
+class AutorunMode(Enum):
+    """
+    Autorun script execution and installation mode on target systems.
+    """
+
+    MANUAL = "manual"
+    RC_D = "rc.d"
+    RC_LOCAL = "rc.local"
+
+    def __str__(self) -> str:
+        return self.value
+
+
+@dc.dataclass
+class AutorunCommonConfig(Config):
+    """
+    Common autorun and result-bundling configuration for session deployment.
+    """
+
+    mode: AutorunMode = config_field(
+        AutorunMode.MANUAL,
+        by_value=True,
+        desc="Autorun installation mode (`manual`, `rc.d`, or `rc.local`).",
+    )
+    bundle_results: bool = config_field(
+        False,
+        desc="Tar and base64-encode benchmark results to stdout upon completion.",
+    )
+    settle_delay: int | None = config_field(
+        None,
+        desc="Optional delay in seconds before starting benchmark execution after boot.",
+    )
+    reboot: bool = config_field(
+        False,
+        desc="Reboot instead of powering off after all autorun targets complete.",
+    )
+    user: str = config_field(
+        "root",
+        desc="User account under which autorun executes benchmark scripts.",
+    )
+
+
+@dc.dataclass
+class SystemAutorunMatchConfig(Config):
+    """
+    Boot-time kernel and environment matching configuration for a target system.
+    """
+
+    kernel: str = config_field(
+        Config.REQUIRED,
+        desc="Kernel configuration name (`kern.ident`) matched at boot.",
+    )
+    bootenv: str | None = config_field(
+        None,
+        desc="Optional ZFS boot environment for the benchmarks.",
+    )
+    arch: PlatformArch | None = config_field(
+        None,
+        by_value=True,
+        desc="Optional CPU architecture (`uname -p`) guard for multi-arch sessions.",
+    )
+
+
+@dc.dataclass
+class DeploySystemConfig(Config):
+    """
+    Mapping from benchmark parameterisation combinations to a target system.
+    """
+
+    name: str = config_field(
+        Config.REQUIRED,
+        desc="Unique name of the target system used to populate the `target` parameterisation axis.",
+    )
+    matches: dict[str, ConfigAny] = config_field(
+        dict,
+        desc="Parameterisation key/value pairs matched in order; an empty dict acts as catch-all.",
+    )
+    run_on: str | None = config_field(
+        None,
+        desc="Identifier of the `deploy.dist` image/archive where this target system runs.",
+    )
+    autorun: SystemAutorunMatchConfig | None = config_field(
+        None,
+        desc="Boot-time matching configuration for autorun execution.",
+    )
+
+
+_FETCH_GIT_URL_PREFIXES = (
+    "https://",
+    "http://",
+    "ssh://",
+    "git://",
+    "git@",
+    "file://",
+)
+_FETCH_DOWNLOAD_URL_PREFIXES = (
+    "https://",
+    "http://",
+    "file://",
+)
+_FETCH_DIGEST_ALGOS = {"sha256", "sha512"}
+
+
+@dc.dataclass
+class FetchTargetConfig(Config):
+    """
+    Describe an external repository, `cheribuild://` project, or archive/file to fetch and pin.
+    """
+
+    url: str = config_field(
+        Config.REQUIRED,
+        desc="Source URL (`https://`, `http://`, `ssh://`, `git://`, `git@`, `file://`, or `cheribuild://<target>`).",
+    )
+    revision: str | None = config_field(
+        None,
+        desc="Git commit SHA, tag, or branch to checkout and pin.",
+    )
+    digest: str | None = config_field(
+        None,
+        desc="Expected content digest in `<algo>:<hex>` format (`sha256` or `sha512`) for downloaded files/archives.",
+    )
+    archive: bool = config_field(
+        False,
+        desc="Treat the fetched URL as a downloadable file/archive verified via `digest`.",
+    )
+    dest: ConfigPath | None = config_field(
+        None,
+        desc="Optional destination path relative to the session `deploy/` directory.",
+    )
+
+    @validates("url")
+    def validate_url(self, value: str | ConfigTemplateSpec, **kwargs) -> None:
+        """
+        Validate a fetch target `url` value when not templated.
+        """
+        if isinstance(value, ConfigTemplateSpec):
+            return
+        if not isinstance(value, str) or not value.strip():
+            raise ValidationError("Fetch target 'url' must not be empty.")
+        if value.startswith("cheribuild://"):
+            target = value.removeprefix("cheribuild://").strip()
+            if not target:
+                raise ValidationError(
+                    "cheribuild:// fetch URL must specify a non-empty target name."
+                )
+            return
+        if not value.startswith(_FETCH_GIT_URL_PREFIXES):
+            raise ValidationError(f"Unsupported fetch URL '{value}'.")
+
+    @validates("revision")
+    def validate_revision(
+        self, value: str | ConfigTemplateSpec | None, **kwargs
+    ) -> None:
+        """
+        Validate a fetch target `revision` value when provided and not templated.
+        """
+        if value is None or isinstance(value, ConfigTemplateSpec):
+            return
+        if not isinstance(value, str) or not value.strip():
+            raise ValidationError("Fetch target 'revision' must not be empty.")
+
+    @validates("digest")
+    def validate_digest(self, value: str | ConfigTemplateSpec | None, **kwargs) -> None:
+        """
+        Validate a fetch target `digest` value (`<algo>:<hex>`) when provided and not templated.
+        """
+        if value is None or isinstance(value, ConfigTemplateSpec):
+            return
+        if not isinstance(value, str):
+            raise ValidationError("Fetch target 'digest' must be a string.")
+        algo, sep, hex_val = value.partition(":")
+        if (
+            sep != ":"
+            or algo not in _FETCH_DIGEST_ALGOS
+            or not hex_val
+            or re.fullmatch(r"[0-9a-fA-F]+", hex_val) is None
+        ):
+            raise ValidationError("Invalid 'digest' format; expected '<algo>:<hex>'.")
+
+    @validates_schema
+    def validate_fetch_target(self, data: dict[str, Any], **kwargs) -> None:
+        """
+        Validate cross-field constraints between `url`, `revision`, `digest`, and `archive`.
+        """
+        raw_url = data.get("url")
+        url = raw_url.value if isinstance(raw_url, ConfigTemplateSpec) else raw_url
+        revision = data.get("revision")
+        digest = data.get("digest")
+        archive = data.get("archive", False) is True
+
+        if isinstance(url, str) and url.startswith("cheribuild://"):
+            if archive:
+                raise ValidationError(
+                    "cheribuild:// fetch target cannot set 'archive' to True."
+                )
+            if digest is not None:
+                raise ValidationError(
+                    "cheribuild:// fetch target must not specify 'digest'."
+                )
+            if revision is None:
+                raise ValidationError("cheribuild:// fetch target requires 'revision'.")
+            return
+
+        if archive or digest is not None:
+            if not isinstance(raw_url, ConfigTemplateSpec) and not (
+                isinstance(url, str) and url.startswith(_FETCH_DOWNLOAD_URL_PREFIXES)
+            ):
+                raise ValidationError(
+                    f"Unsupported download/archive fetch URL '{url}'."
+                )
+            if digest is None:
+                raise ValidationError(
+                    "Archive fetch target requires 'digest' in '<algo>:<hex>' format."
+                )
+            if revision is not None:
+                raise ValidationError(
+                    "Fetch target must not specify both 'revision' and 'digest'."
+                )
+            return
+
+        if revision is None:
+            raise ValidationError("Git repository fetch target requires 'revision'.")
+
+
+@dc.dataclass
+class CheribuildDeployConfig(Config):
+    """
+    Cheribuild targets and embedded `cheribuild.json` configuration options.
+    """
+
+    targets: list[str] = config_field(
+        list,
+        desc="Ordered list of cheribuild targets to build during deployment.",
+    )
+    config: dict[str, ConfigAny] = config_field(
+        dict,
+        desc="Embedded cheribuild JSON configuration options merged into the session cheribuild.json.",
+    )
+
+
+class DistHandler(Enum):
+    """
+    Image or archive assembly backend for deployment distribution artefacts.
+    """
+
+    CHERIBUILD = "cheribuild"
+    BSD_ROOTFS_ARCHIVE = "bsd-rootfs-archive"
+
+    def __str__(self) -> str:
+        return self.value
+
+
+@dc.dataclass
+class DistStrategyConfig(Config):
+    """
+    Strategy describing how a deployment distribution artefact is assembled.
+    """
+
+    handler: DistHandler = config_field(
+        Config.REQUIRED,
+        by_value=True,
+        desc="Image assembly backend (`cheribuild` or `bsd-rootfs-archive`).",
+    )
+    target: str = config_field(
+        Config.REQUIRED,
+        desc="For `cheribuild`: image target (e.g. `disk-image-aarch64`). "
+        "For `bsd-rootfs-archive`: rootfs target whose install-directory is archived.",
+    )
+    output_name: str | None = config_field(
+        None,
+        desc="Optional output filename under `deploy/dist/`; defaults to `<dist_id>.img` or `<dist_id>.tar.zst`.",
+    )
+
+    @validates("target")
+    def validate_target(self, data: str | ConfigTemplateSpec, **kwargs) -> None:
+        """
+        Ensure the strategy target name is not empty.
+        """
+        target = data.value if isinstance(data, ConfigTemplateSpec) else data
+        if not isinstance(target, str) or not target.strip():
+            raise ValidationError("Distribution strategy 'target' must not be empty.")
+
+
+@dc.dataclass
+class DistTargetConfig(Config):
+    """
+    Define a deployable system image or rootfs archive under `deploy/dist/`.
+    """
+
+    strategy: DistStrategyConfig = config_field(
+        Config.REQUIRED,
+        desc="How to assemble this distribution artefact.",
+    )
+    bundle_session: bool = config_field(
+        True,
+        desc="Copy generated session `run/` scripts, `assets/`, and `session-run.json` into `remote_session_path` inside the image.",
+    )
+    enable_autorun: bool | None = config_field(
+        None,
+        desc="Install autorun rc hooks in this image; defaults to True when `deploy.autorun.mode != 'manual'`.",
+    )
+    command_hooks: dict[str, list[str]] = config_field(
+        dict,
+        validate=ContainsOnly(["pre_dist", "post_dist"]),
+        desc="Shell commands executed before (`pre_dist`) or after (`post_dist`) assembling this artefact.",
+    )
+
+
+@dc.dataclass
+class DeployConfig(Config):
+    """
+    Session deployment, source pinning, build, and target system mapping configuration.
+    """
+
+    autorun: AutorunCommonConfig = config_field(
+        AutorunCommonConfig,
+        desc="Common autorun and result-bundling configuration.",
+    )
+    system: list[DeploySystemConfig] = config_field(
+        list,
+        desc="Parameterisation-to-system target mappings.",
+    )
+    fetch: dict[str, FetchTargetConfig] = config_field(
+        dict,
+        desc="External git repositories, `cheribuild://` projects, and archives to fetch and pin.",
+    )
+    cheribuild: CheribuildDeployConfig | None = config_field(
+        None,
+        desc="Cheribuild targets and embedded cheribuild.json configuration.",
+    )
+    command_hooks: dict[str, list[str]] = config_field(
+        dict,
+        validate=ContainsOnly(["post_fetch", "pre_build", "post_build"]),
+        desc="Shell commands executed at global deployment phases.",
+    )
+    dist: dict[str, DistTargetConfig] = config_field(
+        dict,
+        desc="Deployable system artefacts keyed by `run_on` identifier.",
+    )
+
+    @validates_schema
+    def validate_deploy(self, data: dict[str, Any], **kwargs) -> None:
+        """
+        Validate cross-field references in deployment configuration.
+        """
+        dist = data.get("dist") or {}
+        systems = data.get("system") or []
+        for sys_entry in systems:
+            run_on = sys_entry.run_on
+            if run_on is None or isinstance(run_on, ConfigTemplateSpec):
+                continue
+            if run_on not in dist:
+                raise ValidationError(
+                    f"Deploy system '{sys_entry.name}' references unknown dist target '{run_on}'."
+                )
+
+
 @dc.dataclass
 class TaskTargetConfig(Config):
     """
@@ -1703,9 +2064,12 @@ class BenchmarkRunConfig(CommonBenchmarkConfig):
         dict, desc="Parameterisation tuple for this benchmark run."
     )
 
-    #: Instance configuration
-    instance: InstanceConfig | None = config_field(
-        None, desc="Resolved host configuration"
+    #: XXX DEPRECATED: Retained for compatibility with legacy instance configurations
+    instance: InstanceConfig | None = config_field(None, desc="DEPRECATED")
+
+    #: Resolved deployment target system mapping
+    system_target: DeploySystemConfig | None = config_field(
+        None, desc="Resolved target system mapping"
     )
 
     def __str__(self):
@@ -1715,6 +2079,10 @@ class BenchmarkRunConfig(CommonBenchmarkConfig):
             return (
                 f"{self.name} ({self.uuid}/{self.g_uuid}) on {self.instance} "
                 + common_info
+            )
+        elif self.system_target:
+            return (
+                f"{self.name} ({self.uuid}) on {self.system_target.name} " + common_info
             )
         else:
             return f"unallocated {self.name} ({self.uuid}) " + common_info
@@ -1788,9 +2156,13 @@ class CommonSessionConfig(Config):
     #: Path to the session directory tree in the benchmark host
     remote_session_path: ConfigPath = Path("/opt/benchmark-output")
 
-    #: Tar and base64-encode the benchmark results to stdout.
-    #: This is useful if the benchmark host does not support a filesystem output.
+    #: XXX DEPRECATED: Legacy result bundling flag; superseded by deploy.autorun.bundle_results
     bundle_results: bool = False
+
+    #: Session deployment and target system mapping configuration
+    deploy: DeployConfig | None = config_field(
+        None, desc="Session deployment and target system mapping configuration"
+    )
 
     def __post_init__(self):
         super().__post_init__()
@@ -1837,8 +2209,7 @@ class SessionRunConfig(CommonSessionConfig):
     #: Session unique ID
     uuid: UUIDStr = dc.field(default_factory=make_uuid)
 
-    #: Snapshots of the relevant git repositories that should be syncronised to this session
-    #: These are taken when the session is created.
+    #: XXX DEPRECATED: Retained for loading legacy session-run.json files
     git_sha: Dict[str, str] = dc.field(default_factory=dict)
 
     #: Session name, defaults to the session UUID
@@ -1874,8 +2245,12 @@ class SessionRunConfig(CommonSessionConfig):
         for bench_conf in new_config.configurations:
             bench_ctx = ctx.clone()
             bench_ctx.add_namespace(bench_conf, "benchmark")
-            # Shorthand for the corresponding instance configuration
-            bench_ctx.add_namespace(bench_conf.instance, "instance")
+            # Shorthand for the corresponding target system configuration
+            # XXX DEPRECATED: Expose legacy `instance` namespace for templates
+            if bench_conf.instance is not None:
+                bench_ctx.add_namespace(bench_conf.instance, "instance")
+            if bench_conf.system_target is not None:
+                bench_ctx.add_namespace(bench_conf.system_target, "system_target")
             # Ensure that the benchmark parameters are not themselves parameterized
             bench_conf.bind_parameters(bench_ctx.clone())
             # Register parameterization keys, note that these may happen shadow
@@ -1887,7 +2262,7 @@ class SessionRunConfig(CommonSessionConfig):
         return new_config
 
     @classmethod
-    def _match_params(cls, params: dict[str, Any], matcher: dict[str, str]) -> bool:
+    def _match_params(cls, params: dict[str, Any], matcher: dict[str, Any]) -> bool:
         """
         Check whether a given set of parameters satisfies a matcher dictionary.
 
@@ -1917,10 +2292,22 @@ class SessionRunConfig(CommonSessionConfig):
     @classmethod
     def _match_system_config(
         cls, params: dict, configs: list[SystemConfig]
-    ) -> SystemConfig | None:
+    ) -> InstanceConfig | None:
         for sys_conf in configs:
             if cls._match_params(params, sys_conf.matches):
                 return sys_conf.host_system
+        return None
+
+    @classmethod
+    def _match_deploy_system_config(
+        cls, params: dict, configs: list[DeploySystemConfig]
+    ) -> DeploySystemConfig | None:
+        """
+        Match a parameter combination against deployment system target descriptors in order.
+        """
+        for sys_conf in configs:
+            if cls._match_params(params, sys_conf.matches):
+                return sys_conf
         return None
 
     @classmethod
@@ -1945,7 +2332,7 @@ class SessionRunConfig(CommonSessionConfig):
 
         If the "target" parameterization level is explicitly present, use its value as is.
         If the "target" level is not given, it is generated by assigning it
-        the system configuration UUID.
+        the resolved target system name.
 
         :param user_config: The user configuration for the local machine setup.
         :param config: The :class:`PipelineConfig` to use.
@@ -1956,22 +2343,66 @@ class SessionRunConfig(CommonSessionConfig):
         sorted_params = OrderedDict(bench_config.parameterize)
         logger.info("Create new session %s: %s", session.uuid, bench_config.desc)
 
-        # Host system names must be unique, warn if this is not the case.
-        # It might be useful to have multiple matchers for the same system, so
-        # don't make this an error.
-        host_system_names = set()
-        # Assign dataset g_uuids for backward-compatibility only
-        host_system_uuids = {}
-        for sys_config in bench_config.system:
-            name = sys_config.host_system.name
-            if name in host_system_names:
-                logger.warning(
-                    "Host system matcher '%s' has duplicate host system name '%s'",
-                    sys_config.matches,
-                    name,
+        if config.deploy is not None:
+            session.deploy = DeployConfig.copy(config.deploy)
+            # XXX DEPRECATED: Merge legacy benchmark.system into deploy.system when deploy.system is omitted
+            if not session.deploy.system and bench_config.system:
+                session.deploy.system = [
+                    DeploySystemConfig(
+                        name=s.host_system.name,
+                        matches=copy.deepcopy(s.matches),
+                        autorun=SystemAutorunMatchConfig(
+                            kernel=s.host_system.kernel,
+                            bootenv=s.host_system.bootenv,
+                            arch=s.host_system.arch,
+                        ),
+                    )
+                    for s in bench_config.system
+                ]
+            # XXX DEPRECATED: Sync legacy CommonSessionConfig.bundle_results from deploy.autorun
+            if session.deploy.autorun.bundle_results:
+                session.bundle_results = True
+        elif bench_config.system or config.bundle_results:
+            # XXX DEPRECATED: Synthesize deploy from legacy benchmark.system and bundle_results
+            synthesized_systems = [
+                DeploySystemConfig(
+                    name=s.host_system.name,
+                    matches=copy.deepcopy(s.matches),
+                    autorun=SystemAutorunMatchConfig(
+                        kernel=s.host_system.kernel,
+                        bootenv=s.host_system.bootenv,
+                        arch=s.host_system.arch,
+                    ),
                 )
-            host_system_names.add(name)
-            host_system_uuids[name] = uuid4()
+                for s in bench_config.system
+            ]
+            session.deploy = DeployConfig(
+                autorun=AutorunCommonConfig(bundle_results=config.bundle_results),
+                system=synthesized_systems,
+            )
+
+        # Host system names should be unique; warn if duplicate matchers share a name.
+        host_system_names = set()
+        if config.deploy is not None and config.deploy.system:
+            for sys_config in session.deploy.system:
+                if sys_config.name in host_system_names:
+                    logger.warning(
+                        "Deploy system matcher '%s' has duplicate system name '%s'",
+                        sys_config.matches,
+                        sys_config.name,
+                    )
+                host_system_names.add(sys_config.name)
+        else:
+            # XXX DEPRECATED: Duplicate-name check for legacy benchmark.system entries
+            for sys_config in bench_config.system:
+                name = sys_config.host_system.name
+                if name in host_system_names:
+                    logger.warning(
+                        "Host system matcher '%s' has duplicate host system name '%s'",
+                        sys_config.matches,
+                        name,
+                    )
+                host_system_names.add(name)
 
         # Generate all parameter combinations
         logger.debug("Generate parameterization for '%s'", bench_config.name)
@@ -1985,8 +2416,39 @@ class SessionRunConfig(CommonSessionConfig):
             run_config = BenchmarkRunConfig.from_common_conf(bench_config)
             run_config.parameters = parameters.copy()
             # Resolve system configuration
-            if bench_config.system:
+            sys_target: DeploySystemConfig | None = None
+            if config.deploy is not None and config.deploy.system:
+                sys_target = cls._match_deploy_system_config(
+                    parameters, session.deploy.system
+                )
+                if sys_target is None:
+                    logger.error(
+                        "Missing system configuration for parameter combination %s",
+                        parameters,
+                    )
+                    raise ConfigurationError("Invalid configuration")
+                if "target" not in parameters:
+                    run_config.parameters["target"] = sys_target.name
+                # XXX DEPRECATED: Synthesize InstanceConfig for callers still reading BenchmarkRunConfig.instance
+                host_system = InstanceConfig(
+                    name=sys_target.name,
+                    kernel=sys_target.autorun.kernel
+                    if sys_target.autorun
+                    else "GENERIC",
+                    bootenv=sys_target.autorun.bootenv if sys_target.autorun else None,
+                    arch=(
+                        sys_target.autorun.arch
+                        if sys_target.autorun and sys_target.autorun.arch is not None
+                        else PlatformArch.NATIVE
+                    ),
+                )
+            elif bench_config.system:
+                # XXX DEPRECATED: Resolve legacy benchmark.system entry
                 host_system = cls._match_system_config(parameters, bench_config.system)
+                if session.deploy and session.deploy.system:
+                    sys_target = cls._match_deploy_system_config(
+                        parameters, session.deploy.system
+                    )
                 if host_system is None:
                     logger.error(
                         "Missing system configuration for parameter combination %s",
@@ -1997,6 +2459,7 @@ class SessionRunConfig(CommonSessionConfig):
                     # Generate the target parameter, if not specified
                     run_config.parameters["target"] = host_system.name
             else:
+                # XXX DEPRECATED: Default native InstanceConfig fallback when no system is configured
                 host_system = InstanceConfig.native()
                 # Require the target parameter as it can not be generated
                 if "target" not in parameters:
@@ -2032,21 +2495,11 @@ class SessionRunConfig(CommonSessionConfig):
                     )
 
             run_config.uuid = uuid4()
+            # XXX DEPRECATED: Populate BenchmarkRunConfig.instance for backward compatibility
             run_config.instance = InstanceConfig.copy(host_system)
+            if sys_target is not None:
+                run_config.system_target = DeploySystemConfig.copy(sys_target)
             session.configurations.append(run_config)
-
-        # Snapshot all repositories we care about, if they are present.
-        # Note that we should support snapshot hooks in the configured tasks.
-        def snap_head(repo_path, key):
-            if repo_path.exists():
-                session.git_sha[key] = Repo(repo_path).head.commit.hexsha
-            else:
-                logger.warning("No %s repository, skip SHA snapshot", key)
-
-        snap_head(user_config.cheribuild_path, "cheribuild")
-        snap_head(user_config.cheribsd_path, "cheribsd")
-        snap_head(user_config.qemu_path, "qemu")
-        snap_head(user_config.llvm_path, "llvm")
 
         # Now that we are done with generating the configuration, resolve all
         # templates that do not involve the user configuration
