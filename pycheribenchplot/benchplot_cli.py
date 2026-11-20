@@ -342,7 +342,7 @@ class TaskInfoSubCommand(SubCommand):
         Emit human-readable description of a benchmark context.
         """
         c = bench.config
-        print(f"\t{c.name} ({c.uuid}) on {c.instance}")
+        print(f"\t{c.name} ({c.uuid}) on {bench.target_name}")
         print("\t\tParameterization:")
         for pk, pv in c.parameters.items():
             print(f"\t\t - {pk} = {pv}")

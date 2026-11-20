@@ -1452,9 +1452,9 @@ class AutorunCommonConfig(Config):
         False,
         desc="Tar and base64-encode benchmark results to stdout upon completion.",
     )
-    settle_delay: int | None = config_field(
-        None,
-        desc="Optional delay in seconds before starting benchmark execution after boot.",
+    settle_delay: int = config_field(
+        5,
+        desc="Delay in seconds before starting benchmark execution after boot.",
     )
     reboot: bool = config_field(
         False,
@@ -1763,6 +1763,21 @@ class DeployConfig(Config):
         dict,
         desc="Deployable system artefacts keyed by `run_on` identifier.",
     )
+
+    @validates("system")
+    def validate_system(self, value: list[DeploySystemConfig], **kwargs) -> None:
+        """
+        Validate that deploy system entries have unique names.
+        """
+        seen_names: set[str] = set()
+        for sys_entry in value:
+            if isinstance(sys_entry.name, ConfigTemplateSpec):
+                continue
+            if sys_entry.name in seen_names:
+                raise ValidationError(
+                    f"Duplicate deploy system name '{sys_entry.name}'."
+                )
+            seen_names.add(sys_entry.name)
 
     @validates_schema
     def validate_deploy(self, data: dict[str, Any], **kwargs) -> None:
@@ -2381,19 +2396,9 @@ class SessionRunConfig(CommonSessionConfig):
                 system=synthesized_systems,
             )
 
-        # Host system names should be unique; warn if duplicate matchers share a name.
-        host_system_names = set()
-        if config.deploy is not None and config.deploy.system:
-            for sys_config in session.deploy.system:
-                if sys_config.name in host_system_names:
-                    logger.warning(
-                        "Deploy system matcher '%s' has duplicate system name '%s'",
-                        sys_config.matches,
-                        sys_config.name,
-                    )
-                host_system_names.add(sys_config.name)
-        else:
-            # XXX DEPRECATED: Duplicate-name check for legacy benchmark.system entries
+        # XXX DEPRECATED: Duplicate-name check for legacy benchmark.system entries
+        if not (config.deploy is not None and config.deploy.system):
+            host_system_names = set()
             for sys_config in bench_config.system:
                 name = sys_config.host_system.name
                 if name in host_system_names:
@@ -2417,6 +2422,7 @@ class SessionRunConfig(CommonSessionConfig):
             run_config.parameters = parameters.copy()
             # Resolve system configuration
             sys_target: DeploySystemConfig | None = None
+            host_system: InstanceConfig | None = None
             if config.deploy is not None and config.deploy.system:
                 sys_target = cls._match_deploy_system_config(
                     parameters, session.deploy.system
@@ -2429,19 +2435,6 @@ class SessionRunConfig(CommonSessionConfig):
                     raise ConfigurationError("Invalid configuration")
                 if "target" not in parameters:
                     run_config.parameters["target"] = sys_target.name
-                # XXX DEPRECATED: Synthesize InstanceConfig for callers still reading BenchmarkRunConfig.instance
-                host_system = InstanceConfig(
-                    name=sys_target.name,
-                    kernel=sys_target.autorun.kernel
-                    if sys_target.autorun
-                    else "GENERIC",
-                    bootenv=sys_target.autorun.bootenv if sys_target.autorun else None,
-                    arch=(
-                        sys_target.autorun.arch
-                        if sys_target.autorun and sys_target.autorun.arch is not None
-                        else PlatformArch.NATIVE
-                    ),
-                )
             elif bench_config.system:
                 # XXX DEPRECATED: Resolve legacy benchmark.system entry
                 host_system = cls._match_system_config(parameters, bench_config.system)
@@ -2459,8 +2452,6 @@ class SessionRunConfig(CommonSessionConfig):
                     # Generate the target parameter, if not specified
                     run_config.parameters["target"] = host_system.name
             else:
-                # XXX DEPRECATED: Default native InstanceConfig fallback when no system is configured
-                host_system = InstanceConfig.native()
                 # Require the target parameter as it can not be generated
                 if "target" not in parameters:
                     logger.error(
@@ -2495,8 +2486,9 @@ class SessionRunConfig(CommonSessionConfig):
                     )
 
             run_config.uuid = uuid4()
-            # XXX DEPRECATED: Populate BenchmarkRunConfig.instance for backward compatibility
-            run_config.instance = InstanceConfig.copy(host_system)
+            if host_system is not None:
+                # XXX DEPRECATED: Populate BenchmarkRunConfig.instance for backward compatibility
+                run_config.instance = InstanceConfig.copy(host_system)
             if sys_target is not None:
                 run_config.system_target = DeploySystemConfig.copy(sys_target)
             session.configurations.append(run_config)

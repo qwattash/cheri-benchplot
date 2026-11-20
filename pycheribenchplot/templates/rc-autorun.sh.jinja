@@ -12,8 +12,8 @@ rcvar=benchplot_enable
 load_rc_config $name
 : ${benchplot_enable:="NO"}
 : ${benchplot_session:=""}
-: ${benchplot_user:="root"}
-: ${benchplot_settle_delay:=""}
+: ${benchplot_user:="{{ autorun_common.user }}"}
+: ${benchplot_settle_delay:="{{ autorun_common.settle_delay }}"}
 
 pidfile="/var/run/${name}.pid"
 autorun_script="${benchplot_session}/auto-run.sh"

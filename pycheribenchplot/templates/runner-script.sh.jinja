@@ -13,7 +13,14 @@ set -e
 {% endmacro -%}
 
 echo "Run benchmark configuration ID={{ dataset_id }} with {{ iterations }} iterations."
+{% if system_target %}
+echo "Target '{{ system_target.name }}'"
+{% elif instance %}
+{# XXX DEPRECATED: Legacy InstanceConfig fallback #}
 echo "Instance '{{ instance.name }}'"
+{% elif 'target' in parameters %}
+echo "Target '{{ parameters['target'] }}'"
+{% endif %}
 echo "Parameters:"
 {% for pkey, pval in parameters.items() -%}
     echo -e "\t{{ pkey }}='{{ pval }}'"
@@ -75,9 +82,13 @@ echo "Parameters:"
     {% endblock iteration_setup -%}
 
     {%- block iteration_exec scoped %}
-      {% for hook in iter_exec_hooks %}
-        {{ gen_iter_hook("exec", current_iteration, hook) }}
-      {% endfor %}
+      {% if iter_exec_hooks %}
+        {% for hook in iter_exec_hooks %}
+          {{ gen_iter_hook("exec", current_iteration, hook) }}
+        {% endfor %}
+      {% elif not iter_setup_hooks and not iter_teardown_hooks %}
+        :
+      {% endif %}
     {% endblock iteration_exec -%}
 
     {%- block iteration_teardown scoped %}

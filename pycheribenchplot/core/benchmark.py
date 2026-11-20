@@ -131,7 +131,19 @@ class Benchmark:
     def __init__(self, session: Session, config: BenchmarkRunConfig):
         self.session = session
         self.config = config
-        self.logger = new_logger(f"{self.config.name}:{self.config.instance.name}")
+        self.logger = new_logger(f"{self.config.name}:{self.target_name}")
+
+    @property
+    def target_name(self) -> str:
+        """
+        Human-readable target system name for this benchmark context.
+        """
+        if self.config.system_target is not None:
+            return self.config.system_target.name
+        if self.config.instance is not None:
+            # XXX DEPRECATED: Fall back to legacy InstanceConfig
+            return self.config.instance.name
+        return str(self.config.parameters.get("target", "local"))
 
     def __str__(self):
         return f"{self.config.name}({self.uuid})"
@@ -220,10 +232,7 @@ class Benchmark:
         :return: Path for archiving binaries used in the run but belonging to the instance.
             This avoids duplication.
         """
-        return (
-            self.session.get_asset_root_path()
-            / f"{self.config.instance.name}-{self.g_uuid}"
-        )
+        return self.session.get_asset_root_path() / f"{self.target_name}-{self.g_uuid}"
 
     def get_plot_path(self) -> Path:
         """

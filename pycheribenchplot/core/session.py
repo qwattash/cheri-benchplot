@@ -6,7 +6,7 @@ import subprocess
 import tarfile
 from collections import defaultdict
 from pathlib import Path
-from typing import Type
+from typing import Any, Type
 from uuid import UUID
 
 import polars as pl
@@ -716,12 +716,102 @@ class Session:
             shutil.rmtree(plot_root)
         self._ensure_dir_tree()
 
+    def _render_script(self, template: str, dst: Path, context: dict[str, Any]) -> None:
+        ctx = TemplateContextBase(self.logger)
+        ctx.set_template(template)
+        ctx.extend_context(context)
+        with open(dst, "w+") as script_file:
+            ctx.render(script_file)
+        dst.chmod(0o755)
+
+    def _generate_target_scripts(self) -> None:
+        data_root = self.get_data_root_path()
+        # XXX DEPRECATED: Fall back to legacy CommonSessionConfig.bundle_results
+        bundle_results = (
+            self.config.deploy.autorun.bundle_results or self.config.bundle_results
+        )
+        autorun_targets = []
+        for (target,), section in self.parameterization_matrix.group_by("target"):
+            workdirs = [
+                bench.get_benchmark_data_path().relative_to(data_root)
+                for bench in section["descriptor"]
+            ]
+            run_target = re.sub(r"[\s/]", "-", target)
+            script_path = data_root / f"run-target-{run_target}.sh"
+            self._render_script(
+                "run-target.sh.jinja",
+                script_path,
+                {
+                    "target": target,
+                    "workload_run_script": self.workload_run_script,
+                    "workload_workdirs": workdirs,
+                    "workload_done_file": self.workload_done_file,
+                    "bundle_results": bundle_results,
+                },
+            )
+
+            sys_target = section["descriptor"].first().config.system_target
+            if sys_target.autorun is None:
+                self.logger.info(
+                    "Target '%s' has no autorun configuration, skipping in auto-run.sh",
+                    target,
+                )
+                continue
+            autorun_targets.append(
+                {
+                    "system": sys_target,
+                    "autorun": sys_target.autorun,
+                    "run_script": script_path.relative_to(data_root),
+                }
+            )
+
+        if not autorun_targets:
+            self.logger.debug(
+                "Session %s has no autorun system targets; skipping autorun scripts",
+                self.name,
+            )
+            return
+
+        autorun_common = self.config.deploy.autorun
+        self._render_script(
+            "autorun.sh.jinja",
+            data_root / "auto-run.sh",
+            {
+                "autorun_targets": autorun_targets,
+                "autorun_common": autorun_common,
+                "session": self.config.name,
+                "single_user": False,
+            },
+        )
+        self._render_script(
+            "rc-autorun.sh.jinja",
+            data_root / "rc-autorun.sh",
+            {
+                "session": self.config.name,
+                "autorun_common": autorun_common,
+            },
+        )
+        self._render_script(
+            "rc-local.sh.jinja",
+            data_root / "rc.local",
+            {
+                "session": self.config.name,
+                "autorun_common": autorun_common,
+            },
+        )
+
     def generate(self, scheduler: TaskScheduler, clean: bool = False):
         """
         Run the session execution generators.
 
-        This will run the tasks configured as "generators" in the configuration to
-        produce shell scripts in the session directories.
+        Script generation operates across three progressive tiers:
+        1. Per-benchmark workload scripts (`run/<bench>-<uuid>/runner-script.sh`)
+           are always generated via the configured execution tasks.
+        2. When `deploy.system` is configured, per-target group scripts
+           (`run/run-target-<target>.sh`) are generated.
+        3. When at least one `deploy.system` entry defines `autorun`, boot-time
+           autorun scripts (`run/auto-run.sh`, `run/rc-autorun.sh`, and
+           `run/rc.local`) are also generated.
 
         :param scheduler: The task scheduler to use for execution.
         :param clean: If True, wipe all outputs before generating.
@@ -729,75 +819,13 @@ class Session:
         if clean:
             self.clean_all()
 
-        # Generate top-level runner scripts to run benchmark groups on different systems
-        # These are generated according to :attr:`PipelineBenchmarkConfig.system`
-        # specification.
-        data_root = self.get_data_root_path()
-        autorun_info_by_arch = defaultdict(list)
-        for (target,), section in self.parameterization_matrix.group_by("target"):
-            workdirs = [
-                bench.get_benchmark_data_path().relative_to(data_root)
-                for bench in section["descriptor"]
-            ]
-            ctx = TemplateContextBase(self.logger)
-            ctx.set_template("run-target.sh.jinja")
-            ctx.extend_context(
-                {
-                    "target": target,
-                    "workload_run_script": self.workload_run_script,
-                    "workload_workdirs": workdirs,
-                    "workload_done_file": self.workload_done_file,
-                    "bundle_results": self.config.bundle_results,
-                }
+        if self.config.deploy is not None and self.config.deploy.system:
+            self._generate_target_scripts()
+        else:
+            self.logger.debug(
+                "Session %s has no deploy.system targets; skipping target and autorun scripts",
+                self.name,
             )
-            run_target = re.sub(r"[\s/]", "-", target)
-            script_path = self.get_data_root_path() / f"run-target-{run_target}.sh"
-            with open(script_path, "w+") as script_file:
-                ctx.render(script_file)
-            script_path.chmod(0o755)
-
-            # Remember this target-wide runner script associated to its arch
-            # Note: all descriptors for a target should run on the same host
-            # machine arch. This is the entire point of the `target` axis.
-            desc = section["descriptor"].first()
-            arch = desc.config.instance.arch
-            assert all([d.config.instance.arch == arch for d in section["descriptor"]])
-            autorun_info_by_arch[arch].append(
-                {
-                    "instance": desc.config.instance,
-                    "run_script": script_path.relative_to(data_root),
-                }
-            )
-
-        ctx = TemplateContextBase(self.logger)
-        ctx.set_template("autorun.sh.jinja")
-        ctx.extend_context(
-            {
-                "autorun_info": autorun_info_by_arch,
-                "session": self.config.name,
-                "single_user": False,
-            }
-        )
-        autorun_path = data_root / "auto-run.sh"
-        with open(autorun_path, "w+") as script_file:
-            ctx.render(script_file)
-        autorun_path.chmod(0o755)
-
-        ctx = TemplateContextBase(self.logger)
-        ctx.set_template("rc-autorun.sh.jinja")
-        ctx.extend_context({"session": self.config.name})
-        autorun_rc_path = data_root / "rc-autorun.sh"
-        with open(autorun_rc_path, "w+") as script_file:
-            ctx.render(script_file)
-        autorun_rc_path.chmod(0o755)
-
-        ctx = TemplateContextBase(self.logger)
-        ctx.set_template("rc-local.sh.jinja")
-        ctx.extend_context({"session": self.config.name})
-        autorun_rc_path = data_root / "rc.local"
-        with open(autorun_rc_path, "w+") as script_file:
-            ctx.render(script_file)
-        autorun_rc_path.chmod(0o755)
 
         # Schedule generators according to the collected descriptors
         for descriptor in self.parameterization_matrix["descriptor"]:

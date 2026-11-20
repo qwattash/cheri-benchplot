@@ -361,7 +361,8 @@ class BootstrapAnalysisTask(AnalysisTask):
             if "instance" in baseline_sel:
                 name = baseline_sel["instance"]
                 for b in self.session.all_benchmarks():
-                    if b.config.instance.name == name:
+                    # XXX DEPRECATED: Legacy baseline selection by InstanceConfig name
+                    if b.config.instance is not None and b.config.instance.name == name:
                         baseline_sel["dataset_gid"] = b.config.g_uuid
                         del baseline_sel["instance"]
                         break

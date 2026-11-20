@@ -246,8 +246,7 @@ class TaskScheduler:
         for failed in self.failed_tasks:
             task_details = []
             if isinstance(failed, DatasetTask):
-                iconf = failed.benchmark.config.instance
-                task_details.append(f"on {iconf}")
+                task_details.append(f"on {failed.benchmark.target_name}")
                 task_details.append(f"params: {failed.benchmark.parameters}")
             logger.error(
                 "Task %s.%s failed %s",

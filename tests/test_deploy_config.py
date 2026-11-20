@@ -215,7 +215,7 @@ def test_deploy_config_defaults():
 
     assert cfg.autorun.mode == AutorunMode.MANUAL
     assert cfg.autorun.bundle_results is False
-    assert cfg.autorun.settle_delay is None
+    assert cfg.autorun.settle_delay == 5
     assert cfg.autorun.reboot is False
     assert cfg.autorun.user == "root"
     assert cfg.system == []
@@ -278,6 +278,19 @@ def test_parse_full_deploy_config(full_deploy_dict: dict):
     )
     assert cfg.dist["morello-rootfs"].bundle_session is False
     assert cfg.dist["morello-rootfs"].enable_autorun is False
+
+
+def test_deploy_duplicate_system_name_rejected():
+    """Verify DeployConfig rejects duplicate DeploySystemConfig names."""
+    with pytest.raises(ValidationError, match="Duplicate deploy system name 'dup'"):
+        DeployConfig.schema().load(
+            {
+                "system": [
+                    {"name": "dup", "matches": {"abi": "nocheri"}},
+                    {"name": "dup", "matches": {"abi": "purecap"}},
+                ]
+            }
+        )
 
 
 def test_deploy_unknown_run_on_rejected(full_deploy_dict: dict):

@@ -149,6 +149,9 @@ class ScriptContext(TemplateContextBase):
         self._context = {
             "dataset_id": benchmark.uuid,
             "iterations": benchmark.config.iterations,
+            "system_target": benchmark.config.system_target,
+            "target_name": benchmark.target_name,
+            # XXX DEPRECATED: Retained for templates still referencing `instance`
             "instance": benchmark.config.instance,
             "parameters": benchmark.parameters,
             "setup_hooks": [],

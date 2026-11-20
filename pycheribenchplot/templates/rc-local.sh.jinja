@@ -2,6 +2,8 @@
 
 . /etc/rc.subr
 
+name="benchplot"
+
 info "cheri-benchplot rc.local {{ session }}"
 
 # Ensure that we have a kernel file, this is necessary for hwpmc
@@ -11,13 +13,14 @@ if [ ! -f /boot/kernel/kernel ]; then
     touch /boot/kernel/kernel
 fi
 
-load_rc_config
+load_rc_config benchplot
 : ${benchplot_enable:="NO"}
 : ${benchplot_session:=""}
-: ${benchplot_user:="root"}
-: ${benchplot_settle_delay:=""}
-: ${benchplot_reboot:="NO"}
+: ${benchplot_user:="{{ autorun_common.user }}"}
+: ${benchplot_settle_delay:="{{ autorun_common.settle_delay }}"}
+: ${benchplot_reboot:="{{ 'YES' if autorun_common.reboot else 'NO' }}"}
 
+_delay_arg=""
 if [ -n "${benchplot_settle_delay}" ]; then
     _delay_arg="-k ${benchplot_settle_delay}"
 fi
@@ -29,20 +32,25 @@ if [ "${benchplot_enable}" = "NO" ]; then
 fi
 
 if [ ! -d "${benchplot_session}" ]; then
-	err 1 "${benchplot_session} is not a directory."
+    err 1 "${benchplot_session} is not a directory."
 fi
 
 if [ ! -x "${autorun_script}" ]; then
-	err 1 "Autorun script '${autorun_script}' not found or not executable."
+    err 1 "Autorun script '${autorun_script}' not found or not executable."
 fi
 
 info "Autorun benchplot session at ${benchplot_session}"
+NOREBOOT=""
 if [ "${benchplot_reboot}" = "NO" ]; then
     NOREBOOT="-n"
 fi
 
 # -n prevents auto-reboot
-(cd ${benchplot_session} && ${autorun_script} ${NOREBOOT} ${_delay_arg})
+if [ "${benchplot_user}" != "root" ]; then
+    su -m "${benchplot_user}" -c "cd '${benchplot_session}' && '${autorun_script}' ${NOREBOOT} ${_delay_arg}"
+else
+    (cd "${benchplot_session}" && "${autorun_script}" ${NOREBOOT} ${_delay_arg})
+fi
 
 if [ "${benchplot_reboot}" = "NO" ]; then
     # Introduce some delay to let output buffers drain before poweroff
