@@ -679,6 +679,12 @@ class Session:
         """
         return self.session_root_path / "assets"
 
+    def get_deploy_root_path(self) -> Path:
+        """
+        :return: The root path for isolated deployment sources, builds, and images
+        """
+        return self.session_root_path / "deploy"
+
     def all_benchmarks(self) -> list[Benchmark]:
         """
         Helper method to iterate over benchmark contexts.
@@ -732,10 +738,9 @@ class Session:
         )
         autorun_targets = []
         for (target,), section in self.parameterization_matrix.group_by("target"):
-            workdirs = [
-                bench.get_benchmark_data_path().relative_to(data_root)
-                for bench in section["descriptor"]
-            ]
+            workdirs = []
+            for bench in section["descriptor"]:
+                workdirs.append(bench.get_benchmark_data_path().relative_to(data_root))
             run_target = re.sub(r"[\s/]", "-", target)
             script_path = data_root / f"run-target-{run_target}.sh"
             self._render_script(
@@ -863,11 +868,7 @@ class Session:
         self.logger.info("Session %s execution completed", self.name)
         scheduler.report_failures(self.logger)
 
-    def analyse(
-        self,
-        analysis_config: AnalysisConfig,
-        scheduler: TaskScheduler,
-    ):
+    def analyse(self, analysis_config: AnalysisConfig, scheduler: TaskScheduler):
         """
         Run the session analysis tasks requested.
         The analysis pipeline is slightly different from the execution pipeline.

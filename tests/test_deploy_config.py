@@ -8,6 +8,7 @@ from git import Actor, Repo
 from marshmallow import ValidationError
 
 from pycheribenchplot.core.config import (
+    AssembledDistTargetConfig,
     AutorunCommonConfig,
     AutorunMode,
     BenchplotUserConfig,
@@ -15,6 +16,8 @@ from pycheribenchplot.core.config import (
     ConfigContext,
     ConfigTemplateSpec,
     DeployConfig,
+    DeployConfigCommon,
+    DeployManifest,
     DeploySystemConfig,
     DistHandler,
     DistStrategyConfig,
@@ -210,9 +213,10 @@ def simple_deploy_dict() -> dict:
 
 
 def test_deploy_config_defaults():
-    """Verify default values when loading an empty DeployConfig."""
+    """Verify default values when loading an empty DeployConfig and DeployManifest."""
     cfg = DeployConfig.schema().load({})
-
+    assert isinstance(cfg, DeployConfigCommon)
+    assert not isinstance(cfg, DeployManifest)
     assert cfg.autorun.mode == AutorunMode.MANUAL
     assert cfg.autorun.bundle_results is False
     assert cfg.autorun.settle_delay == 5
@@ -224,9 +228,19 @@ def test_deploy_config_defaults():
     assert cfg.command_hooks == {}
     assert cfg.dist == {}
 
+    manifest = DeployManifest.schema().load({})
+    assert isinstance(manifest, DeployConfigCommon)
+    assert not isinstance(manifest, DeployConfig)
+    assert manifest.autorun.mode == AutorunMode.MANUAL
+    assert manifest.system == []
+    assert manifest.fetch == {}
+    assert manifest.cheribuild is None
+    assert manifest.command_hooks == {}
+    assert manifest.dist == {}
+
 
 def test_parse_full_deploy_config(full_deploy_dict: dict):
-    """Verify parsing of a full DeployConfig with all supported options and strategies."""
+    """Verify parsing of a full DeployConfig and DeployManifest with all supported options."""
     raw = full_deploy_dict
     cfg = DeployConfig.schema().load(raw)
 
@@ -279,11 +293,38 @@ def test_parse_full_deploy_config(full_deploy_dict: dict):
     assert cfg.dist["morello-rootfs"].bundle_session is False
     assert cfg.dist["morello-rootfs"].enable_autorun is False
 
+    # Plain DeployConfig shape also loads cleanly into DeployManifest with defaults
+    manifest_plain = DeployManifest.schema().load(raw)
+    assert isinstance(
+        manifest_plain.dist["aarch64-multikernel"], AssembledDistTargetConfig
+    )
+    assert manifest_plain.dist["aarch64-multikernel"].output_path is None
+    assert manifest_plain.dist["aarch64-multikernel"].config_hash is None
 
-def test_deploy_duplicate_system_name_rejected():
-    """Verify DeployConfig rejects duplicate DeploySystemConfig names."""
+    # Populated DeployManifest with AssembledDistTargetConfig fields
+    manifest_raw = {
+        **raw,
+        "dist": {
+            **raw["dist"],
+            "aarch64-multikernel": {
+                **raw["dist"]["aarch64-multikernel"],
+                "output_path": "dist/aarch64-multikernel.img",
+                "config_hash": "b" * 64,
+            },
+        },
+    }
+    manifest = DeployManifest.schema().load(manifest_raw)
+    assert manifest.dist["aarch64-multikernel"].output_path == Path(
+        "dist/aarch64-multikernel.img"
+    )
+    assert manifest.dist["aarch64-multikernel"].config_hash == "b" * 64
+
+
+@pytest.mark.parametrize("schema_cls", [DeployConfig, DeployManifest])
+def test_deploy_duplicate_system_name_rejected(schema_cls: type):
+    """Verify DeployConfig and DeployManifest reject duplicate or missing DeploySystemConfig names."""
     with pytest.raises(ValidationError, match="Duplicate deploy system name 'dup'"):
-        DeployConfig.schema().load(
+        schema_cls.schema().load(
             {
                 "system": [
                     {"name": "dup", "matches": {"abi": "nocheri"}},
@@ -292,18 +333,27 @@ def test_deploy_duplicate_system_name_rejected():
             }
         )
 
+    with pytest.raises(ValidationError):
+        schema_cls.schema().load({"system": [{"matches": {"abi": "nocheri"}}]})
 
-def test_deploy_unknown_run_on_rejected(full_deploy_dict: dict):
-    """Verify DeployConfig rejects system.run_on when target is missing from dist."""
+
+@pytest.mark.parametrize("schema_cls", [DeployConfig, DeployManifest])
+def test_deploy_unknown_run_on_rejected(full_deploy_dict: dict, schema_cls: type):
+    """Verify DeployConfig and DeployManifest reject system.run_on when target is missing from dist."""
     # Non-empty dist missing the referenced key
-    raw = full_deploy_dict
-    raw["system"][0]["run_on"] = "nonexistent-image"
+    raw = {
+        **full_deploy_dict,
+        "system": [
+            {**full_deploy_dict["system"][0], "run_on": "nonexistent-image"},
+            full_deploy_dict["system"][1],
+        ],
+    }
     with pytest.raises(ValidationError, match="unknown dist target"):
-        DeployConfig.schema().load(raw)
+        schema_cls.schema().load(raw)
 
     # Empty dist when run_on is specified
     with pytest.raises(ValidationError, match="unknown dist target"):
-        DeployConfig.schema().load(
+        schema_cls.schema().load(
             {
                 "system": [
                     {
@@ -313,6 +363,23 @@ def test_deploy_unknown_run_on_rejected(full_deploy_dict: dict):
                     }
                 ],
                 "dist": {},
+            }
+        )
+
+
+@pytest.mark.parametrize("forbidden_key", ["pretend", "include-dependencies"])
+def test_cheribuild_cli_only_keys_rejected_in_schema(forbidden_key: str):
+    """Verify CheribuildDeployConfig rejects CLI-only keys at root and inside target blocks."""
+    with pytest.raises(ValidationError, match="CLI-only cheribuild option"):
+        CheribuildDeployConfig.schema().load(
+            {"targets": ["cheribsd-aarch64"], "config": {forbidden_key: True}}
+        )
+
+    with pytest.raises(ValidationError, match="CLI-only cheribuild option"):
+        CheribuildDeployConfig.schema().load(
+            {
+                "targets": ["cheribsd-aarch64"],
+                "config": {"cheribsd-aarch64": {forbidden_key: True}},
             }
         )
 
@@ -482,9 +549,7 @@ def test_pipeline_config_roundtrip_and_bind(tmp_path: Path, simple_deploy_dict: 
 
 
 def test_session_run_config_with_deploy_roundtrip_and_session_generate(
-    tmp_path: Path,
-    benchplot_user_config: BenchplotUserConfig,
-    simple_deploy_dict: dict,
+    tmp_path: Path, benchplot_user_config: BenchplotUserConfig, simple_deploy_dict: dict
 ):
     """
     Verify SessionRunConfig.generate_v1 resolves deploy.system, exposes system_target
@@ -512,7 +577,12 @@ def test_session_run_config_with_deploy_roundtrip_and_session_generate(
 
     assert run_cfg.git_sha == {}
     assert run_cfg.bundle_results is True
-    assert run_cfg.deploy is not None
+    assert isinstance(run_cfg.deploy, DeployManifest)
+    assert isinstance(
+        run_cfg.deploy.dist["aarch64-multikernel"], AssembledDistTargetConfig
+    )
+    assert run_cfg.deploy.dist["aarch64-multikernel"].output_path is None
+    assert run_cfg.deploy.dist["aarch64-multikernel"].config_hash is None
     assert len(run_cfg.configurations) == 2
 
     by_kernel = {c.parameters["kernel"]: c for c in run_cfg.configurations}
@@ -532,7 +602,7 @@ def test_session_run_config_with_deploy_roundtrip_and_session_generate(
     run_file = tmp_path / "session-run.json"
     run_file.write_text(run_json)
     reloaded_run = SessionRunConfig.load_json(run_file)
-    assert reloaded_run.deploy is not None
+    assert isinstance(reloaded_run.deploy, DeployManifest)
     assert (
         reloaded_run.deploy.cheribuild.config
         == raw_pipeline["deploy"]["cheribuild"]["config"]
@@ -780,7 +850,7 @@ class TestDeprecatedDeployCompat:
         )
 
         run_cfg = SessionRunConfig.generate_v1(benchplot_user_config, legacy_pipeline)
-        assert run_cfg.deploy is not None
+        assert isinstance(run_cfg.deploy, DeployManifest)
         assert run_cfg.deploy.autorun.bundle_results is True
         assert run_cfg.deploy.autorun.mode == AutorunMode.MANUAL
         assert len(run_cfg.deploy.system) == 2

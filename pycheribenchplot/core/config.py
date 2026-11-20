@@ -1648,6 +1648,15 @@ class FetchTargetConfig(Config):
             raise ValidationError("Git repository fetch target requires 'revision'.")
 
 
+#: Cheribuild options that are strictly CLI-only and invalid inside cheribuild.json
+_CHERIBUILD_CLI_ONLY_KEYS = frozenset(
+    {
+        "pretend",
+        "include-dependencies",
+    }
+)
+
+
 @dc.dataclass
 class CheribuildDeployConfig(Config):
     """
@@ -1662,6 +1671,30 @@ class CheribuildDeployConfig(Config):
         dict,
         desc="Embedded cheribuild JSON configuration options merged into the session cheribuild.json.",
     )
+
+    @validates("config")
+    def validate_config(
+        self, value: dict[str, Any] | ConfigTemplateSpec, **kwargs
+    ) -> None:
+        """
+        Reject CLI-only cheribuild options at root level or inside `<target>` blocks.
+        """
+        cfg = value.value if isinstance(value, ConfigTemplateSpec) else value
+        if not isinstance(cfg, dict):
+            raise ValidationError("Cheribuild 'config' must be a dictionary.")
+        for key, entry in cfg.items():
+            if key in _CHERIBUILD_CLI_ONLY_KEYS:
+                raise ValidationError(
+                    f"CLI-only cheribuild option '{key}' cannot be set in deploy.cheribuild.config."
+                )
+            nested = entry.value if isinstance(entry, ConfigTemplateSpec) else entry
+            if isinstance(nested, dict):
+                for subkey in nested:
+                    if subkey in _CHERIBUILD_CLI_ONLY_KEYS:
+                        raise ValidationError(
+                            f"CLI-only cheribuild option '{subkey}' cannot be set in "
+                            f"deploy.cheribuild.config.{key}."
+                        )
 
 
 class DistHandler(Enum):
@@ -1733,9 +1766,25 @@ class DistTargetConfig(Config):
 
 
 @dc.dataclass
-class DeployConfig(Config):
+class AssembledDistTargetConfig(DistTargetConfig):
     """
-    Session deployment, source pinning, build, and target system mapping configuration.
+    Assembled distribution artefact recording the resolved output path and input fingerprint.
+    """
+
+    output_path: ConfigPath | None = config_field(
+        None,
+        desc="Output path relative to `<session>/deploy`; populated upon assembly.",
+    )
+    config_hash: str | None = config_field(
+        None,
+        desc="Deterministic SHA-256 fingerprint of the dist inputs; populated upon assembly.",
+    )
+
+
+@dc.dataclass
+class DeployConfigCommon(Config):
+    """
+    Common deployment instructions shared by pipeline config and resolved session manifest.
     """
 
     autorun: AutorunCommonConfig = config_field(
@@ -1759,18 +1808,20 @@ class DeployConfig(Config):
         validate=ContainsOnly(["post_fetch", "pre_build", "post_build"]),
         desc="Shell commands executed at global deployment phases.",
     )
-    dist: dict[str, DistTargetConfig] = config_field(
-        dict,
-        desc="Deployable system artefacts keyed by `run_on` identifier.",
-    )
 
     @validates("system")
-    def validate_system(self, value: list[DeploySystemConfig], **kwargs) -> None:
+    def validate_system(
+        self, value: list[DeploySystemConfig] | ConfigTemplateSpec, **kwargs
+    ) -> None:
         """
         Validate that deploy system entries have unique names.
         """
+        if isinstance(value, ConfigTemplateSpec):
+            return
         seen_names: set[str] = set()
         for sys_entry in value:
+            if not isinstance(sys_entry, DeploySystemConfig):
+                continue
             if isinstance(sys_entry.name, ConfigTemplateSpec):
                 continue
             if sys_entry.name in seen_names:
@@ -1785,8 +1836,14 @@ class DeployConfig(Config):
         Validate cross-field references in deployment configuration.
         """
         dist = data.get("dist") or {}
+        if isinstance(dist, ConfigTemplateSpec):
+            return
         systems = data.get("system") or []
+        if isinstance(systems, ConfigTemplateSpec):
+            return
         for sys_entry in systems:
+            if not isinstance(sys_entry, DeploySystemConfig):
+                continue
             run_on = sys_entry.run_on
             if run_on is None or isinstance(run_on, ConfigTemplateSpec):
                 continue
@@ -1794,6 +1851,37 @@ class DeployConfig(Config):
                 raise ValidationError(
                     f"Deploy system '{sys_entry.name}' references unknown dist target '{run_on}'."
                 )
+
+
+@dc.dataclass
+class DeployConfig(DeployConfigCommon):
+    """
+    Session deployment and orchestration configuration in the pipeline config.
+    """
+
+    dist: dict[str, DistTargetConfig] = config_field(
+        dict,
+        desc="Deployable system artefacts keyed by `run_on` identifier.",
+    )
+
+
+@dc.dataclass
+class DeployManifest(DeployConfigCommon):
+    """
+    Deployment resolution state persisted in session-run.json for reproducible reruns.
+    """
+
+    dist: dict[str, AssembledDistTargetConfig] = config_field(
+        dict,
+        desc="Deployable system artefacts and resolution state keyed by `run_on` identifier.",
+    )
+
+    @classmethod
+    def from_deploy_config(cls, deploy_cfg: DeployConfig) -> Self:
+        """
+        Initialize a :class:`DeployManifest` from a :class:`DeployConfig`.
+        """
+        return cls.schema().load(DeployConfig.schema().dump(deploy_cfg))
 
 
 @dc.dataclass
@@ -2174,11 +2262,6 @@ class CommonSessionConfig(Config):
     #: XXX DEPRECATED: Legacy result bundling flag; superseded by deploy.autorun.bundle_results
     bundle_results: bool = False
 
-    #: Session deployment and target system mapping configuration
-    deploy: DeployConfig | None = config_field(
-        None, desc="Session deployment and target system mapping configuration"
-    )
-
     def __post_init__(self):
         super().__post_init__()
 
@@ -2212,6 +2295,25 @@ class PipelineConfig(CommonSessionConfig):
         dict, desc="Configure assets to import into the session"
     )
 
+    deploy: DeployConfig | None = config_field(
+        None, desc="Session deployment and orchestration configuration"
+    )
+
+
+def _deploy_system_from_legacy(sys_conf: "SystemConfig") -> DeploySystemConfig:
+    """
+    XXX DEPRECATED: Convert a legacy benchmark.system entry to a DeploySystemConfig.
+    """
+    return DeploySystemConfig(
+        name=sys_conf.host_system.name,
+        matches=copy.deepcopy(sys_conf.matches),
+        autorun=SystemAutorunMatchConfig(
+            kernel=sys_conf.host_system.kernel,
+            bootenv=sys_conf.host_system.bootenv,
+            arch=sys_conf.host_system.arch,
+        ),
+    )
+
 
 @dc.dataclass
 class SessionRunConfig(CommonSessionConfig):
@@ -2232,6 +2334,11 @@ class SessionRunConfig(CommonSessionConfig):
 
     #: Benchmark run configuration, this is essentially the flattened benchmark matrix
     configurations: List[BenchmarkRunConfig] = dc.field(default_factory=list)
+
+    #: Session deployment resolution state
+    deploy: DeployManifest | None = config_field(
+        None, desc="Session deployment resolution state"
+    )
 
     def __post_init__(self):
         super().__post_init__()
@@ -2359,20 +2466,11 @@ class SessionRunConfig(CommonSessionConfig):
         logger.info("Create new session %s: %s", session.uuid, bench_config.desc)
 
         if config.deploy is not None:
-            session.deploy = DeployConfig.copy(config.deploy)
+            session.deploy = DeployManifest.from_deploy_config(config.deploy)
             # XXX DEPRECATED: Merge legacy benchmark.system into deploy.system when deploy.system is omitted
             if not session.deploy.system and bench_config.system:
                 session.deploy.system = [
-                    DeploySystemConfig(
-                        name=s.host_system.name,
-                        matches=copy.deepcopy(s.matches),
-                        autorun=SystemAutorunMatchConfig(
-                            kernel=s.host_system.kernel,
-                            bootenv=s.host_system.bootenv,
-                            arch=s.host_system.arch,
-                        ),
-                    )
-                    for s in bench_config.system
+                    _deploy_system_from_legacy(s) for s in bench_config.system
                 ]
             # XXX DEPRECATED: Sync legacy CommonSessionConfig.bundle_results from deploy.autorun
             if session.deploy.autorun.bundle_results:
@@ -2380,18 +2478,9 @@ class SessionRunConfig(CommonSessionConfig):
         elif bench_config.system or config.bundle_results:
             # XXX DEPRECATED: Synthesize deploy from legacy benchmark.system and bundle_results
             synthesized_systems = [
-                DeploySystemConfig(
-                    name=s.host_system.name,
-                    matches=copy.deepcopy(s.matches),
-                    autorun=SystemAutorunMatchConfig(
-                        kernel=s.host_system.kernel,
-                        bootenv=s.host_system.bootenv,
-                        arch=s.host_system.arch,
-                    ),
-                )
-                for s in bench_config.system
+                _deploy_system_from_legacy(s) for s in bench_config.system
             ]
-            session.deploy = DeployConfig(
+            session.deploy = DeployManifest(
                 autorun=AutorunCommonConfig(bundle_results=config.bundle_results),
                 system=synthesized_systems,
             )
