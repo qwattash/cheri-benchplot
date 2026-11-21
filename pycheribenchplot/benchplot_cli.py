@@ -15,6 +15,7 @@ from pycheribenchplot.core.config import (
     PipelineConfig,
 )
 from pycheribenchplot.core.benchmark import Benchmark
+from pycheribenchplot.core.deploy import SessionDeployment
 from pycheribenchplot.core.error import ToolArgparseError
 from pycheribenchplot.core.session import Session
 from pycheribenchplot.core.task import ExecutionTask, TaskRegistry
@@ -52,6 +53,40 @@ class SessionSubCommand(SubCommand):
         sub_gen = session_subparsers.add_parser("generate", help="Generate run scripts")
         self._register_session_arg(sub_gen)
 
+        sub_deploy = session_subparsers.add_parser(
+            "deploy",
+            help="Fetch, build, and assemble the session deployment artefacts.",
+        )
+        self._register_session_arg(sub_deploy)
+        sub_deploy.add_argument(
+            "-f",
+            "--force",
+            action="store_true",
+            help="Force re-fetch, re-build, and re-assembly of deployment artefacts.",
+        )
+        sub_deploy.add_argument(
+            "--skip-fetch",
+            action="store_true",
+            help="Skip fetching deployment sources.",
+        )
+        sub_deploy.add_argument(
+            "--skip-build",
+            action="store_true",
+            help="Skip building deployment targets.",
+        )
+        sub_deploy.add_argument(
+            "--skip-dist",
+            action="store_true",
+            help="Skip assembling deployment dist artefacts.",
+        )
+        sub_deploy.add_argument(
+            "--dist-target",
+            action="append",
+            default=None,
+            metavar="DIST_ID",
+            help="Only assemble the given dist target, may be given multiple times.",
+        )
+
         sub_run = session_subparsers.add_parser("run", help="Run the benchmark session")
         self._register_session_arg(sub_run)
 
@@ -87,6 +122,11 @@ class SessionSubCommand(SubCommand):
             "clean", help="Clean session data and plots."
         )
         self._register_session_arg(sub_clean)
+        sub_clean.add_argument(
+            "--deploy",
+            action="store_true",
+            help="Also remove the deployment build/cache tree and manifest.",
+        )
 
         sub_analyse = session_subparsers.add_parser(
             "analyse", help="Process data and generate plots."
@@ -126,6 +166,14 @@ class SessionSubCommand(SubCommand):
             default=None,
             type=Path,
             help="Output bundle directory, see `benchplot-cli session bundle`",
+        )
+        sub_push.add_argument(
+            "--image",
+            nargs="*",
+            default=None,
+            metavar="DIST_ID",
+            help="Push assembled deployment dist artefacts instead of the session "
+            "bundle. Without arguments, push all assembled artefacts.",
         )
 
         sub_pull = session_subparsers.add_parser(
@@ -167,6 +215,19 @@ class SessionSubCommand(SubCommand):
         session = self._get_session(user_config, args)
         scheduler = session.make_scheduler()
         session.generate(scheduler)
+
+    def handle_deploy(self, user_config, args):
+        """
+        Hook to handle the deployment subcommand.
+        """
+        session = self._get_session(user_config, args)
+        deployment = SessionDeployment(session, force=args.force)
+        deployment.deploy(
+            skip_fetch=args.skip_fetch,
+            skip_build=args.skip_build,
+            skip_dist=args.skip_dist,
+            dist_targets=args.dist_target,
+        )
 
     def handle_run(self, user_config, args):
         """
@@ -214,7 +275,7 @@ class SessionSubCommand(SubCommand):
     def handle_clean(self, user_config, args):
         # XXX add safety net question?
         session = self._get_session(user_config, args)
-        session.clean_all()
+        session.clean_all(clean_deploy=args.deploy)
 
     def handle_analyse(self, user_config, args):
         session = self._get_session(user_config, args)
@@ -232,8 +293,11 @@ class SessionSubCommand(SubCommand):
 
     def handle_push(self, user_config, args):
         session = self._get_session(user_config, args)
-        bundle_file = session.bundle(path=args.output)
-        session.push(args.host, bundle_file)
+        if args.image is None:
+            bundle_file = session.bundle(path=args.output)
+            session.push(args.host, bundle_file)
+        else:
+            session.push_images(args.host, images=args.image or None)
 
     def handle_pull(self, user_config, args):
         session = self._get_session(user_config, args)

@@ -1,4 +1,5 @@
 import json
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -7,13 +8,15 @@ from pycheribenchplot.core.config import (
     AssetConfig,
     AssetImportAction,
     BenchplotUserConfig,
+    DeployManifest,
     InstanceConfig,
     PipelineBenchmarkConfig,
     PipelineConfig,
     SystemConfig,
 )
 from pycheribenchplot.core.session import Session, SESSION_RUN_FILE
-from .util.session import TaskFactory
+from .util.deploy import make_deploy_session
+from .util.session import TaskFactory, benchplot_user_config
 
 
 @pytest.fixture
@@ -981,3 +984,115 @@ def test_merge_by_key_complex_multi_axis_scenario(tmp_path):
 
     assert_data_not_merged(aarch64_purecap, ["aarch64.txt"])
     assert_data_not_merged(riscv64_purecap, ["riscv64.txt"])
+
+
+# ==============================================================================
+# Deployment Housekeeping Tests
+# ==============================================================================
+
+
+def _make_manifest_session(
+    benchplot_user_config, tmp_path, dist_ids=("img-one", "img-two")
+):
+    """
+    Build a session whose deploy block is a DeployManifest with assembled
+    dist artefacts on disk, as produced by `session deploy`.
+    """
+    session = make_deploy_session(
+        benchplot_user_config,
+        tmp_path,
+        "s-push",
+        deploy={
+            "dist": {
+                dist_id: {
+                    "strategy": {
+                        "handler": "bsd-rootfs-archive",
+                        "target": "/nonexistent",
+                    },
+                    "bundle_session": False,
+                }
+                for dist_id in dist_ids
+            }
+        },
+    )
+    deploy_root = session.get_deploy_root_path()
+    artefacts = {}
+    for dist_id in dist_ids:
+        artefact = deploy_root / "dist" / f"{dist_id}.tar.zst"
+        artefact.parent.mkdir(parents=True, exist_ok=True)
+        artefact.write_text("fake image")
+        artefacts[dist_id] = artefact
+    manifest = DeployManifest.from_deploy_config(session.config.deploy)
+    for dist_id, artefact in artefacts.items():
+        manifest.dist[dist_id].output_path = artefact.relative_to(deploy_root)
+        manifest.dist[dist_id].config_hash = "0" * 64
+    session.config.deploy = manifest
+    return session, artefacts
+
+
+def test_bundle_excludes_deploy_tree(tmp_path, benchplot_user_config):
+    """
+    Session.bundle() excludes the deploy/ build tree but keeps the session
+    run configuration (embedding the deployment resolution state).
+    """
+    session = make_deploy_session(
+        benchplot_user_config, tmp_path, "s-bundle", deploy=None
+    )
+    deploy_root = session.get_deploy_root_path()
+    (deploy_root / "src" / "pkg").mkdir(parents=True)
+    (deploy_root / "src" / "pkg" / "cache.o").write_text("cache")
+
+    out_dir = tmp_path / "bundles"
+    out_dir.mkdir()
+    bundle_file = session.bundle(path=out_dir)
+
+    with tarfile.open(bundle_file) as bundle:
+        names = bundle.getnames()
+    prefix = f"{session.name}/"
+    assert f"{prefix}{SESSION_RUN_FILE}" in names
+    assert not any(
+        name == f"{prefix}deploy" or name.startswith(f"{prefix}deploy/")
+        for name in names
+    )
+
+
+def test_push_images_requires_deploy(tmp_path, benchplot_user_config):
+    """
+    push_images() fails when the session has no deployment dist configuration.
+    """
+    session = make_deploy_session(
+        benchplot_user_config, tmp_path, "s-nodep", deploy=None
+    )
+    with pytest.raises(RuntimeError, match="no deployment dist artefacts"):
+        session.push_images("fakehost:")
+
+
+def test_push_images_artefact_resolution(tmp_path, benchplot_user_config, mocker):
+    """
+    push_images() resolves assembled dist artefacts from the deploy manifest:
+    all artefacts by default, the selected ids otherwise, and fails on unknown
+    ids or artefacts that have not been assembled yet.
+    """
+    session, artefacts = _make_manifest_session(benchplot_user_config, tmp_path)
+    push = mocker.patch.object(Session, "push")
+
+    # All assembled artefacts are pushed by default
+    session.push_images("fakehost:")
+    assert [call.args for call in push.call_args_list] == [
+        ("fakehost:", artefacts["img-one"]),
+        ("fakehost:", artefacts["img-two"]),
+    ]
+
+    # Only the selected artefacts are pushed
+    push.reset_mock()
+    session.push_images("fakehost:", images=["img-two"])
+    push.assert_called_once_with("fakehost:", artefacts["img-two"])
+
+    # Unknown dist ids are rejected
+    with pytest.raises(RuntimeError, match="Unknown deployment dist target 'bogus'"):
+        session.push_images("fakehost:", images=["bogus"])
+
+    # Artefacts that have not been assembled yet are rejected
+    artefacts["img-two"].unlink()
+    with pytest.raises(RuntimeError, match="has not been assembled yet"):
+        session.push_images("fakehost:", images=["img-two"])
