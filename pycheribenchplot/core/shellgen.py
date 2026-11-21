@@ -148,7 +148,6 @@ class ScriptContext(TemplateContextBase):
         self._context = {
             "dataset_id": benchmark.uuid,
             "iterations": benchmark.config.iterations,
-            "system_target": benchmark.config.system_target,
             "target_name": benchmark.target_name,
             "parameters": benchmark.parameters,
             "setup_hooks": [],

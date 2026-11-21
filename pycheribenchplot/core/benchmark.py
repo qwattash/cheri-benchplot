@@ -138,9 +138,7 @@ class Benchmark:
         """
         Human-readable target system name for this benchmark context.
         """
-        if self.config.system_target is not None:
-            return self.config.system_target.name
-        return str(self.config.parameters.get("target", "local"))
+        return self.config.parameters.get("target", "local")
 
     def __str__(self):
         return f"{self.config.name}({self.uuid})"
@@ -151,10 +149,6 @@ class Benchmark:
     @property
     def uuid(self):
         return self.config.uuid
-
-    @property
-    def g_uuid(self):
-        return self.config.g_uuid
 
     @property
     def parameters(self) -> dict[str, any]:
@@ -168,10 +162,10 @@ class Benchmark:
     def metadata_columns(self) -> list[str]:
         """
         Helper to find the metadata columns for the current benchmark.
-        The metadata columns are the standard dataset_id, dataset_gid and iteration, plus
+        The metadata columns are the standard dataset_id and iteration, plus
         the parameterzation keys.
         """
-        return ["dataset_id", "dataset_gid", "iteration"] + list(self.parameters.keys())
+        return ["dataset_id", "iteration"] + list(self.parameters.keys())
 
     @property
     def user_config(self):
@@ -212,13 +206,6 @@ class Benchmark:
         :return: Path for archiving binaries used in the run
         """
         return self.session.get_asset_root_path() / f"{self.config.name}-{self.uuid}"
-
-    def get_instance_asset_path(self) -> Path:
-        """
-        :return: Path for archiving binaries used in the run but belonging to the instance.
-            This avoids duplication.
-        """
-        return self.session.get_asset_root_path() / f"{self.target_name}-{self.g_uuid}"
 
     def get_plot_path(self) -> Path:
         """

@@ -617,13 +617,11 @@ class DatasetTask(Task):
 
         This will create the following columns:
           - dataset_id set to the UUID dataset identifier
-          - dataset_gid set to the UUID platform identifier
           - a variable number of parameter key/value entries from the datagen
             parameterization.
         """
         df = df.with_columns(
             pl.lit(self.benchmark.uuid).alias("dataset_id"),
-            pl.lit(self.benchmark.g_uuid).alias("dataset_gid"),
             *(pl.lit(v).alias(k) for k, v in self.benchmark.parameters.items()),
         )
         return df

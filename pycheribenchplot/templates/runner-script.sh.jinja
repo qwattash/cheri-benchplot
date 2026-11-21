@@ -13,11 +13,7 @@ set -e
 {% endmacro -%}
 
 echo "Run benchmark configuration ID={{ dataset_id }} with {{ iterations }} iterations."
-{% if system_target %}
-echo "Target '{{ system_target.name }}'"
-{% elif 'target' in parameters %}
-echo "Target '{{ parameters['target'] }}'"
-{% endif %}
+echo "Target '{{ target_name }}'"
 echo "Parameters:"
 {% for pkey, pval in parameters.items() -%}
     echo -e "\t{{ pkey }}='{{ pval }}'"

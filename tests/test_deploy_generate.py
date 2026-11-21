@@ -64,7 +64,7 @@ def test_generate_tier1_no_deploy(
     session = Session.make_new(benchplot_user_config, pipeline, session_dir)
     assert session.config.deploy is None
     for cfg in session.config.configurations:
-        assert cfg.system_target is None
+        assert cfg.parameters["target"] in ("host-a", "host-b")
 
     scheduler = session.make_scheduler()
     session.generate(scheduler)
@@ -84,7 +84,7 @@ def test_generate_tier1_no_deploy(
         assert f"Target '{expected_target}'" in runner_text
         assert "None" not in runner_text
 
-    # Verify `benchplot-cli info session` works cleanly when system_target is None
+    # Verify `benchplot-cli info session` works cleanly without a deploy block
     user_cfg_file = tmp_path / "cheri-benchplot.json"
     user_cfg_file.write_text(benchplot_user_config.emit_json())
     info_res = subprocess.run(
@@ -145,8 +145,7 @@ def test_generate_tier2a_deploy_system_without_autorun(
     session_dir = tmp_path / "tier2a-session"
     session = Session.make_new(benchplot_user_config, pipeline, session_dir)
     for cfg in session.config.configurations:
-        assert cfg.system_target is not None
-        assert cfg.system_target.autorun is None
+        assert cfg.parameters["target"] in ("target-nocheri", "target-purecap")
 
     scheduler = session.make_scheduler()
     session.generate(scheduler)
@@ -169,7 +168,7 @@ def test_generate_tier2a_deploy_system_without_autorun(
 
     for bench in session.all_benchmarks():
         runner_text = _assert_executable_posix_sh(bench.get_run_script_path())
-        assert f"Target '{bench.config.system_target.name}'" in runner_text
+        assert f"Target '{bench.config.parameters['target']}'" in runner_text
 
 
 def test_generate_tier2b_wildcard_arch_and_multikernel(

@@ -373,9 +373,6 @@ class BootstrapAnalysisTask(AnalysisTask):
         baseline_sel = self.baseline_selector()
         selectors = {k: v for k, v in baseline_sel.items() if k in df.columns}
         baseline = df.filter(**selectors)
-        if len(baseline["dataset_gid"].unique()) != 1:
-            self.logger.error("Invalid baseline specifier %s", baseline_sel)
-            raise ValueError("Invalid configuration")
         return baseline
 
     def compute_overhead(

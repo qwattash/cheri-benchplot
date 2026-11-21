@@ -1744,6 +1744,15 @@ class DeployConfigCommon(Config):
         desc="Shell commands executed at global deployment phases.",
     )
 
+    def get_system(self, name: str) -> DeploySystemConfig | None:
+        """
+        Look up a deploy system entry by name.
+        """
+        for sys_entry in self.system:
+            if sys_entry.name == name:
+                return sys_entry
+        return None
+
     @validates("system")
     def validate_system(
         self, value: list[DeploySystemConfig] | ConfigTemplateSpec, **kwargs
@@ -2364,8 +2373,12 @@ class SessionRunConfig(CommonSessionConfig):
                         parameters,
                     )
                     raise ConfigurationError("Invalid configuration")
-                if "target" not in parameters:
-                    run_config.parameters["target"] = sys_target.name
+                if "target" in parameters:
+                    logger.warning(
+                        "Explicit 'target' parameterization overrides deploy.system mapping for %s",
+                        parameters,
+                    )
+                run_config.parameters.setdefault("target", sys_target.name)
             else:
                 # Require the target parameter as it can not be generated
                 if "target" not in parameters:

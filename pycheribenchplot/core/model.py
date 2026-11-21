@@ -5,13 +5,12 @@ import uuid
 from typing import Any, Callable, Type
 
 import hypothesis as hp
-import numpy as np
 import pandas as pd
 import pandera as pa
 import pandera.strategies as st
 import typing_inspect
 import wrapt
-from pandera import (Check, Column, DataFrameSchema, DataType, Field, SchemaModel)
+from pandera import Column, DataFrameSchema, DataType, Field, SchemaModel
 from pandera.dtypes import immutable
 from pandera.engines import numpy_engine, pandas_engine
 from pandera.errors import SchemaError
@@ -19,6 +18,9 @@ from pandera.typing import DataFrame, Index, Series
 from typing_extensions import Self
 
 from .pandas_util import apply_or
+
+if typing.TYPE_CHECKING:
+    from .session import Session
 
 # Helper type
 SchemaTransform = Callable[[DataFrameSchema], DataFrameSchema]
@@ -31,16 +33,21 @@ class UUIDType(numpy_engine.Object):
     Pandera data type for UUID values
     XXX we may move to having string UUID values instead...
     """
+
     def check(self, pandera_dtype, data_container):
         return data_container.map(lambda v: isinstance(v, uuid.UUID))
 
     def coerce(self, series: pd.Series) -> pd.Series:
-        return series.map(lambda uid: uid if isinstance(uid, uuid.UUID) else uuid.UUID(uid))
+        return series.map(
+            lambda uid: uid if isinstance(uid, uuid.UUID) else uuid.UUID(uid)
+        )
 
 
 def uuid_strategy(pa_dtype: DataType, strategy: st.SearchStrategy | None, *args):
     if strategy is None:
-        return st.pandas_dtype_strategy(pa_dtype, strategy=hp.strategies.just(uuid.uuid4()))
+        return st.pandas_dtype_strategy(
+            pa_dtype, strategy=hp.strategies.just(uuid.uuid4())
+        )
     # This would be useful if we have generators for valid and invalid UUIDs and
     # this would filter them by validity
     raise NotImplementedError("Chaining not supported yet")
@@ -48,7 +55,9 @@ def uuid_strategy(pa_dtype: DataType, strategy: st.SearchStrategy | None, *args)
 
 @pa.extensions.register_check_method(strategy=uuid_strategy)
 def is_valid_uuid(pandas_obj, *args) -> pd.Series:
-    return pandas_obj.map(apply_or(lambda v: type(v) == uuid.UUID or uuid.UUID(v), False))
+    return pandas_obj.map(
+        apply_or(lambda v: type(v) is uuid.UUID or uuid.UUID(v), False)
+    )
 
 
 class BaseDataModel(SchemaModel):
@@ -57,6 +66,7 @@ class BaseDataModel(SchemaModel):
     This does not assume the presence of any of the dynamic ID fields but provides the
     infrastructure to add dynamic fields based on a session.
     """
+
     @classmethod
     def dynamic_index_position(cls) -> str:
         """
@@ -92,12 +102,14 @@ class BaseDataModel(SchemaModel):
                     dt = param_index.dtypes[param]
                 except AttributeError:
                     dt = param_index.dtype
-                extra_columns[param] = Column(dt,
-                                              nullable=False,
-                                              coerce=True,
-                                              required=True,
-                                              title=param,
-                                              description=f"Benchmark parameter {param}")
+                extra_columns[param] = Column(
+                    dt,
+                    nullable=False,
+                    coerce=True,
+                    required=True,
+                    title=param,
+                    description=f"Benchmark parameter {param}",
+                )
         s = s.add_columns(extra_columns).reset_index()
         # Create new index in the following order [<index_up_to_dynamic_position>, <param_index_fields>, <other_index_fields>]
         index_offset = cls.dynamic_index_position()
@@ -116,6 +128,7 @@ class BaseDataModel(SchemaModel):
         If the session is not given, this will return a partial factory function
         that can be used to generate the final strategy with a given session.
         """
+
         def proxy_strategy(lazy_session: "Session"):
             return cls.to_schema(lazy_session).strategy(**kwargs)
 
@@ -124,13 +137,16 @@ class BaseDataModel(SchemaModel):
         return proxy_strategy
 
     @classmethod
-    def example(cls, session: "Session" = None, **kwargs) -> Callable[["Session"], pd.DataFrame] | pd.DataFrame:
+    def example(
+        cls, session: "Session" = None, **kwargs
+    ) -> Callable[["Session"], pd.DataFrame] | pd.DataFrame:
         """
         Similar to the base example generator.
 
         If the session is not given, this will return a partial factory function
         that can be used to generate the final example with a given session.
         """
+
         def proxy_example(lazy_session: "Session"):
             return cls.to_schema(lazy_session).example(**kwargs)
 
@@ -143,6 +159,7 @@ class BaseDataModel(SchemaModel):
         :noindex:
         Common configuration for pandera schema validation
         """
+
         # Drop extra columns
         strict = "filter"
         # Coerce data types
@@ -156,7 +173,13 @@ class DerivedSchemaBuilder:
     This only supports the to_schema() function from the SchemaModel interface.
     The resulting schema is modified according to a transformation function.
     """
-    def __init__(self, id_: str, base_model: Type[BaseDataModel | Self], transform: SchemaTransform):
+
+    def __init__(
+        self,
+        id_: str,
+        base_model: Type[BaseDataModel | Self],
+        transform: SchemaTransform,
+    ):
         #: Identifier used to distinguish the derived schema
         self._id = id_
         #: The underlying model that provides the schema
@@ -180,6 +203,7 @@ class GlobalModel(BaseDataModel):
     A data model that is not associated to any specific benchmark run or group.
     This is a global set of data without dynamic fields.
     """
+
     @classmethod
     def dynamic_index_position(cls):
         return None
@@ -191,8 +215,10 @@ class DataModel(BaseDataModel):
     Input data is generally loaded and assembled from the benchmark output files.
     We will should always have the full IDs here.
     """
-    dataset_id: Index[UUIDType] = Field(nullable=False, title="benchmark run ID", is_valid_uuid=True)
-    dataset_gid: Index[UUIDType] = Field(nullable=False, title="platform ID", is_valid_uuid=True)
+
+    dataset_id: Index[UUIDType] = Field(
+        nullable=False, title="benchmark run ID", is_valid_uuid=True
+    )
     # The iteration number may be null if there is no iteration associated to the data, meaning
     # that it is collected for the whole set of iterations of the benchmark.
     iteration: Index[pd.Int64Dtype] = Field(nullable=True, title="Iteration number")
@@ -202,14 +228,16 @@ class DataModel(BaseDataModel):
         """
         Produce a schema for a variation of this model that reflects a groupby operation.
 
-        The groupby operation may elide any of the dataset_id, dataset_gid and iteration
+        The groupby operation may elide any of the dataset_id and iteration
         index levels. Additional groupby indexes may be specified.
         """
         # Normalize to list
-        if type(by) == str:
+        if type(by) is str:
             by = [by]
 
-        assert by, "At least an index level must be specified to create groupby DataModel"
+        assert by, (
+            "At least an index level must be specified to create groupby DataModel"
+        )
         derived_suffix = "groupby-" + "-".join(by)
 
         def index_transform(session, schema):
@@ -228,10 +256,10 @@ class DataModel(BaseDataModel):
         This is useful to validate data before the per-benchmark and per-session
         identifiers are added.
         """
+
         def index_transform(session, schema):
-            index_names = list(schema.index.names)
             param_names = session.parameter_keys
-            drop = ["dataset_id", "dataset_gid", "iteration"] + param_names
+            drop = ["dataset_id", "iteration"] + param_names
             return schema.reset_index(drop, drop=True)
 
         return DerivedSchemaBuilder("raw-model-", cls, index_transform)
@@ -246,13 +274,10 @@ class ParamGroupDataModel(BaseDataModel):
     Base class for groups of statistics by parameter group.
     These will be a result of aggregation along the iteration or other custom axes.
     """
-    # Note: Need the check_name=True because otherwise the single-level index will not
-    # have a name associated to it. This does not happen for multi-indexes
-    dataset_gid: Index[UUIDType] = Field(nullable=False, title="platform ID", check_name=True)
 
     @classmethod
     def dynamic_index_position(cls):
-        return "dataset_gid"
+        return None
 
 
 def _validate_data_model(session: "Session", type_target: Type, value: Any) -> Any:
@@ -312,7 +337,9 @@ def check_data_model(fn: Callable = None, warn: bool = False) -> Callable:
 
     @wrapt.decorator
     def wrapper(wrapped, instance, args, kwargs):
-        assert instance is not None, "@check_data_model() must be used on a DatasetTask method"
+        assert instance is not None, (
+            "@check_data_model() must be used on a DatasetTask method"
+        )
         # assert isinstance(instance, DatasetTask), "@check_data_model() must be used on a DatasetTask method"
 
         sig = inspect.signature(wrapped)
@@ -326,21 +353,36 @@ def check_data_model(fn: Callable = None, warn: bool = False) -> Callable:
 
         def validate_arg(name, value):
             try:
-                return _validate_data_model(instance.session, sig.parameters[name].annotation, value)
+                return _validate_data_model(
+                    instance.session, sig.parameters[name].annotation, value
+                )
             except SchemaError as ex:
-                log_function("%s: argument '%s' failed validation because %s", wrapped_name, name, ex)
+                log_function(
+                    "%s: argument '%s' failed validation because %s",
+                    wrapped_name,
+                    name,
+                    ex,
+                )
                 if not warn:
                     raise
             return value
 
-        checked_args = tuple(validate_arg(arg_name, arg_value) for arg_name, arg_value in bound_args.items())
-        checked_kwargs = {arg_name: validate_arg(arg_name, arg_value) for arg_name, arg_value in bound_kwargs.items()}
+        checked_args = tuple(
+            validate_arg(arg_name, arg_value)
+            for arg_name, arg_value in bound_args.items()
+        )
+        checked_kwargs = {
+            arg_name: validate_arg(arg_name, arg_value)
+            for arg_name, arg_value in bound_kwargs.items()
+        }
         result = wrapped(*checked_args, **checked_kwargs)
 
         try:
             return _validate_data_model(instance.session, sig.return_annotation, result)
         except SchemaError as ex:
-            log_function("%s: returned value failed validation because %s", wrapped_name, ex)
+            log_function(
+                "%s: returned value failed validation because %s", wrapped_name, ex
+            )
             if not warn:
                 raise
         return result
@@ -355,4 +397,5 @@ class DFSchema:
     Could use pydantic but it seems complicated to hook into it without
     extra conversions.
     """
+
     pass

@@ -547,20 +547,20 @@ def test_session_run_config_with_deploy_roundtrip_and_session_generate(
     tmp_path: Path, benchplot_user_config: BenchplotUserConfig, simple_deploy_dict: dict
 ):
     """
-    Verify SessionRunConfig.generate_v1 resolves deploy.system, exposes system_target
-    templates, round-trips through JSON, and works with Session.generate().
+    Verify SessionRunConfig.generate_v1 resolves deploy.system into the `target`
+    parameterisation axis, round-trips through JSON, and works with Session.generate().
     """
     raw_pipeline = {
         "version": "1.0",
         "benchmark": {
             "name": "kbuild-session",
-            "desc": "Build on {system_target.name}",
+            "desc": "Build on {target}",
             "iterations": 1,
             "parameterize": {"kernel": ["nocheri", "hybrid"]},
             "generators": [
                 {
                     "handler": "kernel-build.exec",
-                    "task_options": {"kernel_config": "{system_target.autorun.kernel}"},
+                    "task_options": {"kernel_config": "GENERIC-{kernel}"},
                 }
             ],
         },
@@ -580,14 +580,14 @@ def test_session_run_config_with_deploy_roundtrip_and_session_generate(
 
     by_kernel = {c.parameters["kernel"]: c for c in run_cfg.configurations}
     assert by_kernel["nocheri"].parameters["target"] == "nocheri"
-    assert by_kernel["nocheri"].system_target is not None
-    assert by_kernel["nocheri"].system_target.name == "nocheri"
-    assert by_kernel["nocheri"].system_target.run_on == "aarch64-multikernel"
+    assert run_cfg.deploy.get_system("nocheri").run_on == "aarch64-multikernel"
     assert by_kernel["nocheri"].desc == "Build on nocheri"
+    assert by_kernel["nocheri"].generators[0].task_options.kernel_config == (
+        "GENERIC-nocheri"
+    )
 
     assert by_kernel["hybrid"].parameters["target"] == "hybrid-base"
-    assert by_kernel["hybrid"].system_target is not None
-    assert by_kernel["hybrid"].system_target.name == "hybrid-base"
+    assert run_cfg.deploy.get_system("hybrid-base").run_on == "aarch64-multikernel"
     assert by_kernel["hybrid"].desc == "Build on hybrid-base"
 
     # Verify SessionRunConfig JSON round-trip
@@ -600,7 +600,11 @@ def test_session_run_config_with_deploy_roundtrip_and_session_generate(
         reloaded_run.deploy.cheribuild.config
         == raw_pipeline["deploy"]["cheribuild"]["config"]
     )
-    assert reloaded_run.configurations[0].system_target is not None
+    assert reloaded_run.configurations[0].parameters["target"] in (
+        "nocheri",
+        "hybrid-base",
+    )
+    assert reloaded_run.deploy.get_system("nocheri") is not None
 
     # Verify Session.make_new + Session.generate() succeed with deploy.system
     session_dir = tmp_path / "test-session"

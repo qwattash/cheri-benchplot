@@ -33,7 +33,7 @@ SESSION_RUN_FILE = "session-run.json"
 benchplot_logger = logging.getLogger("cheri-benchplot")
 
 # XXX Is `target` reserved as well?
-RESERVED_PARAMETER_NAMES = ["descriptor", "instance", "iteration"]
+RESERVED_PARAMETER_NAMES = frozenset({"descriptor", "iteration"})
 
 
 def _bundle_archive_filter(tarinfo: tarfile.TarInfo) -> tarfile.TarInfo | None:
@@ -224,8 +224,6 @@ class Session:
                     "Invalid parameterization axis: '%s', reserved name.", name
                 )
                 raise RuntimeError("Configuration error")
-        # Instance identifier column
-        instance_axis = []
         # Dataset descriptor object
         descriptors = []
 
@@ -248,10 +246,9 @@ class Session:
             descriptor = Benchmark(self, dataset_config)
             for key, value in dataset_config.parameters.items():
                 dataset_axes[key].append(value)
-            instance_axis.append(dataset_config.g_uuid)
             descriptors.append(descriptor)
 
-        dataset_axes.update({"instance": instance_axis, "descriptor": descriptors})
+        dataset_axes.update({"descriptor": descriptors})
         # Actually create the table
         parameterization_table = pl.DataFrame(dataset_axes)
         self.logger.debug("Parameterization table:\n%s", parameterization_table)
@@ -789,8 +786,12 @@ class Session:
                 },
             )
 
-            sys_target = section["descriptor"].first().config.system_target
-            if sys_target.autorun is None:
+            target_name = section["descriptor"].first().config.parameters["target"]
+            if self.config.deploy is not None:
+                sys_target = self.config.deploy.get_system(target_name)
+            else:
+                sys_target = None
+            if sys_target is None or sys_target.autorun is None:
                 self.logger.info(
                     "Target '%s' has no autorun configuration, skipping in auto-run.sh",
                     target,

@@ -411,8 +411,6 @@ class DataFrameLoadTaskMixin:
             new_cols = {}
             if "dataset_id" not in df.columns:
                 new_cols["dataset_id"] = pl.lit(self.benchmark.uuid)
-            if "dataset_gid" not in df.columns:
-                new_cols["dataset_gid"] = pl.lit(self.benchmark.g_uuid)
             if "iteration" not in df.columns:
                 if isinstance(target, BenchmarkIterationTarget):
                     new_cols["iteration"] = pl.lit(iteration)
