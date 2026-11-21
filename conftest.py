@@ -25,10 +25,6 @@ def pytest_configure(config):
         "markers",
         "user_config: mark test requiring a benchplot user config",
     )
-    config.addinivalue_line(
-        "markers",
-        "deprecated_compat: mark test exercising deprecated backward-compatibility shims",
-    )
     if config.getoption("-v"):
         setup_logging(verbose=True, debug_config=True)
 

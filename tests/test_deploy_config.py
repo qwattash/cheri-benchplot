@@ -4,7 +4,6 @@ import sys
 from pathlib import Path
 
 import pytest
-from git import Actor, Repo
 from marshmallow import ValidationError
 
 from pycheribenchplot.core.config import (
@@ -23,14 +22,10 @@ from pycheribenchplot.core.config import (
     DistStrategyConfig,
     DistTargetConfig,
     FetchTargetConfig,
-    InstanceConfig,
-    PipelineBenchmarkConfig,
     PipelineConfig,
-    PlatformABI,
     PlatformArch,
     SessionRunConfig,
     SystemAutorunMatchConfig,
-    SystemConfig,
 )
 from pycheribenchplot.core.error import ConfigurationError
 from pycheribenchplot.core.session import Session
@@ -575,8 +570,6 @@ def test_session_run_config_with_deploy_roundtrip_and_session_generate(
     pipeline = PipelineConfig.schema().load(raw_pipeline)
     run_cfg = SessionRunConfig.generate(benchplot_user_config, pipeline)
 
-    assert run_cfg.git_sha == {}
-    assert run_cfg.bundle_results is True
     assert isinstance(run_cfg.deploy, DeployManifest)
     assert isinstance(
         run_cfg.deploy.dist["aarch64-multikernel"], AssembledDistTargetConfig
@@ -720,156 +713,3 @@ def test_cli_info_config_pipeline(
     generated = json.loads(gen_res.stdout)
     assert "deploy" in generated
     assert generated["deploy"] is None
-
-
-# ==============================================================================
-# XXX DEPRECATED: Remove when legacy benchmark.system / git_sha / instance /
-# bundle_results backward compatibility is dropped.
-# ==============================================================================
-
-
-@pytest.mark.deprecated_compat
-class TestDeprecatedDeployCompat:
-    """
-    Tests covering deprecated legacy config fields and compatibility shims.
-    """
-
-    def test_generate_v1_does_not_populate_git_sha(
-        self, benchplot_user_config: BenchplotUserConfig
-    ):
-        """
-        XXX DEPRECATED: Verify SessionRunConfig.generate_v1 no longer snapshots git repositories into git_sha.
-        """
-        actor = Actor("Test User", "test@example.com")
-        for repo_name in ("cheribuild", "cheribsd", "qemu", "llvm-project"):
-            repo_dir = benchplot_user_config.src_path / repo_name
-            repo = Repo.init(repo_dir)
-            readme = repo_dir / "README"
-            readme.write_text(repo_name)
-            repo.index.add([str(readme)])
-            repo.index.commit("Initial commit", author=actor, committer=actor)
-
-        pipeline = PipelineConfig.schema().load(
-            {
-                "version": "1.0",
-                "benchmark": {
-                    "name": "local-bench",
-                    "parameterize": {"target": ["local"]},
-                    "generators": [],
-                },
-            }
-        )
-        run_cfg = SessionRunConfig.generate_v1(benchplot_user_config, pipeline)
-        assert run_cfg.git_sha == {}
-        assert run_cfg.deploy is None
-        assert run_cfg.configurations[0].system_target is None
-
-    def test_load_legacy_session_run_json_backward_compat(self, tmp_path: Path):
-        """
-        XXX DEPRECATED: Verify legacy session-run.json files containing git_sha and lacking deploy/system_target load cleanly.
-        """
-        legacy_data = {
-            "abort_on_failure": True,
-            "concurrent_workers": 0,
-            "remote_session_path": "/opt/benchmark-output",
-            "bundle_results": False,
-            "uuid": "56645c4d-e7ed-4c14-a009-f306544ff6d4",
-            "git_sha": {
-                "cheribuild": "92a432e1c0a047b2b0ff8f87ce5c4830fb09e40e",
-                "cheribsd": "3dc9d7087121783dce5654ca4ffdb2ee4ee5ea5f",
-            },
-            "name": "legacy.smoketest",
-            "configurations": [
-                {
-                    "name": "iperf",
-                    "iterations": 2,
-                    "generators": [],
-                    "drop_iterations": 0,
-                    "desc": "legacy run",
-                    "command_hooks": {},
-                    "uuid": "599954d8-bb8a-4e92-9d7a-e6436dd67cac",
-                    "g_uuid": None,
-                    "parameters": {"bufsize": "64", "target": "hybrid-kernel"},
-                    "instance": {
-                        "kernel": "GENERIC-MORELLO-NODEBUG",
-                        "name": "hybrid-kernel",
-                        "arch": "arm64",
-                        "kernelabi": "hybrid",
-                        "userabi": "benchmark",
-                    },
-                }
-            ],
-        }
-        legacy_path = tmp_path / "session-run.json"
-        legacy_path.write_text(json.dumps(legacy_data))
-
-        loaded = SessionRunConfig.load_json(legacy_path)
-        assert loaded.deploy is None
-        assert loaded.git_sha == legacy_data["git_sha"]
-        assert len(loaded.configurations) == 1
-        assert loaded.configurations[0].system_target is None
-        assert loaded.configurations[0].instance is not None
-        assert loaded.configurations[0].instance.name == "hybrid-kernel"
-        assert loaded.configurations[0].instance.arch == PlatformArch.ARM64
-
-    def test_legacy_benchmark_system_and_bundle_results_shim(
-        self, benchplot_user_config: BenchplotUserConfig
-    ):
-        """
-        XXX DEPRECATED: Verify legacy PipelineConfig using benchmark.system and bundle_results synthesizes session.deploy.
-        """
-        legacy_pipeline = PipelineConfig(
-            bundle_results=True,
-            benchmark=PipelineBenchmarkConfig(
-                name="legacy-bench",
-                parameterize={"abi": ["hybrid", "purecap"]},
-                system=[
-                    SystemConfig(
-                        matches={"abi": "hybrid"},
-                        host_system=InstanceConfig(
-                            name="morello-hybrid",
-                            kernel="GENERIC-MORELLO-NODEBUG",
-                            arch=PlatformArch.ARM64,
-                            kernelabi=PlatformABI.HYBRID,
-                            userabi=PlatformABI.HYBRID,
-                            bootenv="be-hybrid",
-                        ),
-                    ),
-                    SystemConfig(
-                        matches={"abi": "purecap"},
-                        host_system=InstanceConfig(
-                            name="morello-purecap",
-                            kernel="GENERIC-MORELLO-PURECAP-NODEBUG",
-                            arch=PlatformArch.ARM64,
-                            kernelabi=PlatformABI.PURECAP,
-                            userabi=PlatformABI.PURECAP,
-                        ),
-                    ),
-                ],
-            ),
-        )
-
-        run_cfg = SessionRunConfig.generate_v1(benchplot_user_config, legacy_pipeline)
-        assert isinstance(run_cfg.deploy, DeployManifest)
-        assert run_cfg.deploy.autorun.bundle_results is True
-        assert run_cfg.deploy.autorun.mode == AutorunMode.MANUAL
-        assert len(run_cfg.deploy.system) == 2
-
-        sys0, sys1 = run_cfg.deploy.system
-        assert sys0.name == "morello-hybrid"
-        assert sys0.matches == {"abi": "hybrid"}
-        assert sys0.autorun is not None
-        assert sys0.autorun.kernel == "GENERIC-MORELLO-NODEBUG"
-        assert sys0.autorun.bootenv == "be-hybrid"
-        assert sys0.autorun.arch == PlatformArch.ARM64
-
-        assert sys1.name == "morello-purecap"
-        assert sys1.autorun is not None
-        assert sys1.autorun.bootenv is None
-        assert sys1.autorun.arch == PlatformArch.ARM64
-
-        by_abi = {c.parameters["abi"]: c for c in run_cfg.configurations}
-        assert by_abi["hybrid"].system_target is not None
-        assert by_abi["hybrid"].system_target.name == "morello-hybrid"
-        assert by_abi["hybrid"].instance is not None
-        assert by_abi["hybrid"].instance.kernelabi == PlatformABI.HYBRID

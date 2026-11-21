@@ -356,21 +356,6 @@ class BootstrapAnalysisTask(AnalysisTask):
             raise ConfigurationError("Missing baseline")
 
         if type(baseline_sel) is dict:
-            # If we have the 'instance' parameter, replace it with the corresponding
-            # dataset_gid
-            if "instance" in baseline_sel:
-                name = baseline_sel["instance"]
-                for b in self.session.all_benchmarks():
-                    # XXX DEPRECATED: Legacy baseline selection by InstanceConfig name
-                    if b.config.instance is not None and b.config.instance.name == name:
-                        baseline_sel["dataset_gid"] = b.config.g_uuid
-                        del baseline_sel["instance"]
-                        break
-                else:
-                    self.logger.error(
-                        "Invalid 'instance' value in baseline configuration"
-                    )
-                    raise ValueError("Invalid configuration")
             selectors = dict(baseline_sel)
         else:
             # Expect a UUID

@@ -8,7 +8,6 @@ from typing import IO
 from beautysh import BashFormatter
 from jinja2 import Environment, PackageLoader, TemplateNotFound, select_autoescape
 
-from .config import PlatformArch, PlatformABI
 
 type Benchmark = "Benchmark"
 
@@ -151,8 +150,6 @@ class ScriptContext(TemplateContextBase):
             "iterations": benchmark.config.iterations,
             "system_target": benchmark.config.system_target,
             "target_name": benchmark.target_name,
-            # XXX DEPRECATED: Retained for templates still referencing `instance`
-            "instance": benchmark.config.instance,
             "parameters": benchmark.parameters,
             "setup_hooks": [],
             "teardown_hooks": [],
@@ -160,10 +157,6 @@ class ScriptContext(TemplateContextBase):
             "iter_teardown_hooks": [],
             "iter_exec_hooks": [],
         }
-
-        # Add config enum types to the context
-        self.register_global("PlatformABI", PlatformABI)
-        self.register_global("PlatformArch", PlatformArch)
 
     def add_hook(self, phase: str, hook: ScriptHook):
         with self._lock:

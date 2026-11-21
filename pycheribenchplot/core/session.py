@@ -7,7 +7,6 @@ import tarfile
 from collections import defaultdict
 from pathlib import Path, PurePosixPath
 from typing import Any, Type
-from uuid import UUID
 
 import polars as pl
 from typing_extensions import Self
@@ -20,7 +19,6 @@ from .config import (
     AssetImportAction,
     BenchplotUserConfig,
     ConfigContext,
-    InstanceConfig,
     PipelineConfig,
     SessionRunConfig,
 )
@@ -149,9 +147,6 @@ class Session:
         #: Session root path, where all the session data will be stored
         self.session_root_path = session_root_path.expanduser().absolute()
         self._ensure_dir_tree()
-        #: Mapping from target names to platform configurations.
-        #: Note that this should be readonly.
-        self.platform_map = {}
         #: A dataframe that organises the set of benchmarks to run or analyse.
         self.parameterization_matrix = self._resolve_parameterization_matrix(
             self.config
@@ -218,8 +213,6 @@ class Session:
         parameters = defaultdict(list)
         for dataset_config in config.configurations:
             self.logger.debug("Found benchmark run config %s", dataset_config)
-            # Note that g_uuids are used for backward-compatibility only
-            self.platform_map[dataset_config.g_uuid] = dataset_config.instance
             for k, p in dataset_config.parameters.items():
                 parameters[k].append(p)
 
@@ -687,24 +680,6 @@ class Session:
             copy_function=_handle_file_merge,
         )
 
-    def get_instance_configuration(self, g_uuid: UUID | str) -> InstanceConfig:
-        """
-        Helper to retreive an instance configuration for the given g_uuid.
-        """
-        # Descriptors with the same instance share the same instance configuration
-        # just grab the first one
-        match_instance = self.parameterization_matrix.filter(instance=str(g_uuid))
-        descriptor_config = match_instance["descriptor"][0].config
-        return descriptor_config.instance
-
-    def machine_configuration_name(self, g_uuid: UUID | str) -> str:
-        """
-        Retrieve the human-readable form of the machine configuration identified by a given UUID.
-        This is useful for producing readable output.
-        """
-        instance_config = self.get_instance_configuration(g_uuid)
-        return instance_config.name
-
     def get_metadata_root_path(self) -> Path:
         """
         :return: The metadata directory, used to store benchplot task metadata.
@@ -794,10 +769,7 @@ class Session:
 
     def _generate_target_scripts(self) -> None:
         data_root = self.get_data_root_path()
-        # XXX DEPRECATED: Fall back to legacy CommonSessionConfig.bundle_results
-        bundle_results = (
-            self.config.deploy.autorun.bundle_results or self.config.bundle_results
-        )
+        bundle_results = self.config.deploy.autorun.bundle_results
         autorun_targets = []
         for (target,), section in self.parameterization_matrix.group_by("target"):
             workdirs = []

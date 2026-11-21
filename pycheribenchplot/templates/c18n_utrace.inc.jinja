@@ -14,19 +14,7 @@
 {%- endmacro %}
 
 {% macro c18n_utrace_env() -%}
-  {%- if instance.arch == PlatformArch.ARM64 -%}
-    {%- if instance.userabi == PlatformABI.PURECAP -%}
-      env LD_64C_UTRACE_COMPARTMENT=1
-    {%- elif instance.userabi == PlatformABI.BENCHMARK -%}
-      env LD_64CB_UTRACE_COMPARTMENT=1
-    {%- else -%}
-      env LD_UTRACE_COMPARTMENT=1
-    {%- endif -%}
-  {%- elif instance.arch == PlatformArch.RISCV64 -%}
-    env LD_UTRACE_COMPARTMENT=1
-  {%- else -%}
-    "INVALID arch {{ instance.arch }}"
-  {%- endif -%}
+  env LD_64C_UTRACE_COMPARTMENT=1 LD_64CB_UTRACE_COMPARTMENT=1 LD_UTRACE_COMPARTMENT=1
 {%- endmacro %}
 
 {#

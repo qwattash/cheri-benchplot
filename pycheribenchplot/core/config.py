@@ -1359,71 +1359,6 @@ class PlatformArch(Enum):
         return self.value
 
 
-class PlatformABI(Enum):
-    NOCHERI = "nocheri"
-    HYBRID = "hybrid"
-    PURECAP = "purecap"
-    BENCHMARK = "benchmark"
-
-    def __str__(self):
-        return self.value
-
-
-class DeploymentType(Enum):
-    """
-    Benchmark deployment method.
-    """
-
-    #: Generate MFS root images and related boot scripts
-    MFS_ROOT_IMAGE = "mfs-root"
-    #: Generate ZFS rootfs images for boot enviroments or jails
-    ZFS_ROOT_IMAGE = "zfs-root"
-    #: Generate tar.gz rootfs archive
-    ROOTFS_ARCHIVE = "rootfs-archive"
-    #: Do not generate deployment images
-    NONE = "none"
-
-
-@dc.dataclass
-class InstanceConfig(Config):
-    """
-    Configuration for a CheriBSD instance to run benchmarks on.
-    """
-
-    kernel: str = config_field(
-        Config.REQUIRED, desc="Name of the kernel configuration file used"
-    )
-    name: str = config_field(
-        Config.REQUIRED,
-        desc="Unique name of the platform where the benchmark is run. "
-        "This is used to populate the reserved `target` parameterisation axis.",
-    )
-
-    arch: PlatformArch = config_field(PlatformArch.RISCV64, desc="CPU Architecture.")
-
-    kernelabi: PlatformABI = config_field(
-        PlatformABI.PURECAP, desc="Kernel ABI identifier."
-    )
-
-    userabi: PlatformABI = config_field(
-        PlatformABI.PURECAP, desc="User ABI identifier."
-    )
-
-    bootenv: str = config_field(None, desc="ZFS boot environment for the benchmarks")
-
-    deployment: DeploymentType = config_field(
-        DeploymentType.NONE,
-        desc="System deployment configuration. This enables benchmark image generation.",
-    )
-
-    @classmethod
-    def native(cls) -> Self:
-        return InstanceConfig(kernel="GENERIC", name="local", arch=PlatformArch.NATIVE)
-
-    def __str__(self):
-        return f"{self.name}"
-
-
 class AutorunMode(Enum):
     """
     Autorun script execution and installation mode on target systems.
@@ -2096,20 +2031,6 @@ class ParamOptions(Config):
 
 
 @dc.dataclass
-class SystemConfig(Config):
-    """
-    Host system to use for each specific group of parameters.
-    """
-
-    #: Match a set of key/values from the parameterization to which apply
-    #: the system configuration.
-    matches: Dict[str, ConfigAny]
-
-    #: System configuration
-    host_system: InstanceConfig
-
-
-@dc.dataclass
 class PipelineBenchmarkConfig(CommonBenchmarkConfig):
     """
     User-facing benchmark configuration.
@@ -2125,13 +2046,6 @@ class PipelineBenchmarkConfig(CommonBenchmarkConfig):
 
     parameterize_options: ParamOptions = config_field(
         ParamOptions, desc="Parameterization tunables."
-    )
-
-    #: System configuration.
-    #: Note that matching is done in-order, therefore the last entry may have
-    #: `"matches": {}` to catch-all.
-    system: list[SystemConfig] = config_field(
-        list, desc="System configuration, this is used to generate the <target> axis."
     )
 
     @validates("parameterize")
@@ -2167,9 +2081,6 @@ class BenchmarkRunConfig(CommonBenchmarkConfig):
         dict, desc="Parameterisation tuple for this benchmark run."
     )
 
-    #: XXX DEPRECATED: Retained for compatibility with legacy instance configurations
-    instance: InstanceConfig | None = config_field(None, desc="DEPRECATED")
-
     #: Resolved deployment target system mapping
     system_target: DeploySystemConfig | None = config_field(
         None, desc="Resolved target system mapping"
@@ -2178,12 +2089,7 @@ class BenchmarkRunConfig(CommonBenchmarkConfig):
     def __str__(self):
         generators = [g.handler for g in self.generators]
         common_info = f"params={self.parameters} gen={generators}"
-        if self.g_uuid and self.instance:
-            return (
-                f"{self.name} ({self.uuid}/{self.g_uuid}) on {self.instance} "
-                + common_info
-            )
-        elif self.system_target:
+        if self.system_target:
             return (
                 f"{self.name} ({self.uuid}) on {self.system_target.name} " + common_info
             )
@@ -2259,9 +2165,6 @@ class CommonSessionConfig(Config):
     #: Path to the session directory tree in the benchmark host
     remote_session_path: ConfigPath = Path("/opt/benchmark-output")
 
-    #: XXX DEPRECATED: Legacy result bundling flag; superseded by deploy.autorun.bundle_results
-    bundle_results: bool = False
-
     def __post_init__(self):
         super().__post_init__()
 
@@ -2300,21 +2203,6 @@ class PipelineConfig(CommonSessionConfig):
     )
 
 
-def _deploy_system_from_legacy(sys_conf: "SystemConfig") -> DeploySystemConfig:
-    """
-    XXX DEPRECATED: Convert a legacy benchmark.system entry to a DeploySystemConfig.
-    """
-    return DeploySystemConfig(
-        name=sys_conf.host_system.name,
-        matches=copy.deepcopy(sys_conf.matches),
-        autorun=SystemAutorunMatchConfig(
-            kernel=sys_conf.host_system.kernel,
-            bootenv=sys_conf.host_system.bootenv,
-            arch=sys_conf.host_system.arch,
-        ),
-    )
-
-
 @dc.dataclass
 class SessionRunConfig(CommonSessionConfig):
     """
@@ -2325,9 +2213,6 @@ class SessionRunConfig(CommonSessionConfig):
 
     #: Session unique ID
     uuid: UUIDStr = dc.field(default_factory=make_uuid)
-
-    #: XXX DEPRECATED: Retained for loading legacy session-run.json files
-    git_sha: Dict[str, str] = dc.field(default_factory=dict)
 
     #: Session name, defaults to the session UUID
     name: Optional[str] = None
@@ -2368,9 +2253,6 @@ class SessionRunConfig(CommonSessionConfig):
             bench_ctx = ctx.clone()
             bench_ctx.add_namespace(bench_conf, "benchmark")
             # Shorthand for the corresponding target system configuration
-            # XXX DEPRECATED: Expose legacy `instance` namespace for templates
-            if bench_conf.instance is not None:
-                bench_ctx.add_namespace(bench_conf.instance, "instance")
             if bench_conf.system_target is not None:
                 bench_ctx.add_namespace(bench_conf.system_target, "system_target")
             # Ensure that the benchmark parameters are not themselves parameterized
@@ -2410,15 +2292,6 @@ class SessionRunConfig(CommonSessionConfig):
             if cls._match_params(params, skip):
                 return False
         return True
-
-    @classmethod
-    def _match_system_config(
-        cls, params: dict, configs: list[SystemConfig]
-    ) -> InstanceConfig | None:
-        for sys_conf in configs:
-            if cls._match_params(params, sys_conf.matches):
-                return sys_conf.host_system
-        return None
 
     @classmethod
     def _match_deploy_system_config(
@@ -2467,36 +2340,6 @@ class SessionRunConfig(CommonSessionConfig):
 
         if config.deploy is not None:
             session.deploy = DeployManifest.from_deploy_config(config.deploy)
-            # XXX DEPRECATED: Merge legacy benchmark.system into deploy.system when deploy.system is omitted
-            if not session.deploy.system and bench_config.system:
-                session.deploy.system = [
-                    _deploy_system_from_legacy(s) for s in bench_config.system
-                ]
-            # XXX DEPRECATED: Sync legacy CommonSessionConfig.bundle_results from deploy.autorun
-            if session.deploy.autorun.bundle_results:
-                session.bundle_results = True
-        elif bench_config.system or config.bundle_results:
-            # XXX DEPRECATED: Synthesize deploy from legacy benchmark.system and bundle_results
-            synthesized_systems = [
-                _deploy_system_from_legacy(s) for s in bench_config.system
-            ]
-            session.deploy = DeployManifest(
-                autorun=AutorunCommonConfig(bundle_results=config.bundle_results),
-                system=synthesized_systems,
-            )
-
-        # XXX DEPRECATED: Duplicate-name check for legacy benchmark.system entries
-        if not (config.deploy is not None and config.deploy.system):
-            host_system_names = set()
-            for sys_config in bench_config.system:
-                name = sys_config.host_system.name
-                if name in host_system_names:
-                    logger.warning(
-                        "Host system matcher '%s' has duplicate host system name '%s'",
-                        sys_config.matches,
-                        name,
-                    )
-                host_system_names.add(name)
 
         # Generate all parameter combinations
         logger.debug("Generate parameterization for '%s'", bench_config.name)
@@ -2511,7 +2354,6 @@ class SessionRunConfig(CommonSessionConfig):
             run_config.parameters = parameters.copy()
             # Resolve system configuration
             sys_target: DeploySystemConfig | None = None
-            host_system: InstanceConfig | None = None
             if config.deploy is not None and config.deploy.system:
                 sys_target = cls._match_deploy_system_config(
                     parameters, session.deploy.system
@@ -2524,22 +2366,6 @@ class SessionRunConfig(CommonSessionConfig):
                     raise ConfigurationError("Invalid configuration")
                 if "target" not in parameters:
                     run_config.parameters["target"] = sys_target.name
-            elif bench_config.system:
-                # XXX DEPRECATED: Resolve legacy benchmark.system entry
-                host_system = cls._match_system_config(parameters, bench_config.system)
-                if session.deploy and session.deploy.system:
-                    sys_target = cls._match_deploy_system_config(
-                        parameters, session.deploy.system
-                    )
-                if host_system is None:
-                    logger.error(
-                        "Missing system configuration for parameter combination %s",
-                        parameters,
-                    )
-                    raise RuntimeError("Invalid configuration")
-                if "target" not in parameters:
-                    # Generate the target parameter, if not specified
-                    run_config.parameters["target"] = host_system.name
             else:
                 # Require the target parameter as it can not be generated
                 if "target" not in parameters:
@@ -2575,9 +2401,6 @@ class SessionRunConfig(CommonSessionConfig):
                     )
 
             run_config.uuid = uuid4()
-            if host_system is not None:
-                # XXX DEPRECATED: Populate BenchmarkRunConfig.instance for backward compatibility
-                run_config.instance = InstanceConfig.copy(host_system)
             if sys_target is not None:
                 run_config.system_target = DeploySystemConfig.copy(sys_target)
             session.configurations.append(run_config)

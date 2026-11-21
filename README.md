@@ -172,7 +172,6 @@ The JSON pipeline configuration has the following shape:
         "desc": "Description for humans",
         "iterations": 1,
         "parameterize": {},
-        "system": [],
         "command_hooks": {},
         "generators": []
     }
@@ -186,7 +185,8 @@ The key fields in this file are:
  defines a single benchmarking axis named "buffer-size" with values 1, 1024 and 2048.
  This means that the pipeline configuration will be expanded to produce three benchmark
  executions, each with its own buffer-size value.
- - *system*: defines the "target" assignment for different parameter combinations.
+ - *deploy*: (top level, optional) defines the "target" assignment for different
+  parameter combinations via its `system` mapping.
   This is intended to describe if/how different parameterisations map to the
   platform on which they run. For instance, if we have a `"platform": ["arm", "riscv"]`
   parameter axis, we probably want all "arm" benchmark workloads to run on an ARM
@@ -203,7 +203,7 @@ The key fields in this file are:
 > The name "iteration" is reserved for internal use (the benchmark iteration number).
 > The name "descriptor" is reserved for internal use.
 > The name "target" is semi-reserved, the value is automatically generated from the
-> `benchmark.system` mapping, but can be forced if the axis is explicitly
+> `deploy.system` mapping, but can be forced if the axis is explicitly
 > specificed.
 
 The `benchplot-cli` tool is your friend, this can be used to show
@@ -259,7 +259,6 @@ hyperfine for collecting timing results, we will set `timing_tool` to "time".
         "desc": "Description for humans",
         "iterations": 1,
         "parameterize": {},
-        "system": [],
         "command_hooks": {},
         "generators": [{
             "handler": "generic.exec",
@@ -287,9 +286,9 @@ but we will pick one that I think is convenient enough.
 
 First, we determine the benchmark host on which we are going to run,
 a Morello machine in this case, and we decide to use the `host` parameter axis
-for this. The `host` parameter axis is also used to provide a matching `system`
-allocation descriptor for the host.
-The `system.name` field will be used to populate the internal `target`
+for this. The `host` parameter axis is also used to provide a matching
+`deploy.system` allocation descriptor for the host.
+The `deploy.system.name` field will be used to populate the internal `target`
 parameterisation axis.
 Then, we add a `revocation` axis with values "enabled" and "disabled". This is
 used to switch on and off CHERI temporal safety.
@@ -297,13 +296,11 @@ Finally we move the git repository URL in the `repo` axis.
 
 > [!TIP]
 > While it is possible to specify directly the `target` parameterisation axis
-> in place of `host`, here we highlight the existence of the host system
-> configuration. Currently the `system` configuration is not really used
-> internally, unless the task needs to know the cheri target string or
-> kernel ABI; however, the idea is that we could automate the full workflow
-> and the host_system mappings gives us a place to specify where to run
-> different benchmark parameterisations (i.e. if we have multiple host machines
-> with different architectures).
+> in place of `host`, here we highlight the existence of the deployment system
+> configuration. The `deploy.system` mappings give us a place to specify where
+> to run different benchmark parameterisations (i.e. if we have multiple host
+> machines with different architectures), as well as the boot-time kernel and
+> environment used for autorun execution on each target.
 
 As we move the repository URL into a parameter axis, we need a way to reference
 its value in the command template string for the `task_options`.
@@ -325,21 +322,21 @@ value of the `repo` parameter axis assigned to the specific benchmark combinatio
             "revocation": ["enable", "disable"],
             "repo": ["https://github.com/CTSRD-CHERI/cheribsd-ports.git"]
         },
-        "system": [{
-            "matches": { "host": "morello" },
-            "host_system": {
-                "name": "morello",
-                "kernel": "GENERIC-MORELLO-PURECAP-BENCHMARK-NODEBUG",
-                "cheri_target": "morello-purecap",
-                "kernelabi": "purecap"
-            }
-        }],
         "command_hooks": {},
         "generators": [{
             "handler": "generic.exec",
             "task_options": {
                 "command": "git clone {repo}",
                 "timing_mode": "time"
+            }
+        }]
+    },
+    "deploy": {
+        "system": [{
+            "name": "morello",
+            "matches": { "host": "morello" },
+            "autorun": {
+                "kernel": "GENERIC-MORELLO-PURECAP-BENCHMARK-NODEBUG"
             }
         }]
     }
@@ -371,15 +368,6 @@ substitution to use the `revocation` axis as an argument to `proccontrol`.
             "revocation": ["enable", "disable"],
             "repo": ["https://github.com/CTSRD-CHERI/cheribsd-ports.git"]
         },
-        "system": [{
-            "matches": { "host": "morello" },
-            "host_system": {
-                "name": "morello",
-                "kernel": "GENERIC-MORELLO-PURECAP-BENCHMARK-NODEBUG",
-                "cheri_target": "morello-purecap",
-                "kernelabi": "purecap"
-            }
-        }],
         "command_hooks": {
             "setup": [{
                 "matches": {},
@@ -391,6 +379,15 @@ substitution to use the `revocation` axis as an argument to `proccontrol`.
             "task_options": {
                 "command": "proccontrol -m cherirevoke -s {revocation} git clone {repo}",
                 "timing_mode": "time"
+            }
+        }]
+    },
+    "deploy": {
+        "system": [{
+            "name": "morello",
+            "matches": { "host": "morello" },
+            "autorun": {
+                "kernel": "GENERIC-MORELLO-PURECAP-BENCHMARK-NODEBUG"
             }
         }]
     }

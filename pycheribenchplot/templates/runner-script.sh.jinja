@@ -15,9 +15,6 @@ set -e
 echo "Run benchmark configuration ID={{ dataset_id }} with {{ iterations }} iterations."
 {% if system_target %}
 echo "Target '{{ system_target.name }}'"
-{% elif instance %}
-{# XXX DEPRECATED: Legacy InstanceConfig fallback #}
-echo "Instance '{{ instance.name }}'"
 {% elif 'target' in parameters %}
 echo "Target '{{ parameters['target'] }}'"
 {% endif %}

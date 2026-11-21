@@ -44,12 +44,8 @@ class TaskFactory:
                     },
                     "generators": [],
                     "uuid": str(dataset_id),
-                    "instance": {
-                        "kernel": "TEST-KERNEL-CONFIG",
+                    "system_target": {
                         "name": "test-target-instance",
-                        "arch": "arm64",
-                        "kernelabi": "purecap",
-                        "userabi": "purecap",
                     },
                 }
             ],
@@ -66,12 +62,14 @@ class TaskFactory:
         """
         Add an additional benchmark configuration to the session.
         Must be called before build().
-        The instance block is copied from the first (default) configuration.
+        The system_target block is copied from the first (default) configuration.
         """
         assert self._session is None, "Can not add configurations after build()"
         session_id = uuid.UUID(self._unrolled_config["uuid"])
         dataset_id = uuid.uuid3(session_id, name)
-        instance = copy.deepcopy(self._unrolled_config["configurations"][0]["instance"])
+        system_target = copy.deepcopy(
+            self._unrolled_config["configurations"][0]["system_target"]
+        )
         self._unrolled_config["configurations"].append(
             {
                 "name": name,
@@ -79,7 +77,7 @@ class TaskFactory:
                 "parameters": parameters,
                 "generators": [],
                 "uuid": str(dataset_id),
-                "instance": instance,
+                "system_target": system_target,
             }
         )
         return self

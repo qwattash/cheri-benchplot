@@ -12,7 +12,7 @@ from typing import Callable, Generator, Hashable, Iterable, Self, Type
 import polars as pl
 
 from .borg import Borg
-from .config import AnalysisConfig, Config, InstanceConfig
+from .config import AnalysisConfig, Config
 from .error import MissingDependency, TaskNotFound
 from .util import new_logger
 
@@ -723,21 +723,6 @@ class AnalysisTask(SessionTask):
         plus the iteration index.
         """
         return ["dataset_id", *self.param_columns, "iteration"]
-
-    def get_instance_config(self, g_uuid: str) -> InstanceConfig:
-        """
-        Helper to retreive an instance configuration for the given g_uuid.
-        """
-        return self.session.get_instance_configuration(g_uuid)
-
-    def g_uuid_to_label(self, g_uuid: str) -> str:
-        """
-        Helper that maps group UUIDs to a human-readable label that describes the instance
-
-        Deprecated, use the `target` parameter.
-        """
-        instance_config = self.get_instance_config(g_uuid)
-        return instance_config.name
 
     def get_analysis_path(self) -> Path:
         """
